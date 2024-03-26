@@ -65,7 +65,6 @@ DB copy provides a helper which can copy LevelDB or RocksDB data quickly on the 
   java -jar Toolkit.jar db cp  output-directory/database /tmp/databse
 ```
 
-
 ## DB Lite
 
 DB lite provides lite database, parameters are compatible with previous `LiteFullNodeTool`.
@@ -90,7 +89,7 @@ DB lite provides lite database, parameters are compatible with previous `LiteFul
   #split and get a history dataset
   java -jar Toolkit.jar db lite -o split -t history --fn-data-path output-directory/database --dataset-path /tmp
   #merge history dataset and snapshot dataset
-  java -jar Toolkit.jar db lite -o split -t history --fn-data-path /tmp/snapshot --dataset-path /tmp/history
+  java -jar Toolkit.jar db lite -o merge --fn-data-path /tmp/snapshot --dataset-path /tmp/history
 ```
 
 ## DB Move
@@ -134,6 +133,17 @@ Execute move command.
   java -jar Toolkit.jar db mv -c main_net_config.conf -d /data/tron/output-directory
 ```
 
+## DB Root
+
+DB root provides a helper which can compute merkle root for tiny db.
+
+NOTE: large db may GC overhead limit exceeded.
+
+### Available parameters:
+
+- `<src>`: Source path for database. Default: output-directory/database
+- `--db`: db name.
+- `-h | --help`: provide the help info
 
 ## DB Prune
 
