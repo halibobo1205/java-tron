@@ -77,6 +77,7 @@ public class DbLiteTest {
     // allow account root
     Args.getInstance().setAllowAccountStateRoot(1);
     Args.getInstance().setRpcPort(PublicMethod.chooseRandomPort());
+    Args.getInstance().setRpcEnable(true);
     databaseDir = Args.getInstance().getStorage().getDbDirectory();
     // init dbBackupConfig to avoid NPE
     Args.getInstance().dbBackupConfig = DbBackupConfig.getInstance();
