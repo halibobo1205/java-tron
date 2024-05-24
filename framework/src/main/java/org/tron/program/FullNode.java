@@ -15,6 +15,7 @@ import org.tron.common.prometheus.Metrics;
 import org.tron.core.Constant;
 import org.tron.core.config.DefaultConfig;
 import org.tron.core.config.args.Args;
+import org.tron.core.services.SolidityService;
 
 @Slf4j(topic = "app")
 public class FullNode {
@@ -40,7 +41,6 @@ public class FullNode {
    * Start the FullNode.
    */
   public static void main(String[] args) {
-    logger.info("Full node running.");
     Args.setParam(args, Constant.TESTNET_CONF);
     CommonParameter parameter = Args.getInstance();
 
@@ -51,6 +51,20 @@ public class FullNode {
       jCommander.parse(args);
       Args.printHelp(jCommander);
       return;
+    }
+
+    if (parameter.isKeystore()) {
+      KeystoreFactory.exec();
+      return;
+    }
+    if (parameter.isDbConvert()) {
+      DBConvert.run(args);
+      return;
+    }
+    if (parameter.isSolidityNode()) {
+      logger.info("Solidity node is running.");
+    } else {
+      logger.info("Full node running.");
     }
 
     if (Args.getInstance().isDebug()) {
@@ -71,6 +85,7 @@ public class FullNode {
     Application appT = ApplicationFactory.create(context);
     context.registerShutdownHook();
     appT.startup();
+    SolidityService.runIfNeed();
     appT.blockUntilShutdown();
   }
 }
