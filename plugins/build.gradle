@@ -8,7 +8,7 @@ apply plugin: 'checkstyle'
 def versions = [
         checkstyle: '8.7',
 ]
-mainClassName = 'org.tron.plugins.ArchiveManifest'
+mainClassName = 'org.tron.plugins.Toolkit'
 group 'org.tron'
 version '1.0.0'
 
@@ -94,6 +94,8 @@ def binaryRelease(taskName, jarName, mainClass) {
             include "/**"
         }
 
+        dependsOn project(':protocol').jar // explicit_dependency
+
         from {
             configurations.runtimeClasspath.collect { // https://docs.gradle.org/current/userguide/upgrading_version_6.html#changes_6.3
                 it.isDirectory() ? it : zipTree(it)
@@ -135,23 +137,10 @@ if (JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_17)) {
         into "bin"
     }
 }
-createScript(project, 'org.tron.plugins.ArchiveManifest', 'ArchiveManifest')
 createScript(project, 'org.tron.plugins.Toolkit', 'Toolkit')
 
-def releaseBinary = hasProperty('binaryRelease') ? getProperty('binaryRelease') : 'true'
-def skipArchive = hasProperty('skipArchive') ? true : false
-def skipAll = hasProperty('skipAll') ? true : false
-if (releaseBinary == 'true') {
-    artifacts {
-        archives(binaryRelease('buildToolkitJar', 'Toolkit', 'org.tron.plugins.Toolkit'))
-    }
-    if (!skipAll) {
-        if (!skipArchive) {
-            artifacts {
-                archives(binaryRelease('buildArchiveManifestJar', 'ArchiveManifest', 'org.tron.plugins.ArchiveManifest'))
-            }
-        }
-    }
+artifacts {
+    archives(binaryRelease('buildToolkitJar', 'Toolkit', 'org.tron.plugins.Toolkit'))
 }
 
 task copyToParent(type: Copy) {
