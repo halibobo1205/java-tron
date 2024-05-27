@@ -79,7 +79,12 @@ public class ApplicationImpl implements Application {
 
   @Override
   public void startServices() {
-    services.start();
+    try {
+      services.start();
+    } catch (Exception e) {
+      logger.error("Failed to start services", e);
+      System.exit(1);
+    }
   }
 
   @Override
