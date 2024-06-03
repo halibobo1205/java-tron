@@ -18,7 +18,7 @@ public class DbConvertTest extends DbTest {
   @Test
   public void testRunWithSafe() throws IOException {
     String[] args = new String[] { "db", "convert",  INPUT_DIRECTORY,
-        temporaryFolder.newFolder().toString(),"--safe" };
+        temporaryFolder.newFolder().toString()};
     Assert.assertEquals(0, cli.execute(args));
   }
 

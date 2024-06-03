@@ -20,10 +20,10 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
 import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.rocksdb.AbstractComparator;
 import org.rocksdb.BlockBasedTableConfig;
 import org.rocksdb.BloomFilter;
 import org.rocksdb.Checkpoint;
-import org.rocksdb.DirectComparator;
 import org.rocksdb.InfoLogLevel;
 import org.rocksdb.Logger;
 import org.rocksdb.Options;
@@ -60,11 +60,11 @@ public class RocksDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
   private ReadWriteLock resetDbLock = new ReentrantReadWriteLock();
   private static final String KEY_ENGINE = "ENGINE";
   private static final String ROCKSDB = "ROCKSDB";
-  private DirectComparator comparator;
+  private AbstractComparator comparator;
   private static final org.slf4j.Logger rocksDbLogger = LoggerFactory.getLogger(ROCKSDB);
 
   public RocksDbDataSourceImpl(String parentPath, String name, RocksDbSettings settings,
-      DirectComparator comparator) {
+                               AbstractComparator comparator) {
     this.dataBaseName = name;
     this.parentPath = parentPath;
     this.comparator = comparator;
