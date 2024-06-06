@@ -26,6 +26,7 @@ import org.tron.common.es.ExecutorServiceManager;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.core.config.args.Args;
 import org.tron.core.services.filter.LiteFnQueryGrpcInterceptor;
+import org.tron.core.services.ratelimiter.PrometheusInterceptor;
 import org.tron.core.services.ratelimiter.RateLimiterInterceptor;
 import org.tron.core.services.ratelimiter.RpcApiAccessInterceptor;
 
@@ -43,6 +44,9 @@ public abstract class RpcService extends AbstractService {
 
   @Autowired
   private RpcApiAccessInterceptor apiAccessInterceptor;
+
+  @Autowired
+  private PrometheusInterceptor prometheusInterceptor;
 
   @Override
   public void innerStart() throws Exception {
@@ -102,6 +106,11 @@ public abstract class RpcService extends AbstractService {
 
     // add lite fullnode query interceptor
     serverBuilder.intercept(this.liteFnQueryGrpcInterceptor);
+
+    // add prometheus interceptor
+    if (Args.getInstance().isMetricsPrometheusEnable()) {
+      serverBuilder.intercept(prometheusInterceptor);
+    }
   }
 
   protected void initServer(NettyServerBuilder serverBuilder) {
