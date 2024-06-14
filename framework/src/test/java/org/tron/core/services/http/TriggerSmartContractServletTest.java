@@ -33,16 +33,8 @@ public class TriggerSmartContractServletTest extends BaseTest {
     Args.setParam(
         new String[]{"--output-directory", dbPath(), "--debug", "--witness"}, Constant.TEST_CONF);
     Args.getInstance().needSyncCheck = false;
-    Args.getInstance().setRpcEnable(false);
-    Args.getInstance().setRpcSolidityEnable(false);
-    Args.getInstance().setRpcPBFTEnable(false);
     Args.getInstance().setFullNodeHttpEnable(true);
     Args.getInstance().setFullNodeHttpPort(PublicMethod.chooseRandomPort());
-    Args.getInstance().setPBFTHttpEnable(false);
-    Args.getInstance().setSolidityNodeHttpEnable(false);
-    Args.getInstance().setJsonRpcHttpFullNodeEnable(false);
-    Args.getInstance().setJsonRpcHttpSolidityNodeEnable(false);
-    Args.getInstance().setJsonRpcHttpPBFTNodeEnable(false);
     httpNode = String.format("%s:%d", "127.0.0.1",
         Args.getInstance().getFullNodeHttpPort());
   }

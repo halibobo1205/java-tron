@@ -39,18 +39,12 @@ public class HttpApiAccessFilterTest extends BaseTest {
   static {
     Args.setParam(new String[]{"-d", dbPath()}, Constant.TEST_CONF);
     Args.getInstance().setFullNodeAllowShieldedTransactionArgs(false);
-    Args.getInstance().setRpcEnable(false);
-    Args.getInstance().setRpcSolidityEnable(false);
-    Args.getInstance().setRpcPBFTEnable(false);
     Args.getInstance().setFullNodeHttpEnable(true);
     Args.getInstance().setFullNodeHttpPort(PublicMethod.chooseRandomPort());
     Args.getInstance().setPBFTHttpEnable(true);
     Args.getInstance().setPBFTHttpPort(PublicMethod.chooseRandomPort());
     Args.getInstance().setSolidityNodeHttpEnable(true);
     Args.getInstance().setSolidityHttpPort(PublicMethod.chooseRandomPort());
-    Args.getInstance().setJsonRpcHttpFullNodeEnable(false);
-    Args.getInstance().setJsonRpcHttpSolidityNodeEnable(false);
-    Args.getInstance().setJsonRpcHttpPBFTNodeEnable(false);
   }
 
   @Test

@@ -77,14 +77,6 @@ public class DbLiteTest {
     Args.getInstance().setAllowAccountStateRoot(1);
     Args.getInstance().setRpcPort(PublicMethod.chooseRandomPort());
     Args.getInstance().setRpcEnable(true);
-    Args.getInstance().setRpcSolidityEnable(false);
-    Args.getInstance().setRpcPBFTEnable(false);
-    Args.getInstance().setFullNodeHttpEnable(false);
-    Args.getInstance().setPBFTHttpEnable(false);
-    Args.getInstance().setSolidityNodeHttpEnable(false);
-    Args.getInstance().setJsonRpcHttpFullNodeEnable(false);
-    Args.getInstance().setJsonRpcHttpSolidityNodeEnable(false);
-    Args.getInstance().setJsonRpcHttpPBFTNodeEnable(false);
     databaseDir = Args.getInstance().getStorage().getDbDirectory();
     // init dbBackupConfig to avoid NPE
     Args.getInstance().dbBackupConfig = DbBackupConfig.getInstance();
