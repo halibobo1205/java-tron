@@ -44,7 +44,7 @@ public class MetricsApiServiceTest {
             "--storage-db-directory", dbDirectory,
             "--storage-index-directory", indexDirectory
         },
-        "config.conf"
+        Constant.TEST_CONF
     );
     CommonParameter parameter = Args.getInstance();
     parameter.setNodeListenPort(port);
