@@ -59,7 +59,7 @@ public abstract class RpcService extends AbstractService {
   }
 
   @Override
-  public CompletableFuture<?> start() {
+  public CompletableFuture<Boolean> start() {
     NettyServerBuilder serverBuilder = initServerBuilder();
     addService(serverBuilder);
     addInterceptor(serverBuilder);

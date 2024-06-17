@@ -18,12 +18,12 @@ public abstract class AbstractService implements Service {
 
 
   @Override
-  public CompletableFuture<?> start() {
+  public CompletableFuture<Boolean> start() {
     logger.info("{} starting on {}", name, port);
-    final CompletableFuture<?> resultFuture = new CompletableFuture<>();
+    final CompletableFuture<Boolean> resultFuture = new CompletableFuture<>();
     try {
       innerStart();
-      resultFuture.complete(null);
+      resultFuture.complete(true);
       logger.info("{} started, listening on {}", name, port);
     } catch (Exception e) {
       resultFuture.completeExceptionally(e);
@@ -32,12 +32,12 @@ public abstract class AbstractService implements Service {
   }
 
   @Override
-  public CompletableFuture<?> stop() {
+  public CompletableFuture<Boolean> stop() {
     logger.info("{} shutdown...", name);
-    final CompletableFuture<?> resultFuture = new CompletableFuture<>();
+    final CompletableFuture<Boolean> resultFuture = new CompletableFuture<>();
     try {
       innerStop();
-      resultFuture.complete(null);
+      resultFuture.complete(true);
       logger.info("{} shutdown complete", name);
     } catch (Exception e) {
       resultFuture.completeExceptionally(e);

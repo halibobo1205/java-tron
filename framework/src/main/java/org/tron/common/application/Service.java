@@ -24,14 +24,14 @@ public interface Service {
    *
    * @return completion state
    */
-  CompletableFuture<?> start();
+  CompletableFuture<Boolean> start();
 
   /**
    * Stops the service and performs needed cleanup.
    *
    * @return completion state
    */
-  CompletableFuture<?> stop();
+  CompletableFuture<Boolean> stop();
 
   boolean isEnable();
 

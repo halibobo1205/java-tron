@@ -44,7 +44,7 @@ public abstract class HttpService extends AbstractService {
   }
 
   @Override
-  public CompletableFuture<?> start() {
+  public CompletableFuture<Boolean> start() {
     initServer();
     ServletContextHandler context = initContextHandler();
     addServlet(context);
