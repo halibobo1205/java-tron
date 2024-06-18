@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.junit.Assert;
 import org.junit.Test;
 import org.tron.common.logsfilter.capsule.BlockFilterCapsule;
+import org.tron.common.math.MathWrapper;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.exception.ItemNotFoundException;
 import org.tron.core.services.jsonrpc.TronJsonRpcImpl;
@@ -17,7 +18,7 @@ import org.tron.core.services.jsonrpc.filters.BlockFilterAndResult;
 public class ConcurrentHashMapTest {
 
   private static int randomInt(int minInt, int maxInt) {
-    return (int) Math.round(Math.random() * (maxInt - minInt) + minInt);
+    return (int) MathWrapper.round(MathWrapper.random() * (maxInt - minInt) + minInt);
   }
 
   /**

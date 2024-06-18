@@ -20,6 +20,7 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import java.util.Arrays;
 import java.util.Objects;
 import lombok.extern.slf4j.Slf4j;
+import org.tron.common.math.MathWrapper;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.Commons;
 import org.tron.common.utils.DecodeUtil;
@@ -64,8 +65,8 @@ public class ParticipateAssetIssueActuator extends AbstractActuator {
       //subtract from owner address
       byte[] ownerAddress = participateAssetIssueContract.getOwnerAddress().toByteArray();
       AccountCapsule ownerAccount = accountStore.get(ownerAddress);
-      long balance = Math.subtractExact(ownerAccount.getBalance(), cost);
-      balance = Math.subtractExact(balance, fee);
+      long balance = MathWrapper.subtractExact(ownerAccount.getBalance(), cost);
+      balance = MathWrapper.subtractExact(balance, fee);
       ownerAccount.setBalance(balance);
       byte[] key = participateAssetIssueContract.getAssetName().toByteArray();
 
@@ -74,14 +75,14 @@ public class ParticipateAssetIssueActuator extends AbstractActuator {
       assetIssueCapsule = Commons
           .getAssetIssueStoreFinal(dynamicStore, assetIssueStore, assetIssueV2Store).get(key);
 
-      long exchangeAmount = Math.multiplyExact(cost, assetIssueCapsule.getNum());
-      exchangeAmount = Math.floorDiv(exchangeAmount, assetIssueCapsule.getTrxNum());
+      long exchangeAmount = MathWrapper.multiplyExact(cost, assetIssueCapsule.getNum());
+      exchangeAmount = MathWrapper.floorDiv(exchangeAmount, assetIssueCapsule.getTrxNum());
       ownerAccount.addAssetAmountV2(key, exchangeAmount, dynamicStore, assetIssueStore);
 
       //add to to_address
       byte[] toAddress = participateAssetIssueContract.getToAddress().toByteArray();
       AccountCapsule toAccount = accountStore.get(toAddress);
-      toAccount.setBalance(Math.addExact(toAccount.getBalance(), cost));
+      toAccount.setBalance(MathWrapper.addExact(toAccount.getBalance(), cost));
       if (!toAccount.reduceAssetAmountV2(key, exchangeAmount, dynamicStore, assetIssueStore)) {
         throw new ContractExeException("reduceAssetAmount failed !");
       }
@@ -156,7 +157,7 @@ public class ParticipateAssetIssueActuator extends AbstractActuator {
     try {
       //Whether the balance is enough
       long fee = calcFee();
-      if (ownerAccount.getBalance() < Math.addExact(amount, fee)) {
+      if (ownerAccount.getBalance() < MathWrapper.addExact(amount, fee)) {
         throw new ContractValidateException("No enough balance !");
       }
 
@@ -181,8 +182,8 @@ public class ParticipateAssetIssueActuator extends AbstractActuator {
 
       int trxNum = assetIssueCapsule.getTrxNum();
       int num = assetIssueCapsule.getNum();
-      long exchangeAmount = Math.multiplyExact(amount, num);
-      exchangeAmount = Math.floorDiv(exchangeAmount, trxNum);
+      long exchangeAmount = MathWrapper.multiplyExact(amount, num);
+      exchangeAmount = MathWrapper.floorDiv(exchangeAmount, trxNum);
       if (exchangeAmount <= 0) {
         throw new ContractValidateException("Can not process the exchange!");
       }

@@ -19,6 +19,7 @@ import com.google.protobuf.ByteString;
 import java.math.BigInteger;
 import java.util.Arrays;
 import org.tron.common.crypto.Hash;
+import org.tron.common.math.MathWrapper;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.ByteUtil;
 import org.tron.core.capsule.AccountCapsule;
@@ -230,8 +231,8 @@ public class MarketUtils {
   public static int comparePrice(long price1SellQuantity, long price1BuyQuantity,
       long price2SellQuantity, long price2BuyQuantity) {
     try {
-      return Long.compare(Math.multiplyExact(price1BuyQuantity, price2SellQuantity),
-          Math.multiplyExact(price2BuyQuantity, price1SellQuantity));
+      return Long.compare(MathWrapper.multiplyExact(price1BuyQuantity, price2SellQuantity),
+          MathWrapper.multiplyExact(price2BuyQuantity, price1SellQuantity));
 
     } catch (ArithmeticException ex) {
       // do nothing here, because we will use BigInteger to compute again
@@ -299,8 +300,8 @@ public class MarketUtils {
 
   public static long multiplyAndDivide(long a, long b, long c) {
     try {
-      long tmp = Math.multiplyExact(a, b);
-      return Math.floorDiv(tmp, c);
+      long tmp = MathWrapper.multiplyExact(a, b);
+      return MathWrapper.floorDiv(tmp, c);
     } catch (ArithmeticException ex) {
       // do nothing here, because we will use BigInteger to compute again
     }
@@ -320,7 +321,7 @@ public class MarketUtils {
     byte[] sellTokenId = orderCapsule.getSellTokenId();
     long sellTokenQuantityRemain = orderCapsule.getSellTokenQuantityRemain();
     if (Arrays.equals(sellTokenId, "_".getBytes())) {
-      accountCapsule.setBalance(Math.addExact(
+      accountCapsule.setBalance(MathWrapper.addExact(
           accountCapsule.getBalance(), sellTokenQuantityRemain));
     } else {
       accountCapsule

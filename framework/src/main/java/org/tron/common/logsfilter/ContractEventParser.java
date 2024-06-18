@@ -8,6 +8,7 @@ import org.bouncycastle.crypto.OutputLengthException;
 import org.bouncycastle.util.Arrays;
 import org.bouncycastle.util.encoders.Hex;
 import org.pf4j.util.StringUtils;
+import org.tron.common.math.MathWrapper;
 import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.utils.StringUtil;
 import org.tron.core.db.TransactionTrace;
@@ -76,7 +77,7 @@ public class ContractEventParser {
       throw new OutputLengthException("data start:" + start + ", length:" + length);
     }
     byte[] dst = new byte[length];
-    System.arraycopy(src, start, dst, 0, Math.min(length, src.length - start));
+    System.arraycopy(src, start, dst, 0, MathWrapper.min(length, src.length - start));
     return dst;
   }
 

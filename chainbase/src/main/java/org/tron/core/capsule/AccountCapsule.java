@@ -20,6 +20,7 @@ import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
+import org.tron.common.math.MathWrapper;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.capsule.utils.AssetUtil;
 import org.tron.core.store.AssetIssueStore;
@@ -42,7 +43,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-import static java.lang.Math.ceil;
 import static org.tron.core.config.Parameter.ChainConstant.BLOCK_PRODUCED_INTERVAL;
 import static org.tron.core.config.Parameter.ChainConstant.WINDOW_SIZE_MS;
 import static org.tron.core.config.Parameter.ChainConstant.WINDOW_SIZE_PRECISION;
@@ -403,13 +403,15 @@ public class AccountCapsule implements ProtoCapsule<Account>, Comparable<Account
 
   public void safeAddAcquiredDelegatedFrozenBalanceForBandwidth(long balance) {
     this.account = this.account.toBuilder().setAcquiredDelegatedFrozenBalanceForBandwidth(
-        Math.max(0, this.account.getAcquiredDelegatedFrozenBalanceForBandwidth() + balance))
+            MathWrapper.max(
+                0, this.account.getAcquiredDelegatedFrozenBalanceForBandwidth() + balance))
         .build();
   }
 
   public void safeAddAcquiredDelegatedFrozenV2BalanceForBandwidth(long balance) {
     this.account = this.account.toBuilder().setAcquiredDelegatedFrozenV2BalanceForBandwidth(
-            Math.max(0, this.account.getAcquiredDelegatedFrozenV2BalanceForBandwidth() + balance))
+            MathWrapper.max(
+                0, this.account.getAcquiredDelegatedFrozenV2BalanceForBandwidth() + balance))
             .build();
   }
 
@@ -499,7 +501,8 @@ public class AccountCapsule implements ProtoCapsule<Account>, Comparable<Account
   public void safeAddAcquiredDelegatedFrozenBalanceForEnergy(long balance) {
     AccountResource newAccountResource = getAccountResource().toBuilder()
         .setAcquiredDelegatedFrozenBalanceForEnergy(
-            Math.max(0, getAccountResource().getAcquiredDelegatedFrozenBalanceForEnergy() + balance))
+            MathWrapper.max(
+                0, getAccountResource().getAcquiredDelegatedFrozenBalanceForEnergy() + balance))
         .build();
 
     this.account = this.account.toBuilder()
@@ -509,7 +512,7 @@ public class AccountCapsule implements ProtoCapsule<Account>, Comparable<Account
 
   public void safeAddAcquiredDelegatedFrozenV2BalanceForEnergy(long balance) {
     AccountResource newAccountResource = getAccountResource().toBuilder()
-            .setAcquiredDelegatedFrozenV2BalanceForEnergy(Math.max(0, getAccountResource()
+            .setAcquiredDelegatedFrozenV2BalanceForEnergy(MathWrapper.max(0, getAccountResource()
                     .getAcquiredDelegatedFrozenV2BalanceForEnergy() + balance)).build();
     this.account = this.account.toBuilder().setAccountResource(newAccountResource).build();
   }
@@ -718,8 +721,8 @@ public class AccountCapsule implements ProtoCapsule<Account>, Comparable<Account
     if (currentAmount == null) {
       currentAmount = 0L;
     }
-    this.account = this.account.toBuilder().putAsset(nameKey, Math.addExact(currentAmount, amount))
-        .build();
+    this.account = this.account.toBuilder().putAsset(nameKey, MathWrapper.addExact(
+        currentAmount, amount)).build();
     return true;
   }
 
@@ -737,8 +740,8 @@ public class AccountCapsule implements ProtoCapsule<Account>, Comparable<Account
         currentAmount = 0L;
       }
       this.account = this.account.toBuilder()
-          .putAsset(nameKey, Math.addExact(currentAmount, amount))
-          .putAssetV2(tokenID, Math.addExact(currentAmount, amount))
+          .putAsset(nameKey, MathWrapper.addExact(currentAmount, amount))
+          .putAssetV2(tokenID, MathWrapper.addExact(currentAmount, amount))
           .build();
     }
     //key is token id
@@ -750,7 +753,7 @@ public class AccountCapsule implements ProtoCapsule<Account>, Comparable<Account
         currentAmount = 0L;
       }
       this.account = this.account.toBuilder()
-          .putAssetV2(tokenIDStr, Math.addExact(currentAmount, amount))
+          .putAssetV2(tokenIDStr, MathWrapper.addExact(currentAmount, amount))
           .build();
     }
     return true;
@@ -762,7 +765,7 @@ public class AccountCapsule implements ProtoCapsule<Account>, Comparable<Account
     Long currentAmount = assetMap.get(nameKey);
     if (amount > 0 && null != currentAmount && amount <= currentAmount) {
       this.account = this.account.toBuilder()
-              .putAsset(nameKey, Math.subtractExact(currentAmount, amount)).build();
+              .putAsset(nameKey, MathWrapper.subtractExact(currentAmount, amount)).build();
       return true;
     }
 
@@ -781,8 +784,8 @@ public class AccountCapsule implements ProtoCapsule<Account>, Comparable<Account
       Long currentAmount = assetMap.get(nameKey);
       if (amount > 0 && null != currentAmount && amount <= currentAmount) {
         this.account = this.account.toBuilder()
-                .putAsset(nameKey, Math.subtractExact(currentAmount, amount))
-                .putAssetV2(tokenID, Math.subtractExact(currentAmount, amount))
+                .putAsset(nameKey, MathWrapper.subtractExact(currentAmount, amount))
+                .putAssetV2(tokenID, MathWrapper.subtractExact(currentAmount, amount))
                 .build();
         return true;
       }
@@ -794,7 +797,7 @@ public class AccountCapsule implements ProtoCapsule<Account>, Comparable<Account
       Long currentAmount = assetMapV2.get(tokenID);
       if (amount > 0 && null != currentAmount && amount <= currentAmount) {
         this.account = this.account.toBuilder()
-                .putAssetV2(tokenID, Math.subtractExact(currentAmount, amount))
+                .putAssetV2(tokenID, MathWrapper.subtractExact(currentAmount, amount))
                 .build();
         return true;
       }

@@ -46,6 +46,7 @@ import org.tron.common.crypto.zksnark.BN128G2;
 import org.tron.common.crypto.zksnark.Fp;
 import org.tron.common.crypto.zksnark.PairingCheck;
 import org.tron.common.es.ExecutorServiceManager;
+import org.tron.common.math.MathWrapper;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.runtime.ProgramResult;
 import org.tron.common.runtime.vm.DataWord;
@@ -614,14 +615,15 @@ public class PrecompiledContracts {
       int expLen = parseLen(data, 1);
       int modLen = parseLen(data, 2);
 
-      byte[] expHighBytes = parseBytes(data, addSafely(ARGS_OFFSET, baseLen), Math.min(expLen, 32));
+      byte[] expHighBytes = parseBytes(data, addSafely(ARGS_OFFSET, baseLen), MathWrapper.min(
+          expLen, 32));
 
-      long multComplexity = getMultComplexity(Math.max(baseLen, modLen));
+      long multComplexity = getMultComplexity(MathWrapper.max(baseLen, modLen));
       long adjExpLen = getAdjustedExponentLength(expHighBytes, expLen);
 
       // use big numbers to stay safe in case of overflow
       BigInteger energy = BigInteger.valueOf(multComplexity)
-          .multiply(BigInteger.valueOf(Math.max(adjExpLen, 1)))
+          .multiply(BigInteger.valueOf(MathWrapper.max(adjExpLen, 1)))
           .divide(GQUAD_DIVISOR);
 
       return isLessThan(energy, BigInteger.valueOf(Long.MAX_VALUE)) ? energy.longValueExact()

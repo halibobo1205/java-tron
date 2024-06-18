@@ -3,6 +3,7 @@ package org.tron.core.capsule;
 import java.util.Objects;
 import lombok.Getter;
 import lombok.Setter;
+import org.tron.common.math.MathWrapper;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.Commons;
 import org.tron.common.utils.ForkController;
@@ -220,7 +221,7 @@ public class ReceiptCapsule {
       payEnergyBill(dynamicPropertiesStore, accountStore, forkController, caller,
           receipt.getEnergyUsageTotal(), receipt.getResult(), energyProcessor, now);
     } else {
-      long originUsage = Math.multiplyExact(receipt.getEnergyUsageTotal(), percent) / 100;
+      long originUsage = MathWrapper.multiplyExact(receipt.getEnergyUsageTotal(), percent) / 100;
       originUsage = getOriginUsage(dynamicPropertiesStore, origin, originEnergyLimit,
           energyProcessor,
           originUsage);
@@ -239,14 +240,14 @@ public class ReceiptCapsule {
 
     if (dynamicPropertiesStore.getAllowTvmFreeze() == 1
         || dynamicPropertiesStore.supportUnfreezeDelay()) {
-      return Math.min(originUsage, Math.min(originEnergyLeft, originEnergyLimit));
+      return MathWrapper.min(originUsage, MathWrapper.min(originEnergyLeft, originEnergyLimit));
     }
 
     if (checkForEnergyLimit(dynamicPropertiesStore)) {
-      return Math.min(originUsage,
-          Math.min(energyProcessor.getAccountLeftEnergyFromFreeze(origin), originEnergyLimit));
+      return MathWrapper.min(originUsage, MathWrapper.min(
+              energyProcessor.getAccountLeftEnergyFromFreeze(origin), originEnergyLimit));
     }
-    return Math.min(originUsage, energyProcessor.getAccountLeftEnergyFromFreeze(origin));
+    return MathWrapper.min(originUsage, energyProcessor.getAccountLeftEnergyFromFreeze(origin));
   }
 
   private void payEnergyBill(

@@ -10,7 +10,6 @@ import org.eclipse.jetty.servlet.ServletContextHandler;
 import org.eclipse.jetty.servlet.ServletHolder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.tron.common.application.HttpService;
-import org.tron.common.parameter.CommonParameter;
 import org.tron.core.config.args.Args;
 import org.tron.core.services.filter.HttpApiAccessFilter;
 import org.tron.core.services.filter.LiteFnQueryHttpFilter;
@@ -172,14 +171,9 @@ public class HttpApiOnPBFTService extends HttpService {
   @Autowired
   private GetDelegatedResourceV2OnPBFTServlet getDelegatedResourceV2OnPBFTServlet;
 
-  @Override
-  public void init() {
-
-  }
-
-  @Override
-  public void init(CommonParameter parameter) {
+  public HttpApiOnPBFTService() {
     port = Args.getInstance().getPBFTHttpPort();
+    enable = isFullNode() && Args.getInstance().isPBFTHttpEnable();
   }
 
   @Override

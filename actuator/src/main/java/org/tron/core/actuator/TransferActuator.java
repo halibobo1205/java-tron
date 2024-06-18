@@ -7,6 +7,7 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import java.util.Arrays;
 import java.util.Objects;
 import lombok.extern.slf4j.Slf4j;
+import org.tron.common.math.MathWrapper;
 import org.tron.common.utils.Commons;
 import org.tron.common.utils.DecodeUtil;
 import org.tron.common.utils.StringUtil;
@@ -58,7 +59,7 @@ public class TransferActuator extends AbstractActuator {
         fee = fee + dynamicStore.getCreateNewAccountFeeInSystemContract();
       }
 
-      Commons.adjustBalance(accountStore, ownerAddress, -(Math.addExact(fee, amount)));
+      Commons.adjustBalance(accountStore, ownerAddress, -(MathWrapper.addExact(fee, amount)));
       if (dynamicStore.supportBlackHoleOptimization()) {
         dynamicStore.burnTrx(fee);
       } else {
@@ -156,7 +157,7 @@ public class TransferActuator extends AbstractActuator {
         }
       }
 
-      if (balance < Math.addExact(amount, fee)) {
+      if (balance < MathWrapper.addExact(amount, fee)) {
         logger.warn("Balance is not sufficient. Account: {}, balance: {}, amount: {}, fee: {}.",
             StringUtil.encode58Check(ownerAddress), balance, amount, fee);
         throw new ContractValidateException(
@@ -164,7 +165,7 @@ public class TransferActuator extends AbstractActuator {
       }
 
       if (toAccount != null) {
-        Math.addExact(toAccount.getBalance(), amount);
+        MathWrapper.addExact(toAccount.getBalance(), amount);
       }
     } catch (ArithmeticException e) {
       logger.debug(e.getMessage(), e);

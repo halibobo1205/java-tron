@@ -5,6 +5,7 @@ import static org.tron.core.Constant.DYNAMIC_ENERGY_FACTOR_DECIMAL;
 
 import com.google.protobuf.InvalidProtocolBufferException;
 import lombok.extern.slf4j.Slf4j;
+import org.tron.common.math.MathWrapper;
 import org.tron.core.store.DynamicPropertiesStore;
 import org.tron.protos.contract.SmartContractOuterClass;
 import org.tron.protos.contract.SmartContractOuterClass.ContractState;
@@ -106,8 +107,7 @@ public class ContractStateCapsule implements ProtoCapsule<ContractState> {
       double increasePercent = 1 + (double) increaseFactor / precisionFactor;
       this.contractState = ContractState.newBuilder()
           .setUpdateCycle(lastCycle)
-          .setEnergyFactor(Math.min(
-              maxFactor,
+          .setEnergyFactor(MathWrapper.min(maxFactor,
               (long) ((getEnergyFactor() + precisionFactor) * increasePercent) - precisionFactor))
           .build();
     }
@@ -119,7 +119,7 @@ public class ContractStateCapsule implements ProtoCapsule<ContractState> {
     }
 
     // Calc the decrease percent (decrease factor [75% ~ 100%])
-    double decreasePercent = Math.pow(
+    double decreasePercent = MathWrapper.pow(
         1 - (double) increaseFactor / DYNAMIC_ENERGY_DECREASE_DIVISION / precisionFactor,
         cycleCount
     );
@@ -130,7 +130,7 @@ public class ContractStateCapsule implements ProtoCapsule<ContractState> {
     //  That means we merge this special case to normal cases)
     this.contractState = ContractState.newBuilder()
         .setUpdateCycle(newCycle)
-        .setEnergyFactor(Math.max(
+        .setEnergyFactor(MathWrapper.max(
             0,
             (long) ((getEnergyFactor() + precisionFactor) * decreasePercent) - precisionFactor))
         .build();

@@ -5,6 +5,7 @@ import static org.tron.core.config.Parameter.ChainConstant.BLOCK_PRODUCED_INTERV
 import static org.tron.core.config.Parameter.ChainConstant.TRX_PRECISION;
 
 import lombok.extern.slf4j.Slf4j;
+import org.tron.common.math.MathWrapper;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.TransactionCapsule;
@@ -79,8 +80,7 @@ public class EnergyProcessor extends ResourceProcessor {
       // logger.info(totalEnergyAverageUsage + "<" + targetTotalEnergyLimit + "\n" + result);
     }
 
-    result = Math.min(
-        Math.max(result, totalEnergyLimit),
+    result = MathWrapper.min(MathWrapper.max(result, totalEnergyLimit),
         totalEnergyLimit * dynamicPropertiesStore.getAdaptiveResourceLimitMultiplier()
     );
 

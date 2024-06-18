@@ -28,6 +28,7 @@ import java.util.Objects;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
+import org.tron.common.math.MathWrapper;
 import org.tron.common.utils.Commons;
 import org.tron.common.utils.DecodeUtil;
 import org.tron.core.capsule.AccountCapsule;
@@ -244,7 +245,7 @@ public class MarketSellAssetActuator extends AbstractActuator {
       long fee = calcFee();
 
       if (Arrays.equals(sellTokenID, "_".getBytes())) {
-        if (ownerAccount.getBalance() < Math.addExact(sellTokenQuantity, fee)) {
+        if (ownerAccount.getBalance() < MathWrapper.addExact(sellTokenQuantity, fee)) {
           throw new ContractValidateException("No enough balance !");
         }
       } else {
@@ -447,7 +448,7 @@ public class MarketSellAssetActuator extends AbstractActuator {
       takerOrderCapsule.setSellTokenQuantityRemain(0);
       MarketUtils.updateOrderState(takerOrderCapsule, State.INACTIVE, marketAccountStore);
 
-      makerOrderCapsule.setSellTokenQuantityRemain(Math.subtractExact(
+      makerOrderCapsule.setSellTokenQuantityRemain(MathWrapper.subtractExact(
           makerOrderCapsule.getSellTokenQuantityRemain(), takerBuyTokenQuantityRemain));
     } else {
       // taker > maker
@@ -475,7 +476,7 @@ public class MarketSellAssetActuator extends AbstractActuator {
         return;
       } else {
         makerOrderCapsule.setSellTokenQuantityRemain(0);
-        takerOrderCapsule.setSellTokenQuantityRemain(Math.subtractExact(
+        takerOrderCapsule.setSellTokenQuantityRemain(MathWrapper.subtractExact(
             takerOrderCapsule.getSellTokenQuantityRemain(), makerBuyTokenQuantityReceive));
       }
     }
@@ -524,7 +525,8 @@ public class MarketSellAssetActuator extends AbstractActuator {
 
   private void transferBalanceOrToken(AccountCapsule accountCapsule) {
     if (Arrays.equals(sellTokenID, "_".getBytes())) {
-      accountCapsule.setBalance(Math.subtractExact(accountCapsule.getBalance(), sellTokenQuantity));
+      accountCapsule.setBalance(MathWrapper.subtractExact(
+          accountCapsule.getBalance(), sellTokenQuantity));
     } else {
       accountCapsule
           .reduceAssetAmountV2(sellTokenID, sellTokenQuantity, dynamicStore, assetIssueStore);
@@ -537,7 +539,7 @@ public class MarketSellAssetActuator extends AbstractActuator {
 
     byte[] buyTokenId = orderCapsule.getBuyTokenId();
     if (Arrays.equals(buyTokenId, "_".getBytes())) {
-      accountCapsule.setBalance(Math.addExact(accountCapsule.getBalance(), num));
+      accountCapsule.setBalance(MathWrapper.addExact(accountCapsule.getBalance(), num));
     } else {
       accountCapsule
           .addAssetAmountV2(buyTokenId, num, dynamicStore, assetIssueStore);
@@ -550,7 +552,7 @@ public class MarketSellAssetActuator extends AbstractActuator {
 
     byte[] buyTokenId = orderCapsule.getBuyTokenId();
     if (Arrays.equals(buyTokenId, "_".getBytes())) {
-      accountCapsule.setBalance(Math.addExact(accountCapsule.getBalance(), num));
+      accountCapsule.setBalance(MathWrapper.addExact(accountCapsule.getBalance(), num));
     } else {
       accountCapsule
           .addAssetAmountV2(buyTokenId, num, dynamicStore, assetIssueStore);

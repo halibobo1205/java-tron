@@ -23,6 +23,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.tron.common.application.TronApplicationContext;
+import org.tron.common.math.MathWrapper;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.runtime.Runtime;
 import org.tron.common.runtime.RuntimeImpl;
@@ -863,7 +864,7 @@ public class VoteTest {
     long rewardBySystem = mortgageService.queryReward(contract);
     long beginCycle = manager.getDelegationStore().getBeginCycle(contract);
     long currentCycle = manager.getDynamicPropertiesStore().getCurrentCycleNumber();
-    long passedCycle = Math.max(0, currentCycle - beginCycle);
+    long passedCycle = MathWrapper.max(0, currentCycle - beginCycle);
     Assert.assertTrue(isZero ? rewardBySystem == 0 : rewardBySystem > 0);
     triggerContract(contract, SUCCESS,
         getConsumer(">=", rewardBySystem)

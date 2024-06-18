@@ -22,6 +22,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.tron.common.application.TronApplicationContext;
+import org.tron.common.math.MathWrapper;
 import org.tron.common.runtime.Runtime;
 import org.tron.common.runtime.RuntimeImpl;
 import org.tron.common.runtime.TVMTestResult;
@@ -856,7 +857,7 @@ public class FreezeV2Test {
         transferUsage = (long) (oldReceiver.getEnergyUsage()
             * ((double) (amount) / oldReceiver.getAllFrozenBalanceForEnergy()));
       }
-      transferUsage = Math.min(unDelegateMaxUsage, transferUsage);
+      transferUsage = MathWrapper.min(unDelegateMaxUsage, transferUsage);
     }
 
     DelegatedResourceStore delegatedResourceStore = manager.getDelegatedResourceStore();

@@ -3,6 +3,7 @@ package org.tron.core.db;
 import static org.tron.core.config.Parameter.ChainConstant.BLOCK_PRODUCED_INTERVAL;
 import static org.tron.core.config.Parameter.ChainConstant.WINDOW_SIZE_PRECISION;
 
+import org.tron.common.math.MathWrapper;
 import org.tron.common.utils.Commons;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.TransactionCapsule;
@@ -51,7 +52,7 @@ abstract class ResourceProcessor {
       if (lastTime + windowSize > now) {
         long delta = now - lastTime;
         double decay = (windowSize - delta) / (double) windowSize;
-        averageLastUsage = Math.round(averageLastUsage * decay);
+        averageLastUsage = MathWrapper.round(averageLastUsage * decay);
       } else {
         averageLastUsage = 0;
       }
@@ -79,7 +80,7 @@ abstract class ResourceProcessor {
       if (lastTime + oldWindowSize > now) {
         long delta = now - lastTime;
         double decay = (oldWindowSize - delta) / (double) oldWindowSize;
-        averageLastUsage = Math.round(averageLastUsage * decay);
+        averageLastUsage = MathWrapper.round(averageLastUsage * decay);
       } else {
         averageLastUsage = 0;
       }
@@ -111,7 +112,7 @@ abstract class ResourceProcessor {
       if (lastTime + oldWindowSize > now) {
         long delta = now - lastTime;
         double decay = (oldWindowSize - delta) / (double) oldWindowSize;
-        averageLastUsage = Math.round(averageLastUsage * decay);
+        averageLastUsage = MathWrapper.round(averageLastUsage * decay);
       } else {
         averageLastUsage = 0;
       }
@@ -127,7 +128,7 @@ abstract class ResourceProcessor {
     long remainWindowSize = oldWindowSizeV2 - (now - lastTime) * WINDOW_SIZE_PRECISION;
     long newWindowSize = divideCeil(
         remainUsage * remainWindowSize + usage * this.windowSize * WINDOW_SIZE_PRECISION, newUsage);
-    newWindowSize = Math.min(newWindowSize, this.windowSize * WINDOW_SIZE_PRECISION);
+    newWindowSize = MathWrapper.min(newWindowSize, this.windowSize * WINDOW_SIZE_PRECISION);
     accountCapsule.setNewWindowSizeV2(resourceCode, newWindowSize);
     return newUsage;
   }
@@ -189,7 +190,8 @@ abstract class ResourceProcessor {
         divideCeil(
             ownerUsage * remainOwnerWindowSizeV2 + transferUsage * remainReceiverWindowSizeV2,
             newOwnerUsage);
-    newOwnerWindowSize = Math.min(newOwnerWindowSize, this.windowSize * WINDOW_SIZE_PRECISION);
+    newOwnerWindowSize = MathWrapper.min(
+        newOwnerWindowSize, this.windowSize * WINDOW_SIZE_PRECISION);
     owner.setNewWindowSizeV2(resourceCode, newOwnerWindowSize);
     owner.setUsage(resourceCode, newOwnerUsage);
     owner.setLatestTime(resourceCode, now);

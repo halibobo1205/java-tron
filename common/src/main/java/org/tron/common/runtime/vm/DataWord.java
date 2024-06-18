@@ -23,6 +23,7 @@ import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import org.bouncycastle.util.Arrays;
 import org.bouncycastle.util.encoders.Hex;
+import org.tron.common.math.MathWrapper;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.ByteUtil;
 import org.tron.common.utils.DecodeUtil;
@@ -165,7 +166,7 @@ public class DataWord implements Comparable<DataWord> {
     byte[] ret = ByteUtil.EMPTY_BYTE_ARRAY;
     if (data != null) {
       ret = new byte[WORD_SIZE];
-      int dataSize = Math.min(data.length, WORD_SIZE);
+      int dataSize = MathWrapper.min(data.length, WORD_SIZE);
       System.arraycopy(data, 0, ret, 0, dataSize);
     }
     return ret;
@@ -484,7 +485,7 @@ public class DataWord implements Comparable<DataWord> {
         data, 0, data.length,
         o.getData(), 0, o.getData().length);
     // Convert result into -1, 0 or 1 as is the convention
-    return (int) Math.signum(result);
+    return (int) MathWrapper.signum(result);
   }
 
   public void signExtend(byte k) {

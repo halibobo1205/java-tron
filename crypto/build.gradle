@@ -4,14 +4,13 @@ plugins {
 
 version '1.0.0'
 
-sourceCompatibility = 1.8
 
 repositories {
     mavenCentral()
 }
 
 dependencies {
-    compile project(":common")
+    api project(":common")
 }
 
 jacocoTestReport {

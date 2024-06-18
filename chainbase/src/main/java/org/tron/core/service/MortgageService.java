@@ -12,6 +12,7 @@ import org.apache.commons.collections4.CollectionUtils;
 import org.bouncycastle.util.encoders.Hex;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.tron.common.math.MathWrapper;
 import org.tron.common.utils.Pair;
 import org.tron.common.utils.StringUtil;
 import org.tron.core.capsule.AccountCapsule;
@@ -206,7 +207,7 @@ public class MortgageService {
         .map(vote -> new Pair<>(vote.getVoteAddress().toByteArray(), vote.getVoteCount()))
         .collect(Collectors.toList());
     if (beginCycle < newAlgorithmCycle) {
-      long oldEndCycle = Math.min(endCycle, newAlgorithmCycle);
+      long oldEndCycle = MathWrapper.min(endCycle, newAlgorithmCycle);
       reward = getOldReward(beginCycle, oldEndCycle, srAddresses);
       beginCycle = oldEndCycle;
     }

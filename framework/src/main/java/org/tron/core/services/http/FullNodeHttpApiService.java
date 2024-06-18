@@ -13,7 +13,6 @@ import org.eclipse.jetty.servlet.ServletHolder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.tron.common.application.HttpService;
-import org.tron.common.parameter.CommonParameter;
 import org.tron.core.config.args.Args;
 import org.tron.core.services.filter.HttpApiAccessFilter;
 import org.tron.core.services.filter.HttpInterceptor;
@@ -294,13 +293,9 @@ public class FullNodeHttpApiService extends HttpService {
   @Autowired
   private CancelAllUnfreezeV2Servlet cancelAllUnfreezeV2Servlet;
 
-  @Override
-  public void init() {
-  }
-
-  @Override
-  public void init(CommonParameter args) {
+  public FullNodeHttpApiService() {
     port = Args.getInstance().getFullNodeHttpPort();
+    enable = isFullNode() && Args.getInstance().isFullNodeHttpEnable();
   }
 
   @Override

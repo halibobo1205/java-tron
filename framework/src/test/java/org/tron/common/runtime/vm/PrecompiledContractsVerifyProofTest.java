@@ -13,6 +13,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 import org.tron.api.GrpcAPI.ShieldedTRC20Parameters;
 import org.tron.common.BaseTest;
+import org.tron.common.math.MathWrapper;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.ByteUtil;
 import org.tron.common.utils.FileUtil;
@@ -4504,7 +4505,7 @@ public class PrecompiledContractsVerifyProofTest extends BaseTest {
   }
 
   private long randomLong() {
-    return Math.round(Math.random() * Long.MAX_VALUE / 2);
+    return MathWrapper.round(MathWrapper.random() * Long.MAX_VALUE / 2);
   }
 
 }

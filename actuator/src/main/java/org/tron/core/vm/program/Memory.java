@@ -1,13 +1,13 @@
 package org.tron.core.vm.program;
 
-import static java.lang.Math.ceil;
-import static java.lang.Math.min;
 import static java.lang.String.format;
 import static org.tron.common.utils.ByteUtil.EMPTY_BYTE_ARRAY;
 import static org.tron.common.utils.ByteUtil.oneByteToHexString;
 
 import java.util.LinkedList;
 import java.util.List;
+
+import org.tron.common.math.MathWrapper;
 import org.tron.common.runtime.vm.DataWord;
 import org.tron.core.vm.program.listener.ProgramListener;
 import org.tron.core.vm.program.listener.ProgramListenerAware;
@@ -104,16 +104,16 @@ public class Memory implements ProgramListenerAware {
       return;
     }
 
-    final int newSize = Math.addExact(address, size);
+    final int newSize = MathWrapper.addExact(address, size);
     int toAllocate = newSize - internalSize();
     if (toAllocate > 0) {
-      addChunks((int) ceil((double) toAllocate / CHUNK_SIZE));
+      addChunks((int) MathWrapper.ceil((double) toAllocate / CHUNK_SIZE));
     }
 
     toAllocate = newSize - softSize;
     if (toAllocate > 0) {
-      toAllocate = (int) ceil((double) toAllocate / WORD_SIZE) * WORD_SIZE;
-      softSize = Math.addExact(softSize, toAllocate);
+      toAllocate = (int) MathWrapper.ceil((double) toAllocate / WORD_SIZE) * WORD_SIZE;
+      softSize = MathWrapper.addExact(softSize, toAllocate);
 
       if (programListener != null) {
         programListener.onMemoryExtend(toAllocate);
@@ -184,7 +184,7 @@ public class Memory implements ProgramListenerAware {
   private int captureMax(int chunkIndex, int chunkOffset, int size, byte[] src, int srcPos) {
 
     byte[] chunk = chunks.get(chunkIndex);
-    int toCapture = min(size, chunk.length - chunkOffset);
+    int toCapture = MathWrapper.min(size, chunk.length - chunkOffset);
 
     System.arraycopy(src, srcPos, chunk, chunkOffset, toCapture);
     return toCapture;
@@ -193,7 +193,7 @@ public class Memory implements ProgramListenerAware {
   private int grabMax(int chunkIndex, int chunkOffset, int size, byte[] dest, int destPos) {
 
     byte[] chunk = chunks.get(chunkIndex);
-    int toGrab = min(size, chunk.length - chunkOffset);
+    int toGrab = MathWrapper.min(size, chunk.length - chunkOffset);
 
     System.arraycopy(chunk, chunkOffset, dest, destPos, toGrab);
 

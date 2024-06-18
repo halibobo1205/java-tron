@@ -13,6 +13,7 @@ import org.apache.commons.lang3.tuple.Pair;
 import org.bouncycastle.util.Strings;
 import org.bouncycastle.util.encoders.Hex;
 import org.tron.common.crypto.Hash;
+import org.tron.common.math.MathWrapper;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.utils.ByteArray;
@@ -681,7 +682,7 @@ public class RepositoryImpl implements Repository {
           StringUtil.createReadableString(accountCapsule.createDbKey())
               + " insufficient balance");
     }
-    accountCapsule.setBalance(Math.addExact(balance, value));
+    accountCapsule.setBalance(MathWrapper.addExact(balance, value));
     Key key = Key.create(address);
     accountCache.put(key, Value.create(accountCapsule,
          accountCache.get(key).getType().addType(Type.DIRTY)));
@@ -841,7 +842,7 @@ public class RepositoryImpl implements Repository {
       if (lastTime + windowSize > now) {
         long delta = now - lastTime;
         double decay = (windowSize - delta) / (double) windowSize;
-        averageLastUsage = Math.round(averageLastUsage * decay);
+        averageLastUsage = MathWrapper.round(averageLastUsage * decay);
       } else {
         averageLastUsage = 0;
       }

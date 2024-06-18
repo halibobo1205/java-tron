@@ -10,6 +10,7 @@ import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.util.StringUtils;
+import org.tron.common.math.MathWrapper;
 import org.tron.common.runtime.InternalTransaction.TrxType;
 import org.tron.common.runtime.ProgramResult;
 import org.tron.common.runtime.Runtime;
@@ -244,9 +245,9 @@ public class TransactionTrace {
 
         callerAccount = callContract.getOwnerAddress().toByteArray();
         originAccount = contractCapsule.getOriginAddress();
-        percent = Math
-            .max(Constant.ONE_HUNDRED - contractCapsule.getConsumeUserResourcePercent(), 0);
-        percent = Math.min(percent, Constant.ONE_HUNDRED);
+        percent = MathWrapper.max(
+            Constant.ONE_HUNDRED - contractCapsule.getConsumeUserResourcePercent(), 0);
+        percent = MathWrapper.min(percent, Constant.ONE_HUNDRED);
         originEnergyLimit = contractCapsule.getOriginEnergyLimit();
         break;
       default:

@@ -8,7 +8,7 @@ import org.eclipse.jetty.servlet.ServletHolder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.tron.common.application.HttpService;
-import org.tron.common.parameter.CommonParameter;
+import org.tron.core.config.args.Args;
 
 @Component
 @Slf4j(topic = "API")
@@ -17,13 +17,9 @@ public class JsonRpcServiceOnSolidity extends HttpService {
   @Autowired
   private JsonRpcOnSolidityServlet jsonRpcOnSolidityServlet;
 
-  @Override
-  public void init() {
-  }
-
-  @Override
-  public void init(CommonParameter args) {
-    port = CommonParameter.getInstance().getJsonRpcHttpSolidityPort();
+  public JsonRpcServiceOnSolidity() {
+    port = Args.getInstance().getJsonRpcHttpSolidityPort();
+    enable = isFullNode() && Args.getInstance().isJsonRpcHttpSolidityNodeEnable();
   }
 
   @Override
@@ -36,7 +32,7 @@ public class JsonRpcServiceOnSolidity extends HttpService {
 
       context.addServlet(new ServletHolder(jsonRpcOnSolidityServlet), "/jsonrpc");
 
-      int maxHttpConnectNumber = CommonParameter.getInstance().getMaxHttpConnectNumber();
+      int maxHttpConnectNumber = Args.getInstance().getMaxHttpConnectNumber();
       if (maxHttpConnectNumber > 0) {
         apiServer.addBean(new ConnectionLimit(maxHttpConnectNumber, apiServer));
       }

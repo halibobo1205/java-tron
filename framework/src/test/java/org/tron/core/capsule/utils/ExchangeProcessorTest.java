@@ -55,6 +55,12 @@ public class ExchangeProcessorTest extends BaseTest {
 
   }
 
+  @Test
+  public void testExchange3() {
+    long result = processor.exchange(4732214, 2202692725330L, 29218);
+    Assert.assertEquals(13516579896L, result);
+  }
+
 
   @Test
   public void testSellAndBuy() {

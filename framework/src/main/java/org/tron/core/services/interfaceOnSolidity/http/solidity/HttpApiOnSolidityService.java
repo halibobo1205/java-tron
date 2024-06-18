@@ -10,7 +10,6 @@ import org.eclipse.jetty.servlet.ServletContextHandler;
 import org.eclipse.jetty.servlet.ServletHolder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.tron.common.application.HttpService;
-import org.tron.common.parameter.CommonParameter;
 import org.tron.core.config.args.Args;
 import org.tron.core.services.filter.HttpApiAccessFilter;
 import org.tron.core.services.filter.LiteFnQueryHttpFilter;
@@ -178,14 +177,9 @@ public class HttpApiOnSolidityService extends HttpService {
   @Autowired
   private GetBlockOnSolidityServlet getBlockOnSolidityServlet;
 
-  @Override
-  public void init() {
-
-  }
-
-  @Override
-  public void init(CommonParameter args) {
+  public HttpApiOnSolidityService() {
     port = Args.getInstance().getSolidityHttpPort();
+    enable = isFullNode() && Args.getInstance().isSolidityNodeHttpEnable();
   }
 
   @Override

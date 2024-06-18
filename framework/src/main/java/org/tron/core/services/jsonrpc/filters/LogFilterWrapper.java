@@ -3,6 +3,7 @@ package org.tron.core.services.jsonrpc.filters;
 import com.google.protobuf.ByteString;
 import lombok.Getter;
 import org.apache.commons.lang3.StringUtils;
+import org.tron.common.math.MathWrapper;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.Wallet;
 import org.tron.core.exception.JsonRpcInvalidParamsException;
@@ -55,7 +56,7 @@ public class LogFilterWrapper {
         if (toBlockSrc == -1) {
           toBlockSrc = Long.MAX_VALUE;
         }
-        fromBlockSrc = Math.min(toBlockSrc, currentMaxBlockNum);
+        fromBlockSrc = MathWrapper.min(toBlockSrc, currentMaxBlockNum);
 
       } else if (StringUtils.isNotEmpty(fr.getFromBlock())
           && StringUtils.isEmpty(fr.getToBlock())) {

@@ -14,6 +14,7 @@ import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.tron.common.math.MathWrapper;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.core.ChainBaseManager;
 import org.tron.core.capsule.BlockCapsule;
@@ -98,8 +99,7 @@ public class ForkController {
         ++count;
       }
     }
-    return count >= Math
-        .ceil((double) versionEnum.getHardForkRate() * stats.length / 100);
+    return count >= MathWrapper.ceil((double) versionEnum.getHardForkRate() * stats.length / 100);
   }
 
 

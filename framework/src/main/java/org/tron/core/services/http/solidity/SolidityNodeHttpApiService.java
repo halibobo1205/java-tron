@@ -11,7 +11,6 @@ import org.eclipse.jetty.servlet.ServletHolder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.tron.common.application.HttpService;
-import org.tron.common.parameter.CommonParameter;
 import org.tron.core.config.args.Args;
 import org.tron.core.services.filter.HttpApiAccessFilter;
 import org.tron.core.services.http.EstimateEnergyServlet;
@@ -166,13 +165,9 @@ public class SolidityNodeHttpApiService extends HttpService {
   private GetEnergyPricesServlet getEnergyPricesServlet;
 
 
-  @Override
-  public void init() {
-  }
-
-  @Override
-  public void init(CommonParameter args) {
+  public SolidityNodeHttpApiService() {
     port = Args.getInstance().getSolidityHttpPort();
+    enable = !isFullNode() && Args.getInstance().isSolidityNodeHttpEnable();
   }
 
   @Override

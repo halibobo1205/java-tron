@@ -25,6 +25,7 @@ import java.nio.ByteBuffer;
 
 import org.bouncycastle.util.Arrays;
 import org.bouncycastle.util.encoders.Hex;
+import org.tron.common.math.MathWrapper;
 import org.tron.common.utils.ByteUtil;
 import org.tron.common.utils.FastByteComparisons;
 
@@ -466,7 +467,7 @@ public class DataWord implements Comparable<DataWord> {
         data, 0, data.length,
         o.getData(), 0, o.getData().length);
     // Convert result into -1, 0 or 1 as is the convention
-    return (int) Math.signum(result);
+    return (int) MathWrapper.signum(result);
   }
 
   /**

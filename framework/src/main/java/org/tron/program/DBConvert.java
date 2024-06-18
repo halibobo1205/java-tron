@@ -31,6 +31,7 @@ import org.rocksdb.RocksDB;
 import org.rocksdb.RocksDBException;
 import org.rocksdb.RocksIterator;
 import org.rocksdb.Status;
+import org.tron.common.math.MathWrapper;
 import org.tron.common.utils.FileUtil;
 import org.tron.common.utils.MarketOrderPriceComparatorForLevelDB;
 import org.tron.common.utils.MarketOrderPriceComparatorForRockDB;
@@ -190,7 +191,8 @@ public class DBConvert implements Callable<Boolean> {
     options.setTargetFileSizeBase(64 * 1024 * 1024);
     options.setTargetFileSizeMultiplier(1);
     options.setMaxBytesForLevelBase(512 * 1024 * 1024);
-    options.setMaxBackgroundCompactions(Math.max(1, Runtime.getRuntime().availableProcessors()));
+    options.setMaxBackgroundCompactions(MathWrapper.max(
+        1, Runtime.getRuntime().availableProcessors()));
     options.setLevel0FileNumCompactionTrigger(4);
     options.setLevelCompactionDynamicLevelBytes(true);
     if ("market_pair_price_to_order".equalsIgnoreCase(this.dbName)) {

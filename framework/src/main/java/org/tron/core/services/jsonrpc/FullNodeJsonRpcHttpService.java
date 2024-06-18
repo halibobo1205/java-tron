@@ -12,7 +12,7 @@ import org.eclipse.jetty.servlet.ServletHolder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.tron.common.application.HttpService;
-import org.tron.common.parameter.CommonParameter;
+import org.tron.core.config.args.Args;
 import org.tron.core.services.filter.HttpInterceptor;
 
 @Component
@@ -22,13 +22,9 @@ public class FullNodeJsonRpcHttpService extends HttpService {
   @Autowired
   private JsonRpcServlet jsonRpcServlet;
 
-  @Override
-  public void init() {
-  }
-
-  @Override
-  public void init(CommonParameter args) {
-    port = CommonParameter.getInstance().getJsonRpcHttpFullNodePort();
+  public FullNodeJsonRpcHttpService() {
+    port = Args.getInstance().getJsonRpcHttpFullNodePort();
+    enable = isFullNode() && Args.getInstance().isJsonRpcHttpFullNodeEnable();
   }
 
   @Override
@@ -41,7 +37,7 @@ public class FullNodeJsonRpcHttpService extends HttpService {
 
       context.addServlet(new ServletHolder(jsonRpcServlet), "/jsonrpc");
 
-      int maxHttpConnectNumber = CommonParameter.getInstance().getMaxHttpConnectNumber();
+      int maxHttpConnectNumber = Args.getInstance().getMaxHttpConnectNumber();
       if (maxHttpConnectNumber > 0) {
         apiServer.addBean(new ConnectionLimit(maxHttpConnectNumber, apiServer));
       }

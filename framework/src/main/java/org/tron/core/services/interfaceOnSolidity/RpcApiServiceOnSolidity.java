@@ -83,13 +83,9 @@ public class RpcApiServiceOnSolidity extends RpcService {
 
   private final String executorName = "rpc-solidity-executor";
 
-  @Override
-  public void init() {
-  }
-
-  @Override
-  public void init(CommonParameter args) {
+  public RpcApiServiceOnSolidity() {
     port = Args.getInstance().getRpcOnSolidityPort();
+    enable = isFullNode() && Args.getInstance().isRpcSolidityEnable();
   }
 
   @Override

@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Objects;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
+import org.tron.common.math.MathWrapper;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.Commons;
 import org.tron.common.utils.DecodeUtil;
@@ -97,7 +98,7 @@ public class ShieldedTransferActuator extends AbstractActuator {
     //adjust and verify total shielded pool value
     try {
       Commons.adjustTotalShieldedPoolValue(
-          Math.addExact(Math.subtractExact(shieldedTransferContract.getToAmount(),
+          MathWrapper.addExact(MathWrapper.subtractExact(shieldedTransferContract.getToAmount(),
               shieldedTransferContract.getFromAmount()), fee), dynamicStore);
     } catch (ArithmeticException | BalanceInsufficientException e) {
       logger.debug(e.getMessage(), e);
@@ -327,9 +328,10 @@ public class ShieldedTransferActuator extends AbstractActuator {
         long totalShieldedPoolValue = dynamicStore
             .getTotalShieldedPoolValue();
         try {
-          valueBalance = Math.addExact(Math.subtractExact(shieldedTransferContract.getToAmount(),
+          valueBalance = MathWrapper.addExact(
+              MathWrapper.subtractExact(shieldedTransferContract.getToAmount(),
               shieldedTransferContract.getFromAmount()), fee);
-          totalShieldedPoolValue = Math.subtractExact(totalShieldedPoolValue, valueBalance);
+          totalShieldedPoolValue = MathWrapper.subtractExact(totalShieldedPoolValue, valueBalance);
         } catch (ArithmeticException e) {
           logger.debug(e.getMessage(), e);
           throw new ZkProofValidateException(e.getMessage(), true);
@@ -452,7 +454,7 @@ public class ShieldedTransferActuator extends AbstractActuator {
       AccountCapsule toAccount = accountStore.get(toAddress);
       if (toAccount != null) {
         try {
-          Math.addExact(getZenBalance(toAccount), toAmount);
+          MathWrapper.addExact(getZenBalance(toAccount), toAmount);
         } catch (ArithmeticException e) {
           logger.debug(e.getMessage(), e);
           throw new ContractValidateException(e.getMessage());

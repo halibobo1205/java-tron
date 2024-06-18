@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.tron.common.math.MathWrapper;
 import org.tron.core.capsule.BlockCapsule.BlockId;
 import org.tron.core.config.Parameter.NetConstants;
 import org.tron.core.exception.P2pException;
@@ -118,7 +119,7 @@ public class SyncBlockChainMsgHandler implements TronMsgHandler {
   private LinkedList<BlockId> getBlockIds(Long unForkNum, BlockId headID) throws P2pException {
     long headNum = headID.getNum();
 
-    long len = Math.min(headNum, unForkNum + NetConstants.SYNC_FETCH_BATCH_NUM);
+    long len = MathWrapper.min(headNum, unForkNum + NetConstants.SYNC_FETCH_BATCH_NUM);
 
     LinkedList<BlockId> ids = new LinkedList<>();
     for (long i = unForkNum; i <= len; i++) {

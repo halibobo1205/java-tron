@@ -9,6 +9,7 @@ import java.math.BigInteger;
 import java.util.Arrays;
 import java.util.Objects;
 import lombok.extern.slf4j.Slf4j;
+import org.tron.common.math.MathWrapper;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.Commons;
 import org.tron.common.utils.DecodeUtil;
@@ -71,14 +72,14 @@ public class ExchangeInjectActuator extends AbstractActuator {
 
       if (Arrays.equals(tokenID, firstTokenID)) {
         anotherTokenID = secondTokenID;
-        anotherTokenQuant = Math
-            .floorDiv(Math.multiplyExact(secondTokenBalance, tokenQuant), firstTokenBalance);
+        anotherTokenQuant = MathWrapper.floorDiv(
+            MathWrapper.multiplyExact(secondTokenBalance, tokenQuant), firstTokenBalance);
         exchangeCapsule.setBalance(firstTokenBalance + tokenQuant,
             secondTokenBalance + anotherTokenQuant);
       } else {
         anotherTokenID = firstTokenID;
-        anotherTokenQuant = Math
-            .floorDiv(Math.multiplyExact(firstTokenBalance, tokenQuant), secondTokenBalance);
+        anotherTokenQuant = MathWrapper.floorDiv(
+            MathWrapper.multiplyExact(firstTokenBalance, tokenQuant), secondTokenBalance);
         exchangeCapsule.setBalance(firstTokenBalance + anotherTokenQuant,
             secondTokenBalance + tokenQuant);
       }

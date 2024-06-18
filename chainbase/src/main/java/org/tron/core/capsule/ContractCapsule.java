@@ -15,13 +15,12 @@
 
 package org.tron.core.capsule;
 
-import static java.lang.Math.max;
-import static java.lang.Math.min;
 
 import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 import lombok.extern.slf4j.Slf4j;
+import org.tron.common.math.MathWrapper;
 import org.tron.core.Constant;
 import org.tron.protos.Protocol.Transaction;
 import org.tron.protos.contract.SmartContractOuterClass.CreateSmartContract;
@@ -111,7 +110,7 @@ public class ContractCapsule implements ProtoCapsule<SmartContract> {
 
   public long getConsumeUserResourcePercent() {
     long percent = this.smartContract.getConsumeUserResourcePercent();
-    return max(0, min(percent, Constant.ONE_HUNDRED));
+    return MathWrapper.max(0, MathWrapper.min(percent, Constant.ONE_HUNDRED));
   }
 
   public long getOriginEnergyLimit() {

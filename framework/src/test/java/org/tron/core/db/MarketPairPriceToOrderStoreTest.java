@@ -6,6 +6,7 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 import org.tron.common.BaseTest;
+import org.tron.common.math.MathWrapper;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.ByteUtil;
 import org.tron.core.ChainBaseManager;
@@ -43,7 +44,7 @@ public class MarketPairPriceToOrderStoreTest extends BaseTest {
   }
 
   private static int randomInt(int minInt, int maxInt) {
-    return (int) Math.round(Math.random() * (maxInt - minInt) + minInt);
+    return (int) MathWrapper.round(MathWrapper.random() * (maxInt - minInt) + minInt);
   }
 
   @Test

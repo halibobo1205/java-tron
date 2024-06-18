@@ -27,6 +27,7 @@ import org.junit.BeforeClass;
 import org.junit.Ignore;
 import org.junit.Test;
 import org.tron.common.BaseTest;
+import org.tron.common.math.MathWrapper;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.ByteUtil;
 import org.tron.common.zksnark.IncrementalMerkleTreeContainer;
@@ -87,7 +88,7 @@ public class LibrustzcashTest extends BaseTest {
   }
 
   private static int randomInt(int minInt, int maxInt) {
-    return (int) Math.round(Math.random() * (maxInt - minInt) + minInt);
+    return (int) MathWrapper.round(MathWrapper.random() * (maxInt - minInt) + minInt);
   }
 
   public static void test(byte[] K, byte[] ovk, byte[] cv, byte[] cm, byte[] epk)

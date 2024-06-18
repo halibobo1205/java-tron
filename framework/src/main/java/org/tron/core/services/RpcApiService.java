@@ -199,14 +199,9 @@ public class RpcApiService extends RpcService {
 
   private final String executorName = "rpc-full-executor";
 
-  @Override
-  public void init() {
-
-  }
-
-  @Override
-  public void init(CommonParameter args) {
+  public RpcApiService() {
     port = Args.getInstance().getRpcPort();
+    enable = Args.getInstance().isRpcEnable();
   }
 
   @Override

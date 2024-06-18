@@ -10,6 +10,7 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import java.util.Arrays;
 import java.util.Objects;
 import lombok.extern.slf4j.Slf4j;
+import org.tron.common.math.MathWrapper;
 import org.tron.common.utils.DecodeUtil;
 import org.tron.common.utils.StringUtil;
 import org.tron.core.capsule.AccountCapsule;
@@ -82,7 +83,7 @@ public class UnDelegateResourceActuator extends AbstractActuator {
                 * ((double) (dynamicStore.getTotalNetLimit()) / dynamicStore.getTotalNetWeight()));
             transferUsage = (long) (receiverCapsule.getNetUsage()
                 * ((double) (unDelegateBalance) / receiverCapsule.getAllFrozenBalanceForBandwidth()));
-            transferUsage = Math.min(unDelegateMaxUsage, transferUsage);
+            transferUsage = MathWrapper.min(unDelegateMaxUsage, transferUsage);
 
             receiverCapsule.addAcquiredDelegatedFrozenV2BalanceForBandwidth(-unDelegateBalance);
           }
@@ -105,7 +106,7 @@ public class UnDelegateResourceActuator extends AbstractActuator {
                 * ((double) (dynamicStore.getTotalEnergyCurrentLimit()) / dynamicStore.getTotalEnergyWeight()));
             transferUsage = (long) (receiverCapsule.getEnergyUsage()
                 * ((double) (unDelegateBalance) / receiverCapsule.getAllFrozenBalanceForEnergy()));
-            transferUsage = Math.min(unDelegateMaxUsage, transferUsage);
+            transferUsage = MathWrapper.min(unDelegateMaxUsage, transferUsage);
 
             receiverCapsule.addAcquiredDelegatedFrozenV2BalanceForEnergy(-unDelegateBalance);
           }

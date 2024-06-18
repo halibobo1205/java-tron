@@ -81,13 +81,9 @@ public class RpcApiServiceOnPBFT extends RpcService {
 
   private final String executorName = "rpc-pbft-executor";
 
-  @Override
-  public void init() {
-  }
-
-  @Override
-  public void init(CommonParameter parameter) {
+  public RpcApiServiceOnPBFT() {
     port = Args.getInstance().getRpcOnPBFTPort();
+    enable = isFullNode() && Args.getInstance().isRpcPBFTEnable();
   }
 
   @Override

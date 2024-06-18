@@ -36,6 +36,7 @@ import org.tron.api.GrpcAPI.Return.response_code;
 import org.tron.api.GrpcAPI.TransactionExtention;
 import org.tron.api.GrpcAPI.TransactionSignWeight;
 import org.tron.api.GrpcAPI.TransactionSignWeight.Result;
+import org.tron.common.math.MathWrapper;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.ChainBaseManager;
@@ -270,7 +271,7 @@ public class TransactionUtil {
     DelegateResourceContract.Builder builder2 = DelegateResourceContract.newBuilder()
         .setBalance(TRX_PRECISION);
     long builder2Size = builder2.build().getSerializedSize();
-    long addSize = Math.max(builderSize - builder2Size, 0L);
+    long addSize = MathWrapper.max(builderSize - builder2Size, 0L);
 
     return DELEGATE_COST_BASE_SIZE + addSize;
   }

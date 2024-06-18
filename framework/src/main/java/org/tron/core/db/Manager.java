@@ -64,6 +64,7 @@ import org.tron.common.logsfilter.trigger.ContractEventTrigger;
 import org.tron.common.logsfilter.trigger.ContractLogTrigger;
 import org.tron.common.logsfilter.trigger.ContractTrigger;
 import org.tron.common.logsfilter.trigger.Trigger;
+import org.tron.common.math.MathWrapper;
 import org.tron.common.overlay.message.Message;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.prometheus.MetricKeys;
@@ -1425,36 +1426,39 @@ public class Manager {
     if (trxCap == null) {
       return null;
     }
-    Sha256Hash txId = trxCap.getTransactionId();
-    if (trxCap.getInstance().getRawData().getContractList().size() != 1) {
-      throw new ContractSizeNotEqualToOneException(
-          String.format(
-              "tx %s contract size should be exactly 1, this is extend feature ,actual :%d",
-              txId, trxCap.getInstance().getRawData().getContractList().size()));
-    }
     Contract contract = trxCap.getInstance().getRawData().getContract(0);
+    Sha256Hash txId = trxCap.getTransactionId();
     final Histogram.Timer requestTimer = Metrics.histogramStartTimer(
         MetricKeys.Histogram.PROCESS_TRANSACTION_LATENCY,
         Objects.nonNull(blockCap) ? MetricLabels.BLOCK : MetricLabels.TRX,
         contract.getType().name());
 
-    long start = System.currentTimeMillis();
+    final long start = System.currentTimeMillis();
 
     if (Objects.nonNull(blockCap)) {
       chainBaseManager.getBalanceTraceStore().initCurrentTransactionBalanceTrace(trxCap);
       trxCap.setInBlock(true);
     }
+    if (Objects.isNull(blockCap) || !blockCap.generatedByMyself) {
+      validateTapos(trxCap);
+      validateCommon(trxCap);
+      if (trxCap.getInstance().getRawData().getContractList().size() != 1) {
+        throw new ContractSizeNotEqualToOneException(
+            String.format(
+                "tx %s contract size should be exactly 1, this is extend feature ,actual :%d",
+                txId, trxCap.getInstance().getRawData().getContractList().size()));
+      }
 
-    validateTapos(trxCap);
-    validateCommon(trxCap);
+      validateDup(trxCap);
 
-    validateDup(trxCap);
-
-    if (!trxCap.validateSignature(chainBaseManager.getAccountStore(),
-        chainBaseManager.getDynamicPropertiesStore())) {
-      throw new ValidateSignatureException(
-          String.format(" %s transaction signature validate failed", txId));
+      if (!trxCap.validateSignature(chainBaseManager.getAccountStore(),
+          chainBaseManager.getDynamicPropertiesStore())) {
+        throw new ValidateSignatureException(
+            String.format(" %s transaction signature validate failed", txId));
+      }
     }
+
+
 
     TransactionTrace trace = new TransactionTrace(trxCap, StoreFactory.getInstance(),
         new RuntimeImpl());
@@ -1817,8 +1821,8 @@ public class Manager {
       mortgageService.payStandbyWitness();
 
       if (chainBaseManager.getDynamicPropertiesStore().supportTransactionFeePool()) {
-        long transactionFeeReward = Math
-            .floorDiv(chainBaseManager.getDynamicPropertiesStore().getTransactionFeePool(),
+        long transactionFeeReward = MathWrapper.floorDiv(
+            chainBaseManager.getDynamicPropertiesStore().getTransactionFeePool(),
                 Constant.TRANSACTION_FEE_POOL_PERIOD);
         mortgageService.payTransactionFeeReward(witnessCapsule.getAddress().toByteArray(),
             transactionFeeReward);
@@ -1833,8 +1837,8 @@ public class Manager {
           + chainBaseManager.getDynamicPropertiesStore().getWitnessPayPerBlock());
 
       if (chainBaseManager.getDynamicPropertiesStore().supportTransactionFeePool()) {
-        long transactionFeeReward = Math
-            .floorDiv(chainBaseManager.getDynamicPropertiesStore().getTransactionFeePool(),
+        long transactionFeeReward = MathWrapper.floorDiv(
+            chainBaseManager.getDynamicPropertiesStore().getTransactionFeePool(),
                 Constant.TRANSACTION_FEE_POOL_PERIOD);
         account.setAllowance(account.getAllowance() + transactionFeeReward);
         chainBaseManager.getDynamicPropertiesStore().saveTransactionFeePool(
@@ -2416,8 +2420,8 @@ public class Manager {
         }
         transactionCount += trx.getTransactionIds().size();
         long blockNum = trx.getNum();
-        maxBlock = Math.max(maxBlock, blockNum);
-        minBlock = Math.min(minBlock, blockNum);
+        maxBlock = MathWrapper.max(maxBlock, blockNum);
+        minBlock = MathWrapper.min(minBlock, blockNum);
         item.setBlockNum(blockNum);
         trx.getTransactionIds().forEach(
             tid -> chainBaseManager.getTransactionStore().put(Hex.decode(tid), item));

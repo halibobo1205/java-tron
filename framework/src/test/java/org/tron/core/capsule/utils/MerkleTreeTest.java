@@ -11,6 +11,7 @@ import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
+import org.tron.common.math.MathWrapper;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.MerkleRoot;
@@ -85,7 +86,7 @@ public class MerkleTreeTest {
       num = num >> 1;
       rank++;
     }
-    if (temp == Math.pow(2, rank - 1)) {
+    if (temp == MathWrapper.pow(2, rank - 1)) {
       rank -= 1;
     }
     return rank;

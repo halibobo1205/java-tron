@@ -4,6 +4,7 @@ import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.tron.common.math.MathWrapper;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.config.args.Args;
 import org.tron.core.exception.BadItemException;
@@ -30,7 +31,7 @@ public class SaplingNoteTest {
   }
 
   private static int randomInt(int minInt, int maxInt) {
-    return (int) Math.round(Math.random() * (maxInt - minInt) + minInt);
+    return (int) MathWrapper.round(MathWrapper.random() * (maxInt - minInt) + minInt);
   }
 
   @Test

@@ -8,7 +8,7 @@ import org.eclipse.jetty.servlet.ServletHolder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.tron.common.application.HttpService;
-import org.tron.common.parameter.CommonParameter;
+import org.tron.core.config.args.Args;
 
 @Component
 @Slf4j(topic = "API")
@@ -17,13 +17,9 @@ public class JsonRpcServiceOnPBFT extends HttpService {
   @Autowired
   private JsonRpcOnPBFTServlet jsonRpcOnPBFTServlet;
 
-  @Override
-  public void init() {
-  }
-
-  @Override
-  public void init(CommonParameter args) {
-    port = CommonParameter.getInstance().getJsonRpcHttpPBFTPort();
+  public JsonRpcServiceOnPBFT() {
+    port = Args.getInstance().getJsonRpcHttpPBFTPort();
+    enable = isFullNode() && Args.getInstance().isJsonRpcHttpPBFTNodeEnable();
   }
 
   @Override
@@ -36,7 +32,7 @@ public class JsonRpcServiceOnPBFT extends HttpService {
 
       context.addServlet(new ServletHolder(jsonRpcOnPBFTServlet), "/jsonrpc");
 
-      int maxHttpConnectNumber = CommonParameter.getInstance().getMaxHttpConnectNumber();
+      int maxHttpConnectNumber = Args.getInstance().getMaxHttpConnectNumber();
       if (maxHttpConnectNumber > 0) {
         apiServer.addBean(new ConnectionLimit(maxHttpConnectNumber, apiServer));
       }
