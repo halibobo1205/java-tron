@@ -172,7 +172,7 @@ public class PeerConnection {
   }
 
   public boolean isIdle() {
-    return advInvRequest.isEmpty() && syncBlockRequested.isEmpty() && syncChainRequested == null;
+    return syncBlockRequested.isEmpty() && syncChainRequested == null;
   }
 
   public void sendMessage(Message message) {
