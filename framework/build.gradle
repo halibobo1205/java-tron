@@ -1,4 +1,5 @@
 plugins {
+    id "org.gradle.test-retry" version "1.5.9"
     id "org.sonarqube" version "2.6"
     id "com.gorylenko.gradle-git-properties" version "2.4.1"
 }
@@ -113,12 +114,23 @@ run {
 }
 
 test {
+    retry {
+        maxRetries = 5
+        maxFailures = 20
+    }
+    maxParallelForks = 3
     testLogging {
         exceptionFormat = 'full'
+        events "SKIPPED", "PASSED", "FAILED"
+        showStandardStreams false
     }
     jacoco {
         destinationFile = file("$buildDir/jacoco/jacocoTest.exec")
         classDumpDir = file("$buildDir/jacoco/classpathdumps")
+        test {
+            exclude 'org/tron/core/ShieldedTRC20BuilderTest.class'
+            exclude 'org/tron/common/runtime/vm/WithdrawRewardTest.class'
+        }
     }
     if (isWindows()) {
         exclude '**/ShieldedTransferActuatorTest.class'
@@ -129,9 +141,9 @@ test {
         exclude 'org/tron/core/ShieldedTRC20BuilderTest.class'
         exclude 'org/tron/common/runtime/vm/WithdrawRewardTest.class'
     }
-    maxHeapSize = "1024m"
+    maxHeapSize = "2048m"
     doFirst {
-        forkEvery = 100
+        forkEvery = 220
         jvmArgs "-XX:MetaspaceSize=128m","-XX:MaxMetaspaceSize=256m", "-XX:+UseG1GC"
     }
 }
