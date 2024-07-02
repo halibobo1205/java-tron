@@ -2,13 +2,14 @@ package org.tron.program;
 
 import static org.tron.core.config.Parameter.ChainConstant.BLOCK_PRODUCED_INTERVAL;
 
+import ch.qos.logback.classic.LoggerContext;
+import ch.qos.logback.classic.joran.JoranConfigurator;
+import java.io.File;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.atomic.AtomicLong;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.BooleanUtils;
-import org.springframework.context.ApplicationContext;
+import org.slf4j.LoggerFactory;
 import org.springframework.util.ObjectUtils;
-import org.springframework.util.StringUtils;
 import org.tron.common.application.Application;
 import org.tron.common.application.ApplicationFactory;
 import org.tron.common.application.TronApplicationContext;
@@ -53,6 +54,23 @@ public class SolidityNode {
     remoteBlockNum.set(getLastSolidityBlockNum());
   }
 
+  private static void load(String path) {
+    try {
+      File file = new File(path);
+      if (!file.exists() || !file.isFile() || !file.canRead()) {
+        return;
+      }
+      LoggerContext lc = (LoggerContext) LoggerFactory.getILoggerFactory();
+      JoranConfigurator configurator = new JoranConfigurator();
+      configurator.setContext(lc);
+      lc.reset();
+      configurator.doConfigure(file);
+      logger.info("load logback configure file success");
+    } catch (Exception e) {
+      logger.error(e.getMessage());
+    }
+  }
+
   /**
    * Start the SolidityNode.
    */
@@ -60,10 +78,7 @@ public class SolidityNode {
     logger.info("Solidity node is running.");
     Args.setParam(args, Constant.TESTNET_CONF);
     CommonParameter parameter = CommonParameter.getInstance();
-
-    logger.info("index switch is {}",
-        BooleanUtils.toStringOnOff(BooleanUtils
-            .toBoolean(parameter.getStorage().getIndexSwitch())));
+    load(parameter.getLogbackPath());
 
     if (ObjectUtils.isEmpty(parameter.getTrustNodeAddr())) {
       logger.error("Trust node is not set.");
