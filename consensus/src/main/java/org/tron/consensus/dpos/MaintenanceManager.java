@@ -103,9 +103,7 @@ public class MaintenanceManager {
     if (!countWitness.isEmpty()) {
       List<ByteString> currentWits = consensusDelegate.getActiveWitnesses();
 
-      List<ByteString> newWitnessAddressList = new ArrayList<>();
-      consensusDelegate.getAllWitnesses()
-          .forEach(witnessCapsule -> newWitnessAddressList.add(witnessCapsule.getAddress()));
+      List<WitnessCapsule> newWitnessAddressList = consensusDelegate.getAllWitnesses();
 
       countWitness.forEach((address, voteCount) -> {
         byte[] witnessAddress = address.toByteArray();

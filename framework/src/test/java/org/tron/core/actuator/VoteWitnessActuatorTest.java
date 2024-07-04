@@ -51,7 +51,9 @@ public class VoteWitnessActuatorTest extends BaseTest {
   private static boolean consensusStart;
 
   static {
-    Args.setParam(new String[]{"--output-directory", dbPath()}, Constant.TEST_CONF);
+    Args.setParam(new String[]{"--output-directory", dbPath(), "--p2p-disable", "true"}
+        , Constant.TEST_CONF);
+    Args.getInstance().setAllowWitnessSortOpt(1);
     OWNER_ADDRESS = Wallet.getAddressPreFixString() + "abd4b9367799eaa3197fecb144eb71de1e049abc";
     WITNESS_ADDRESS = Wallet.getAddressPreFixString() + "548794500882809695a8a687866e76d4271a1abc";
     WITNESS_ADDRESS_NOACCOUNT =

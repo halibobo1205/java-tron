@@ -367,6 +367,10 @@ public class ProposalService extends ProposalUtil {
           manager.getDynamicPropertiesStore().saveMaxCreateAccountTxSize(entry.getValue());
           break;
         }
+        case ALLOW_WITNESS_SORT_OPT: {
+          manager.getDynamicPropertiesStore().saveAllowWitnessSortOpt(entry.getValue());
+          break;
+        }
         default:
           find = false;
           break;

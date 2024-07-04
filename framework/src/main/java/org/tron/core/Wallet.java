@@ -1343,6 +1343,11 @@ public class Wallet {
         .setValue(dbManager.getDynamicPropertiesStore().getMaxCreateAccountTxSize())
         .build());
 
+    builder.addChainParameter(Protocol.ChainParameters.ChainParameter.newBuilder()
+        .setKey("getAllowWitnessSortOpt")
+        .setValue(dbManager.getDynamicPropertiesStore().getAllowWitnessSortOpt())
+        .build());
+
     return builder.build();
   }
 

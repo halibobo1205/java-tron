@@ -108,6 +108,10 @@ public class ConsensusDelegate {
     return witnessStore.getAllWitnesses();
   }
 
+  public void sortWitnesses(List<WitnessCapsule> witnesses) {
+    witnessStore.sortWitnesses(witnesses);
+  }
+
   public void saveStateFlag(int flag) {
     dynamicPropertiesStore.saveStateFlag(flag);
   }

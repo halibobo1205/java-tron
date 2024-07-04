@@ -20,6 +20,9 @@ import org.tron.core.db.TronStoreWithRevoking;
 public class WitnessStore extends TronStoreWithRevoking<WitnessCapsule> {
 
   @Autowired
+  DynamicPropertiesStore dynamicPropertiesStore;
+
+  @Autowired
   protected WitnessStore(@Value("witness") String dbName) {
     super(dbName);
   }
@@ -40,19 +43,35 @@ public class WitnessStore extends TronStoreWithRevoking<WitnessCapsule> {
   }
 
   public List<WitnessCapsule> getWitnessStandby() {
-    List<WitnessCapsule> ret;
-    List<WitnessCapsule> all = getAllWitnesses();
-    all.sort(Comparator.comparingLong(WitnessCapsule::getVoteCount)
-        .reversed().thenComparing(Comparator.comparingInt(
-            (WitnessCapsule w) -> w.getAddress().hashCode()).reversed()));
-    if (all.size() > Parameter.ChainConstant.WITNESS_STANDBY_LENGTH) {
-      ret = new ArrayList<>(all.subList(0, Parameter.ChainConstant.WITNESS_STANDBY_LENGTH));
-    } else {
-      ret = new ArrayList<>(all);
-    }
+    List<WitnessCapsule> ret = getTopSortedWitnesses(
+        Parameter.ChainConstant.WITNESS_STANDBY_LENGTH);
     // trim voteCount = 0
     ret.removeIf(w -> w.getVoteCount() < 1);
     return ret;
   }
 
+  /**
+   * get all sorted witnesses.
+   */
+  public List<WitnessCapsule> getAllSortedWitnesses() {
+    List<WitnessCapsule> all = getAllWitnesses();
+    sortWitnesses(all);
+    return all;
+  }
+
+  public List<WitnessCapsule> getTopSortedWitnesses(int limit) {
+    List<WitnessCapsule> all = getAllSortedWitnesses();
+    if (all.size() > limit) {
+      return new ArrayList<>(all.subList(0, limit));
+    } else {
+      return new ArrayList<>(all);
+    }
+  }
+
+  public void sortWitnesses(List<WitnessCapsule> witnesses) {
+    witnesses.sort(Comparator.comparingLong(WitnessCapsule::getVoteCount).reversed()
+        .thenComparing(dynamicPropertiesStore.allowWitnessSortOpt()
+            ? Comparator.comparing(WitnessCapsule::createReadableString).reversed()
+            : Comparator.comparingInt((WitnessCapsule w) -> w.getAddress().hashCode()).reversed()));
+  }
 }

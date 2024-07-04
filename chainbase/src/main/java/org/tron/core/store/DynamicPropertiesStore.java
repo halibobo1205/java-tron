@@ -222,6 +222,7 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule> 
   private static final byte[] ALLOW_ENERGY_ADJUSTMENT = "ALLOW_ENERGY_ADJUSTMENT".getBytes();
 
   private static final byte[] MAX_CREATE_ACCOUNT_TX_SIZE = "MAX_CREATE_ACCOUNT_TX_SIZE".getBytes();
+  private static final byte[] ALLOW_WITNESS_SORT_OPT = "ALLOW_WITNESS_SORT_OPT".getBytes();
 
   @Autowired
   private DynamicPropertiesStore(@Value("properties") String dbName) {
@@ -2875,6 +2876,21 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule> 
         .map(BytesCapsule::getData)
         .map(ByteArray::toLong)
         .orElse(CommonParameter.getInstance().getMaxCreateAccountTxSize());
+  }
+
+  public boolean allowWitnessSortOpt() {
+    return getAllowWitnessSortOpt() == 1L;
+  }
+
+  public long getAllowWitnessSortOpt() {
+    return Optional.ofNullable(getUnchecked(ALLOW_WITNESS_SORT_OPT))
+        .map(BytesCapsule::getData)
+        .map(ByteArray::toLong)
+        .orElse(CommonParameter.getInstance().getAllowWitnessSortOpt());
+  }
+
+  public void saveAllowWitnessSortOpt(long allowWitnessSortOpt) {
+    this.put(ALLOW_WITNESS_SORT_OPT, new BytesCapsule(ByteArray.fromLong(allowWitnessSortOpt)));
   }
 
   private static class DynamicResourceProperties {

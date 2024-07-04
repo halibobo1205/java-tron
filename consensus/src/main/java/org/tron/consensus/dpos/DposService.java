@@ -84,10 +84,7 @@ public class DposService implements ConsensusInterface {
     maintenanceManager.setDposService(this);
 
     if (consensusDelegate.getLatestBlockHeaderNumber() == 0) {
-      List<ByteString> witnesses = new ArrayList<>();
-      consensusDelegate.getAllWitnesses().forEach(witnessCapsule ->
-          witnesses.add(witnessCapsule.getAddress()));
-      updateWitness(witnesses);
+      updateWitness(consensusDelegate.getAllWitnesses());
       List<ByteString> addresses = consensusDelegate.getActiveWitnesses();
       addresses.forEach(address -> {
         WitnessCapsule witnessCapsule = consensusDelegate.getWitness(address.toByteArray());
@@ -162,12 +159,11 @@ public class DposService implements ConsensusInterface {
     logger.info("Update solid block number to {}", newSolidNum);
   }
 
-  public void updateWitness(List<ByteString> list) {
-    list.sort(Comparator.comparingLong((ByteString b) ->
-        consensusDelegate.getWitness(b.toByteArray()).getVoteCount())
-        .reversed()
-        .thenComparing(Comparator.comparingInt(ByteString::hashCode).reversed()));
-
+  public void updateWitness(List<WitnessCapsule> witnesses) {
+    consensusDelegate.sortWitnesses(witnesses);
+    List<ByteString> list = witnesses.stream()
+        .map(WitnessCapsule::getAddress)
+        .collect(Collectors.toList());
     if (list.size() > MAX_ACTIVE_WITNESS_NUM) {
       consensusDelegate
           .saveActiveWitnesses(list.subList(0, MAX_ACTIVE_WITNESS_NUM));
