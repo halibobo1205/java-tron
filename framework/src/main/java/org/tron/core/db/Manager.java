@@ -1452,16 +1452,17 @@ public class Manager {
       chainBaseManager.getBalanceTraceStore().initCurrentTransactionBalanceTrace(trxCap);
       trxCap.setInBlock(true);
     }
+    if (Objects.isNull(blockCap) || !blockCap.generatedByMyself) {
+      validateTapos(trxCap);
+      validateCommon(trxCap);
 
-    validateTapos(trxCap);
-    validateCommon(trxCap);
+      validateDup(trxCap);
 
-    validateDup(trxCap);
-
-    if (!trxCap.validateSignature(chainBaseManager.getAccountStore(),
-        chainBaseManager.getDynamicPropertiesStore())) {
-      throw new ValidateSignatureException(
-          String.format(" %s transaction signature validate failed", txId));
+      if (!trxCap.validateSignature(chainBaseManager.getAccountStore(),
+          chainBaseManager.getDynamicPropertiesStore())) {
+        throw new ValidateSignatureException(
+            String.format(" %s transaction signature validate failed", txId));
+      }
     }
 
     TransactionTrace trace = new TransactionTrace(trxCap, StoreFactory.getInstance(),
