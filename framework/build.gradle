@@ -15,9 +15,6 @@ def versions = [
         checkstyle: '8.7',
 ]
 
-jacoco {
-    toolVersion = "0.8.1"
-}
 
 
 configurations {
@@ -47,7 +44,6 @@ dependencies {
     implementation group: 'com.google.inject', name: 'guice', version: '4.1.0'
     implementation group: 'io.dropwizard.metrics', name: 'metrics-core', version: '3.1.2'
     implementation group: 'com.github.davidb', name: 'metrics-influxdb', version: '0.8.2'
-    implementation group: 'com.carrotsearch', name: 'java-sizeof', version: '0.0.5'
     // http
     implementation 'org.eclipse.jetty:jetty-server:9.4.53.v20231009'
     implementation 'org.eclipse.jetty:jetty-servlet:9.4.53.v20231009'
@@ -202,9 +198,14 @@ def createScript(project, mainClass, name) {
         }
     }
 }
-
-applicationDistribution.from("../gradle/java-tron.vmoptions") {
-    into "bin"
+if (JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_17)) {
+    applicationDistribution.from("${project.rootDir}/gradle/jdk17/java-tron.vmoptions") {
+        into "bin"
+    }
+} else {
+    applicationDistribution.from("${project.rootDir}/gradle/java-tron.vmoptions") {
+        into "bin"
+    }
 }
 //distZip {
 //    doLast {
