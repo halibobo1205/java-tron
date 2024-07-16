@@ -44,6 +44,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.quartz.CronExpression;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.tron.common.arch.Arch;
 import org.tron.common.args.Account;
 import org.tron.common.args.GenesisBlock;
 import org.tron.common.args.Witness;
@@ -234,6 +235,7 @@ public class Args extends CommonParameter {
     PARAMETER.maxUnsolidifiedBlocks = 54;
     PARAMETER.allowOldRewardOpt = 0;
     PARAMETER.allowEnergyAdjustment = 0;
+    PARAMETER.allowStrictMath = 0;
   }
 
   /**
@@ -1217,6 +1219,10 @@ public class Args extends CommonParameter {
             config.hasPath(Constant.COMMITTEE_ALLOW_ENERGY_ADJUSTMENT) ? config
                     .getInt(Constant.COMMITTEE_ALLOW_ENERGY_ADJUSTMENT) : 0;
 
+    PARAMETER.allowStrictMath =
+        config.hasPath(Constant.COMMITTEE_ALLOW_STRICT_MATH) ? config
+            .getInt(Constant.COMMITTEE_ALLOW_STRICT_MATH) : 0;
+
     logConfig();
   }
 
@@ -1595,11 +1601,13 @@ public class Args extends CommonParameter {
         .getLong(prefix + "targetFileSizeBase") : 64;
     int targetFileSizeMultiplier = config.hasPath(prefix + "targetFileSizeMultiplier") ? config
         .getInt(prefix + "targetFileSizeMultiplier") : 1;
+    int maxOpenFiles = config.hasPath(prefix + "maxOpenFiles")
+        ? config.getInt(prefix + "maxOpenFiles") : 5000;
 
     PARAMETER.rocksDBCustomSettings = RocksDbSettings
         .initCustomSettings(levelNumber, compactThreads, blocksize, maxBytesForLevelBase,
             maxBytesForLevelMultiplier, level0FileNumCompactionTrigger,
-            targetFileSizeBase, targetFileSizeMultiplier);
+            targetFileSizeBase, targetFileSizeMultiplier, maxOpenFiles);
     RocksDbSettings.loggingSettings();
   }
 
@@ -1636,6 +1644,8 @@ public class Args extends CommonParameter {
   public static void logConfig() {
     CommonParameter parameter = CommonParameter.getInstance();
     logger.info("\n");
+    logger.info("************************ System info ************************");
+    logger.info("{}", Arch.withAll());
     logger.info("************************ Net config ************************");
     logger.info("P2P version: {}", parameter.getNodeP2pVersion());
     logger.info("LAN IP: {}", parameter.getNodeLanIp());
