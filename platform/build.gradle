@@ -1,0 +1,47 @@
+import org.gradle.nativeplatform.platform.internal.Architectures
+
+description = "platform – a distributed consensus arithmetic for blockchain."
+
+
+static def isX86() {
+    def arch = System.getProperty("os.arch").toLowerCase()
+    return Architectures.X86_64.isAlias(arch) || Architectures.X86.isAlias(arch)
+}
+
+if (isX86()) {
+    ext {
+        leveldbGroup = "org.fusesource.leveldbjni"
+        leveldbName = "leveldbjni-all"
+        leveldbVersion = "1.8"
+        rocksDBVersion = "5.15.10"
+    }
+} else {
+    ext {
+        leveldbGroup = "com.halibobor"
+        leveldbName = "leveldbjni-all"
+        leveldbVersion = "1.18.3"
+        rocksDBVersion = "7.7.3"
+    }
+}
+
+sourceSets {
+    x86 {
+        java {
+            srcDir 'src/main/java/x86'
+        }
+    }
+    arm {
+        java {
+            srcDir 'src/main/java/arm'
+        }
+    }
+}
+
+dependencies {
+    api group: leveldbGroup, name: leveldbName, version: leveldbVersion
+    api group: 'org.rocksdb', name: 'rocksdbjni', version: rocksDBVersion
+}
+
+tasks.withType(JavaCompile).configureEach {
+    source = isX86() ? sourceSets.x86.java : sourceSets.arm.java
+}
