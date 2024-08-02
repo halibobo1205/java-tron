@@ -17,9 +17,13 @@ import org.tron.common.utils.ByteArray;
 import org.tron.core.Wallet;
 import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.exception.ContractValidateException;
+import org.tron.core.services.annotation.FullServlet;
+import org.tron.core.services.annotation.SolidityNodeServlet;
 import org.tron.protos.Protocol;
 import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
 
+@FullServlet("/wallet/estimateenergy")
+@SolidityNodeServlet("/walletsolidity/estimateenergy")
 @Component
 @Slf4j(topic = "API")
 public class EstimateEnergyServlet extends RateLimiterServlet {

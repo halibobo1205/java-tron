@@ -9,9 +9,11 @@ import org.springframework.stereotype.Component;
 import org.tron.api.GrpcAPI.BytesMessage;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.Wallet;
+import org.tron.core.services.annotation.FullServlet;
 import org.tron.protos.Protocol.TransactionInfo;
 
 
+@FullServlet("/wallet/gettransactionreceiptbyid")
 @Component
 @Slf4j(topic = "API")
 public class GetTransactionReceiptByIdServlet extends RateLimiterServlet {

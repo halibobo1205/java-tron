@@ -10,9 +10,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.tron.api.GrpcAPI.BytesMessage;
 import org.tron.core.Wallet;
+import org.tron.core.services.annotation.FullServlet;
 import org.tron.protos.contract.SmartContractOuterClass.SmartContract;
 
 
+@FullServlet("/wallet/getcontract")
 @Component
 @Slf4j(topic = "API")
 public class GetContractServlet extends RateLimiterServlet {

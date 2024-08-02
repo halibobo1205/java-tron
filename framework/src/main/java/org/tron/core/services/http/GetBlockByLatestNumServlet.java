@@ -9,8 +9,12 @@ import org.springframework.stereotype.Component;
 import org.tron.api.GrpcAPI.BlockList;
 import org.tron.api.GrpcAPI.NumberMessage;
 import org.tron.core.Wallet;
+import org.tron.core.services.annotation.FullServlet;
+import org.tron.core.services.annotation.SolidityNodeServlet;
 
 
+@FullServlet("/wallet/getblockbylatestnum")
+@SolidityNodeServlet("/walletsolidity/getblockbylatestnum")
 @Component
 @Slf4j(topic = "API")
 public class GetBlockByLatestNumServlet extends RateLimiterServlet {
