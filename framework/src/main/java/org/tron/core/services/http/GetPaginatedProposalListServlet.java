@@ -10,7 +10,9 @@ import org.springframework.stereotype.Component;
 import org.tron.api.GrpcAPI.PaginatedMessage;
 import org.tron.api.GrpcAPI.ProposalList;
 import org.tron.core.Wallet;
+import org.tron.core.services.annotation.FullServlet;
 
+@FullServlet("/wallet/getpaginatedproposallist")
 @Component
 @Slf4j(topic = "API")
 public class GetPaginatedProposalListServlet extends RateLimiterServlet {

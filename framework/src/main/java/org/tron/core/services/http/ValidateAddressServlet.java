@@ -12,8 +12,10 @@ import org.springframework.stereotype.Component;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.Commons;
 import org.tron.common.utils.DecodeUtil;
+import org.tron.core.services.annotation.FullServlet;
 
 
+@FullServlet("/wallet/validateaddress")
 @Component
 @Slf4j(topic = "API")
 public class ValidateAddressServlet extends RateLimiterServlet {

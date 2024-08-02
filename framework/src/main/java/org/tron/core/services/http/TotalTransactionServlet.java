@@ -7,8 +7,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.tron.api.GrpcAPI.NumberMessage;
 import org.tron.core.Wallet;
+import org.tron.core.services.annotation.FullServlet;
 
 
+@FullServlet("/wallet/totaltransaction")
 @Component
 @Slf4j(topic = "API")
 public class TotalTransactionServlet extends RateLimiterServlet {

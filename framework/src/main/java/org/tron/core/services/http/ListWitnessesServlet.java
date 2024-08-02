@@ -7,8 +7,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.tron.api.GrpcAPI.WitnessList;
 import org.tron.core.Wallet;
+import org.tron.core.services.annotation.FullServlet;
+import org.tron.core.services.annotation.SolidityNodeServlet;
 
 
+@FullServlet("/wallet/listwitnesses")
+@SolidityNodeServlet("/walletsolidity/listwitnesses")
 @Component
 @Slf4j(topic = "API")
 public class ListWitnessesServlet extends RateLimiterServlet {

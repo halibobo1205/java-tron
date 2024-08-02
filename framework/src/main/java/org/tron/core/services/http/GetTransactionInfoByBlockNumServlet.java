@@ -12,9 +12,13 @@ import org.springframework.stereotype.Component;
 import org.tron.api.GrpcAPI.NumberMessage;
 import org.tron.api.GrpcAPI.TransactionInfoList;
 import org.tron.core.Wallet;
+import org.tron.core.services.annotation.FullServlet;
+import org.tron.core.services.annotation.SolidityNodeServlet;
 import org.tron.protos.Protocol.TransactionInfo;
 import org.tron.protos.Protocol.TransactionInfo.Log;
 
+@FullServlet("/wallet/gettransactioninfobyblocknum")
+@SolidityNodeServlet("/walletsolidity/gettransactioninfobyblocknum")
 @Component
 @Slf4j(topic = "API")
 public class GetTransactionInfoByBlockNumServlet extends RateLimiterServlet {
