@@ -9,8 +9,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.tron.common.entity.NodeInfo;
 import org.tron.core.services.NodeInfoService;
+import org.tron.core.services.annotation.FullServlet;
+import org.tron.core.services.annotation.SolidityNodeServlet;
 
 
+@FullServlet({"/wallet/getnodeinfo", "/monitor/getnodeinfo"})
+@SolidityNodeServlet({"/wallet/getnodeinfo", "/walletsolidity/getnodeinfo"})
 @Component
 @Slf4j(topic = "API")
 public class GetNodeInfoServlet extends RateLimiterServlet {

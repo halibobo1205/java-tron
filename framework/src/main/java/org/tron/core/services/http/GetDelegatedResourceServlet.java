@@ -2,7 +2,6 @@ package org.tron.core.services.http;
 
 import com.google.protobuf.ByteString;
 import java.io.IOException;
-import java.util.stream.Collectors;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
@@ -12,8 +11,12 @@ import org.tron.api.GrpcAPI.DelegatedResourceList;
 import org.tron.api.GrpcAPI.DelegatedResourceMessage;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.Wallet;
+import org.tron.core.services.annotation.FullServlet;
+import org.tron.core.services.annotation.SolidityNodeServlet;
 
 
+@FullServlet("/wallet/getdelegatedresource")
+@SolidityNodeServlet("/walletsolidity/getdelegatedresource")
 @Component
 @Slf4j(topic = "API")
 public class GetDelegatedResourceServlet extends RateLimiterServlet {

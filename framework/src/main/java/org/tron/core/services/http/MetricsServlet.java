@@ -8,7 +8,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.tron.core.metrics.MetricsApiService;
 import org.tron.core.metrics.MetricsInfo;
+import org.tron.core.services.annotation.FullServlet;
 
+@FullServlet("/monitor/getstatsinfo")
 @Component
 @Slf4j(topic = "API")
 public class MetricsServlet extends RateLimiterServlet {
@@ -28,5 +30,9 @@ public class MetricsServlet extends RateLimiterServlet {
     } catch (Exception e) {
       Util.processError(e, response);
     }
+  }
+
+  protected void doPost(HttpServletRequest request, HttpServletResponse response) {
+    doGet(request, response);
   }
 }

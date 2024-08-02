@@ -8,8 +8,10 @@ import org.springframework.stereotype.Component;
 import org.tron.api.GrpcAPI.BytesMessage;
 import org.tron.api.GrpcAPI.SpendAuthSigParameters;
 import org.tron.core.Wallet;
+import org.tron.core.services.annotation.FullServlet;
 
 
+@FullServlet("/wallet/createspendauthsig")
 @Component
 @Slf4j(topic = "API")
 public class CreateSpendAuthSigServlet extends RateLimiterServlet {

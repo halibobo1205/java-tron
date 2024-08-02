@@ -8,8 +8,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.tron.api.GrpcAPI.TransactionIdList;
 import org.tron.core.db.Manager;
+import org.tron.core.services.annotation.FullServlet;
 
 
+@FullServlet("/wallet/gettransactionlistfrompending")
 @Component
 @Slf4j(topic = "API")
 public class GetTransactionListFromPendingServlet extends RateLimiterServlet {

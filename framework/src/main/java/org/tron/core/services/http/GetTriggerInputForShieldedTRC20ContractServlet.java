@@ -1,6 +1,5 @@
 package org.tron.core.services.http;
 
-import java.util.stream.Collectors;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
@@ -9,7 +8,9 @@ import org.springframework.stereotype.Component;
 import org.tron.api.GrpcAPI.BytesMessage;
 import org.tron.api.GrpcAPI.ShieldedTRC20TriggerContractParameters;
 import org.tron.core.Wallet;
+import org.tron.core.services.annotation.FullServlet;
 
+@FullServlet("/wallet/gettriggerinputforshieldedtrc20contract")
 @Component
 @Slf4j(topic = "API")
 public class GetTriggerInputForShieldedTRC20ContractServlet extends RateLimiterServlet {

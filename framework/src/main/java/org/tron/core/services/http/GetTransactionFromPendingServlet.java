@@ -9,8 +9,10 @@ import org.tron.api.GrpcAPI.BytesMessage;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.db.Manager;
+import org.tron.core.services.annotation.FullServlet;
 
 
+@FullServlet("/wallet/gettransactionfrompending")
 @Component
 @Slf4j(topic = "API")
 public class GetTransactionFromPendingServlet extends RateLimiterServlet {

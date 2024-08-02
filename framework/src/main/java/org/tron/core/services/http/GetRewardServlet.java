@@ -8,8 +8,12 @@ import org.bouncycastle.util.encoders.DecoderException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.tron.core.db.Manager;
+import org.tron.core.services.annotation.FullServlet;
+import org.tron.core.services.annotation.SolidityNodeServlet;
 
 
+@FullServlet("/wallet/getReward")
+@SolidityNodeServlet("/walletsolidity/getReward")
 @Component
 @Slf4j(topic = "API")
 public class GetRewardServlet extends RateLimiterServlet {

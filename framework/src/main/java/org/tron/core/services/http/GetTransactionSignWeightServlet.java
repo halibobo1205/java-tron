@@ -6,10 +6,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.tron.api.GrpcAPI.TransactionSignWeight;
+import org.tron.core.services.annotation.FullServlet;
 import org.tron.core.utils.TransactionUtil;
 import org.tron.protos.Protocol.Transaction;
 
 
+@FullServlet("/wallet/getsignweight")
 @Component
 @Slf4j(topic = "API")
 public class GetTransactionSignWeightServlet extends RateLimiterServlet {
