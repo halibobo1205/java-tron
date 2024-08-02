@@ -1,6 +1,5 @@
 package org.tron.core.services.http;
 
-import java.util.stream.Collectors;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
@@ -8,8 +7,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.tron.api.GrpcAPI;
 import org.tron.core.Wallet;
+import org.tron.core.services.annotation.FullServlet;
 
 
+@FullServlet("/wallet/getdiversifier")
 @Component
 @Slf4j(topic = "API")
 public class GetDiversifierServlet extends RateLimiterServlet {
