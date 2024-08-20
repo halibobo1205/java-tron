@@ -5,9 +5,11 @@ import javax.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.tron.core.services.annotation.PbftServlet;
 import org.tron.core.services.http.GetBandwidthPricesServlet;
 import org.tron.core.services.interfaceOnPBFT.WalletOnPBFT;
 
+@PbftServlet("/getbandwidthprices")
 @Component
 @Slf4j(topic = "API")
 public class GetBandwidthPricesOnPBFTServlet extends GetBandwidthPricesServlet {

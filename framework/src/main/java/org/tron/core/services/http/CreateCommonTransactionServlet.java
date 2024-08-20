@@ -13,10 +13,12 @@ import org.springframework.stereotype.Component;
 import org.tron.core.Wallet;
 import org.tron.core.actuator.TransactionFactory;
 import org.tron.core.exception.ContractValidateException;
+import org.tron.core.services.annotation.FullServlet;
 import org.tron.protos.Protocol.Transaction;
 import org.tron.protos.Protocol.Transaction.Contract.ContractType;
 
 
+@FullServlet("/wallet/createCommonTransaction")
 @Component
 @Slf4j(topic = "API")
 public class CreateCommonTransactionServlet extends RateLimiterServlet {

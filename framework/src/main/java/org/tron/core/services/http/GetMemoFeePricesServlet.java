@@ -7,7 +7,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.tron.api.GrpcAPI.PricesResponseMessage;
 import org.tron.core.Wallet;
+import org.tron.core.services.annotation.FullServlet;
 
+@FullServlet("/wallet/getmemofee")
 @Component
 @Slf4j(topic = "API")
 public class GetMemoFeePricesServlet extends RateLimiterServlet {

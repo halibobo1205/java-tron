@@ -4,11 +4,12 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 
 import java.io.File;
+import java.io.IOException;
 import java.lang.reflect.Constructor;
-import org.junit.After;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
+
+import org.junit.*;
+import org.junit.rules.TemporaryFolder;
+import org.junit.rules.TestName;
 import org.tron.common.application.Application;
 import org.tron.common.application.ApplicationFactory;
 import org.tron.common.application.TronApplicationContext;
@@ -24,30 +25,27 @@ import org.tron.core.db2.core.SnapshotRoot;
 public class SnapshotImplTest {
   private RevokingDbWithCacheNewValueTest.TestRevokingTronStore tronDatabase;
   private TronApplicationContext context;
-  private Application appT;
   private SnapshotManager revokingDatabase;
 
-  @Before
-  public void init() {
-    Args.setParam(new String[]{"-d", "output_revokingStore_test"}, Constant.TEST_CONF);
-    context = new TronApplicationContext(DefaultConfig.class);
-    appT = ApplicationFactory.create(context);
+  @Rule
+  public final TemporaryFolder temporaryFolder = new TemporaryFolder();
 
-    tronDatabase = new RevokingDbWithCacheNewValueTest.TestRevokingTronStore(
-        "testSnapshotRoot-testMerge");
+  @Rule
+  public TestName name = new TestName();
+
+  @Before
+  public void init() throws IOException {
+    Args.setParam(new String[]{"-d", temporaryFolder.newFolder().toString()}, Constant.TEST_CONF);
+    context = new TronApplicationContext(DefaultConfig.class);
     revokingDatabase = context.getBean(SnapshotManager.class);
     revokingDatabase.enable();
-    revokingDatabase.add(tronDatabase.getRevokingDB());
   }
 
   @After
   public void removeDb() {
     Args.clearParam();
     context.destroy();
-    FileUtil.deleteDir(new File("output_revokingStore_test"));
-
     tronDatabase.close();
-    revokingDatabase.shutdown();
   }
 
   /**
@@ -60,6 +58,9 @@ public class SnapshotImplTest {
    */
   @Test
   public void testMergeRoot() {
+    tronDatabase = new RevokingDbWithCacheNewValueTest.TestRevokingTronStore(
+        name.getMethodName());
+    revokingDatabase.add(tronDatabase.getRevokingDB());
     // linklist is: from -> root
     SnapshotRoot root = new SnapshotRoot(tronDatabase.getDb());
     //root.setOptimized(true);
@@ -90,7 +91,9 @@ public class SnapshotImplTest {
    */
   @Test
   public void testMergeAhead() {
-
+    tronDatabase = new RevokingDbWithCacheNewValueTest.TestRevokingTronStore(
+        name.getMethodName());
+    revokingDatabase.add(tronDatabase.getRevokingDB());
     // linklist is: from2 -> from -> root
     SnapshotRoot root = new SnapshotRoot(tronDatabase.getDb());
     SnapshotImpl from = getSnapshotImplIns(root);
@@ -158,6 +161,9 @@ public class SnapshotImplTest {
    */
   @Test
   public void testMergeOverride() {
+    tronDatabase = new RevokingDbWithCacheNewValueTest.TestRevokingTronStore(
+        name.getMethodName());
+    revokingDatabase.add(tronDatabase.getRevokingDB());
     // linklist is: from2 -> from -> root
     SnapshotRoot root = new SnapshotRoot(tronDatabase.getDb());
     SnapshotImpl from = getSnapshotImplIns(root);

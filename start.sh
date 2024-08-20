@@ -355,12 +355,13 @@ startService() {
     exit
   fi
 
-  nohup $JAVACMD -Xms$JVM_MS -Xmx$JVM_MX -XX:+UseConcMarkSweepGC -XX:+PrintGCDetails -Xloggc:./gc.log \
-    -XX:+PrintGCDateStamps -XX:+CMSParallelRemarkEnabled -XX:ReservedCodeCacheSize=256m -XX:+UseCodeCacheFlushing \
-    -XX:MetaspaceSize=256m -XX:MaxMetaspaceSize=512m \
-    -XX:MaxDirectMemorySize=$MAX_DIRECT_MEMORY -XX:+HeapDumpOnOutOfMemoryError \
-    -XX:NewRatio=2 -jar \
-    $JAR_NAME $FULL_START_OPT >>start.log 2>&1 &
+  nohup $JAVACMD -Xms$JVM_MS -Xmx$JVM_MX \
+  -XX:+UseZGC \
+  -Xlog:gc*:file=gc-%t.log:time,uptime,level,tags:filecount=50,filesize=100M \
+  -XX:ReservedCodeCacheSize=256m -XX:+UseCodeCacheFlushing \
+  -XX:MetaspaceSize=256m -XX:MaxMetaspaceSize=512m \
+  -XX:MaxDirectMemorySize=$MAX_DIRECT_MEMORY -XX:+HeapDumpOnOutOfMemoryError \
+  -jar $JAR_NAME $FULL_START_OPT >>start.log 2>&1 &
   checkPid
   echo "info: start java-tron with pid $pid on $HOSTNAME"
   echo "info: if you need to stop the service, execute: sh start.sh --stop"
@@ -377,7 +378,7 @@ rebuildManifest() {
     return
   fi
 
-  ARCHIVE_JAR='ArchiveManifest.jar'
+  ARCHIVE_JAR='Toolkit.jar'
   if [[ -f $ARCHIVE_JAR ]]; then
     echo 'info: execute rebuild manifest.'
     $JAVACMD -jar $ARCHIVE_JAR -d $REBUILD_DIR -m $REBUILD_MANIFEST_SIZE -b $REBUILD_BATCH_SIZE

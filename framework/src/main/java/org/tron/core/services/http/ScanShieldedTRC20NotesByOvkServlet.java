@@ -1,6 +1,5 @@
 package org.tron.core.services.http;
 
-import java.util.stream.Collectors;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
@@ -10,7 +9,11 @@ import org.tron.api.GrpcAPI;
 import org.tron.api.GrpcAPI.OvkDecryptTRC20Parameters;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.Wallet;
+import org.tron.core.services.annotation.FullServlet;
+import org.tron.core.services.annotation.SolidityNodeServlet;
 
+@FullServlet("/wallet/scanshieldedtrc20notesbyovk")
+@SolidityNodeServlet("/walletsolidity/scanshieldedtrc20notesbyovk")
 @Component
 @Slf4j(topic = "API")
 public class ScanShieldedTRC20NotesByOvkServlet extends RateLimiterServlet {

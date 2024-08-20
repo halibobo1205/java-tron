@@ -9,7 +9,9 @@ import org.springframework.stereotype.Component;
 import org.tron.api.GrpcAPI.PrivateShieldedTRC20Parameters;
 import org.tron.api.GrpcAPI.ShieldedTRC20Parameters;
 import org.tron.core.Wallet;
+import org.tron.core.services.annotation.FullServlet;
 
+@FullServlet("/wallet/createshieldedcontractparameters")
 @Component
 @Slf4j(topic = "API")
 public class CreateShieldedContractParametersServlet extends RateLimiterServlet {

@@ -1,10 +1,13 @@
 package org.tron.core.db2;
 
 import com.google.common.collect.Sets;
-import java.io.File;
+
+import java.io.IOException;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.AllArgsConstructor;
@@ -13,13 +16,13 @@ import lombok.NoArgsConstructor;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
+import org.junit.rules.TestName;
 import org.springframework.util.CollectionUtils;
-import org.tron.common.application.Application;
-import org.tron.common.application.ApplicationFactory;
 import org.tron.common.application.TronApplicationContext;
 import org.tron.common.cache.CacheStrategies;
-import org.tron.common.utils.FileUtil;
 import org.tron.common.utils.SessionOptional;
 import org.tron.core.Constant;
 import org.tron.core.capsule.ProtoCapsule;
@@ -35,7 +38,6 @@ public class SnapshotRootTest {
 
   private TestRevokingTronStore tronDatabase;
   private TronApplicationContext context;
-  private Application appT;
   private SnapshotManager revokingDatabase;
   private final Set<String> noSecondCacheDBs = Sets.newHashSet(Arrays.asList("trans-cache",
           "exchange-v2","nullifier","accountTrie","transactionRetStore","accountid-index",
@@ -46,25 +48,35 @@ public class SnapshotRootTest {
   private Set<String> allDBNames;
   private Set<String> allRevokingDBNames;
 
+  @Rule
+  public  final TemporaryFolder temporaryFolder = new TemporaryFolder();
+
+  @Rule
+  public TestName name = new TestName();
 
   @Before
-  public void init() {
-    Args.setParam(new String[]{"-d", "output_revokingStore_test"}, Constant.TEST_CONF);
+  public void init() throws IOException {
+    Args.setParam(new String[]{"-d", temporaryFolder.newFolder().toString()}, Constant.TEST_CONF);
+    Args.getInstance().setFullNodeAllowShieldedTransactionArgs(false);
     context = new TronApplicationContext(DefaultConfig.class);
-    appT = ApplicationFactory.create(context);
+    revokingDatabase = context.getBean(SnapshotManager.class);
+    revokingDatabase.enable();
+    allRevokingDBNames = parseRevokingDBNames(context);
+    allDBNames = Arrays.stream(Objects.requireNonNull(Paths.get(
+            Args.getInstance().getOutputDirectory(), "database").toFile().list()))
+        .collect(Collectors.toSet());
   }
 
   @After
   public void removeDb() {
+    context.close();
     Args.clearParam();
-    context.destroy();
-    FileUtil.deleteDir(new File("output_revokingStore_test"));
   }
 
   @Test
   public synchronized void testRemove() {
     ProtoCapsuleTest testProtoCapsule = new ProtoCapsuleTest("test".getBytes());
-    tronDatabase = new TestRevokingTronStore("testSnapshotRoot-testRemove");
+    tronDatabase = new TestRevokingTronStore(name.getMethodName());
     tronDatabase.put("test".getBytes(), testProtoCapsule);
     Assert.assertEquals(testProtoCapsule, tronDatabase.get("test".getBytes()));
 
@@ -75,9 +87,7 @@ public class SnapshotRootTest {
 
   @Test
   public synchronized void testMerge() {
-    tronDatabase = new TestRevokingTronStore("testSnapshotRoot-testMerge");
-    revokingDatabase = context.getBean(SnapshotManager.class);
-    revokingDatabase.enable();
+    tronDatabase = new TestRevokingTronStore(name.getMethodName());
     revokingDatabase.add(tronDatabase.getRevokingDB());
 
     SessionOptional dialog = SessionOptional.instance().setValue(revokingDatabase.buildSession());
@@ -92,9 +102,7 @@ public class SnapshotRootTest {
 
   @Test
   public synchronized void testMergeList() {
-    tronDatabase = new TestRevokingTronStore("testSnapshotRoot-testMergeList");
-    revokingDatabase = context.getBean(SnapshotManager.class);
-    revokingDatabase.enable();
+    tronDatabase = new TestRevokingTronStore(name.getMethodName());
     revokingDatabase.add(tronDatabase.getRevokingDB());
 
     SessionOptional.instance().setValue(revokingDatabase.buildSession());
@@ -131,9 +139,9 @@ public class SnapshotRootTest {
   @Test
   public void testSecondCacheCheck()
       throws ItemNotFoundException {
-    revokingDatabase = context.getBean(SnapshotManager.class);
     allRevokingDBNames = parseRevokingDBNames(context);
-    allDBNames = Arrays.stream(new File("output_revokingStore_test/database").list())
+    allDBNames = Arrays.stream(Objects.requireNonNull(
+        Paths.get(Args.getInstance().getOutputDirectory(), "database").toFile().list()))
             .collect(Collectors.toSet());
     if (CollectionUtils.isEmpty(allDBNames)) {
       throw new ItemNotFoundException("No DBs found");
@@ -143,7 +151,7 @@ public class SnapshotRootTest {
     allDBNames.retainAll(allRevokingDBNames);
     org.junit.Assert.assertEquals(String.format("New added dbs %s "
                     + "shall consider to add second cache or add to noNeedCheckDBs!",
-        allDBNames.stream().collect(Collectors.joining(","))), allDBNames.size(), 0);
+        String.join(",", allDBNames)), 0, allDBNames.size());
   }
 
   @Test
@@ -152,19 +160,18 @@ public class SnapshotRootTest {
     revokingDatabase = context.getBean(SnapshotManager.class);
     allRevokingDBNames = parseRevokingDBNames(context);
     allRevokingDBNames.add("secondCheckTestDB");
-    FileUtil.createDirIfNotExists("output_revokingStore_test/database/secondCheckTestDB");
-    allDBNames = Arrays.stream(new File("output_revokingStore_test/database").list())
-            .collect(Collectors.toSet());
-    FileUtil.deleteDir(new File("output_revokingStore_test/database/secondCheckTestDB"));
     if (CollectionUtils.isEmpty(allDBNames)) {
       throw new ItemNotFoundException("No DBs found");
     }
+    allDBNames = Arrays.stream(Objects.requireNonNull(
+            Paths.get(Args.getInstance().getOutputDirectory(), "database").toFile().list()))
+        .collect(Collectors.toSet());
+    allDBNames.add("secondCheckTestDB");
     allDBNames.removeAll(noSecondCacheDBs);
     allDBNames.removeAll(CacheStrategies.CACHE_DBS);
     allDBNames.retainAll(allRevokingDBNames);
-    org.junit.Assert.assertTrue(String.format("New added dbs %s "
-                    + "check second cache failed!",
-            allDBNames.stream().collect(Collectors.joining(","))), allDBNames.size() == 1);
+    Assert.assertEquals(String.format("New added dbs %s check second cache failed!",
+        String.join(",", allDBNames)), 1, allDBNames.size());
   }
 
   private Set<String> parseRevokingDBNames(TronApplicationContext context) {

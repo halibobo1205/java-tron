@@ -14,17 +14,17 @@ import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
 import java.util.Properties;
 import java.util.UUID;
-
 import lombok.extern.slf4j.Slf4j;
-import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
+import org.junit.ClassRule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 
 @Slf4j
 public class ArchiveManifestTest {
 
-  private static final String OUTPUT_DIRECTORY = "output-directory/database/archiveManifest";
+  private static String OUTPUT_DIRECTORY;
 
   private static final String ENGINE = "ENGINE";
   private static final String LEVELDB = "LEVELDB";
@@ -34,10 +34,13 @@ public class ArchiveManifestTest {
   private static final String MARKET = "market_pair_price_to_order";
   private static final String ENGINE_FILE = "engine.properties";
 
+  @ClassRule
+  public static final TemporaryFolder temporaryFolder = new TemporaryFolder();
 
 
   @BeforeClass
   public static void init() throws IOException {
+    OUTPUT_DIRECTORY = temporaryFolder.newFolder().toString();
     File file = new File(OUTPUT_DIRECTORY,ACCOUNT);
     factory.open(file,ArchiveManifest.newDefaultLevelDbOptions()).close();
     writeProperty(file.toString() + File.separator + ENGINE_FILE,ENGINE,LEVELDB);
@@ -50,11 +53,6 @@ public class ArchiveManifestTest {
     factory.open(file,ArchiveManifest.newDefaultLevelDbOptions()).close();
     writeProperty(file.toString() + File.separator + ENGINE_FILE,ENGINE,ROCKSDB);
 
-  }
-
-  @AfterClass
-  public static void destroy() {
-    deleteDir(new File(OUTPUT_DIRECTORY));
   }
 
   @Test
@@ -108,23 +106,5 @@ public class ArchiveManifestTest {
     } catch (Exception e) {
       logger.warn("{}", e);
     }
-  }
-
-  /**
-   * delete directory.
-   */
-  private static boolean deleteDir(File dir) {
-    if (dir.isDirectory()) {
-      String[] children = dir.list();
-      assert children != null;
-      for (String child : children) {
-        boolean success = deleteDir(new File(dir, child));
-        if (!success) {
-          logger.warn("can't delete dir:" + dir);
-          return false;
-        }
-      }
-    }
-    return dir.delete();
   }
 }

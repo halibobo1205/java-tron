@@ -229,6 +229,14 @@ public class TronNetDelegate {
     }
   }
 
+  public void unparkHitThread() {
+    LockSupport.unpark(hitThread);
+  }
+
+  public void markHitDown() {
+    hitDown = true;
+  }
+
   public void processBlock(BlockCapsule block, boolean isSync) throws P2pException {
     if (!hitDown && dbManager.getLatestSolidityNumShutDown() > 0
         && dbManager.getLatestSolidityNumShutDown() == dbManager.getDynamicPropertiesStore()
@@ -238,8 +246,8 @@ public class TronNetDelegate {
           dbManager.getDynamicPropertiesStore().getLatestBlockHeaderNumber(),
           dbManager.getDynamicPropertiesStore().getLatestBlockHeaderNumberFromDB(),
           dbManager.getDynamicPropertiesStore().getLatestSolidifiedBlockNum());
-      hitDown = true;
-      LockSupport.unpark(hitThread);
+      markHitDown();
+      unparkHitThread();
       return;
     }
     if (hitDown) {

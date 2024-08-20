@@ -5,10 +5,12 @@ import javax.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.tron.core.services.annotation.PbftServlet;
 import org.tron.core.services.http.ScanNoteByIvkServlet;
 import org.tron.core.services.interfaceOnPBFT.WalletOnPBFT;
 
 
+@PbftServlet("/scannotebyivk")
 @Component
 @Slf4j(topic = "API")
 public class ScanNoteByIvkOnPBFTServlet extends ScanNoteByIvkServlet {

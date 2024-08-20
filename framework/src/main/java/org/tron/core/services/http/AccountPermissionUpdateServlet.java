@@ -7,11 +7,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.tron.core.Wallet;
+import org.tron.core.services.annotation.FullServlet;
 import org.tron.protos.Protocol.Transaction;
 import org.tron.protos.Protocol.Transaction.Contract.ContractType;
 import org.tron.protos.contract.AccountContract.AccountPermissionUpdateContract;
 
-
+@FullServlet("/wallet/accountpermissionupdate")
 @Component
 @Slf4j(topic = "API")
 public class AccountPermissionUpdateServlet extends RateLimiterServlet {

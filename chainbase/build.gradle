@@ -1,8 +1,11 @@
+plugins {
+    id("org.kordamp.gradle.jdeps")
+    id("org.kordamp.gradle.jdeprscan")
+}
 description = "chainbase – a decentralized database for blockchain."
 
 // Dependency versions
 // ---------------------------------------
-def jacocoVersion = "0.8.0"
 def jansiVersion = "1.16"
 // --------------------------------------
 
@@ -15,6 +18,18 @@ dependencies {
     api 'org.reflections:reflections:0.9.11'
 }
 
+jdepsReport {
+    sourceSets = ['main', 'test']
+    configurations = ['testRuntimeClasspath']
+    consoleOutput = false
+}
+
+jdeprscanReport {
+    sourceSets = ['main', 'test']
+    configurations = ['testRuntimeClasspath']
+    forRemoval = true
+    release = JavaVersion.VERSION_17.getMajorVersion()
+}
 
 test {
 
@@ -39,10 +54,6 @@ test {
     if (System.getenv("CI") == null) {
         maxParallelForks = Runtime.runtime.availableProcessors().intdiv(2) ?: 1
     }
-}
-
-jacoco {
-    toolVersion = jacocoVersion // See http://www.eclemma.org/jacoco/.
 }
 
 jacocoTestReport {

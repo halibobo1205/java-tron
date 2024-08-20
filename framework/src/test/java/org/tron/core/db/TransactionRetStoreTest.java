@@ -34,7 +34,9 @@ public class TransactionRetStoreTest extends BaseTest {
   static {
     Args.setParam(new String[]{"--output-directory", dbPath(),
         "--storage-db-directory", dbDirectory,
-        "--storage-index-directory", indexDirectory}, Constant.TEST_CONF);
+        "--storage-index-directory", indexDirectory,
+        "--storage-transactionHistory-switch", "on"
+    }, Constant.TEST_CONF);
   }
 
   @BeforeClass

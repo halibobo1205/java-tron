@@ -5,15 +5,17 @@ import static org.fusesource.leveldbjni.JniDBFactory.factory;
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Paths;
 import java.util.UUID;
 import org.iq80.leveldb.DB;
 import org.iq80.leveldb.Options;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
+import org.junit.ClassRule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 import org.tron.common.utils.ByteArray;
-import org.tron.common.utils.FileUtil;
 import org.tron.common.utils.MarketOrderPriceComparatorForLevelDB;
 import org.tron.core.capsule.MarketOrderIdListCapsule;
 import org.tron.core.capsule.utils.MarketUtils;
@@ -21,14 +23,19 @@ import org.tron.core.capsule.utils.MarketUtils;
 public class DBConvertTest {
 
 
-  private static final String INPUT_DIRECTORY = "output-directory/convert-database/";
-  private static final String OUTPUT_DIRECTORY = "output-directory/convert-database-dest/";
+  private static String INPUT_DIRECTORY;
+  private static String OUTPUT_DIRECTORY;
   private static final String ACCOUNT = "account";
   private static final String MARKET = "market_pair_price_to_order";
 
+  @ClassRule
+  public static final TemporaryFolder temporaryFolder = new TemporaryFolder();
 
   @BeforeClass
   public static void init() throws IOException {
+    File db = temporaryFolder.newFolder();
+    INPUT_DIRECTORY = Paths.get(db.toString(), "convert-database").toString();
+    OUTPUT_DIRECTORY = Paths.get(db.toString(), "convert-database-dest").toString();
     if (new File(INPUT_DIRECTORY).mkdirs()) {
       initDB(new File(INPUT_DIRECTORY,ACCOUNT));
       initDB(new File(INPUT_DIRECTORY,MARKET));
@@ -88,8 +95,6 @@ public class DBConvertTest {
 
   @AfterClass
   public static void destroy() {
-    FileUtil.deleteDir(new File(INPUT_DIRECTORY));
-    FileUtil.deleteDir(new File(OUTPUT_DIRECTORY));
   }
 
   @Test

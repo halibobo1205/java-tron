@@ -8,10 +8,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.Wallet;
+import org.tron.core.services.annotation.FullServlet;
+import org.tron.core.services.annotation.SolidityNodeServlet;
 import org.tron.protos.Protocol.MarketOrderList;
 import org.tron.protos.Protocol.MarketOrderPair;
 
 
+@FullServlet("/wallet/getmarketorderlistbypair")
+@SolidityNodeServlet("/walletsolidity/getmarketorderlistbypair")
 @Component
 @Slf4j(topic = "API")
 public class GetMarketOrderListByPairServlet extends RateLimiterServlet {

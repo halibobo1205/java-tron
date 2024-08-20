@@ -199,7 +199,14 @@ public class CommonParameter {
   //If you are running a solidity node for java tron, this flag is set to true
   @Getter
   @Setter
+  @Parameter(names = {"--solidity"}, description = "running a solidity node for java tron")
   public boolean solidityNode = false;
+  //If you are running KeystoreFactory, this flag is set to true
+  @Getter
+  @Setter
+  @Parameter(names = {"--keystore"}, description = "running KeystoreFactory")
+  public boolean keystore = false;
+
   @Getter
   @Setter
   public int rpcPort;
@@ -453,12 +460,30 @@ public class CommonParameter {
   @Getter
   @Setter
   public String cryptoEngine = Constant.ECKey_ENGINE;
+
+  @Getter
+  @Setter
+  public boolean rpcEnable = true;
+
+  @Getter
+  @Setter
+  public boolean rpcSolidityEnable = true;
+
+  @Getter
+  @Setter
+  public boolean rpcPBFTEnable = true;
+
   @Getter
   @Setter
   public boolean fullNodeHttpEnable = true;
   @Getter
   @Setter
   public boolean solidityNodeHttpEnable = true;
+
+  @Getter
+  @Setter
+  public boolean pBFTHttpEnable = true;
+
   @Getter
   @Setter
   public boolean jsonRpcHttpFullNodeEnable = false;
@@ -673,6 +698,11 @@ public class CommonParameter {
   @Getter
   @Setter
   public long maxCreateAccountTxSize = 1000L;
+
+  @Getter
+  @Setter
+  @Parameter(names = {"--check.root.disable"}, description = "disable check state root")
+  public boolean checkRootHashDisable = false;
 
   private static double calcMaxTimeRatio() {
     //return max(2.0, min(5.0, 5 * 4.0 / max(Runtime.getRuntime().availableProcessors(), 1)));

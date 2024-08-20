@@ -1,22 +1,21 @@
 package org.tron.core.db2;
 
-import java.io.File;
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.ArrayUtils;
-import org.apache.commons.lang3.RandomStringUtils;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
-import org.tron.common.application.Application;
-import org.tron.common.application.ApplicationFactory;
+import org.junit.rules.TemporaryFolder;
+import org.junit.rules.TestName;
 import org.tron.common.application.TronApplicationContext;
 import org.tron.common.utils.ByteArray;
-import org.tron.common.utils.FileUtil;
 import org.tron.common.utils.SessionOptional;
 import org.tron.core.Constant;
 import org.tron.core.capsule.utils.MarketUtils;
@@ -28,37 +27,38 @@ import org.tron.core.db2.core.SnapshotManager;
 import org.tron.core.exception.RevokingStoreIllegalStateException;
 
 @Slf4j
-public class RevokingDbWithCacheNewValueTest {
+public class RevokingDbWithCacheNewValueTest{
 
   private SnapshotManager revokingDatabase;
   private TronApplicationContext context;
-  private Application appT;
   private TestRevokingTronStore tronDatabase;
 
-  private String databasePath = "";
+
+  @Rule
+  public  final TemporaryFolder temporaryFolder = new TemporaryFolder();
+
+  @Rule
+  public TestName name = new TestName();
 
   @Before
-  public void init() {
-    databasePath = "output_revokingStore_test_" + RandomStringUtils.randomAlphanumeric(10);
-    Args.setParam(new String[]{"-d", databasePath},
+  public void init() throws IOException {
+    Args.setParam(new String[]{"-d", temporaryFolder.newFolder().toString()},
         Constant.TEST_CONF);
     context = new TronApplicationContext(DefaultConfig.class);
-    appT = ApplicationFactory.create(context);
+    revokingDatabase = context.getBean(SnapshotManager.class);
+    revokingDatabase.enable();
   }
 
   @After
   public void removeDb() {
     Args.clearParam();
-    context.destroy();
+    context.close();
     tronDatabase.close();
-    FileUtil.deleteDir(new File(databasePath));
   }
 
   @Test
   public synchronized void testPop() throws RevokingStoreIllegalStateException {
-    revokingDatabase = context.getBean(SnapshotManager.class);
-    revokingDatabase.enable();
-    tronDatabase = new TestRevokingTronStore("testRevokingDBWithCacheNewValue-testPop");
+    tronDatabase = new TestRevokingTronStore(name.getMethodName());
     revokingDatabase.add(tronDatabase.getRevokingDB());
 
     while (revokingDatabase.size() != 0) {
@@ -86,9 +86,7 @@ public class RevokingDbWithCacheNewValueTest {
 
   @Test
   public synchronized void testMerge() {
-    revokingDatabase = context.getBean(SnapshotManager.class);
-    revokingDatabase.enable();
-    tronDatabase = new TestRevokingTronStore("testRevokingDBWithCacheNewValue-testMerge");
+    tronDatabase = new TestRevokingTronStore(name.getMethodName());
     revokingDatabase.add(tronDatabase.getRevokingDB());
 
     while (revokingDatabase.size() != 0) {
@@ -118,9 +116,7 @@ public class RevokingDbWithCacheNewValueTest {
 
   @Test
   public synchronized void testRevoke() {
-    revokingDatabase = context.getBean(SnapshotManager.class);
-    revokingDatabase.enable();
-    tronDatabase = new TestRevokingTronStore("testRevokingDBWithCacheNewValue-testRevoke");
+    tronDatabase = new TestRevokingTronStore(name.getMethodName());
     revokingDatabase.add(tronDatabase.getRevokingDB());
 
     while (revokingDatabase.size() != 0) {
@@ -178,9 +174,7 @@ public class RevokingDbWithCacheNewValueTest {
 
   @Test
   public synchronized void testGetlatestValues() {
-    revokingDatabase = context.getBean(SnapshotManager.class);
-    revokingDatabase.enable();
-    tronDatabase = new TestRevokingTronStore("testSnapshotManager-testGetlatestValues");
+    tronDatabase = new TestRevokingTronStore(name.getMethodName());
     revokingDatabase.add(tronDatabase.getRevokingDB());
     while (revokingDatabase.size() != 0) {
       revokingDatabase.pop();
@@ -205,9 +199,7 @@ public class RevokingDbWithCacheNewValueTest {
 
   @Test
   public synchronized void testGetValuesNext() {
-    revokingDatabase = context.getBean(SnapshotManager.class);
-    revokingDatabase.enable();
-    tronDatabase = new TestRevokingTronStore("testSnapshotManager-testGetValuesNext");
+    tronDatabase = new TestRevokingTronStore(name.getMethodName());
     revokingDatabase.add(tronDatabase.getRevokingDB());
     while (revokingDatabase.size() != 0) {
       revokingDatabase.pop();
@@ -233,9 +225,7 @@ public class RevokingDbWithCacheNewValueTest {
 
   @Test
   public synchronized void testGetKeysNext() {
-    revokingDatabase = context.getBean(SnapshotManager.class);
-    revokingDatabase.enable();
-    tronDatabase = new TestRevokingTronStore("testSnapshotManager-testGetKeysNext");
+    tronDatabase = new TestRevokingTronStore(name.getMethodName());
     revokingDatabase.add(tronDatabase.getRevokingDB());
     while (revokingDatabase.size() != 0) {
       revokingDatabase.pop();
@@ -304,9 +294,7 @@ public class RevokingDbWithCacheNewValueTest {
 
   @Test
   public synchronized void testGetKeysNextWithSameKey() {
-    revokingDatabase = context.getBean(SnapshotManager.class);
-    revokingDatabase.enable();
-    tronDatabase = new TestRevokingTronStore("testSnapshotManager-testGetKeysNextWithSameKey");
+    tronDatabase = new TestRevokingTronStore(name.getMethodName());
     revokingDatabase.add(tronDatabase.getRevokingDB());
     while (revokingDatabase.size() != 0) {
       revokingDatabase.pop();
@@ -386,10 +374,7 @@ public class RevokingDbWithCacheNewValueTest {
 
   @Test
   public synchronized void testGetKeysNextWithSameKeyOrderCheck() {
-    revokingDatabase = context.getBean(SnapshotManager.class);
-    revokingDatabase.enable();
-    tronDatabase = new TestRevokingTronStore(
-        "testSnapshotManager-testGetKeysNextWithSameKeyOrderCheck");
+    tronDatabase = new TestRevokingTronStore(name.getMethodName());
     revokingDatabase.add(tronDatabase.getRevokingDB());
     while (revokingDatabase.size() != 0) {
       revokingDatabase.pop();
@@ -481,10 +466,4 @@ public class RevokingDbWithCacheNewValueTest {
     }
   }
 
-  public static class TestSnapshotManager extends SnapshotManager {
-
-    public TestSnapshotManager(String checkpointPath) {
-      super(checkpointPath);
-    }
-  }
 }

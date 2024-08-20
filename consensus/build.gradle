@@ -1,3 +1,7 @@
+plugins {
+    id("org.kordamp.gradle.jdeps")
+    id("org.kordamp.gradle.jdeprscan")
+}
 description = "consensus – a distributed consensus arithmetic for blockchain."
 
 dependencies {
@@ -28,6 +32,19 @@ test {
     if (System.getenv("CI") == null) {
         maxParallelForks = Runtime.runtime.availableProcessors().intdiv(2) ?: 1
     }
+}
+
+jdepsReport {
+    sourceSets = ['main', 'test']
+    configurations = ['testRuntimeClasspath']
+    consoleOutput = false
+}
+
+jdeprscanReport {
+    sourceSets = ['main', 'test']
+    configurations = ['testRuntimeClasspath']
+    forRemoval = true
+    release = JavaVersion.VERSION_17.getMajorVersion()
 }
 
 jacocoTestReport {

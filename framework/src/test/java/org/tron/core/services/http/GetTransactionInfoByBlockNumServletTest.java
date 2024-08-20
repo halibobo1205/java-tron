@@ -35,6 +35,7 @@ public class GetTransactionInfoByBlockNumServletTest extends BaseTest {
     Args.setParam(
             new String[]{
                 "--output-directory", dbPath(),
+                "--storage-transactionHistory-switch", "on"
             }, Constant.TEST_CONF
     );
   }

@@ -1,16 +1,16 @@
 package org.tron.core.services.http;
 
-import com.alibaba.fastjson.JSONObject;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.tron.core.Wallet;
-import org.tron.protos.Protocol.Account;
+import org.tron.core.services.annotation.FullServlet;
 import org.tron.protos.contract.BalanceContract.BlockBalanceTrace;
 
 
+@FullServlet("/wallet/getblockbalance")
 @Component
 @Slf4j(topic = "API")
 public class GetBlockBalanceServlet extends RateLimiterServlet {
