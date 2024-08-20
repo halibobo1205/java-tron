@@ -8,6 +8,7 @@ gitProperties.failOnNoGitDirectory = false;
 
 apply plugin: 'application'
 apply plugin: 'checkstyle'
+apply plugin: 'com.github.johnrengelman.shadow'
 
 mainClassName = 'org.tron.program.FullNode'
 
@@ -39,6 +40,10 @@ dependencies {
     implementation fileTree(dir: 'libs', include: '*.jar')
     // end local libraries
     testImplementation group: 'org.hamcrest', name: 'hamcrest-junit', version: '1.0.0.1'
+    // https://github.com/stefanbirkner/system-rules/issues/85
+    // https://openjdk.org/jeps/411, JEP 411: Deprecate the Security Manager for Removal from JDK17
+    // WARNING: A terminally deprecated method in java.lang.System has been called
+    // WARNING: System::setSecurityManager will be removed in a future release
     testImplementation group: 'com.github.stefanbirkner', name: 'system-rules', version: '1.16.0'
 
     implementation group: 'com.google.inject', name: 'guice', version: '4.1.0'
@@ -57,7 +62,9 @@ dependencies {
     compileOnly group: 'javax.portlet', name: 'portlet-api', version: '3.0.1'
 
     implementation "io.vavr:vavr:0.9.2"
-    implementation group: 'org.pf4j', name: 'pf4j', version: '2.5.0'
+    implementation group: 'org.pf4j', name: 'pf4j', version: '3.10.0',{
+        exclude group: 'org.slf4j', module: 'slf4j-api'
+    }
 
     testImplementation group: 'org.springframework', name: 'spring-test', version: '5.2.0.RELEASE'
     testImplementation group: 'org.springframework', name: 'spring-web', version: '5.2.0.RELEASE'
@@ -146,35 +153,6 @@ jacocoTestReport {
     getExecutionData().setFrom(fileTree('../framework/build/jacoco').include("**.exec"))
 }
 
-def binaryRelease(taskName, jarName, mainClass) {
-    return tasks.create("${taskName}", Jar) {
-        baseName = jarName
-        version = null
-        from(sourceSets.main.output) {
-            include "/**"
-        }
-        // explicit_dependency
-        dependsOn (project(':actuator').jar, project(':consensus').jar, project(':chainbase').jar,
-                project(':crypto').jar, project(':common').jar, project(':protocol').jar)
-        from {
-            configurations.runtimeClasspath.collect {
-                it.isDirectory() ? it : zipTree(it)
-            }
-        }
-
-        // exclude these files for bouncycastle
-        exclude "META-INF/*.SF"
-        exclude "META-INF/*.DSA"
-        exclude "META-INF/*.RSA"
-
-        manifest {
-            attributes "Main-Class": "${mainClass}"
-        }
-
-//        classifier(jarName)
-    }
-}
-
 def createScript(project, mainClass, name) {
     project.tasks.create(name: name, type: CreateStartScripts) {
         unixStartScriptGenerator.template = resources.text.fromFile('../gradle/unixStartScript.txt')
@@ -222,10 +200,23 @@ tasks.distTar.enabled = false
 
 createScript(project, 'org.tron.program.FullNode', 'FullNode')
 
-artifacts {
-    archives(binaryRelease('buildFullNodeJar', 'FullNode', 'org.tron.program.FullNode'))
+shadowJar {
+    baseName = 'FullNode'
+    classifier = null
+    version = null
+    // exclude these files for bouncycastle
+    exclude "META-INF/*.SF"
+    exclude "META-INF/*.DSA"
+    exclude "META-INF/*.RSA"
+    mergeServiceFiles() //  https://github.com/grpc/grpc-java/issues/10853
+}
+shadowDistZip {
+    enabled = false
 }
 
+startShadowScripts {
+    enabled = false
+}
 
 task copyToParent(type: Copy) {
     into "../build/distributions"
