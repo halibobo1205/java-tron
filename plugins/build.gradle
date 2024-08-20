@@ -4,6 +4,7 @@ plugins {
 
 apply plugin: 'application'
 apply plugin: 'checkstyle'
+apply plugin: 'com.github.johnrengelman.shadow'
 
 def versions = [
         checkstyle: '8.7',
@@ -86,33 +87,6 @@ jacocoTestReport {
     getExecutionData().setFrom(fileTree('../framework/build/jacoco').include("**.exec"))
 }
 
-def binaryRelease(taskName, jarName, mainClass) {
-    return tasks.create("${taskName}", Jar) {
-        baseName = jarName
-        version = null
-        from(sourceSets.main.output) {
-            include "/**"
-        }
-
-        dependsOn project(':protocol').jar // explicit_dependency
-
-        from {
-            configurations.runtimeClasspath.collect { // https://docs.gradle.org/current/userguide/upgrading_version_6.html#changes_6.3
-                it.isDirectory() ? it : zipTree(it)
-            }
-        }
-
-        // exclude these files for bouncycastle
-        exclude "META-INF/*.SF"
-        exclude "META-INF/*.DSA"
-        exclude "META-INF/*.RSA"
-
-        manifest {
-            attributes "Main-Class": "${mainClass}"
-        }
-    }
-}
-
 def createScript(project, mainClass, name) {
     project.tasks.create(name: name, type: CreateStartScripts) {
         outputDir = new File(project.buildDir, 'scripts')
@@ -139,8 +113,22 @@ if (JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_17)) {
 }
 createScript(project, 'org.tron.plugins.Toolkit', 'Toolkit')
 
-artifacts {
-    archives(binaryRelease('buildToolkitJar', 'Toolkit', 'org.tron.plugins.Toolkit'))
+shadowJar {
+    baseName = 'Toolkit'
+    classifier = null
+    version = null
+    // exclude these files for bouncycastle
+    exclude "META-INF/*.SF"
+    exclude "META-INF/*.DSA"
+    exclude "META-INF/*.RSA"
+    mergeServiceFiles() //  https://github.com/grpc/grpc-java/issues/10853
+}
+shadowDistZip {
+    enabled = false
+}
+
+startShadowScripts {
+    enabled = false
 }
 
 task copyToParent(type: Copy) {
