@@ -5,6 +5,7 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.tron.common.BaseTest;
+import org.tron.common.context.GlobalContext;
 import org.tron.core.Constant;
 import org.tron.core.capsule.ExchangeProcessor;
 import org.tron.core.config.args.Args;
@@ -25,6 +26,7 @@ public class ExchangeProcessorTest extends BaseTest {
   public static void init() {
     long supply = 1_000_000_000_000_000_000L;
     processor = new ExchangeProcessor(supply);
+    GlobalContext.setHeader(1);
   }
 
   @Test

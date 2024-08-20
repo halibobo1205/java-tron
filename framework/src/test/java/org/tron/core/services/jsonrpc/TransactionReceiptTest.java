@@ -23,7 +23,8 @@ public class TransactionReceiptTest extends BaseTest {
   private TransactionRetStore transactionRetStore;
 
   static {
-    Args.setParam(new String[]{"-d", dbPath()}, Constant.TEST_CONF);
+    Args.setParam(new String[]{"-d", dbPath(), "--storage-transactionHistory-switch", "on"},
+        Constant.TEST_CONF);
   }
 
   @Test

@@ -8,11 +8,13 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.tron.core.Wallet;
+import org.tron.core.services.annotation.FullServlet;
 import org.tron.protos.Protocol.Transaction;
 import org.tron.protos.Protocol.Transaction.Contract.ContractType;
 import org.tron.protos.contract.ProposalContract.ProposalApproveContract;
 
 
+@FullServlet("/wallet/proposalapprove")
 @Component
 @Slf4j(topic = "API")
 public class ProposalApproveServlet extends RateLimiterServlet {

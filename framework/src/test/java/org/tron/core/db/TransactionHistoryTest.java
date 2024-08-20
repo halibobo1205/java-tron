@@ -28,7 +28,8 @@ public class TransactionHistoryTest extends BaseTest {
         new String[]{
             "--output-directory", dbPath(),
             "--storage-db-directory", dbDirectory,
-            "--storage-index-directory", indexDirectory
+            "--storage-index-directory", indexDirectory,
+            "--storage-transactionHistory-switch", "on"
         },
         Constant.TEST_CONF
     );

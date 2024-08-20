@@ -377,7 +377,7 @@ rebuildManifest() {
     return
   fi
 
-  ARCHIVE_JAR='ArchiveManifest.jar'
+  ARCHIVE_JAR='Toolkit.jar'
   if [[ -f $ARCHIVE_JAR ]]; then
     echo 'info: execute rebuild manifest.'
     $JAVACMD -jar $ARCHIVE_JAR -d $REBUILD_DIR -m $REBUILD_MANIFEST_SIZE -b $REBUILD_BATCH_SIZE

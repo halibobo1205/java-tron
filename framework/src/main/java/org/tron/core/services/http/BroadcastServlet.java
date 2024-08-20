@@ -10,9 +10,10 @@ import org.tron.api.GrpcAPI;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.Wallet;
 import org.tron.core.capsule.TransactionCapsule;
+import org.tron.core.services.annotation.FullServlet;
 import org.tron.protos.Protocol.Transaction;
 
-
+@FullServlet("/wallet/broadcasttransaction")
 @Component
 @Slf4j(topic = "API")
 public class BroadcastServlet extends RateLimiterServlet {
