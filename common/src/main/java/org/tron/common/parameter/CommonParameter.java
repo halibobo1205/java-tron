@@ -207,6 +207,12 @@ public class CommonParameter {
   @Parameter(names = {"--keystore"}, description = "running KeystoreFactory")
   public boolean keystore = false;
 
+  //If you are running leveldb to rocksdb convert tool, this flag is set to true
+  @Getter
+  @Setter
+  @Parameter(names = {"--db-convert"}, description = "running leveldb to rocksdb convert")
+  public boolean dbConvert = false;
+
   @Getter
   @Setter
   public int rpcPort;

@@ -57,6 +57,10 @@ public class FullNode {
       KeystoreFactory.exec();
       return;
     }
+    if (parameter.isDbConvert()) {
+      DBConvert.run(args);
+      return;
+    }
     if (parameter.isSolidityNode()) {
       logger.info("Solidity node is running.");
     } else {

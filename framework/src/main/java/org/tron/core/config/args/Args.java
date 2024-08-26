@@ -168,6 +168,7 @@ public class Args extends CommonParameter {
     PARAMETER.udpNettyWorkThreadNum = 0;
     PARAMETER.solidityNode = false;
     PARAMETER.keystore = false;
+    PARAMETER.dbConvert = false;
     PARAMETER.trustNodeAddr = "";
     PARAMETER.walletExtensionApi = false;
     PARAMETER.estimateEnergy = false;
