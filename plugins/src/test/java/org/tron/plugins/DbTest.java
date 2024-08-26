@@ -17,6 +17,7 @@ import picocli.CommandLine;
 public class DbTest {
 
   String INPUT_DIRECTORY;
+  String INPUT_DIRECTORY_ROCKSDB;
   private static final String ACCOUNT = "account";
   private static final String MARKET = DBUtils.MARKET_PAIR_PRICE_TO_ORDER;
   CommandLine cli = new CommandLine(new Toolkit());
@@ -32,6 +33,10 @@ public class DbTest {
     initDB(new File(INPUT_DIRECTORY, ACCOUNT));
     initDB(new File(INPUT_DIRECTORY, MARKET));
     initDB(new File(INPUT_DIRECTORY, DBUtils.CHECKPOINT_DB_V2));
+    INPUT_DIRECTORY_ROCKSDB = temporaryFolder.newFolder().toString();
+    initDB(new File(INPUT_DIRECTORY_ROCKSDB, ACCOUNT));
+    initDB(new File(INPUT_DIRECTORY_ROCKSDB, MARKET));
+    initDB(new File(INPUT_DIRECTORY_ROCKSDB, DBUtils.CHECKPOINT_DB_V2));
   }
 
   private static void initDB(File file) throws IOException {

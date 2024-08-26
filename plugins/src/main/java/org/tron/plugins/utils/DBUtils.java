@@ -108,6 +108,8 @@ public class DBUtils {
     if (forBulkLoad) {
       options.prepareForBulkLoad();
     }
+    // since 6.6.3 version, https://github.com/facebook/rocksdb/pull/5958
+    options.setForceConsistencyChecks(false);
     return options;
   }
 

@@ -20,4 +20,6 @@ public interface DBInterface extends Closeable {
 
   String getName();
 
+  void compactRange() throws IOException;
+
 }

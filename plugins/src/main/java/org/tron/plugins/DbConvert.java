@@ -1,6 +1,7 @@
 package org.tron.plugins;
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -15,13 +16,14 @@ import lombok.extern.slf4j.Slf4j;
 import me.tongfei.progressbar.ProgressBar;
 import org.fusesource.leveldbjni.JniDBFactory;
 import org.iq80.leveldb.DB;
-import org.iq80.leveldb.DBIterator;
 import org.rocksdb.RocksDB;
 import org.rocksdb.RocksDBException;
-import org.rocksdb.RocksIterator;
 import org.rocksdb.Status;
 import org.tron.plugins.utils.DBUtils;
 import org.tron.plugins.utils.FileUtils;
+import org.tron.plugins.utils.db.DBInterface;
+import org.tron.plugins.utils.db.DBIterator;
+import org.tron.plugins.utils.db.DbTool;
 import picocli.CommandLine;
 
 
@@ -40,16 +42,22 @@ public class DbConvert implements Callable<Integer> {
 
   private static final int BATCH  = 256;
 
+  enum Type { rocksdb, leveldb }
+
   @CommandLine.Spec
   CommandLine.Model.CommandSpec spec;
   @CommandLine.Parameters(index = "0", defaultValue = "output-directory/database",
-      description = " Input path for leveldb. Default: ${DEFAULT-VALUE}")
+      description = " Input path for db. Default: ${DEFAULT-VALUE}")
   private File src;
-  @CommandLine.Parameters(index = "1", defaultValue = "output-directory-dst/database",
-      description = "Output path for rocksdb. Default: ${DEFAULT-VALUE}")
+  @CommandLine.Parameters(index = "1", defaultValue = "output-directory-rocksdb/database",
+      description = "Output path for db. Default: output-directory-{type}/database")
   private File dest;
 
-  private final boolean safe = true;
+  @CommandLine.Option(
+      names = {"--type", "-t"},
+      defaultValue = "rocksdb",
+      description = "[ ${COMPLETION-CANDIDATES} ]. Default: ${DEFAULT-VALUE}")
+  private Type type;
 
   @CommandLine.Option(names = {"-h", "--help"})
   private boolean help;
@@ -60,6 +68,10 @@ public class DbConvert implements Callable<Integer> {
     if (help) {
       spec.commandLine().usage(System.out);
       return 0;
+    }
+    if (dest == null || "output-directory-rocksdb/database".equals(dest.toString())) {
+      // reset dest
+      dest = new File("output-directory-" + type, "database");
     }
     if (!src.exists()) {
       logger.info(" {} does not exist.", src);
@@ -89,12 +101,12 @@ public class DbConvert implements Callable<Integer> {
     final long time = System.currentTimeMillis();
     List<Converter> services = new ArrayList<>();
     files.forEach(f -> services.add(
-        new DbConverter(src.getPath(), dest.getPath(), f.getName(), safe)));
+        new DbConverter(src.getPath(), dest.getPath(), f.getName(), type)));
     cpList.forEach(f -> services.add(
         new DbConverter(
             Paths.get(src.getPath(), DBUtils.CHECKPOINT_DB_V2).toString(),
             Paths.get(dest.getPath(), DBUtils.CHECKPOINT_DB_V2).toString(),
-            f.getName(), safe)));
+            f.getName(), type)));
     List<String> fails = ProgressBar.wrap(services.stream(), "convert task").parallel().map(
         dbConverter -> {
           try {
@@ -134,15 +146,15 @@ public class DbConvert implements Callable<Integer> {
     private long srcDbValueSum = 0L;
     private long dstDbValueSum = 0L;
 
-    private boolean safe;
+    private final Type type;
 
-    public DbConverter(String srcDir, String dstDir, String name, boolean safe) {
+    public DbConverter(String srcDir, String dstDir, String name, Type type) {
       this.srcDir = srcDir;
       this.dstDir = dstDir;
       this.dbName = name;
       this.srcDbPath = Paths.get(this.srcDir, name);
       this.dstDbPath = Paths.get(this.dstDir, name);
-      this.safe = safe;
+      this.type = type;
     }
 
     @Override
@@ -158,10 +170,6 @@ public class DbConvert implements Callable<Integer> {
         logger.info(" {} does not exist.", srcDbPath);
         return true;
       }
-      if (!FileUtils.isLevelDBEngine(srcDbPath)) {
-        logger.info("Db {},not leveldb, ignored.", this.dbName);
-        return true;
-      }
       long startTime = System.currentTimeMillis();
       if (this.dstDbPath.toFile().exists()) {
         logger.info(" {} begin to clear exist database directory", this.dbName);
@@ -172,23 +180,20 @@ public class DbConvert implements Callable<Integer> {
       FileUtils.createDirIfNotExists(dstDir);
 
       logger.info("Convert database {} start", this.dbName);
-      if (safe) {
-        convertLevelToRocks();
-        compact();
+      if (Type.rocksdb == type) {
+        convertToRocks();
       } else {
-        FileUtils.copyDir(Paths.get(srcDir), Paths.get(dstDir), dbName);
+        convertToLevel();
       }
-      boolean result = check() && createEngine(dstDbPath.toString());
+      boolean result = check() && createEngine(dstDbPath.toString(), type);
+      if (result) {
+        compact();
+      }
       long etime = System.currentTimeMillis();
 
       if (result) {
-        if (safe) {
           logger.info("Convert database {} successful end with {} key-value {} minutes",
               this.dbName, this.srcDbKeyCount, (etime - startTime) / 1000.0 / 60);
-        } else {
-          logger.info("Convert database {} successful end  {} minutes",
-              this.dbName, (etime - startTime) / 1000.0 / 60);
-        }
 
       } else {
         logger.info("Convert database {} failure", this.dbName);
@@ -215,6 +220,20 @@ public class DbConvert implements Callable<Integer> {
           batch.put(k, v);
         }
         write(rocks, batch);
+      }
+      keys.clear();
+      values.clear();
+    }
+
+    private void batchInsert(DB level, List<byte[]> keys, List<byte[]> values)
+        throws Exception {
+      try (org.iq80.leveldb.WriteBatch batch = level.createWriteBatch()) {
+        for (int i = 0; i < keys.size(); i++) {
+          byte[] k = keys.get(i);
+          byte[] v = values.get(i);
+          batch.put(k, v);
+        }
+        level.write(batch);
       }
       keys.clear();
       values.clear();
@@ -258,20 +277,16 @@ public class DbConvert implements Callable<Integer> {
      *
      * @return if ok
      */
-    public void convertLevelToRocks() throws Exception {
+    public void convertToRocks() throws Exception {
       List<byte[]> keys = new ArrayList<>(BATCH);
       List<byte[]> values = new ArrayList<>(BATCH);
       JniDBFactory.pushMemoryPool(1024 * 1024);
-      try (
-          DB level = DBUtils.newLevelDb(srcDbPath);
-          RocksDB rocks = DBUtils.newRocksDbForBulkLoad(dstDbPath);
-          DBIterator levelIterator = level.iterator(
-              new org.iq80.leveldb.ReadOptions().fillCache(false))) {
-
-        levelIterator.seekToFirst();
-
-        while (levelIterator.hasNext()) {
-          Map.Entry<byte[], byte[]> entry = levelIterator.next();
+      try (DBInterface source = DbTool.getDB(Paths.get(srcDir), dbName);
+           DBIterator sourceIterator = source.iterator();
+          RocksDB rocks = DBUtils.newRocksDbForBulkLoad(dstDbPath)) {
+        sourceIterator.seekToFirst();
+        while (sourceIterator.hasNext()) {
+          Map.Entry<byte[], byte[]> entry = sourceIterator.next();
           byte[] key = entry.getKey();
           byte[] value = entry.getValue();
           srcDbKeyCount++;
@@ -292,31 +307,56 @@ public class DbConvert implements Callable<Integer> {
       }
     }
 
-    private void compact() throws RocksDBException {
+    public void convertToLevel() throws Exception {
+      List<byte[]> keys = new ArrayList<>(BATCH);
+      List<byte[]> values = new ArrayList<>(BATCH);
+      JniDBFactory.pushMemoryPool(1024 * 1024);
+      try (DBInterface source = DbTool.getDB(Paths.get(srcDir), dbName);
+          DBIterator sourceIterator = source.iterator();
+          DB level = DBUtils.newLevelDb(dstDbPath)) {
+        sourceIterator.seekToFirst();
+        while (sourceIterator.hasNext()) {
+          Map.Entry<byte[], byte[]> entry = sourceIterator.next();
+          byte[] key = entry.getKey();
+          byte[] value = entry.getValue();
+          srcDbKeyCount++;
+          srcDbKeySum = byteArrayToIntWithOne(srcDbKeySum, key);
+          srcDbValueSum = byteArrayToIntWithOne(srcDbValueSum, value);
+          keys.add(key);
+          values.add(value);
+          if (keys.size() >= BATCH) {
+            batchInsert(level, keys, values);
+          }
+        }
+        // clear
+        if (!keys.isEmpty()) {
+          batchInsert(level, keys, values);
+        }
+      } finally {
+        JniDBFactory.popMemoryPool();
+      }
+    }
+
+    private void compact() throws RocksDBException, IOException {
       if (DBUtils.MARKET_PAIR_PRICE_TO_ORDER.equalsIgnoreCase(this.dbName)) {
         return;
       }
-      try (RocksDB rocks  = DBUtils.newRocksDb(this.dstDbPath)) {
+      try (DBInterface db  = DbTool.getDB(Paths.get(dstDir), dbName)) {
         logger.info("compact database {} start", this.dbName);
-        rocks.compactRange();
+        db.compactRange();
         logger.info("compact database {} end", this.dbName);
       }
     }
 
-    private boolean check() throws RocksDBException {
-      if (!safe) {
-        return true;
-      }
+    private boolean check() throws RocksDBException, IOException {
       try (
-          RocksDB rocks  = DBUtils.newRocksDbReadOnly(this.dstDbPath);
-          org.rocksdb.ReadOptions r = new org.rocksdb.ReadOptions().setFillCache(false);
-          RocksIterator rocksIterator = rocks.newIterator(r)) {
-
+          DBInterface db = DbTool.getDB(Paths.get(dstDir), dbName);
+          DBIterator iterator = db.iterator()) {
         // check
         logger.info("check database {} start", this.dbName);
-        for (rocksIterator.seekToFirst(); rocksIterator.isValid(); rocksIterator.next()) {
-          byte[] key = rocksIterator.key();
-          byte[] value = rocksIterator.value();
+        for (iterator.seekToFirst(); iterator.hasNext(); iterator.next()) {
+          byte[] key = iterator.getKey();
+          byte[] value = iterator.getValue();
           dstDbKeyCount++;
           dstDbKeySum = byteArrayToIntWithOne(dstDbKeySum, key);
           dstDbValueSum = byteArrayToIntWithOne(dstDbValueSum, value);
@@ -331,12 +371,13 @@ public class DbConvert implements Callable<Integer> {
     }
   }
 
-  private static boolean createEngine(String dir) {
+  private static boolean createEngine(String dir, Type type) {
     String enginePath = dir + File.separator + DBUtils.FILE_ENGINE;
     if (!FileUtils.createFileIfNotExists(enginePath)) {
       return false;
     }
-    return FileUtils.writeProperty(enginePath, DBUtils.KEY_ENGINE, DBUtils.ROCKSDB);
+    return FileUtils.writeProperty(enginePath, DBUtils.KEY_ENGINE, Type.rocksdb == type
+        ?  DBUtils.ROCKSDB : DBUtils.LEVELDB);
   }
 
   private static boolean  checkDone(String dir) {

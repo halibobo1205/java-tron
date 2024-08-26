@@ -16,9 +16,30 @@ public class DbConvertTest extends DbTest {
   }
 
   @Test
-  public void testRunWithSafe() throws IOException {
+  public void testRunLevelDBToLevelDB() throws IOException {
     String[] args = new String[] { "db", "convert",  INPUT_DIRECTORY,
-        temporaryFolder.newFolder().toString()};
+        temporaryFolder.newFolder().toString(), "--type", "leveldb" };
+    Assert.assertEquals(0, cli.execute(args));
+  }
+
+  @Test
+  public void testRunLevelDBToRocksDB() throws IOException {
+    String[] args = new String[] { "db", "convert",  INPUT_DIRECTORY,
+        temporaryFolder.newFolder().toString(), "--type", "rocksdb" };
+    Assert.assertEquals(0, cli.execute(args));
+  }
+
+  @Test
+  public void testRunRocksDBToLevelDB() throws IOException {
+    String[] args = new String[] { "db", "convert",  INPUT_DIRECTORY_ROCKSDB,
+        temporaryFolder.newFolder().toString(), "--type", "leveldb" };
+    Assert.assertEquals(0, cli.execute(args));
+  }
+
+  @Test
+  public void testRunRocksDBToRocksDB() throws IOException {
+    String[] args = new String[] { "db", "convert",  INPUT_DIRECTORY_ROCKSDB,
+        temporaryFolder.newFolder().toString(), "--type", "rocksdb" };
     Assert.assertEquals(0, cli.execute(args));
   }
 
