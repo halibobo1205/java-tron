@@ -1,26 +1,9 @@
-plugins {
-    id("org.kordamp.gradle.jdeps")
-    id("org.kordamp.gradle.jdeprscan")
-}
 description = "actuator – a series of transactions for blockchain."
 
 dependencies {
     api project(":chainbase")
     api project(":protocol")
     api project(":crypto")
-}
-
-jdepsReport {
-    sourceSets = ['main', 'test']
-    configurations = ['testRuntimeClasspath']
-    consoleOutput = false
-}
-
-jdeprscanReport {
-    sourceSets = ['main', 'test']
-    configurations = ['testRuntimeClasspath']
-    forRemoval = true
-    release = JavaVersion.VERSION_17.getMajorVersion()
 }
 
 test {

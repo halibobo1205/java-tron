@@ -404,6 +404,7 @@ public class Maths {
   public static double pow(double a, double b) {
     double result = Math.pow(a, b);
     double strictResult = StrictMath.pow(a, b);
+    boolean isJre8 = System.getProperty("java.specification.version").startsWith("1.8");
     final boolean isNoStrict = Double.compare(result, strictResult) != 0;
     Optional<Long> header = GlobalContext.getHeader();
     header.ifPresent(h -> {
@@ -416,7 +417,7 @@ public class Maths {
       mathStore.ifPresent(s -> s.put(key, doubleToBytes(result)));
       strictMathStore.ifPresent(s -> s.put(key, doubleToBytes(strictResult)));
     });
-    return powData.getOrDefault(new PowData(a, b), strictResult);
+    return powData.getOrDefault(new PowData(a, b), isJre8 ? result : strictResult);
   }
 
   static String doubleToHex(double input) {

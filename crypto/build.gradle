@@ -1,12 +1,8 @@
 plugins {
     id 'java'
-    id("org.kordamp.gradle.jdeps")
-    id("org.kordamp.gradle.jdeprscan")
 }
 
 version '1.0.0'
-
-sourceCompatibility = 1.8
 
 repositories {
     mavenCentral()
@@ -14,19 +10,6 @@ repositories {
 
 dependencies {
     api project(":common")
-}
-
-jdepsReport {
-    sourceSets = ['main', 'test']
-    configurations = ['testRuntimeClasspath']
-    consoleOutput = false
-}
-
-jdeprscanReport {
-    sourceSets = ['main', 'test']
-    configurations = ['testRuntimeClasspath']
-    forRemoval = true
-    release = JavaVersion.VERSION_17.getMajorVersion()
 }
 
 jacocoTestReport {

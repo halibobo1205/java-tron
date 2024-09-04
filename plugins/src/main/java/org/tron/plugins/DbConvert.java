@@ -192,7 +192,7 @@ public class DbConvert implements Callable<Integer> {
       long etime = System.currentTimeMillis();
 
       if (result) {
-          logger.info("Convert database {} successful end with {} key-value {} minutes",
+        logger.info("Convert database {} successful end with {} key-value {} minutes",
               this.dbName, this.srcDbKeyCount, (etime - startTime) / 1000.0 / 60);
 
       } else {

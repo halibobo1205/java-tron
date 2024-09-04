@@ -3,7 +3,7 @@
 <configuration>
 
   <!-- Be sure to flush latest logs on exit -->
-  <shutdownHook class="ch.qos.logback.core.hook.DefaultShutdownHook"/>
+  <shutdownHook class="ch.qos.logback.core.hook.DelayingShutdownHook"/>
 
   <appender class="ch.qos.logback.core.rolling.RollingFileAppender"
     name="FILE">

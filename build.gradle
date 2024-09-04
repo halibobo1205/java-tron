@@ -1,21 +1,11 @@
-plugins {
-    id("org.kordamp.gradle.jdeps") version "0.20.0" apply false
-    id("org.kordamp.gradle.jdeprscan") version "0.11.0" apply false
-}
-
 allprojects {
     version = "1.0.0"
     apply plugin: "java-library"
 }
 
-if (!JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_17)) {
-    throw new GradleException("Java 17 or later is required to build Java-tron.\n" +
-            "  Detected version ${JavaVersion.current()}")
-}
-
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(17)
+        languageVersion = JavaLanguageVersion.of(8)
         vendor = JvmVendorSpec.ADOPTIUM
     }
 }
@@ -23,9 +13,6 @@ java {
 subprojects {
     apply plugin: "jacoco"
     apply plugin: "maven-publish"
-
-    sourceCompatibility = JavaVersion.VERSION_17
-    targetCompatibility = JavaVersion.VERSION_17
 
     [compileJava, compileTestJava]*.options*.encoding = 'UTF-8'
 
@@ -56,7 +43,7 @@ subprojects {
     dependencies {
         implementation group: 'org.slf4j', name: 'slf4j-api', version: '1.7.25'
         implementation group: 'org.slf4j', name: 'jcl-over-slf4j', version: '1.7.25'
-        implementation group: 'ch.qos.logback', name: 'logback-classic', version: '1.5.6'
+        implementation group: 'ch.qos.logback', name: 'logback-classic', version: '1.2.9'
         implementation group: 'com.google.guava', name: 'guava', version: '33.2.1-jre'
         implementation "com.google.code.findbugs:jsr305:3.0.2"
         implementation group: 'org.springframework', name: 'spring-context', version: '5.3.37'
@@ -92,7 +79,7 @@ subprojects {
 
 
         testImplementation group: 'junit', name: 'junit', version: '4.13.2'
-        testImplementation "org.mockito:mockito-core:5.8.0"
+        testImplementation "org.mockito:mockito-core:2.13.0"
     }
 
     tasks.register('sourcesJar', Jar) {

@@ -1,5 +1,6 @@
 package org.tron.plugins;
 
+import com.google.common.collect.Lists;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -31,7 +32,7 @@ public class DbQuery implements Callable<Integer> {
     final List<String> dbs;
 
     Type(String dbs) {
-      this.dbs = List.of(dbs.split(","));
+      this.dbs = Lists.newArrayList(dbs.split(","));
     }
   }
 
@@ -89,12 +90,17 @@ public class DbQuery implements Callable<Integer> {
     } else {
       Type type = Arrays.stream(Type.values()).filter(t -> t.dbs.contains(dbName))
           .findFirst().orElse(Type.hex);
-      String json = switch (type) {
-        case block -> ByteArray.toJson(ByteArray.toBlock(b));
-        case account -> ByteArray.toJson(ByteArray.toAccount(b));
-        case exchange -> ByteArray.toJson(ByteArray.toExchange(b));
-        default -> ByteArray.toHexString(b);
-      };
+      String json;
+      switch (type) {
+        case block: json = ByteArray.toJson(ByteArray.toBlock(b));
+        break;
+        case account: json = ByteArray.toJson(ByteArray.toAccount(b));
+          break;
+        case exchange: json = ByteArray.toJson(ByteArray.toExchange(b));
+          break;
+        default: json = ByteArray.toHexString(b);
+          break;
+      }
       spec.commandLine().getOut().format("%s\t%s\t%s", dbName, key, json).println();
       logger.info("{}\t{}\t{}", dbName, key, json);
     }

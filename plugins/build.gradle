@@ -1,6 +1,4 @@
 plugins {
-    id("org.kordamp.gradle.jdeps")
-    id("org.kordamp.gradle.jdeprscan")
     id "org.sonarqube" version "2.6"
 }
 
@@ -8,7 +6,7 @@ apply plugin: 'application'
 apply plugin: 'checkstyle'
 
 def versions = [
-        checkstyle: '10.14.2', // see https://github.com/checkstyle/checkstyle/issues/14123
+        checkstyle: '8.7',
 ]
 mainClassName = 'org.tron.plugins.Toolkit'
 group 'org.tron'
@@ -16,19 +14,6 @@ version '1.0.0'
 
 configurations {
     checkstyleConfig
-}
-
-jdepsReport {
-    sourceSets = ['main', 'test']
-    configurations = ['testRuntimeClasspath']
-    consoleOutput = false
-}
-
-jdeprscanReport {
-    sourceSets = ['main', 'test']
-    configurations = ['testRuntimeClasspath']
-    forRemoval = true
-    release = JavaVersion.VERSION_17.getMajorVersion()
 }
 
 configurations.named('checkstyleConfig') {
@@ -54,7 +39,7 @@ check.dependsOn 'lint'
 
 checkstyle {
     toolVersion = "${versions.checkstyle}"
-    configFile = file("../framework/config/checkstyle/checkStyleAll.xml")
+    configFile = file("${project.rootDir}/config/checkstyle/checkStyleAll.xml")
 }
 
 checkstyleMain {
@@ -110,8 +95,6 @@ def binaryRelease(taskName, jarName, mainClass) {
             include "/**"
         }
 
-        dependsOn project(':protocol').jar // explicit_dependency
-
         from {
             configurations.runtimeClasspath.collect { // https://docs.gradle.org/current/userguide/upgrading_version_6.html#changes_6.3
                 it.isDirectory() ? it : zipTree(it)
@@ -144,7 +127,7 @@ def createScript(project, mainClass, name) {
         }
     }
 }
-applicationDistribution.from("../gradle/java-tron.vmoptions") {
+applicationDistribution.from("${project.rootDir}/gradle/java-tron.vmoptions") {
     into "bin"
 }
 createScript(project, 'org.tron.plugins.Toolkit', 'Toolkit')
