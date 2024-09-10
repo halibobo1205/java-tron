@@ -84,7 +84,7 @@ public class DbQuery implements Callable<Integer> {
       dbName = this.db.getFileName().toString();
     }
     String key = ByteArray.toHexString(k);
-    if (b.length == 0) {
+    if (b == null || b.length == 0) {
       spec.commandLine().getOut().format("%s\t%s", dbName, key).println();
       logger.info("{}\t{}", dbName, key);
     } else {
