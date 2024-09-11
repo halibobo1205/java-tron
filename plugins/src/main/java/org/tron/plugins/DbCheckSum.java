@@ -10,10 +10,13 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
+
+import com.google.protobuf.ByteString;
 import lombok.extern.slf4j.Slf4j;
 import me.tongfei.progressbar.ProgressBar;
 import org.rocksdb.RocksDB;
 import org.rocksdb.RocksDBException;
+import org.tron.plugins.utils.Sha256Hash;
 import org.tron.plugins.utils.db.DBInterface;
 import org.tron.plugins.utils.db.DBIterator;
 import org.tron.plugins.utils.db.DbTool;
@@ -32,21 +35,20 @@ public class DbCheckSum implements Callable<Integer> {
   static {
     RocksDB.loadLibrary();
   }
+
   private static final List<String> stateDbs = Arrays.asList(
-      "account", "account-asset", "account-index", "accountid-index",
-      "asset-issue-v2",
-      "code", "contract",
-      "delegation", "DelegatedResource", "DelegatedResourceAccountIndex",
+      "account", "account-asset",
+      "asset-issue", "asset-issue-v2",
+      "code", "contract", "contract-state",
+      "delegation", "DelegatedResource",
       "exchange", "exchange-v2",
-      "IncrementalMerkleTree",
       "market_account", "market_order", "market_pair_price_to_order", "market_pair_to_price",
-      "nullifier",
       "properties",
       "proposal",
       "storage-row",
       "votes",
-      "witness", "witness_schedule",
-      "contract-state");
+      "witness", "witness_schedule"
+      );
 
 
   @CommandLine.Spec
@@ -107,8 +109,8 @@ public class DbCheckSum implements Callable<Integer> {
     private final String dbName;
 
     private BigInteger srcDbKeyCount = BigInteger.ZERO;
-    private BigInteger srcDbKeySum = BigInteger.ZERO;
-    private BigInteger srcDbValueSum = BigInteger.ZERO;
+    private Sha256Hash srcDbKeySum = Sha256Hash.ZERO_HASH;
+    private Sha256Hash srcDbValueSum = Sha256Hash.ZERO_HASH;
 
     public DbChecksum(String srcDir, String name) {
       this.srcDir = srcDir;
@@ -144,24 +146,21 @@ public class DbCheckSum implements Callable<Integer> {
           byte[] key = iterator.getKey();
           byte[] value = iterator.getValue();
           srcDbKeyCount = srcDbKeyCount.add(BigInteger.ONE);
-          srcDbKeySum = byteArrayToIntWithOne(srcDbKeySum, key);
-          srcDbValueSum = byteArrayToIntWithOne(srcDbValueSum, value);
+          srcDbKeySum = checkSum(srcDbKeySum, key);
+          srcDbValueSum = checkSum(srcDbValueSum, value);
         }
         logger.info("Check database {} end srcDbKeyCount {}, srcDbKeySum {}, srcDbValueSum {}",
             dbName, srcDbKeyCount, srcDbKeySum, srcDbValueSum);
         return String.format(
-            " %s: srcDbKeyCount %d, srcDbKeySum %d, srcDbValueSum %d",
+            " %s: srcDbKeyCount %d, srcDbKeySum %s, srcDbValueSum %s",
             dbName, srcDbKeyCount, srcDbKeySum, srcDbValueSum);
       }
     }
   }
 
 
-  private static BigInteger byteArrayToIntWithOne(BigInteger sum, byte[] b) {
-    for (byte oneByte : b) {
-      sum = sum.add(BigInteger.valueOf(oneByte & 0xff));
-    }
-    return sum;
+  private static Sha256Hash checkSum(Sha256Hash sum, byte[] b) {
+    return Sha256Hash.of(true, sum.getByteString().concat(ByteString.copyFrom(b)).toByteArray());
   }
 
 }
