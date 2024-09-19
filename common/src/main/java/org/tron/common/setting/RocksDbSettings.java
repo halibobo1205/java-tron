@@ -1,16 +1,21 @@
 package org.tron.common.setting;
 
+import com.google.common.base.Preconditions;
+import java.util.Objects;
 import lombok.Getter;
-import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
+import org.rocksdb.BlockBasedTableConfig;
+import org.rocksdb.BloomFilter;
+import org.rocksdb.ComparatorOptions;
 import org.rocksdb.LRUCache;
+import org.rocksdb.Options;
 import org.rocksdb.RocksDB;
+import org.rocksdb.Statistics;
+import org.tron.common.utils.MarketOrderPriceComparatorForRocksDB;
 
 @Slf4j
 public class RocksDbSettings {
 
-  @Setter
-  @Getter
   private static RocksDbSettings rocksDbSettings;
 
   @Getter
@@ -139,5 +144,48 @@ public class RocksDbSettings {
   }
   public static LRUCache getCache() {
     return cache;
+  }
+
+  public static Options getOptionsByDbName(String dbName) {
+    Preconditions.checkArgument(Objects.nonNull(rocksDbSettings),
+        "rocksDbSettings not initialized");
+
+    Options options = new Options();
+
+    // most of these options are suggested by https://github.com/facebook/rocksdb/wiki/Set-Up-Options
+
+    // general options
+    if (rocksDbSettings.isEnableStatistics()) {
+      options.setStatistics(new Statistics());
+      options.setStatsDumpPeriodSec(60);
+    }
+    options.setCreateIfMissing(true);
+    options.setIncreaseParallelism(1);
+    options.setLevelCompactionDynamicLevelBytes(true);
+    options.setMaxOpenFiles(rocksDbSettings.getMaxOpenFiles());
+
+    // general options supported user config
+    options.setNumLevels(rocksDbSettings.getLevelNumber());
+    options.setMaxBytesForLevelMultiplier(rocksDbSettings.getMaxBytesForLevelMultiplier());
+    options.setMaxBytesForLevelBase(rocksDbSettings.getMaxBytesForLevelBase());
+    options.setMaxBackgroundCompactions(rocksDbSettings.getCompactThreads());
+    options.setLevel0FileNumCompactionTrigger(rocksDbSettings.getLevel0FileNumCompactionTrigger());
+    options.setTargetFileSizeMultiplier(rocksDbSettings.getTargetFileSizeMultiplier());
+    options.setTargetFileSizeBase(rocksDbSettings.getTargetFileSizeBase());
+
+    // table options
+    final BlockBasedTableConfig tableCfg;
+    options.setTableFormatConfig(tableCfg = new BlockBasedTableConfig());
+    tableCfg.setBlockSize(rocksDbSettings.getBlockSize());
+    tableCfg.setBlockCache(RocksDbSettings.getCache());
+    tableCfg.setCacheIndexAndFilterBlocks(true);
+    tableCfg.setPinL0FilterAndIndexBlocksInCache(true);
+    tableCfg.setFilter(new BloomFilter(10, false));
+    if ("market_pair_price_to_order".equals(dbName)) {
+      ComparatorOptions comparatorOptions = new ComparatorOptions();
+      options.setComparator(new MarketOrderPriceComparatorForRocksDB(comparatorOptions));
+    }
+
+    return options;
   }
 }
