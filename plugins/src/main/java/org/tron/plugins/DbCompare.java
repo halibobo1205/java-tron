@@ -11,6 +11,7 @@ import org.tron.plugins.utils.ByteArray;
 import org.tron.plugins.utils.db.DBInterface;
 import org.tron.plugins.utils.db.DBIterator;
 import org.tron.plugins.utils.db.DbTool;
+import org.tron.protos.Protocol;
 import picocli.CommandLine;
 
 @Slf4j(topic = "compare")
@@ -32,6 +33,8 @@ public class DbCompare implements Callable<Integer> {
   private File compare;
   @CommandLine.Option(names = {"-h", "--help"}, help = true, description = "display a help message")
   private boolean help;
+
+  private static final String ACCOUNT_VOTE_SUFFIX = "-account-vote";
 
   @Override
   public Integer call() throws Exception {
@@ -98,7 +101,7 @@ public class DbCompare implements Callable<Integer> {
           byte[] baseKey = baseIterator.getKey();
           byte[] dstKey = dstIterator.getKey();
           byte[] dstValue = dstIterator.getValue();
-          if (Arrays.equals(baseKey, dstKey) && !Arrays.equals(baseValue, dstValue)) {
+          if (Arrays.equals(baseKey, dstKey) && !compareValue(baseKey, baseValue, dstValue)) {
             spec.commandLine().getOut().format("%s\t%s\t%s.",
                 ByteArray.toHexString(baseKey),
                 ByteArray.toHexString(baseValue), ByteArray.toHexString(dstValue)).println();
@@ -109,7 +112,7 @@ public class DbCompare implements Callable<Integer> {
           if (!Arrays.equals(baseKey, dstKey)) {
             byte[] dstValueTmp = base.get(dstKey);
             byte[] baseValueTmp = dst.get(baseKey);
-            if (!Arrays.equals(baseValue, baseValueTmp)) {
+            if (!compareValue(baseKey, baseValue, baseValueTmp)) {
               spec.commandLine().getOut().format("%s\t%s\t%s.",
                   ByteArray.toHexString(baseKey),
                   ByteArray.toHexString(baseValue), ByteArray.toHexString(baseValueTmp)).println();
@@ -117,7 +120,7 @@ public class DbCompare implements Callable<Integer> {
                   ByteArray.toHexString(baseKey),
                   ByteArray.toHexString(baseValue), ByteArray.toHexString(baseValueTmp));
             }
-            if (!Arrays.equals(dstValueTmp, dstValue)) {
+            if (!compareValue(dstKey, dstValueTmp, dstValue)) {
               spec.commandLine().getOut().format("%s\t%s\t%s.",
                   ByteArray.toHexString(dstKey),
                   ByteArray.toHexString(dstValueTmp), ByteArray.toHexString(dstValue)).println();
@@ -132,7 +135,7 @@ public class DbCompare implements Callable<Integer> {
           byte[] key = baseIterator.getKey();
           byte[] baseValue = baseIterator.getValue();
           byte[] destValue = dst.get(key);
-          if (!Arrays.equals(baseValue, destValue)) {
+          if (!compareValue(key, baseValue, destValue)) {
             spec.commandLine().getOut().format("%s\t%s\t%s.",
                 ByteArray.toHexString(key),
                 ByteArray.toHexString(baseValue), ByteArray.toHexString(destValue)).println();
@@ -145,7 +148,7 @@ public class DbCompare implements Callable<Integer> {
           byte[] key = dstIterator.getKey();
           byte[] destValue = dstIterator.getValue();
           byte[] baseValue = base.get(key);
-          if (!Arrays.equals(baseValue, destValue)) {
+          if (!compareValue(key, baseValue, destValue)) {
             spec.commandLine().getOut().format("%s\t%s\t%s.",
                 ByteArray.toHexString(key),
                 ByteArray.toHexString(baseValue), ByteArray.toHexString(destValue)).println();
@@ -158,6 +161,24 @@ public class DbCompare implements Callable<Integer> {
       logger.info("compare {} end", this.name);
       spec.commandLine().getOut().println("compare " + this.name + " end");
       return true;
+    }
+
+    private boolean compareValue(byte[] key, byte[] base, byte[] exp) {
+      if ("account".equals(name)
+          || ("delegation".equals(name) && new String(key).endsWith(ACCOUNT_VOTE_SUFFIX))) {
+        Protocol.Account baseAccount = ByteArray.toAccount(base);
+        Protocol.Account expAccount = ByteArray.toAccount(exp);
+        // remove assetOptimized // TODO why?
+        if (baseAccount.getAssetOptimized() || expAccount.getAssetOptimized()) {
+          baseAccount = baseAccount.toBuilder().clearAsset().clearAssetV2()
+              .setAssetOptimized(true).build();
+          expAccount = expAccount.toBuilder().clearAsset().clearAssetV2()
+              .setAssetOptimized(true).build();
+        }
+        return baseAccount.equals(expAccount);
+      }  else {
+        return Arrays.equals(base, exp);
+      }
     }
   }
 }
