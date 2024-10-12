@@ -1,5 +1,6 @@
 package org.tron.plugins;
 
+import com.google.protobuf.ByteString;
 import java.io.File;
 import java.io.IOException;
 import java.math.BigInteger;
@@ -10,8 +11,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
-
-import com.google.protobuf.ByteString;
 import lombok.extern.slf4j.Slf4j;
 import me.tongfei.progressbar.ProgressBar;
 import org.rocksdb.RocksDB;
@@ -20,9 +19,8 @@ import org.tron.plugins.utils.Sha256Hash;
 import org.tron.plugins.utils.db.DBInterface;
 import org.tron.plugins.utils.db.DBIterator;
 import org.tron.plugins.utils.db.DbTool;
+import org.tron.protos.Protocol;
 import picocli.CommandLine;
-
-
 
 @Slf4j(topic = "checksum")
 @CommandLine.Command(name = "checksum",
@@ -49,13 +47,25 @@ public class DbCheckSum implements Callable<Integer> {
       "votes",
       "witness", "witness_schedule"
       );
-
+  private static final byte[] CURRENT_SHUFFLED_WITNESSES = "current_shuffled_witnesses".getBytes();
+  private static final String FORK_PREFIX = "FORK_VERSION_";
+  private static final String DONE_SUFFIX = "_DONE";
+  private static final List<String> ignoredProperties = Arrays.asList(
+      "VOTE_REWARD_RATE", "SINGLE_REPEAT", "NON_EXISTENT_ACCOUNT_TRANSFER_MIN",
+      "ALLOW_TVM_ASSET_ISSUE", "ALLOW_TVM_STAKE",
+      "MAX_VOTE_NUMBER", "MAX_FROZEN_NUMBER", "MAINTENANCE_TIME_INTERVAL",
+      "LATEST_SOLIDIFIED_BLOCK_NUM", "BLOCK_NET_USAGE",
+      "BLOCK_FILLED_SLOTS_INDEX", "BLOCK_FILLED_SLOTS_NUMBER");
 
   @CommandLine.Spec
   static CommandLine.Model.CommandSpec spec;
   @CommandLine.Parameters(index = "0", defaultValue = "output-directory/database",
       description = " Input path for db. Default: ${DEFAULT-VALUE}")
   private File src;
+
+  @CommandLine.Option(names = { "--db"},
+      description = "db name for show root")
+  private List<String> dbs;
 
 
   @CommandLine.Option(names = {"-h", "--help"})
@@ -89,6 +99,9 @@ public class DbCheckSum implements Callable<Integer> {
     List<Checksum> services = new ArrayList<>();
     files.forEach(f -> services.add(
         new DbChecksum(src.getPath(), f.getName())));
+    if (dbs != null) {
+      services.removeIf(s -> !dbs.contains(s.name()));
+    }
     List<String> ret = ProgressBar.wrap(services.stream(), "checksum task").parallel().map(
         Checksum::doChecksum).sorted().collect(Collectors.toList());
     long during = (System.currentTimeMillis() - time) / 1000;
@@ -144,7 +157,19 @@ public class DbCheckSum implements Callable<Integer> {
         logger.info("check database {} start", this.dbName);
         for (iterator.seekToFirst(); iterator.hasNext(); iterator.next()) {
           byte[] key = iterator.getKey();
+          if ("witness_schedule".equals(dbName) && Arrays.equals(key, CURRENT_SHUFFLED_WITNESSES)) {
+            continue;
+          }
+          if ("properties".equals(dbName) && (ignoredProperties.contains(new String(key)))
+              || new String(key).startsWith(FORK_PREFIX) || new String(key).endsWith(DONE_SUFFIX)) {
+            continue;
+          }
           byte[] value = iterator.getValue();
+          if ("witness".equals(dbName)) {
+            value = Protocol.Witness.parseFrom(value)
+                .toBuilder().clearTotalMissed()
+                .build().toByteArray(); // ignore totalMissed
+          }
           srcDbKeyCount = srcDbKeyCount.add(BigInteger.ONE);
           srcDbKeySum = checkSum(srcDbKeySum, key);
           srcDbValueSum = checkSum(srcDbValueSum, value);
