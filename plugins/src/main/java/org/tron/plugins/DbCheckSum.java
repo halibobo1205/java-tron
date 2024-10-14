@@ -8,7 +8,9 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.TreeMap;
 import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
@@ -35,17 +37,13 @@ public class DbCheckSum implements Callable<Integer> {
   }
 
   private static final List<String> stateDbs = Arrays.asList(
-      "account", "account-asset",
-      "asset-issue", "asset-issue-v2",
-      "code", "contract", "contract-state",
+      "account", "account-asset", "asset-issue-v2",
+      "code", "contract", "contract-state", "storage-row",
       "delegation", "DelegatedResource",
-      "exchange", "exchange-v2",
+      "exchange-v2",
       "market_account", "market_order", "market_pair_price_to_order", "market_pair_to_price",
-      "properties",
-      "proposal",
-      "storage-row",
-      "votes",
-      "witness", "witness_schedule"
+      "properties", "proposal",
+      "votes", "witness", "witness_schedule"
       );
   private static final byte[] CURRENT_SHUFFLED_WITNESSES = "current_shuffled_witnesses".getBytes();
   private static final String FORK_PREFIX = "FORK_VERSION_";
@@ -56,6 +54,7 @@ public class DbCheckSum implements Callable<Integer> {
       "MAX_VOTE_NUMBER", "MAX_FROZEN_NUMBER", "MAINTENANCE_TIME_INTERVAL",
       "LATEST_SOLIDIFIED_BLOCK_NUM", "BLOCK_NET_USAGE",
       "BLOCK_FILLED_SLOTS_INDEX", "BLOCK_FILLED_SLOTS_NUMBER");
+  private static final String ACCOUNT_VOTE_SUFFIX = "-account-vote";
 
   @CommandLine.Spec
   static CommandLine.Model.CommandSpec spec;
@@ -169,6 +168,20 @@ public class DbCheckSum implements Callable<Integer> {
             value = Protocol.Witness.parseFrom(value)
                 .toBuilder().clearTotalMissed()
                 .build().toByteArray(); // ignore totalMissed
+          }
+          if ("account".equals(dbName)
+              || ("delegation".equals(dbName) && new String(key).endsWith(ACCOUNT_VOTE_SUFFIX))) {
+            Protocol.Account account = Protocol.Account.parseFrom(value);
+            if (account.getAssetOptimized()) {
+              value = account.toBuilder().clearAsset().clearAssetV2().clearAssetOptimized()
+                  .build().toByteArray();
+            } else {
+              Map<String, Long> asset = new TreeMap<>(account.getAssetV2Map());
+              asset.entrySet().removeIf(entry -> entry.getValue() == 0);
+              value =  account.toBuilder().clearAsset().clearAssetV2().clearAssetOptimized()
+                  .putAllAssetV2(asset)
+                  .build().toByteArray();
+            }
           }
           srcDbKeyCount = srcDbKeyCount.add(BigInteger.ONE);
           srcDbKeySum = checkSum(srcDbKeySum, key);
