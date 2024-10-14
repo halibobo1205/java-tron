@@ -388,4 +388,12 @@ public class TronNetDelegate {
     return headNum - solidNum >= maxUnsolidifiedBlocks;
   }
 
+  public long getNextBlockSlotTime() {
+    long slotCount = 1;
+    if (chainBaseManager.getDynamicPropertiesStore().getStateFlag() == 1) {
+      slotCount += chainBaseManager.getDynamicPropertiesStore().getMaintenanceSkipSlots();
+    }
+    return chainBaseManager.getDynamicPropertiesStore().getLatestBlockHeaderTimestamp()
+        + slotCount * BLOCK_PRODUCED_INTERVAL;
+  }
 }
