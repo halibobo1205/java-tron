@@ -168,7 +168,6 @@ public class LevelDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
       Files.createDirectories(dbPath.getParent());
     }
     try {
-      dbOptions.bitsPerKey(10);
       database = factory.open(dbPath.toFile(), dbOptions);
       if (!this.getDBName().startsWith("checkpoint")) {
         logger
