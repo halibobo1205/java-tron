@@ -59,6 +59,7 @@ import org.tron.core.store.MarketPairToPriceStore;
 import org.tron.core.store.NullifierStore;
 import org.tron.core.store.ProposalStore;
 import org.tron.core.store.SectionBloomStore;
+import org.tron.core.store.StateRootStore;
 import org.tron.core.store.StorageRowStore;
 import org.tron.core.store.TransactionHistoryStore;
 import org.tron.core.store.TransactionRetStore;
@@ -234,6 +235,10 @@ public class ChainBaseManager {
   private SectionBloomStore sectionBloomStore;
 
   @Autowired
+  @Getter
+  private StateRootStore stateRootStore;
+
+  @Autowired
   private DbStatService dbStatService;
 
   @Getter
@@ -243,6 +248,10 @@ public class ChainBaseManager {
   @Getter
   @Setter
   private long lowestBlockNum = -1; // except num = 0.
+
+  @Getter
+  @Setter
+  private long latestSaveBlockTime;
 
   // for test only
   public List<ByteString> getWitnesses() {
@@ -381,6 +390,7 @@ public class ChainBaseManager {
     this.lowestBlockNum = this.blockIndexStore.getLimitNumber(1, 1).stream()
             .map(BlockId::getNum).findFirst().orElse(0L);
     this.nodeType = getLowestBlockNum() > 1 ? NodeType.LITE : NodeType.FULL;
+    this.latestSaveBlockTime = System.currentTimeMillis();
   }
 
   public void shutdown() {

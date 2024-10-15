@@ -5,9 +5,11 @@ import javax.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.tron.core.services.annotation.PbftServlet;
 import org.tron.core.services.http.ScanShieldedTRC20NotesByOvkServlet;
 import org.tron.core.services.interfaceOnPBFT.WalletOnPBFT;
 
+@PbftServlet("/scanshieldedtrc20notesbyovk")
 @Component
 @Slf4j(topic = "API")
 public class ScanShieldedTRC20NotesByOvkOnPBFTServlet extends ScanShieldedTRC20NotesByOvkServlet {

@@ -34,15 +34,13 @@ DB convert provides a helper which can convert LevelDB data to RocksDB data, par
 
 - `<src>`: Input path for leveldb, default: output-directory/database.
 - `<dest>`: Output path for rocksdb, default: output-directory-dst/database.
-- `--safe`: In safe mode, read data from leveldb then put into rocksdb, it's a very time-consuming procedure. If not, just change engine.properties from leveldb to rocksdb, rocksdb
-  is compatible with leveldb for the current version. This may not be the case in the future, default: false.
 - `-h | --help`: Provide the help info.
 
 ### Examples:
 
 ```shell script
 # full command
-  java -jar Toolkit.jar db convert [-h] [--safe] <src> <dest>
+  java -jar Toolkit.jar db convert [-h] <src> <dest>
 # examples
   java -jar Toolkit.jar db convert  output-directory/database /tmp/database
 ```
@@ -76,7 +74,7 @@ DB lite provides lite database, parameters are compatible with previous `LiteFul
 - `-t | --type`: Only used with operate=split: [snapshot,history], default: snapshot.
 - `-fn | --fn-data-path`: The database path to be split or merged.
 - `-ds | --dataset-path`: When operation is `split`,`dataset-path` is the path that store the `snapshot` or `history`, when
-  operation is `split`, `dataset-path` is the `history` data path.
+  operation is `merge`, `dataset-path` is the `history` data path.
 - `-h | --help`: Provide the help info.
 
 ### Examples:

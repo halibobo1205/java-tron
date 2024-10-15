@@ -139,7 +139,8 @@ public class WalletTest extends BaseTest {
   private static boolean init;
 
   static {
-    Args.setParam(new String[]{"-d", dbPath()}, Constant.TEST_CONF);
+    Args.setParam(new String[]{"-d", dbPath(), "--storage-transactionHistory-switch", "on"},
+        Constant.TEST_CONF);
     OWNER_ADDRESS = Wallet.getAddressPreFixString() + "548794500882809695a8a687866e76d4271a1abc";
     RECEIVER_ADDRESS = Wallet.getAddressPreFixString() + "abd4b9367799eaa3197fecb144eb71de1e049150";
   }

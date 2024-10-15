@@ -48,4 +48,9 @@ public class LevelDBImpl implements DBInterface {
   public void close() throws IOException {
     leveldb.close();
   }
+
+  @Override
+  public void compactRange() {
+    leveldb.compactRange(null, null);
+  }
 }

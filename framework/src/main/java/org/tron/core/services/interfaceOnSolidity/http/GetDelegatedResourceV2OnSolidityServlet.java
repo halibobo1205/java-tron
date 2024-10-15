@@ -6,9 +6,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.tron.core.Wallet;
+import org.tron.core.services.annotation.SolidityServlet;
 import org.tron.core.services.http.GetDelegatedResourceV2Servlet;
 import org.tron.core.services.interfaceOnSolidity.WalletOnSolidity;
 
+@SolidityServlet("/walletsolidity/getdelegatedresourcev2")
 @Component
 @Slf4j(topic = "API")
 public class GetDelegatedResourceV2OnSolidityServlet extends GetDelegatedResourceV2Servlet {

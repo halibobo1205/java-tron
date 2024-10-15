@@ -5,9 +5,11 @@ import javax.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.tron.core.services.annotation.SolidityServlet;
 import org.tron.core.services.http.GetEnergyPricesServlet;
 import org.tron.core.services.interfaceOnSolidity.WalletOnSolidity;
 
+@SolidityServlet("/walletsolidity/getenergyprices")
 @Component
 @Slf4j(topic = "API")
 public class GetEnergyPricesOnSolidityServlet extends GetEnergyPricesServlet {

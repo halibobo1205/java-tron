@@ -49,6 +49,7 @@ import org.springframework.stereotype.Component;
 import org.tron.api.GrpcAPI.TransactionInfoList;
 import org.tron.common.args.GenesisBlock;
 import org.tron.common.bloom.Bloom;
+import org.tron.common.context.GlobalContext;
 import org.tron.common.es.ExecutorServiceManager;
 import org.tron.common.logsfilter.EventPluginLoader;
 import org.tron.common.logsfilter.FilterQuery;
@@ -1016,8 +1017,20 @@ public class Manager {
       NonCommonBlockException, BadNumberBlockException, BadBlockException, ZksnarkException,
       EventBloomException {
     block.generatedByMyself = true;
-    long start = System.currentTimeMillis();
-    pushBlock(block);
+    final long start = System.currentTimeMillis();
+    Sha256Hash stateRoot = block.getStateRoot();
+    if (!CommonParameter.getInstance().isCheckRootHashDisable()
+        && !Objects.equals(Sha256Hash.ZERO_HASH, stateRoot)) {
+      GlobalContext.putBlockHash(block.getNum(), stateRoot);
+    }
+    // clear stateRoot for block
+    block.clearStateRoot();
+    try {
+      GlobalContext.setHeader(block.getNum());
+      pushBlock(block);
+    } finally {
+      GlobalContext.removeHeader();
+    }
     logger.info("Push block cost: {} ms, blockNum: {}, blockHash: {}, trx count: {}.",
         System.currentTimeMillis() - start,
         block.getNum(),
@@ -1391,6 +1404,7 @@ public class Manager {
         (chainBaseManager.getDynamicPropertiesStore().getLatestBlockHeaderNumber()
             - chainBaseManager.getDynamicPropertiesStore().getLatestSolidifiedBlockNum()
             + 1));
+    chainBaseManager.setLatestSaveBlockTime(System.currentTimeMillis());
     Metrics.gaugeSet(MetricKeys.Gauge.HEADER_HEIGHT, block.getNum());
     Metrics.gaugeSet(MetricKeys.Gauge.HEADER_TIME, block.getTimeStamp());
   }
@@ -1451,16 +1465,17 @@ public class Manager {
       chainBaseManager.getBalanceTraceStore().initCurrentTransactionBalanceTrace(trxCap);
       trxCap.setInBlock(true);
     }
+    if (Objects.isNull(blockCap) || !blockCap.generatedByMyself) {
+      validateTapos(trxCap);
+      validateCommon(trxCap);
 
-    validateTapos(trxCap);
-    validateCommon(trxCap);
+      validateDup(trxCap);
 
-    validateDup(trxCap);
-
-    if (!trxCap.validateSignature(chainBaseManager.getAccountStore(),
-        chainBaseManager.getDynamicPropertiesStore())) {
-      throw new ValidateSignatureException(
-          String.format(" %s transaction signature validate failed", txId));
+      if (!trxCap.validateSignature(chainBaseManager.getAccountStore(),
+          chainBaseManager.getDynamicPropertiesStore())) {
+        throw new ValidateSignatureException(
+            String.format(" %s transaction signature validate failed", txId));
+      }
     }
 
     TransactionTrace trace = new TransactionTrace(trxCap, StoreFactory.getInstance(),
@@ -1575,6 +1590,7 @@ public class Manager {
     List<TransactionCapsule> toBePacked = new ArrayList<>();
     long currentSize = blockCapsule.getInstance().getSerializedSize();
     boolean isSort = Args.getInstance().isOpenTransactionSort();
+    int[] logSize = new int[] {pendingTransactions.size(), rePushTransactions.size(), 0, 0};
     while (pendingTransactions.size() > 0 || rePushTransactions.size() > 0) {
       boolean fromPending = false;
       TransactionCapsule trx;
@@ -1650,6 +1666,11 @@ public class Manager {
         tmpSession.merge();
         toBePacked.add(trx);
         currentSize += trxPackSize;
+        if (fromPending) {
+          logSize[2] += 1;
+        } else {
+          logSize[3] += 1;
+        }
       } catch (Exception e) {
         logger.warn("Process trx {} failed when generating block {}, {}.", trx.getTransactionId(),
             blockCapsule.getNum(), e.getMessage());
@@ -1666,11 +1687,14 @@ public class Manager {
     BlockCapsule capsule = new BlockCapsule(blockCapsule.getInstance());
     capsule.generatedByMyself = true;
     Metrics.histogramObserve(timer);
-    logger.info("Generate block {} success, trxs:{}, pendingCount: {}, rePushCount: {},"
-                    + " postponedCount: {}, blockSize: {} B",
-            capsule.getNum(), capsule.getTransactions().size(),
-            pendingTransactions.size(), rePushTransactions.size(), postponedTrxCount,
-            capsule.getSerializedSize());
+    logger.info("Generate block {} success, trxs:{}, before pendingCount: {}, rePushCount: {}, "
+            + "from pending: {}, rePush: {}, after pendingCount: {}, rePushCount: {}, "
+            + "postponedCount: {}, blockSize: {} B",
+        capsule.getNum(), capsule.getTransactions().size(),
+        logSize[0], logSize[1], logSize[2], logSize[3],
+        pendingTransactions.size(), rePushTransactions.size(), postponedTrxCount,
+        capsule.getSerializedSize());
+
     return capsule;
   }
 

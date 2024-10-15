@@ -50,7 +50,7 @@ public class FilterQueryTest {
     ((LogEventWrapper) event).setData(new byte[]{});
     ((LogEventWrapper) event).setEventSignature("");
     ((LogEventWrapper) event).setAbiEntry(Entry.newBuilder().setName("testABI").build());
-    event.setBlockNumber(new Long(123));
+    event.setBlockNumber(123L);
     ContractEventTriggerCapsule capsule = new ContractEventTriggerCapsule(event);
     capsule.getContractEventTrigger().setContractAddress("address1");
     capsule.getContractEventTrigger().setTopicMap(topMap);

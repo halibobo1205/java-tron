@@ -48,6 +48,7 @@ import org.tron.common.args.Account;
 import org.tron.common.args.GenesisBlock;
 import org.tron.common.args.Witness;
 import org.tron.common.config.DbBackupConfig;
+import org.tron.common.context.GlobalContext;
 import org.tron.common.crypto.SignInterface;
 import org.tron.common.logsfilter.EventPluginConfig;
 import org.tron.common.logsfilter.FilterQuery;
@@ -166,6 +167,8 @@ public class Args extends CommonParameter {
     PARAMETER.tcpNettyWorkThreadNum = 0;
     PARAMETER.udpNettyWorkThreadNum = 0;
     PARAMETER.solidityNode = false;
+    PARAMETER.keystore = false;
+    PARAMETER.dbConvert = false;
     PARAMETER.trustNodeAddr = "";
     PARAMETER.walletExtensionApi = false;
     PARAMETER.estimateEnergy = false;
@@ -173,6 +176,7 @@ public class Args extends CommonParameter {
     PARAMETER.receiveTcpMinDataLength = 2048;
     PARAMETER.isOpenFullTcpDisconnect = false;
     PARAMETER.nodeDetectEnable = false;
+    PARAMETER.inactiveThreshold = 600;
     PARAMETER.supportConstant = false;
     PARAMETER.debug = false;
     PARAMETER.minTimeRatio = 0.0;
@@ -189,8 +193,12 @@ public class Args extends CommonParameter {
     PARAMETER.validContractProtoThreadNum = 1;
     PARAMETER.shieldedTransInPendingMaxCounts = 10;
     PARAMETER.changedDelegation = 0;
+    PARAMETER.rpcEnable = true;
+    PARAMETER.rpcSolidityEnable = true;
+    PARAMETER.rpcPBFTEnable = true;
     PARAMETER.fullNodeHttpEnable = true;
     PARAMETER.solidityNodeHttpEnable = true;
+    PARAMETER.pBFTHttpEnable = true;
     PARAMETER.jsonRpcHttpFullNodeEnable = false;
     PARAMETER.jsonRpcHttpSolidityNodeEnable = false;
     PARAMETER.jsonRpcHttpPBFTNodeEnable = false;
@@ -233,6 +241,7 @@ public class Args extends CommonParameter {
     PARAMETER.maxUnsolidifiedBlocks = 54;
     PARAMETER.allowOldRewardOpt = 0;
     PARAMETER.allowEnergyAdjustment = 0;
+    GlobalContext.clear();
   }
 
   /**
@@ -251,14 +260,15 @@ public class Args extends CommonParameter {
     } catch (IOException e) {
       logger.error(e.getMessage());
     }
-    JCommander.getConsole().println("OS : " + System.getProperty("os.name"));
-    JCommander.getConsole().println("JVM : " + System.getProperty("java.vendor") + " "
+    JCommander jCommander = JCommander.newBuilder().build();
+    jCommander.getConsole().println("OS : " + System.getProperty("os.name"));
+    jCommander.getConsole().println("JVM : " + System.getProperty("java.vendor") + " "
         + System.getProperty("java.version") + " " + System.getProperty("os.arch"));
     if (!noGitProperties) {
-      JCommander.getConsole().println("Git : " + properties.getProperty("git.commit.id"));
+      jCommander.getConsole().println("Git : " + properties.getProperty("git.commit.id"));
     }
-    JCommander.getConsole().println("Version : " + Version.getVersion());
-    JCommander.getConsole().println("Code : " + Version.VERSION_CODE);
+    jCommander.getConsole().println("Version : " + Version.getVersion());
+    jCommander.getConsole().println("Code : " + Version.VERSION_CODE);
   }
 
   public static void printHelp(JCommander jCommander) {
@@ -302,7 +312,7 @@ public class Args extends CommonParameter {
         helpStr.append(tmpOptionDesc);
       }
     }
-    JCommander.getConsole().println(helpStr.toString());
+    jCommander.getConsole().println(helpStr.toString());
   }
 
   public static String upperFirst(String name) {
@@ -354,13 +364,20 @@ public class Args extends CommonParameter {
    * set parameters.
    */
   public static void setParam(final String[] args, final String confFileName) {
+    Config config = Configuration.getByFileName(PARAMETER.shellConfFileName, confFileName);
+    setParam(args, config);
+  }
+
+  /**
+   * set parameters.
+   */
+  public static void setParam(final String[] args, final Config config) {
+
     JCommander.newBuilder().addObject(PARAMETER).build().parse(args);
     if (PARAMETER.version) {
       printVersion();
       exit(0);
     }
-
-    Config config = Configuration.getByFileName(PARAMETER.shellConfFileName, confFileName);
 
     if (config.hasPath(Constant.NET_TYPE)
         && Constant.TESTNET.equalsIgnoreCase(config.getString(Constant.NET_TYPE))) {
@@ -448,12 +465,28 @@ public class Args extends CommonParameter {
       PARAMETER.lruCacheSize = config.getInt(Constant.VM_LRU_CACHE_SIZE);
     }
 
+    if (config.hasPath(Constant.NODE_RPC_ENABLE)) {
+      PARAMETER.rpcEnable = config.getBoolean(Constant.NODE_RPC_ENABLE);
+    }
+
+    if (config.hasPath(Constant.NODE_RPC_SOLIDITY_ENABLE)) {
+      PARAMETER.rpcSolidityEnable = config.getBoolean(Constant.NODE_RPC_SOLIDITY_ENABLE);
+    }
+
+    if (config.hasPath(Constant.NODE_RPC_PBFT_ENABLE)) {
+      PARAMETER.rpcPBFTEnable = config.getBoolean(Constant.NODE_RPC_PBFT_ENABLE);
+    }
+
     if (config.hasPath(Constant.NODE_HTTP_FULLNODE_ENABLE)) {
       PARAMETER.fullNodeHttpEnable = config.getBoolean(Constant.NODE_HTTP_FULLNODE_ENABLE);
     }
 
     if (config.hasPath(Constant.NODE_HTTP_SOLIDITY_ENABLE)) {
       PARAMETER.solidityNodeHttpEnable = config.getBoolean(Constant.NODE_HTTP_SOLIDITY_ENABLE);
+    }
+
+    if (config.hasPath(Constant.NODE_HTTP_PBFT_ENABLE)) {
+      PARAMETER.pBFTHttpEnable = config.getBoolean(Constant.NODE_HTTP_PBFT_ENABLE);
     }
 
     if (config.hasPath(Constant.NODE_JSONRPC_HTTP_FULLNODE_ENABLE)) {
@@ -844,6 +877,12 @@ public class Args extends CommonParameter {
 
     PARAMETER.nodeDetectEnable = config.hasPath(Constant.NODE_DETECT_ENABLE)
           && config.getBoolean(Constant.NODE_DETECT_ENABLE);
+
+    PARAMETER.inactiveThreshold = config.hasPath(Constant.NODE_INACTIVE_THRESHOLD)
+        ? config.getInt(Constant.NODE_INACTIVE_THRESHOLD) : 600;
+    if (PARAMETER.inactiveThreshold < 1) {
+      PARAMETER.inactiveThreshold = 1;
+    }
 
     PARAMETER.maxTransactionPendingSize = config.hasPath(Constant.NODE_MAX_TRANSACTION_PENDING_SIZE)
         ? config.getInt(Constant.NODE_MAX_TRANSACTION_PENDING_SIZE) : 2000;

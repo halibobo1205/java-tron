@@ -1,11 +1,9 @@
 package org.tron.core.db2;
 
 import com.google.common.collect.Maps;
-import com.google.common.primitives.Bytes;
 import com.google.common.primitives.Longs;
 import com.google.protobuf.ByteString;
-import java.io.File;
-import java.util.Iterator;
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -13,11 +11,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
-import org.tron.common.application.Application;
-import org.tron.common.application.ApplicationFactory;
+import org.junit.rules.TemporaryFolder;
+import org.junit.rules.TestName;
 import org.tron.common.application.TronApplicationContext;
-import org.tron.common.utils.FileUtil;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.Constant;
 import org.tron.core.capsule.BlockCapsule;
@@ -27,47 +25,44 @@ import org.tron.core.db2.RevokingDbWithCacheNewValueTest.TestRevokingTronStore;
 import org.tron.core.db2.SnapshotRootTest.ProtoCapsuleTest;
 import org.tron.core.db2.core.Chainbase;
 import org.tron.core.db2.core.SnapshotManager;
-import org.tron.core.exception.BadItemException;
-import org.tron.core.exception.ItemNotFoundException;
 
 @Slf4j
 public class SnapshotManagerTest {
 
   private SnapshotManager revokingDatabase;
   private TronApplicationContext context;
-  private Application appT;
   private TestRevokingTronStore tronDatabase;
 
+  @Rule
+  public  final TemporaryFolder temporaryFolder = new TemporaryFolder();
+  @Rule
+  public TestName name = new TestName();
+
   @Before
-  public void init() {
-    Args.setParam(new String[]{"-d", "output_SnapshotManager_test"},
+  public void init() throws IOException {
+    Args.setParam(new String[]{"-d", temporaryFolder.newFolder().toString()},
         Constant.TEST_CONF);
     context = new TronApplicationContext(DefaultConfig.class);
-    appT = ApplicationFactory.create(context);
     revokingDatabase = context.getBean(SnapshotManager.class);
     revokingDatabase.enable();
-    tronDatabase = new TestRevokingTronStore("testSnapshotManager-test");
-    revokingDatabase.add(tronDatabase.getRevokingDB());
   }
 
   @After
   public void removeDb() {
+    tronDatabase.close();
     Args.clearParam();
-    context.destroy();
-    tronDatabase.close();
-    FileUtil.deleteDir(new File("output_SnapshotManager_test"));
-    revokingDatabase.getCheckTmpStore().close();
-    tronDatabase.close();
+    context.close();
   }
 
   @Test
-  public synchronized void testRefresh()
-      throws BadItemException, ItemNotFoundException {
+  public synchronized void testRefresh() {
+    tronDatabase = new TestRevokingTronStore(name.getMethodName());
+    revokingDatabase.add(tronDatabase.getRevokingDB());
     while (revokingDatabase.size() != 0) {
       revokingDatabase.pop();
     }
 
-    revokingDatabase.setMaxFlushCount(0);
+    revokingDatabase.setMaxFlushCount(1);
     revokingDatabase.setUnChecked(false);
     revokingDatabase.setMaxSize(5);
     List<Chainbase> dbList = revokingDatabase.getDbs();
@@ -75,6 +70,7 @@ public class SnapshotManagerTest {
         .map(db -> Maps.immutableEntry(db.getDbName(), db))
         .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
     ProtoCapsuleTest protoCapsule = new ProtoCapsuleTest("refresh".getBytes());
+    dbMap.get("properties").put("latest_block_header_number".getBytes(), Longs.toByteArray(0));
     for (int i = 1; i < 11; i++) {
       ProtoCapsuleTest testProtoCapsule = new ProtoCapsuleTest(("refresh" + i).getBytes());
       try (ISession tmpSession = revokingDatabase.buildSession()) {
@@ -82,6 +78,7 @@ public class SnapshotManagerTest {
         BlockCapsule blockCapsule = new BlockCapsule(i, Sha256Hash.ZERO_HASH,
             System.currentTimeMillis(), ByteString.EMPTY);
         dbMap.get("block").put(Longs.toByteArray(i), blockCapsule.getData());
+        dbMap.get("properties").put("latest_block_header_number".getBytes(), Longs.toByteArray(i));
         tmpSession.commit();
       }
     }
@@ -93,6 +90,8 @@ public class SnapshotManagerTest {
 
   @Test
   public synchronized void testClose() {
+    tronDatabase = new TestRevokingTronStore(name.getMethodName());
+    revokingDatabase.add(tronDatabase.getRevokingDB());
     while (revokingDatabase.size() != 0) {
       revokingDatabase.pop();
     }
@@ -107,8 +106,7 @@ public class SnapshotManagerTest {
         tronDatabase.put(protoCapsule.getData(), testProtoCapsule);
       }
     }
-    Assert.assertEquals(null,
-        tronDatabase.get(protoCapsule.getData()));
+    Assert.assertNull(tronDatabase.get(protoCapsule.getData()));
 
   }
 }

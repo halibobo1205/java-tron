@@ -88,13 +88,6 @@ public class DBConvert implements Callable<Boolean> {
     return dbOptions;
   }
 
-  public static void main(String[] args) {
-    int code = run(args);
-    logger.info("exit code {}.", code);
-    System.out.printf("exit code %d.\n", code);
-    System.exit(code);
-  }
-
   public static int run(String[] args) {
     String dbSrc;
     String dbDst;

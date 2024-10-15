@@ -9,9 +9,11 @@ import org.springframework.stereotype.Component;
 import org.tron.api.GrpcAPI.AssetIssueList;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.Wallet;
+import org.tron.core.services.annotation.FullServlet;
 import org.tron.protos.Protocol.Account;
 
 
+@FullServlet("/wallet/getassetissuebyaccount")
 @Component
 @Slf4j(topic = "API")
 public class GetAssetIssueByAccountServlet extends RateLimiterServlet {

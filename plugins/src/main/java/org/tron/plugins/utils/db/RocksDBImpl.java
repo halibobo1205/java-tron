@@ -66,4 +66,13 @@ public class RocksDBImpl implements DBInterface {
   public void close() throws IOException {
     rocksDB.close();
   }
+
+  @Override
+  public void compactRange() throws IOException {
+    try {
+      rocksDB.compactRange();
+    } catch (RocksDBException e) {
+      throw new IOException(e);
+    }
+  }
 }

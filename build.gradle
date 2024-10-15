@@ -3,15 +3,22 @@ allprojects {
     apply plugin: "java-library"
 }
 
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(8)
+        vendor = JvmVendorSpec.ADOPTIUM
+    }
+}
+
 subprojects {
     apply plugin: "jacoco"
     apply plugin: "maven-publish"
 
-    sourceCompatibility = JavaVersion.VERSION_1_8
-    targetCompatibility = JavaVersion.VERSION_1_8
-
     [compileJava, compileTestJava]*.options*.encoding = 'UTF-8'
 
+    jacoco {
+        toolVersion = "0.8.10"
+    }
     buildscript {
         repositories {
             mavenCentral()
@@ -37,46 +44,59 @@ subprojects {
         implementation group: 'org.slf4j', name: 'slf4j-api', version: '1.7.25'
         implementation group: 'org.slf4j', name: 'jcl-over-slf4j', version: '1.7.25'
         implementation group: 'ch.qos.logback', name: 'logback-classic', version: '1.2.9'
-        implementation group: 'com.google.guava', name: 'guava', version: '30.1-jre'
-        implementation "com.google.code.findbugs:jsr305:3.0.0"
-        implementation group: 'org.springframework', name: 'spring-context', version: '5.3.18'
-        implementation group: 'org.springframework', name: 'spring-tx', version: '5.3.18'
+        implementation "com.google.code.findbugs:jsr305:3.0.2"
+        implementation group: 'org.springframework', name: 'spring-context', version: '5.3.37'
+        implementation group: 'org.springframework', name: 'spring-tx', version: '5.3.37'
         implementation "org.apache.commons:commons-lang3:3.4"
         implementation group: 'org.apache.commons', name: 'commons-math', version: '2.2'
         implementation "org.apache.commons:commons-collections4:4.1"
         implementation group: 'joda-time', name: 'joda-time', version: '2.3'
         implementation group: 'org.bouncycastle', name: 'bcprov-jdk15on', version: '1.69'
 
-        compileOnly 'org.projectlombok:lombok:1.18.12'
-        annotationProcessor 'org.projectlombok:lombok:1.18.12'
-        testCompileOnly 'org.projectlombok:lombok:1.18.12'
-        testAnnotationProcessor 'org.projectlombok:lombok:1.18.12'
+        compileOnly 'org.projectlombok:lombok:1.18.34'
+        annotationProcessor 'org.projectlombok:lombok:1.18.34'
+        testCompileOnly 'org.projectlombok:lombok:1.18.34'
+        testAnnotationProcessor 'org.projectlombok:lombok:1.18.34'
+
+        // https://www.oracle.com/java/technologies/javase/11-relnote-issues.html#JDK-8190378
+        implementation group: 'javax.xml.bind', name: 'jaxb-api', version: '2.3.1'
+        implementation group: 'javax.annotation', name: 'javax.annotation-api', version: '1.3.2'
+        implementation group: 'javax.jws', name: 'javax.jws-api', version: '1.1'
+        implementation group: 'javax.activation', name: 'activation', version: '1.1.1'
+        implementation group: 'javax.resource', name: 'javax.resource-api', version: '1.7.1'
+        implementation group: 'javax.validation', name: 'validation-api', version: '2.0.1.Final'
+        implementation group: 'javax.ws.rs', name: 'javax.ws.rs-api', version: '2.1.1'
+        implementation group: 'javax.ejb', name: 'ejb-api', version: '3.0'
+        implementation group: 'javax.enterprise.concurrent', name: 'javax.enterprise.concurrent-api', version: '1.1'
+        implementation group: 'javax.money', name: 'money-api', version: '1.1'
+        implementation group: 'javax.enterprise', name: 'cdi-api', version: '1.2'
+        implementation group: 'javax.portlet', name: 'portlet-api', version: '3.0.1'
+        implementation group: 'javax.xml.ws', name: 'jaxws-api', version: '2.3.1'
+        implementation group: 'javax.xml.rpc', name: 'javax.xml.rpc-api', version: '1.1.2'
+        annotationProcessor group: 'javax.xml.bind', name: 'jaxb-api', version: '2.3.1'
+        annotationProcessor group: 'javax.annotation', name: 'javax.annotation-api', version: '1.3.2'
+
 
         testImplementation group: 'junit', name: 'junit', version: '4.13.2'
         testImplementation "org.mockito:mockito-core:2.13.0"
     }
 
-    task sourcesJar(type: Jar, dependsOn: classes) {
+    tasks.register('sourcesJar', Jar) {
+        dependsOn classes
         classifier = "sources"
         from sourceSets.main.allSource
         duplicatesStrategy = DuplicatesStrategy.INCLUDE // allow duplicates
     }
 
 
-    tasks.withType(AbstractArchiveTask) {
+    tasks.withType(AbstractArchiveTask).configureEach {
         preserveFileTimestamps = false
         reproducibleFileOrder = true
         duplicatesStrategy = DuplicatesStrategy.INCLUDE // allow duplicates
     }
-
-    configurations.all {
-        resolutionStrategy {
-            force group: 'com.google.guava', name: 'guava', version: '30.1-jre'
-        }
-    }
 }
 
-task copyToParent(type: Copy) {
+tasks.register('copyToParent', Copy) {
     into "$buildDir/libs"
     subprojects {
         from tasks.withType(Jar)

@@ -5,15 +5,6 @@
   <!-- Be sure to flush latest logs on exit -->
   <shutdownHook class="ch.qos.logback.core.hook.DelayingShutdownHook"/>
 
-  <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
-    <encoder>
-      <pattern>%d{HH:mm:ss.SSS} %-5level [%t] [%c{1}]\(%F:%L\) %m%n</pattern>
-    </encoder>
-    <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
-      <level>INFO</level>
-    </filter>
-  </appender>
-
   <appender class="ch.qos.logback.core.rolling.RollingFileAppender"
     name="FILE">
     <file>./logs/toolkit.log</file>

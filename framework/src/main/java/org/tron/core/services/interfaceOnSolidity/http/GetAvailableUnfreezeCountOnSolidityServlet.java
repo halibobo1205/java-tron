@@ -6,9 +6,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.tron.core.Wallet;
+import org.tron.core.services.annotation.SolidityServlet;
 import org.tron.core.services.http.GetAvailableUnfreezeCountServlet;
 import org.tron.core.services.interfaceOnSolidity.WalletOnSolidity;
 
+@SolidityServlet("/walletsolidity/getavailableunfreezecount")
 @Component
 @Slf4j(topic = "API")
 public class GetAvailableUnfreezeCountOnSolidityServlet extends GetAvailableUnfreezeCountServlet {
