@@ -135,5 +135,15 @@ public class ExchangeProcessorTest extends BaseTest {
 
   }
 
+  @Test
+  public void testStrictMath() {
+    long supply = 1_000_000_000_000_000_000L;
+    ExchangeProcessor processor = new ExchangeProcessor(supply);
+    long anotherTokenQuant = processor.exchange(4732214, 2202692725330L, 29218);
+    chainBaseManager.getDynamicPropertiesStore().saveAllowStrictMath(1);
+    long result = processor.exchange(4732214, 2202692725330L, 29218);
+    Assert.assertNotEquals(anotherTokenQuant, result);
+  }
+
 
 }
