@@ -8,6 +8,7 @@ gitProperties.failOnNoGitDirectory = false;
 
 apply plugin: 'application'
 apply plugin: 'checkstyle'
+apply plugin: 'com.github.johnrengelman.shadow'
 
 mainClassName = 'org.tron.program.FullNode'
 
@@ -150,32 +151,6 @@ jacocoTestReport {
     getExecutionData().setFrom(fileTree('../framework/build/jacoco').include("**.exec"))
 }
 
-def binaryRelease(taskName, jarName, mainClass) {
-    return tasks.create("${taskName}", Jar) {
-        baseName = jarName
-        version = null
-        from(sourceSets.main.output) {
-            include "/**"
-        }
-
-        from {
-            configurations.runtimeClasspath.collect {
-                it.isDirectory() ? it : zipTree(it)
-            }
-        }
-
-        // exclude these files for bouncycastle
-        exclude "META-INF/*.SF"
-        exclude "META-INF/*.DSA"
-        exclude "META-INF/*.RSA"
-
-        manifest {
-            attributes "Main-Class": "${mainClass}"
-        }
-
-//        classifier(jarName)
-    }
-}
 
 def createScript(project, mainClass, name) {
     project.tasks.create(name: name, type: CreateStartScripts) {
@@ -217,35 +192,24 @@ startScripts.enabled = false
 run.enabled = false
 tasks.distTar.enabled = false
 
-createScript(project, 'org.tron.program.SolidityNode', 'SolidityNode')
 createScript(project, 'org.tron.program.FullNode', 'FullNode')
-createScript(project, 'org.tron.program.KeystoreFactory', 'KeystoreFactory')
-createScript(project, 'org.tron.program.DBConvert', 'DBConvert')
 
-def releaseBinary = hasProperty('binaryRelease') ? getProperty('binaryRelease') : 'true'
-def skipSolidity = hasProperty('skipSolidity') ? true : false
-def skipKeystore = hasProperty('skipKeystore') ? true : false
-def skipConvert = hasProperty('skipConvert') ? true : false
-def skipAll = hasProperty('skipAll') ? true : false
-if (releaseBinary == 'true') {
-    artifacts {
-        archives(binaryRelease('buildFullNodeJar', 'FullNode', 'org.tron.program.FullNode'))
-    }
-    if (!skipAll) {
-        if (!skipSolidity) {
-            artifacts {
-                archives(binaryRelease('buildSolidityNodeJar', 'SolidityNode', 'org.tron.program.SolidityNode'))}
-        }
-        if (!skipKeystore) {
-            artifacts {
-                archives(binaryRelease('buildKeystoreFactoryJar', 'KeystoreFactory', 'org.tron.program.KeystoreFactory'))}
-        }
-        if (!skipConvert) {
-            artifacts {
-                archives(binaryRelease('buildDBConvertJar', 'DBConvert', 'org.tron.program.DBConvert'))}
-        }
-    }
+shadowJar {
+    baseName = 'FullNode'
+    classifier = null
+    version = null
+    // exclude these files for bouncycastle
+    exclude "META-INF/*.SF"
+    exclude "META-INF/*.DSA"
+    exclude "META-INF/*.RSA"
+    mergeServiceFiles() //  https://github.com/grpc/grpc-java/issues/10853
+}
+shadowDistZip {
+    enabled = false
+}
 
+startShadowScripts {
+    enabled = false
 }
 
 task copyToParent(type: Copy) {

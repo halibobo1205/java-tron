@@ -4,6 +4,7 @@ plugins {
 
 apply plugin: 'application'
 apply plugin: 'checkstyle'
+apply plugin: 'com.github.johnrengelman.shadow'
 
 jacoco {
     toolVersion = "0.8.4"
@@ -11,7 +12,7 @@ jacoco {
 def versions = [
         checkstyle: '8.7',
 ]
-mainClassName = 'org.tron.plugins.ArchiveManifest'
+mainClassName = 'org.tron.plugins.Toolkit'
 group 'org.tron'
 version '1.0.0'
 
@@ -133,23 +134,24 @@ def createScript(project, mainClass, name) {
 applicationDistribution.from("../gradle/java-tron.vmoptions") {
     into "bin"
 }
-createScript(project, 'org.tron.plugins.ArchiveManifest', 'ArchiveManifest')
 createScript(project, 'org.tron.plugins.Toolkit', 'Toolkit')
 
-def releaseBinary = hasProperty('binaryRelease') ? getProperty('binaryRelease') : 'true'
-def skipArchive = hasProperty('skipArchive') ? true : false
-def skipAll = hasProperty('skipAll') ? true : false
-if (releaseBinary == 'true') {
-    artifacts {
-        archives(binaryRelease('buildToolkitJar', 'Toolkit', 'org.tron.plugins.Toolkit'))
-    }
-    if (!skipAll) {
-        if (!skipArchive) {
-            artifacts {
-                archives(binaryRelease('buildArchiveManifestJar', 'ArchiveManifest', 'org.tron.plugins.ArchiveManifest'))
-            }
-        }
-    }
+shadowJar {
+    baseName = 'Toolkit'
+    classifier = null
+    version = null
+    // exclude these files for bouncycastle
+    exclude "META-INF/*.SF"
+    exclude "META-INF/*.DSA"
+    exclude "META-INF/*.RSA"
+    mergeServiceFiles() //  https://github.com/grpc/grpc-java/issues/10853
+}
+shadowDistZip {
+    enabled = false
+}
+
+startShadowScripts {
+    enabled = false
 }
 
 task copyToParent(type: Copy) {

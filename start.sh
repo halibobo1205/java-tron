@@ -377,12 +377,12 @@ rebuildManifest() {
     return
   fi
 
-  ARCHIVE_JAR='ArchiveManifest.jar'
+  ARCHIVE_JAR='Toolkit.jar'
   if [[ -f $ARCHIVE_JAR ]]; then
     echo 'info: execute rebuild manifest.'
     $JAVACMD -jar $ARCHIVE_JAR -d $REBUILD_DIR -m $REBUILD_MANIFEST_SIZE -b $REBUILD_BATCH_SIZE
   else
-    echo 'info: download the rebuild manifest plugin from the github'
+    echo 'info: download Toolkit from the github'
     local latest=$(`echo getLatestReleaseVersion`)
     download $RELEASE_URL/download/GreatVoyage-v"$latest"/$ARCHIVE_JAR $ARCHIVE_JAR
     if [[ $download == 0 ]]; then
