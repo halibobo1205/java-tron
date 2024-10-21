@@ -56,9 +56,8 @@ public class SolidityNode {
   /**
    * Start the SolidityNode.
    */
-  public static void main(String[] args) {
+  public static void run() {
     logger.info("Solidity node is running.");
-    Args.setParam(args, Constant.TESTNET_CONF);
     CommonParameter parameter = CommonParameter.getInstance();
 
     logger.info("index switch is {}",

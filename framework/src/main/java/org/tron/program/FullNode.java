@@ -50,7 +50,6 @@ public class FullNode {
    * Start the FullNode.
    */
   public static void main(String[] args) {
-    logger.info("Full node running.");
     Args.setParam(args, Constant.TESTNET_CONF);
     CommonParameter parameter = Args.getInstance();
 
@@ -61,6 +60,16 @@ public class FullNode {
       jCommander.parse(args);
       Args.printHelp(jCommander);
       return;
+    }
+    if (parameter.isKeystore()) {
+      KeystoreFactory.exec();
+      return;
+    }
+    if (parameter.isSolidityNode()) {
+      SolidityNode.run();
+      return;
+    } else {
+      logger.info("Full node running.");
     }
 
     if (Args.getInstance().isDebug()) {

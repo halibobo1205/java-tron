@@ -1,7 +1,5 @@
 package org.tron.program;
 
-import java.io.File;
-import java.io.IOException;
 import javax.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.AfterClass;
@@ -26,12 +24,8 @@ public class SolidityNodeTest extends BaseTest {
   SolidityNodeHttpApiService solidityNodeHttpApiService;
 
   static {
-    try {
-      Args.setParam(new String[]{"-d", temporaryFolder.newFolder().toString()}, Constant.TEST_CONF);
-    } catch (IOException e) {
-      Assert.fail("create temp directory failed.");
-    }
-    Args.getInstance().setSolidityNode(true);
+    Args.setParam(new String[]{"-d", dbPath(), "--solidity"
+    }, Constant.TEST_CONF);
   }
 
   /**
@@ -39,26 +33,6 @@ public class SolidityNodeTest extends BaseTest {
    */
   @BeforeClass
   public static void init() {
-  }
-
-  /**
-   * remo db when after test.
-   */
-  @AfterClass
-  public static void removeDb() {
-    Args.clearParam();
-  }
-
-  private static Boolean deleteFolder(File index) {
-    if (!index.isDirectory() || index.listFiles().length <= 0) {
-      return index.delete();
-    }
-    for (File file : index.listFiles()) {
-      if (null != file && !deleteFolder(file)) {
-        return false;
-      }
-    }
-    return index.delete();
   }
 
   @Test

@@ -20,6 +20,7 @@ import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.tron.plugins.utils.DBUtils;
 import picocli.CommandLine;
 
 @Slf4j
@@ -38,15 +39,15 @@ public class DbArchiveTest {
   @BeforeClass
   public static void init() throws IOException {
     File file = new File(OUTPUT_DIRECTORY,ACCOUNT);
-    factory.open(file,ArchiveManifest.newDefaultLevelDbOptions()).close();
+    factory.open(file, DBUtils.newDefaultLevelDbOptions()).close();
     writeProperty(file.toString() + File.separator + ENGINE_FILE,ENGINE,LEVELDB);
 
     file = new File(OUTPUT_DIRECTORY,MARKET);
-    factory.open(file,ArchiveManifest.newDefaultLevelDbOptions()).close();
+    factory.open(file,DBUtils.newDefaultLevelDbOptions()).close();
     writeProperty(file.toString() + File.separator + ENGINE_FILE,ENGINE,LEVELDB);
 
     file = new File(OUTPUT_DIRECTORY,ACCOUNT_ROCKSDB);
-    factory.open(file,ArchiveManifest.newDefaultLevelDbOptions()).close();
+    factory.open(file,DBUtils.newDefaultLevelDbOptions()).close();
     writeProperty(file.toString() + File.separator + ENGINE_FILE,ENGINE,ROCKSDB);
 
   }
