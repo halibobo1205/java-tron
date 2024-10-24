@@ -110,8 +110,12 @@ public class DbTool {
    */
   public static DBInterface getDB(Path sourceDir, String dbName)
       throws IOException, RocksDBException {
+    return getDB(sourceDir, dbName, getDbType(sourceDir.toString(), dbName));
+  }
+
+  public static DBInterface getDB(Path sourceDir, String dbName, DbType type)
+      throws IOException, RocksDBException {
     Path path = Paths.get(sourceDir.toString(), dbName);
-    DbType type = getDbType(sourceDir.toString(), dbName);
     switch (type) {
       case LevelDB:
         return openLevelDb(path, dbName);

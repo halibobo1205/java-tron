@@ -42,8 +42,6 @@ public class DbConvert implements Callable<Integer> {
 
   private static final int BATCH  = 256;
 
-  enum Type { rocksdb, leveldb }
-
   @CommandLine.Spec
   CommandLine.Model.CommandSpec spec;
   @CommandLine.Parameters(index = "0", defaultValue = "output-directory/database",
@@ -55,9 +53,9 @@ public class DbConvert implements Callable<Integer> {
 
   @CommandLine.Option(
       names = {"--type", "-t"},
-      defaultValue = "rocksdb",
+      defaultValue = "RocksDB",
       description = "[ ${COMPLETION-CANDIDATES} ]. Default: ${DEFAULT-VALUE}")
-  private Type type;
+  private DbTool.DbType type;
 
   @CommandLine.Option(names = {"-h", "--help"})
   private boolean help;
@@ -71,7 +69,7 @@ public class DbConvert implements Callable<Integer> {
     }
     if (dest == null || "output-directory-rocksdb/database".equals(dest.toString())) {
       // reset dest
-      dest = new File("output-directory-" + type, "database");
+      dest = new File("output-directory-" + type.toString().toLowerCase(), "database");
     }
     if (!src.exists()) {
       logger.info(" {} does not exist.", src);
@@ -146,9 +144,9 @@ public class DbConvert implements Callable<Integer> {
     private long srcDbValueSum = 0L;
     private long dstDbValueSum = 0L;
 
-    private final Type type;
+    private final DbTool.DbType type;
 
-    public DbConverter(String srcDir, String dstDir, String name, Type type) {
+    public DbConverter(String srcDir, String dstDir, String name,  DbTool.DbType type) {
       this.srcDir = srcDir;
       this.dstDir = dstDir;
       this.dbName = name;
@@ -180,7 +178,7 @@ public class DbConvert implements Callable<Integer> {
       FileUtils.createDirIfNotExists(dstDir);
 
       logger.info("Convert database {} start", this.dbName);
-      if (Type.rocksdb == type) {
+      if (DbTool.DbType.RocksDB == type) {
         convertToRocks();
       } else {
         convertToLevel();
@@ -350,7 +348,7 @@ public class DbConvert implements Callable<Integer> {
 
     private boolean check() throws RocksDBException, IOException {
       try (
-          DBInterface db = DbTool.getDB(Paths.get(dstDir), dbName);
+          DBInterface db = DbTool.getDB(Paths.get(dstDir), dbName, type);
           DBIterator iterator = db.iterator()) {
         // check
         logger.info("check database {} start", this.dbName);
@@ -371,12 +369,12 @@ public class DbConvert implements Callable<Integer> {
     }
   }
 
-  private static boolean createEngine(String dir, Type type) {
+  private static boolean createEngine(String dir, DbTool.DbType type) {
     String enginePath = dir + File.separator + DBUtils.FILE_ENGINE;
     if (!FileUtils.createFileIfNotExists(enginePath)) {
       return false;
     }
-    return FileUtils.writeProperty(enginePath, DBUtils.KEY_ENGINE, Type.rocksdb == type
+    return FileUtils.writeProperty(enginePath, DBUtils.KEY_ENGINE, DbTool.DbType.RocksDB == type
         ?  DBUtils.ROCKSDB : DBUtils.LEVELDB);
   }
 
