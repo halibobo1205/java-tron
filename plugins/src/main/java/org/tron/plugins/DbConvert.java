@@ -112,9 +112,9 @@ public class DbConvert implements Callable<Integer> {
           try {
             return dbConverter.doConvert() ? null : dbConverter.name();
           } catch (Exception e) {
-            logger.error("{}", e);
+            logger.error("{}", dbConverter.name(), e);
             spec.commandLine().getErr().println(spec.commandLine().getColorScheme()
-                .errorText(e.getMessage()));
+                .errorText(dbConverter.name() + ": " + e.getMessage()));
             return dbConverter.name();
           }
         }).filter(Objects::nonNull).collect(Collectors.toList());
