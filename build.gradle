@@ -16,6 +16,8 @@ subprojects {
 
     [compileJava, compileTestJava]*.options*.encoding = 'UTF-8'
 
+    sourceCompatibility = 1.8
+
     jacoco {
         toolVersion = "0.8.10"
     }
@@ -78,7 +80,7 @@ subprojects {
 
 
         testImplementation group: 'junit', name: 'junit', version: '4.13.2'
-        testImplementation "org.mockito:mockito-core:2.13.0"
+        testImplementation "org.mockito:mockito-core:4.11.0"
     }
 
     tasks.register('sourcesJar', Jar) {
