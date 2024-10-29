@@ -14,9 +14,8 @@ subprojects {
     apply plugin: "jacoco"
     apply plugin: "maven-publish"
 
+    sourceCompatibility = JavaVersion.VERSION_1_8
     [compileJava, compileTestJava]*.options*.encoding = 'UTF-8'
-
-    sourceCompatibility = 1.8
 
     jacoco {
         toolVersion = "0.8.10"
@@ -80,7 +79,7 @@ subprojects {
 
 
         testImplementation group: 'junit', name: 'junit', version: '4.13.2'
-        testImplementation "org.mockito:mockito-core:4.11.0"
+        testImplementation "org.mockito:mockito-core:3.10.0"
         testImplementation group: 'org.powermock', name: 'powermock-module-junit4', version: '2.0.9'
         testImplementation group: 'org.powermock', name: 'powermock-api-mockito2', version: '2.0.9'
 
@@ -99,6 +98,23 @@ subprojects {
         reproducibleFileOrder = true
         duplicatesStrategy = DuplicatesStrategy.INCLUDE // allow duplicates
     }
+    if (JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_17)) {
+        tasks.withType(AbstractTestTask).configureEach{
+            // for powermock to work
+            jvmArgs +=  ['--add-opens=java.base/java.lang=ALL-UNNAMED',
+                         '--add-opens=java.base/java.util=ALL-UNNAMED',
+                         '--add-opens=java.base/java.lang.reflect=ALL-UNNAMED',
+                         '--add-opens=java.xml/jdk.xml.internal=ALL-UNNAMED',
+                         '--add-opens=java.base/java.util.regex=ALL-UNNAMED',
+                         '--add-opens=java.base/java.math=ALL-UNNAMED',
+                         '--add-opens=java.base/java.util.stream=ALL-UNNAMED',
+                         '--add-opens=java.base/java.nio=ALL-UNNAMED',
+                         '--add-opens=java.base/java.io=ALL-UNNAMED',
+
+            ]
+        }
+    }
+
 }
 
 tasks.register('copyToParent', Copy) {
