@@ -70,6 +70,21 @@ subprojects {
         reproducibleFileOrder = true
         duplicatesStrategy = DuplicatesStrategy.INCLUDE // allow duplicates
     }
+    if (JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_17)) {
+        tasks.withType(AbstractTestTask).configureEach{
+            // for powermock/java-sizeof to work
+            jvmArgs +=  ['--add-opens=java.base/java.lang=ALL-UNNAMED',
+                         '--add-opens=java.base/java.util=ALL-UNNAMED',
+                         '--add-opens=java.base/java.lang.reflect=ALL-UNNAMED',
+                         '--add-opens=java.xml/jdk.xml.internal=ALL-UNNAMED',
+                         '--add-opens=java.base/java.util.regex=ALL-UNNAMED',
+                         '--add-opens=java.base/java.math=ALL-UNNAMED',
+                         '--add-opens=java.base/java.util.stream=ALL-UNNAMED',
+                         '--add-opens=java.base/java.nio=ALL-UNNAMED',
+                         '--add-opens=java.base/java.io=ALL-UNNAMED',
+            ]
+        }
+    }
 }
 
 task copyToParent(type: Copy) {
