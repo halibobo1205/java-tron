@@ -81,6 +81,9 @@ subprojects {
 
         testImplementation group: 'junit', name: 'junit', version: '4.13.2'
         testImplementation "org.mockito:mockito-core:4.11.0"
+        testImplementation group: 'org.powermock', name: 'powermock-module-junit4', version: '2.0.9'
+        testImplementation group: 'org.powermock', name: 'powermock-api-mockito2', version: '2.0.9'
+
     }
 
     tasks.register('sourcesJar', Jar) {
