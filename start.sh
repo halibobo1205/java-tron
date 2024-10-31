@@ -355,15 +355,41 @@ startService() {
     exit
   fi
 
-  nohup $JAVACMD -Xms$JVM_MS -Xmx$JVM_MX -XX:+UseConcMarkSweepGC -XX:+PrintGCDetails -Xloggc:./gc.log \
-    -XX:+PrintGCDateStamps -XX:+CMSParallelRemarkEnabled -XX:ReservedCodeCacheSize=256m -XX:+UseCodeCacheFlushing \
-    -XX:MetaspaceSize=256m -XX:MaxMetaspaceSize=512m \
-    -XX:MaxDirectMemorySize=$MAX_DIRECT_MEMORY -XX:+HeapDumpOnOutOfMemoryError \
-    -XX:NewRatio=2 -jar \
-    $JAR_NAME $FULL_START_OPT >>start.log 2>&1 &
+  runService
   checkPid
   echo "info: start java-tron with pid $pid on $HOSTNAME"
   echo "info: if you need to stop the service, execute: sh start.sh --stop"
+}
+
+runService() {
+  # check the java version is jdk8 or jdk17
+  java_version=$($JAVACMD -version 2>&1 |awk 'NR==1{ gsub(/"/,""); print $3 }')
+  if [[ $java_version =~ '1.8' ]]; then
+    echo 'info: java version is jdk8'
+    nohup $JAVACMD -Xms$JVM_MS -Xmx$JVM_MX -XX:+UseConcMarkSweepGC -XX:+PrintGCDetails -Xloggc:./gc.log \
+        -XX:+PrintGCDateStamps -XX:+CMSParallelRemarkEnabled -XX:ReservedCodeCacheSize=256m -XX:+UseCodeCacheFlushing \
+        -XX:MetaspaceSize=256m -XX:MaxMetaspaceSize=512m \
+        -XX:MaxDirectMemorySize=$MAX_DIRECT_MEMORY -XX:+HeapDumpOnOutOfMemoryError \
+        -XX:NewRatio=2 -jar \
+        $JAR_NAME $FULL_START_OPT >>start.log 2>&1 &
+  elif [[ $java_version =~ '17' ]]; then
+    # check the gc log directory. if not exists, create it
+    if [[ ! -d 'gc' ]]; then
+      mkdir -p 'gc'
+    fi
+
+    nohup $JAVACMD -Xms$JVM_MS -Xmx$JVM_MX \
+          -XX:+UseZGC \
+          -Xlog:gc*:file=gc/gc-%t.log:time,uptime,level,tags:filecount=50,filesize=100M \
+          -XX:ReservedCodeCacheSize=256m -XX:+UseCodeCacheFlushing \
+          -XX:MetaspaceSize=256m -XX:MaxMetaspaceSize=512m \
+          -XX:MaxDirectMemorySize=$MAX_DIRECT_MEMORY -XX:+HeapDumpOnOutOfMemoryError \
+          -jar $JAR_NAME $FULL_START_OPT >>start.log 2>&1 &
+
+  else
+    echo 'warn: java version is not jdk8 or jdk17'
+    exit
+  fi
 }
 
 rebuildManifest() {
