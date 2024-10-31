@@ -130,8 +130,14 @@ def createScript(project, mainClass, name) {
         }
     }
 }
-applicationDistribution.from("../gradle/java-tron.vmoptions") {
-    into "bin"
+if (JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_17)) {
+    applicationDistribution.from("${project.rootDir}/gradle/jdk17/java-tron.vmoptions") {
+        into "bin"
+    }
+} else {
+    applicationDistribution.from("${project.rootDir}/gradle/java-tron.vmoptions") {
+        into "bin"
+    }
 }
 createScript(project, 'org.tron.plugins.ArchiveManifest', 'ArchiveManifest')
 createScript(project, 'org.tron.plugins.Toolkit', 'Toolkit')
