@@ -2,19 +2,12 @@ allprojects {
     version = "1.0.0"
     apply plugin: "java-library"
 }
-
-java {
-    toolchain {
-        languageVersion = JavaLanguageVersion.of(8)
-        vendor = JvmVendorSpec.ADOPTIUM
-    }
-}
-
 subprojects {
     apply plugin: "jacoco"
     apply plugin: "maven-publish"
 
     sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.current()
     [compileJava, compileTestJava]*.options*.encoding = 'UTF-8'
 
     jacoco {
