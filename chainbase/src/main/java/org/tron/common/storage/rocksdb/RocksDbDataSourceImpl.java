@@ -21,6 +21,7 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
 import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.iq80.leveldb.DBException;
 import org.rocksdb.Checkpoint;
 import org.rocksdb.InfoLogLevel;
 import org.rocksdb.Logger;
@@ -114,9 +115,15 @@ public class RocksDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
 
   private boolean quitIfNotAlive() {
     if (!isAlive()) {
-      logger.warn("DB {} is not alive.", dataBaseName);
+      throw new DBException("DB " + dataBaseName + " is closed.");
     }
     return !isAlive();
+  }
+
+  private static void checkArgNotNull(Object value, String name) {
+    if (value == null) {
+      throw new IllegalArgumentException("The " + name + " argument cannot be null");
+    }
   }
 
   @Override
@@ -233,6 +240,8 @@ public class RocksDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
 
   @Override
   public void putData(byte[] key, byte[] value) {
+    checkArgNotNull(key, "key");
+    checkArgNotNull(value, "value");
     resetDbLock.readLock().lock();
     try {
       if (quitIfNotAlive()) {
@@ -248,6 +257,7 @@ public class RocksDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
 
   @Override
   public byte[] getData(byte[] key) {
+    checkArgNotNull(key, "key");
     resetDbLock.readLock().lock();
     try {
       if (quitIfNotAlive()) {
@@ -263,6 +273,7 @@ public class RocksDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
 
   @Override
   public void deleteData(byte[] key) {
+    checkArgNotNull(key, "key");
     resetDbLock.readLock().lock();
     try {
       if (quitIfNotAlive()) {
@@ -471,12 +482,14 @@ public class RocksDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
   }
 
   public void backup(String dir) throws RocksDBException {
+    quitIfNotAlive();
     Checkpoint cp = Checkpoint.create(database);
     cp.createCheckpoint(dir + this.getDBName());
   }
 
   private RocksIterator getRocksIterator() {
     try ( ReadOptions readOptions = new ReadOptions().setFillCache(false)) {
+      quitIfNotAlive();
       return  database.newIterator(readOptions);
     }
   }
