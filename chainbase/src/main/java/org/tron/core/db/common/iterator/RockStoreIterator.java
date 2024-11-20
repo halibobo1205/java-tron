@@ -80,6 +80,11 @@ public final class RockStoreIterator implements DBIterator {
   }
 
   @Override
+  public void remove() {
+    throw new UnsupportedOperationException();
+  }
+
+  @Override
   public void seek(byte[] key) {
     checkState();
     dbIterator.seek(key);
