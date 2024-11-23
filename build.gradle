@@ -85,25 +85,26 @@ subprojects {
         testImplementation "org.mockito:mockito-core:4.11.0"
     }
 
-    task sourcesJar(type: Jar, dependsOn: classes) {
+    tasks.register('sourcesJar', Jar) {
+        dependsOn classes
         classifier = "sources"
         from sourceSets.main.allSource
         duplicatesStrategy = DuplicatesStrategy.INCLUDE // allow duplicates
     }
 
 
-    tasks.withType(AbstractArchiveTask) {
+    tasks.withType(AbstractArchiveTask).configureEach {
         preserveFileTimestamps = false
         reproducibleFileOrder = true
         duplicatesStrategy = DuplicatesStrategy.INCLUDE // allow duplicates
     }
     tasks.withType(Test).configureEach {
         // https://docs.gradle.org/current/dsl/org.gradle.api.tasks.testing.Test.html#org.gradle.api.tasks.testing.Test:environment
-        environment 'CI', 'true'
+       /* environment 'CI', 'true'*/
     }
 }
 
-task copyToParent(type: Copy) {
+tasks.register('copyToParent', Copy) {
     into "$buildDir/libs"
     subprojects {
         from tasks.withType(Jar)

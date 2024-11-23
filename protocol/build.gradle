@@ -20,7 +20,7 @@ dependencies {
     api group: 'com.google.api.grpc', name: 'proto-google-common-protos', version: '2.15.0'
 }
 
-tasks.matching { it instanceof Test }.all {
+tasks.matching { it instanceof Test }.configureEach {
     testLogging.events = ["failed", "passed", "skipped"]
 }
 
