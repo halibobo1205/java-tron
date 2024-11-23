@@ -17,7 +17,7 @@ configurations {
     checkstyleConfig
 }
 
-configurations.getByName('checkstyleConfig') {
+configurations.named('checkstyleConfig') {
     transitive = false
 }
 
@@ -46,7 +46,7 @@ checkstyleMain {
     source = 'src/main/java'
 }
 
-task lint(type: Checkstyle) {
+tasks.register('lint', Checkstyle) {
     // Cleaning the old log because of the creation of the new ones (not sure if totaly needed)
     delete fileTree(dir: "${project.rootDir}/app/build/reports")
     source 'src'
@@ -59,7 +59,7 @@ task lint(type: Checkstyle) {
     ignoreFailures = false
 }
 
-tasks.matching { it instanceof Test }.all {
+tasks.matching { it instanceof Test }.configureEach {
     testLogging.events = ["failed", "passed", "skipped"]
 }
 
@@ -131,7 +131,7 @@ startShadowScripts {
     enabled = false
 }
 
-task copyToParent(type: Copy) {
+tasks.register('copyToParent', Copy) {
     into "../build/distributions"
     from "$buildDir/distributions"
     include "*.zip"
