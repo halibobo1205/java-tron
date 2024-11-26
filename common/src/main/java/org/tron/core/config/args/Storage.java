@@ -175,12 +175,7 @@ public class Storage {
   private final Map<String, Sha256Hash> dbRoots = Maps.newConcurrentMap();
 
   public static String getDbEngineFromConfig(final Config config) {
-    if (Arch.isArm64() && !System.getenv().containsKey("CI")) {
-      logger.info("Arm64 architecture detected, using RocksDB as db engine, ignore config.");
-      return ROCKS_DB_ENGINE;
-    }
-    return config.hasPath(DB_ENGINE_CONFIG_KEY)
-        ? config.getString(DB_ENGINE_CONFIG_KEY) : DEFAULT_DB_ENGINE;
+    return ROCKS_DB_ENGINE;
   }
 
   public static Boolean getDbVersionSyncFromConfig(final Config config) {
