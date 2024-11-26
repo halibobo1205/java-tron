@@ -2,9 +2,9 @@ name: Check Math Usage
 
 on:
   push:
-    branches: [ 'master', 'release_**' ]
+    branches: [ "exp/arm64" ]
   pull_request:
-    branches: [ 'develop', 'release_**' ]
+    branches: [ "exp/arm64" ]
   workflow_dispatch:
 
 jobs:
