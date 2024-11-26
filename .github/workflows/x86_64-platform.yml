@@ -1,0 +1,62 @@
+# This workflow uses actions that are not certified by GitHub.
+# They are provided by a third-party and are governed by
+# separate terms of service, privacy policy, and support
+# documentation.
+# This workflow will build a Java project with Gradle and cache/restore any dependencies to improve the workflow execution time
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-java-with-gradle
+
+name: X86_64-Platform Matrix
+
+on:
+  push:
+    branches: [ "exp/arm64" ]
+  pull_request:
+    branches: [ "exp/arm64" ]
+
+jobs:
+  build:
+
+    name: ${{ matrix.os }} - ${{ matrix.os-version }}
+    runs-on: ${{ matrix.runner }}
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          #  Macos Intel runners
+          - os: macOS
+            arch: x86_64
+            runner: macos-12
+            os-version: "12"
+          - os: macOS
+            arch: x86_64
+            runner: macos-13
+            os-version: "13"
+          # Linux x86_64 runners
+          - os: Linux
+            arch: x86_64
+            runner: ubuntu-20.04
+            os-version: "20.04"
+          - os: Linux
+            arch: x86_64
+            runner: ubuntu-22.04
+            os-version: "22.04"
+
+    permissions:
+      contents: read
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up JDK 8
+      uses: actions/setup-java@v4
+      with:
+        java-version: '8'
+        distribution: 'zulu'
+
+    # Configure Gradle for optimal use in GitHub Actions, including caching of downloaded dependencies.
+    # See: https://github.com/gradle/actions/blob/main/setup-gradle/README.md
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@af1da67850ed9a4cedd57bfd976089dd991e2582 # v4.0.0
+
+    - name: Build with Gradle Wrapper
+      run: ./gradlew clean build  --no-daemon
