@@ -1,6 +1,7 @@
 package org.tron.core.actuator;
 
 import static java.util.stream.Collectors.toList;
+import static org.tron.common.math.StrictMathWrapper.addExact;
 
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
@@ -111,7 +112,7 @@ public class AccountPermissionUpdateActuator extends AbstractActuator {
         throw new ContractValidateException("key's weight should be greater than 0");
       }
       try {
-        weightSum = Math.addExact(weightSum, key.getWeight());
+        weightSum = addExact(weightSum, key.getWeight());
       } catch (ArithmeticException e) {
         throw new ContractValidateException(e.getMessage());
       }

@@ -1,6 +1,8 @@
 package org.tron.core.vm.repository;
 
-import static java.lang.Long.max;
+import static org.tron.common.math.StrictMathWrapper.addExact;
+import static org.tron.common.math.StrictMathWrapper.max;
+import static org.tron.common.math.StrictMathWrapper.round;
 import static org.tron.core.config.Parameter.ChainConstant.BLOCK_PRODUCED_INTERVAL;
 import static org.tron.core.config.Parameter.ChainConstant.TRX_PRECISION;
 
@@ -681,7 +683,7 @@ public class RepositoryImpl implements Repository {
           StringUtil.createReadableString(accountCapsule.createDbKey())
               + " insufficient balance");
     }
-    accountCapsule.setBalance(Math.addExact(balance, value));
+    accountCapsule.setBalance(addExact(balance, value));
     Key key = Key.create(address);
     accountCache.put(key, Value.create(accountCapsule,
          accountCache.get(key).getType().addType(Type.DIRTY)));
@@ -841,7 +843,7 @@ public class RepositoryImpl implements Repository {
       if (lastTime + windowSize > now) {
         long delta = now - lastTime;
         double decay = (windowSize - delta) / (double) windowSize;
-        averageLastUsage = Math.round(averageLastUsage * decay);
+        averageLastUsage = round(averageLastUsage * decay);
       } else {
         averageLastUsage = 0;
       }

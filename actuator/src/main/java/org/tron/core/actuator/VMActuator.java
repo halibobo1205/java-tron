@@ -1,9 +1,11 @@
 package org.tron.core.actuator;
 
-import static java.lang.Math.max;
-import static java.lang.Math.min;
 import static org.apache.commons.lang3.ArrayUtils.getLength;
 import static org.apache.commons.lang3.ArrayUtils.isNotEmpty;
+import static org.tron.common.math.StrictMathWrapper.addExact;
+import static org.tron.common.math.StrictMathWrapper.floorDiv;
+import static org.tron.common.math.StrictMathWrapper.max;
+import static org.tron.common.math.StrictMathWrapper.min;
 import static org.tron.protos.contract.Common.ResourceCode.ENERGY;
 
 import com.google.protobuf.ByteString;
@@ -124,7 +126,7 @@ public class VMActuator implements Actuator2 {
     trx = context.getTrxCap().getInstance();
     // If tx`s fee limit is set, use it to calc max energy limit for constant call
     if (isConstantCall && trx.getRawData().getFeeLimit() > 0) {
-      maxEnergyLimit = Math.min(maxEnergyLimit, trx.getRawData().getFeeLimit()
+      maxEnergyLimit = min(maxEnergyLimit, trx.getRawData().getFeeLimit()
           / context.getStoreFactory().getChainBaseManager()
           .getDynamicPropertiesStore().getEnergyFee());
     }
@@ -564,7 +566,7 @@ public class VMActuator implements Actuator2 {
     }
 
     long energyFromBalance = max(account.getBalance() - callValue, 0) / sunPerEnergy;
-    long availableEnergy = Math.addExact(leftFrozenEnergy, energyFromBalance);
+    long availableEnergy = addExact(leftFrozenEnergy, energyFromBalance);
 
     long energyFromFeeLimit = feeLimit / sunPerEnergy;
     if (VMConfig.allowTvmFreezeV2()) {
@@ -599,8 +601,8 @@ public class VMActuator implements Actuator2 {
     // can change the calc way
     long leftEnergyFromFreeze = rootRepository.getAccountLeftEnergyFromFreeze(account);
     callValue = max(callValue, 0);
-    long energyFromBalance = Math
-        .floorDiv(max(account.getBalance() - callValue, 0), sunPerEnergy);
+    long energyFromBalance = floorDiv(max(
+        account.getBalance() - callValue, 0), sunPerEnergy);
 
     long energyFromFeeLimit;
     long totalBalanceForEnergyFreeze = account.getAllFrozenBalanceForEnergy();
@@ -619,13 +621,12 @@ public class VMActuator implements Actuator2 {
             .multiply(BigInteger.valueOf(feeLimit))
             .divide(BigInteger.valueOf(totalBalanceForEnergyFreeze)).longValueExact();
       } else {
-        energyFromFeeLimit = Math
-            .addExact(leftEnergyFromFreeze,
-                (feeLimit - leftBalanceForEnergyFreeze) / sunPerEnergy);
+        energyFromFeeLimit = addExact(
+            leftEnergyFromFreeze, (feeLimit - leftBalanceForEnergyFreeze) / sunPerEnergy);
       }
     }
 
-    return min(Math.addExact(leftEnergyFromFreeze, energyFromBalance), energyFromFeeLimit);
+    return min(addExact(leftEnergyFromFreeze, energyFromBalance), energyFromFeeLimit);
   }
 
   public long getTotalEnergyLimit(AccountCapsule creator, AccountCapsule caller,
@@ -748,7 +749,7 @@ public class VMActuator implements Actuator2 {
       receipt.setOriginEnergyMergedWindowSize(creator.getWindowSize(ENERGY));
       rootRepository.updateAccount(creator.createDbKey(), creator);
     }
-    return Math.addExact(callerEnergyLimit, creatorEnergyLimit);
+    return addExact(callerEnergyLimit, creatorEnergyLimit);
   }
 
   private long getTotalEnergyLimitWithFloatRatio(AccountCapsule creator, AccountCapsule caller,
@@ -768,9 +769,10 @@ public class VMActuator implements Actuator2 {
 
     if (creatorEnergyLimit * consumeUserResourcePercent
         > (VMConstant.ONE_HUNDRED - consumeUserResourcePercent) * callerEnergyLimit) {
-      return Math.floorDiv(callerEnergyLimit * VMConstant.ONE_HUNDRED, consumeUserResourcePercent);
+      return floorDiv(
+          callerEnergyLimit * VMConstant.ONE_HUNDRED, consumeUserResourcePercent);
     } else {
-      return Math.addExact(callerEnergyLimit, creatorEnergyLimit);
+      return addExact(callerEnergyLimit, creatorEnergyLimit);
     }
   }
 

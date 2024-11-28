@@ -1,5 +1,6 @@
 package org.tron.common.runtime.vm;
 
+import static org.tron.common.math.StrictMathWrapper.min;
 import static org.tron.core.config.Parameter.ChainConstant.BLOCK_PRODUCED_INTERVAL;
 import static org.tron.core.config.Parameter.ChainConstant.TRX_PRECISION;
 import static org.tron.core.config.Parameter.ChainConstant.WINDOW_SIZE_MS;
@@ -856,7 +857,7 @@ public class FreezeV2Test {
         transferUsage = (long) (oldReceiver.getEnergyUsage()
             * ((double) (amount) / oldReceiver.getAllFrozenBalanceForEnergy()));
       }
-      transferUsage = Math.min(unDelegateMaxUsage, transferUsage);
+      transferUsage = min(unDelegateMaxUsage, transferUsage);
     }
 
     DelegatedResourceStore delegatedResourceStore = manager.getDelegatedResourceStore();

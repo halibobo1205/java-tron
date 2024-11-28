@@ -1,6 +1,8 @@
 package org.tron.common.runtime.vm;
 
 import static org.junit.Assert.assertNotNull;
+import static org.tron.common.math.StrictMathWrapper.random;
+import static org.tron.common.math.StrictMathWrapper.round;
 
 import com.google.protobuf.ByteString;
 import java.math.BigInteger;
@@ -4504,7 +4506,7 @@ public class PrecompiledContractsVerifyProofTest extends BaseTest {
   }
 
   private long randomLong() {
-    return Math.round(Math.random() * Long.MAX_VALUE / 2);
+    return round(random() * Long.MAX_VALUE / 2);
   }
 
 }

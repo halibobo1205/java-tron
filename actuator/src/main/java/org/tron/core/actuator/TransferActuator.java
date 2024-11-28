@@ -1,5 +1,6 @@
 package org.tron.core.actuator;
 
+import static org.tron.common.math.StrictMathWrapper.addExact;
 import static org.tron.core.config.Parameter.ChainConstant.TRANSFER_FEE;
 
 import com.google.protobuf.ByteString;
@@ -58,7 +59,7 @@ public class TransferActuator extends AbstractActuator {
         fee = fee + dynamicStore.getCreateNewAccountFeeInSystemContract();
       }
 
-      Commons.adjustBalance(accountStore, ownerAddress, -(Math.addExact(fee, amount)));
+      Commons.adjustBalance(accountStore, ownerAddress, -(addExact(fee, amount)));
       if (dynamicStore.supportBlackHoleOptimization()) {
         dynamicStore.burnTrx(fee);
       } else {
@@ -156,7 +157,7 @@ public class TransferActuator extends AbstractActuator {
         }
       }
 
-      if (balance < Math.addExact(amount, fee)) {
+      if (balance < addExact(amount, fee)) {
         logger.warn("Balance is not sufficient. Account: {}, balance: {}, amount: {}, fee: {}.",
             StringUtil.encode58Check(ownerAddress), balance, amount, fee);
         throw new ContractValidateException(
@@ -164,7 +165,7 @@ public class TransferActuator extends AbstractActuator {
       }
 
       if (toAccount != null) {
-        Math.addExact(toAccount.getBalance(), amount);
+        addExact(toAccount.getBalance(), amount);
       }
     } catch (ArithmeticException e) {
       logger.debug(e.getMessage(), e);

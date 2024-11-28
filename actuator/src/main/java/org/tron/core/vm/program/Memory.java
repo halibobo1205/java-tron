@@ -1,8 +1,9 @@
 package org.tron.core.vm.program;
 
-import static java.lang.Math.ceil;
-import static java.lang.Math.min;
 import static java.lang.String.format;
+import static org.tron.common.math.StrictMathWrapper.addExact;
+import static org.tron.common.math.StrictMathWrapper.ceilAsInt;
+import static org.tron.common.math.StrictMathWrapper.min;
 import static org.tron.common.utils.ByteUtil.EMPTY_BYTE_ARRAY;
 import static org.tron.common.utils.ByteUtil.oneByteToHexString;
 
@@ -104,16 +105,16 @@ public class Memory implements ProgramListenerAware {
       return;
     }
 
-    final int newSize = Math.addExact(address, size);
+    final int newSize = addExact(address, size);
     int toAllocate = newSize - internalSize();
     if (toAllocate > 0) {
-      addChunks((int) ceil((double) toAllocate / CHUNK_SIZE));
+      addChunks(ceilAsInt((double) toAllocate / CHUNK_SIZE));
     }
 
     toAllocate = newSize - softSize;
     if (toAllocate > 0) {
-      toAllocate = (int) ceil((double) toAllocate / WORD_SIZE) * WORD_SIZE;
-      softSize = Math.addExact(softSize, toAllocate);
+      toAllocate = ceilAsInt((double) toAllocate / WORD_SIZE) * WORD_SIZE;
+      softSize = addExact(softSize, toAllocate);
 
       if (programListener != null) {
         programListener.onMemoryExtend(toAllocate);

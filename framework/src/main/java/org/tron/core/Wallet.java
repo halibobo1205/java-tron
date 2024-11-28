@@ -18,6 +18,9 @@
 
 package org.tron.core;
 
+import static org.tron.common.math.StrictMathWrapper.addExact;
+import static org.tron.common.math.StrictMathWrapper.ceilAsLong;
+import static org.tron.common.math.StrictMathWrapper.max;
 import static org.tron.common.utils.Commons.getAssetIssueStoreFinal;
 import static org.tron.common.utils.Commons.getExchangeStoreFinal;
 import static org.tron.common.utils.WalletUtil.isConstant;
@@ -883,7 +886,7 @@ public class Wallet {
     long v2NetUsage = getV2NetUsage(ownerCapsule, netUsage);
 
     long maxSize = ownerCapsule.getFrozenV2BalanceForBandwidth() - v2NetUsage;
-    return Math.max(0, maxSize);
+    return max(0, maxSize);
   }
 
   public long calcCanDelegatedEnergyMaxSize(ByteString ownerAddress) {
@@ -903,7 +906,7 @@ public class Wallet {
     long v2EnergyUsage = getV2EnergyUsage(ownerCapsule, energyUsage);
 
     long maxSize =  ownerCapsule.getFrozenV2BalanceForEnergy() - v2EnergyUsage;
-    return Math.max(0, maxSize);
+    return max(0, maxSize);
   }
 
   public DelegatedResourceAccountIndex getDelegatedResourceAccountIndex(ByteString address) {
@@ -2975,7 +2978,7 @@ public class Wallet {
     if (transaction.getRet(0).getRet().equals(code.SUCESS)) {
       txRetBuilder.setResult(true);
       txRetBuilder.setCode(response_code.SUCCESS);
-      estimateBuilder.setEnergyRequired((long) Math.ceil((double) high / dps.getEnergyFee()));
+      estimateBuilder.setEnergyRequired(ceilAsLong((double) high / dps.getEnergyFee()));
     }
 
     return transaction;
@@ -3529,8 +3532,8 @@ public class Wallet {
     long totalToAmount = 0;
     if (scaledToAmount > 0) {
       try {
-        totalToAmount = receiveSize == 0 ? scaledToAmount
-            : (Math.addExact(scaledToAmount, shieldedReceives.get(0).getNote().getValue()));
+        totalToAmount = receiveSize == 0 ? scaledToAmount : (addExact(
+                scaledToAmount, shieldedReceives.get(0).getNote().getValue()));
       } catch (ArithmeticException e) {
         throw new ZksnarkException("Unbalanced burn!");
       }
@@ -3661,8 +3664,8 @@ public class Wallet {
     long totalToAmount = 0;
     if (scaledToAmount > 0) {
       try {
-        totalToAmount = receiveSize == 0 ? scaledToAmount
-            : Math.addExact(scaledToAmount, shieldedReceives.get(0).getNote().getValue());
+        totalToAmount = receiveSize == 0 ? scaledToAmount : addExact(
+            scaledToAmount, shieldedReceives.get(0).getNote().getValue());
       } catch (ArithmeticException e) {
         throw new ZksnarkException("Unbalanced burn!");
       }
