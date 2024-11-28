@@ -1,5 +1,7 @@
 package org.tron.core.actuator;
 
+import static org.tron.common.math.StrictMathWrapper.floorDiv;
+import static org.tron.common.math.StrictMathWrapper.multiplyExact;
 import static org.tron.core.capsule.utils.TransactionUtil.isNumber;
 import static org.tron.core.config.Parameter.ChainSymbol.TRX_SYMBOL_BYTES;
 
@@ -24,7 +26,6 @@ import org.tron.core.store.AssetIssueStore;
 import org.tron.core.store.DynamicPropertiesStore;
 import org.tron.core.store.ExchangeStore;
 import org.tron.core.store.ExchangeV2Store;
-import org.tron.core.utils.TransactionUtil;
 import org.tron.protos.Protocol.Transaction.Contract.ContractType;
 import org.tron.protos.Protocol.Transaction.Result.code;
 import org.tron.protos.contract.ExchangeContract.ExchangeInjectContract;
@@ -71,14 +72,14 @@ public class ExchangeInjectActuator extends AbstractActuator {
 
       if (Arrays.equals(tokenID, firstTokenID)) {
         anotherTokenID = secondTokenID;
-        anotherTokenQuant = Math
-            .floorDiv(Math.multiplyExact(secondTokenBalance, tokenQuant), firstTokenBalance);
+        anotherTokenQuant = floorDiv(multiplyExact(
+            secondTokenBalance, tokenQuant), firstTokenBalance);
         exchangeCapsule.setBalance(firstTokenBalance + tokenQuant,
             secondTokenBalance + anotherTokenQuant);
       } else {
         anotherTokenID = firstTokenID;
-        anotherTokenQuant = Math
-            .floorDiv(Math.multiplyExact(firstTokenBalance, tokenQuant), secondTokenBalance);
+        anotherTokenQuant = floorDiv(multiplyExact(
+            firstTokenBalance, tokenQuant), secondTokenBalance);
         exchangeCapsule.setBalance(firstTokenBalance + anotherTokenQuant,
             secondTokenBalance + tokenQuant);
       }

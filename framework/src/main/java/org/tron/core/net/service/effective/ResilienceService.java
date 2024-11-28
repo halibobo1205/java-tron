@@ -1,5 +1,8 @@
 package org.tron.core.net.service.effective;
 
+import static org.tron.common.math.StrictMathWrapper.ceilAsInt;
+import static org.tron.common.math.StrictMathWrapper.max;
+
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -86,8 +89,8 @@ public class ResilienceService {
       long now = System.currentTimeMillis();
       Map<Object, Integer> weights = new HashMap<>();
       peers.forEach(peer -> {
-        int weight = (int) Math.ceil((double) (now - peer.getLastInteractiveTime()) / 500);
-        weights.put(peer, Math.max(weight, 1));
+        int weight = ceilAsInt((double) (now - peer.getLastInteractiveTime()) / 500);
+        weights.put(peer, max(weight, 1));
       });
       WeightedRandom weightedRandom = new WeightedRandom(weights);
       PeerConnection one = (PeerConnection) weightedRandom.next();

@@ -1,5 +1,8 @@
 package org.tron.core.db;
 
+import static org.tron.common.math.StrictMathWrapper.random;
+import static org.tron.common.math.StrictMathWrapper.round;
+
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.After;
@@ -43,7 +46,7 @@ public class MarketPairPriceToOrderStoreTest extends BaseTest {
   }
 
   private static int randomInt(int minInt, int maxInt) {
-    return (int) Math.round(Math.random() * (maxInt - minInt) + minInt);
+    return (int) round(random() * (maxInt - minInt) + minInt);
   }
 
   @Test

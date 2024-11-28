@@ -29,6 +29,9 @@ import org.tron.common.utils.DecodeUtil;
 import org.tron.common.utils.FastByteComparisons;
 import org.tron.core.db.ByteArrayWrapper;
 
+import static org.tron.common.math.StrictMathWrapper.min;
+import static org.tron.common.math.StrictMathWrapper.signum;
+
 /**
  * DataWord is the 32-byte array representation of a 256-bit number Calculations can be done on this
  * word with other DataWords
@@ -165,7 +168,7 @@ public class DataWord implements Comparable<DataWord> {
     byte[] ret = ByteUtil.EMPTY_BYTE_ARRAY;
     if (data != null) {
       ret = new byte[WORD_SIZE];
-      int dataSize = Math.min(data.length, WORD_SIZE);
+      int dataSize = min(data.length, WORD_SIZE);
       System.arraycopy(data, 0, ret, 0, dataSize);
     }
     return ret;
@@ -484,7 +487,7 @@ public class DataWord implements Comparable<DataWord> {
         data, 0, data.length,
         o.getData(), 0, o.getData().length);
     // Convert result into -1, 0 or 1 as is the convention
-    return (int) Math.signum(result);
+    return (int) signum(result);
   }
 
   public void signExtend(byte k) {

@@ -1,6 +1,7 @@
 package org.tron.core.db;
 
-import static java.lang.Long.max;
+import static org.tron.common.math.StrictMathWrapper.max;
+import static org.tron.common.math.StrictMathWrapper.min;
 import static org.tron.core.config.Parameter.ChainConstant.BLOCK_PRODUCED_INTERVAL;
 import static org.tron.core.config.Parameter.ChainConstant.TRX_PRECISION;
 
@@ -79,8 +80,7 @@ public class EnergyProcessor extends ResourceProcessor {
       // logger.info(totalEnergyAverageUsage + "<" + targetTotalEnergyLimit + "\n" + result);
     }
 
-    result = Math.min(
-        Math.max(result, totalEnergyLimit),
+    result = min(max(result, totalEnergyLimit),
         totalEnergyLimit * dynamicPropertiesStore.getAdaptiveResourceLimitMultiplier()
     );
 
