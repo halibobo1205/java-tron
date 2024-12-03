@@ -49,6 +49,7 @@ import org.tron.common.args.Account;
 import org.tron.common.args.GenesisBlock;
 import org.tron.common.args.Witness;
 import org.tron.common.config.DbBackupConfig;
+import org.tron.common.context.GlobalContext;
 import org.tron.common.crypto.SignInterface;
 import org.tron.common.exit.ExitManager;
 import org.tron.common.exit.ExitReason;
@@ -244,6 +245,7 @@ public class Args extends CommonParameter {
     PARAMETER.allowOldRewardOpt = 0;
     PARAMETER.allowEnergyAdjustment = 0;
     PARAMETER.allowStrictMath = 0;
+    GlobalContext.removeHeader();
   }
 
   /**
