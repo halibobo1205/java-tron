@@ -4,6 +4,7 @@ import com.google.protobuf.ByteString;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
+import org.tron.common.context.GlobalContext;
 import org.tron.core.capsule.IncrementalMerkleTreeCapsule;
 import org.tron.core.capsule.PedersenHashCapsule;
 import org.tron.core.exception.ZksnarkException;
@@ -62,14 +63,18 @@ public class MerkleContainer {
 
   public void saveCurrentMerkleTreeAsBestMerkleTree(long blockNum) throws ZksnarkException {
     IncrementalMerkleTreeContainer treeContainer = getCurrentMerkle();
-    setBestMerkle(blockNum, treeContainer);
-    putMerkleTreeIntoStore(treeContainer.getMerkleTreeKey(), treeContainer.getTreeCapsule());
+    byte[] key = setBestMerkle(blockNum, treeContainer);
+    putMerkleTreeIntoStore(key, treeContainer.getTreeCapsule());
   }
 
-  public void setBestMerkle(long blockNum, IncrementalMerkleTreeContainer treeContainer)
+  public byte[] setBestMerkle(long blockNum, IncrementalMerkleTreeContainer treeContainer)
       throws ZksnarkException {
     incrementalMerkleTreeStore.put(lastTreeKey, treeContainer.getTreeCapsule());
-    merkleTreeIndexStore.put(blockNum, treeContainer.getMerkleTreeKey());
+    GlobalContext.disableLog();
+    byte[] key = treeContainer.getMerkleTreeKey();
+    GlobalContext.enableLog();
+    merkleTreeIndexStore.put(blockNum, key);
+    return key;
   }
 
   public boolean merkleRootExist(byte[] rt) {
