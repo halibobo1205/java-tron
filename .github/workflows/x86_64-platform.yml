@@ -15,10 +15,10 @@ on:
 
 jobs:
   build:
-
-    name: ${{ matrix.os }} - ${{ matrix.os-version }}
+    name: ${{ matrix.os }} - ${{ matrix.os-version }} - JDK ${{ matrix.java-version }}
     runs-on: ${{ matrix.runner }}
-    
+    timeout-minutes: 60
+
     strategy:
       fail-fast: false
       matrix:
@@ -28,25 +28,29 @@ jobs:
             arch: x86_64
             runner: macos-13
             os-version: "13"
+            java-version: '17'
           # Linux x86_64 runners
           - os: Linux
             arch: x86_64
             runner: ubuntu-20.04
             os-version: "20.04"
+            java-version: '8'
           - os: Linux
             arch: x86_64
             runner: ubuntu-22.04
             os-version: "22.04"
+            java-version: '17'
 
     permissions:
       contents: read
 
     steps:
     - uses: actions/checkout@v4
-    - name: Set up JDK 8
+
+    - name: Set up JDK ${{ matrix.java-version }}
       uses: actions/setup-java@v4
       with:
-        java-version: '8'
+        java-version: ${{ matrix.java-version }}
         distribution: 'zulu'
 
     # Configure Gradle for optimal use in GitHub Actions, including caching of downloaded dependencies.

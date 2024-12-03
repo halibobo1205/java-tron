@@ -19,8 +19,8 @@ if (isArm64() && !JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_17)
             "  Detected version ${JavaVersion.current()}")
 }
 
-if (isX86() && !JavaVersion.current().isJava8()) {
-    throw new GradleException("Java 8 is required to build Java-Tron for x86.\n" +
+if (isX86() && !JavaVersion.current().isJava8Compatible()) {
+    throw new GradleException("Java 8 or later is required to build Java-Tron for x86.\n" +
             "  Detected version ${JavaVersion.current()}")
 }
 
