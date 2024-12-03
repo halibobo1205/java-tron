@@ -8,7 +8,11 @@ static def isX86() {
     return Architectures.X86_64.isAlias(arch) || Architectures.X86.isAlias(arch)
 }
 
-if (isX86()) {
+static def isJava8() {
+    return JavaVersion.current().isJava8()
+}
+
+if (isX86() && isJava8()) {
     ext {
         leveldbGroup = "org.fusesource.leveldbjni"
         leveldbName = "leveldbjni-all"
@@ -43,5 +47,5 @@ dependencies {
 }
 
 tasks.withType(JavaCompile).configureEach {
-    source = isX86() ? sourceSets.x86.java : sourceSets.arm.java
+    source = isX86() && isJava8() ? sourceSets.x86.java : sourceSets.arm.java
 }
