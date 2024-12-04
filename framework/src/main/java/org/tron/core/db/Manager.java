@@ -50,6 +50,7 @@ import org.tron.api.GrpcAPI.TransactionInfoList;
 import org.tron.common.args.GenesisBlock;
 import org.tron.common.bloom.Bloom;
 import org.tron.common.es.ExecutorServiceManager;
+import org.tron.common.exit.ExitManager;
 import org.tron.common.logsfilter.EventPluginLoader;
 import org.tron.common.logsfilter.FilterQuery;
 import org.tron.common.logsfilter.capsule.BlockFilterCapsule;
@@ -111,11 +112,14 @@ import org.tron.core.exception.BadBlockException;
 import org.tron.core.exception.BadItemException;
 import org.tron.core.exception.BadNumberBlockException;
 import org.tron.core.exception.BalanceInsufficientException;
+import org.tron.core.exception.ConfigExitException;
 import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractSizeNotEqualToOneException;
 import org.tron.core.exception.ContractValidateException;
+import org.tron.core.exception.DatabaseExitException;
 import org.tron.core.exception.DupTransactionException;
 import org.tron.core.exception.EventBloomException;
+import org.tron.core.exception.EventExitException;
 import org.tron.core.exception.ItemNotFoundException;
 import org.tron.core.exception.NonCommonBlockException;
 import org.tron.core.exception.ReceiptCheckErrException;
@@ -491,20 +495,20 @@ public class Manager {
       this.khaosDb.start(chainBaseManager.getBlockById(
           getDynamicPropertiesStore().getLatestBlockHeaderHash()));
     } catch (ItemNotFoundException e) {
-      logger.error(
-          "Can not find Dynamic highest block from DB! \nnumber={} \nhash={}",
+      String msg = String.format(
+          "Can not find Dynamic highest block from DB! \nnumber=%d \nhash=%s",
           getDynamicPropertiesStore().getLatestBlockHeaderNumber(),
           getDynamicPropertiesStore().getLatestBlockHeaderHash());
-      logger.error(
-          "Please delete database directory({}) and restart",
+      String tip = String.format(
+          "Please delete database directory(%s) and restart",
           Args.getInstance().getOutputDirectory());
-      System.exit(1);
+      ExitManager.exit(tip, new DatabaseExitException(msg, e));
     } catch (BadItemException e) {
-      logger.error("DB data broken {}.", e.getMessage());
-      logger.error(
-          "Please delete database directory({}) and restart.",
+      String msg = "DB data broken";
+      String tip = String.format(
+          "Please delete database directory(%s) and restart",
           Args.getInstance().getOutputDirectory());
-      System.exit(1);
+      ExitManager.exit(tip, new DatabaseExitException(msg, e));
     }
     getChainBaseManager().getForkController().init(this.chainBaseManager);
 
@@ -568,8 +572,8 @@ public class Manager {
     try {
       initAutoStop();
     } catch (IllegalArgumentException e) {
-      logger.error("Auto-stop params error: {}", e.getMessage());
-      System.exit(1);
+      String msg = "Auto-stop params error";
+      ExitManager.exit(msg, new ConfigExitException(e));
     }
 
     maxFlushCount = CommonParameter.getInstance().getStorage().getMaxFlushCount();
@@ -586,10 +590,9 @@ public class Manager {
       Args.getInstance().setChainId(genesisBlock.getBlockId().toString());
     } else {
       if (chainBaseManager.hasBlocks()) {
-        logger.error(
-            "Genesis block modify, please delete database directory({}) and restart.",
-            Args.getInstance().getOutputDirectory());
-        System.exit(1);
+        String msg = String.format("Genesis block modify, please delete database directory(%s) and "
+                + "restart.", Args.getInstance().getOutputDirectory());
+        ExitManager.exit(new DatabaseExitException(msg));
       } else {
         logger.info("Create genesis block.");
         Args.getInstance().setChainId(genesisBlock.getBlockId().toString());
@@ -741,9 +744,9 @@ public class Manager {
     }
 
     if (exitHeight == headNum && (!Args.getInstance().isP2pDisable())) {
-      logger.info("Auto-stop hit: shutDownBlockHeight: {}, currentHeaderNum: {}, exit now",
+      String msg = String.format("Auto-stop hit: shutDownBlockHeight: %d, currentHeaderNum: %d",
           exitHeight, headNum);
-      System.exit(0);
+      ExitManager.exit(msg);
     }
 
     if (exitCount > 0) {
@@ -1368,9 +1371,9 @@ public class Manager {
       // if event subscribe is enabled, post solidity trigger to queue
       postSolidityTrigger(oldSolid, newSolid);
     } catch (Exception e) {
-      logger.error("Block trigger failed. head: {}, oldSolid: {}, newSolid: {}",
-          block.getNum(), oldSolid, newSolid, e);
-      System.exit(1);
+      String msg = String.format("Block trigger failed. head: %d, oldSolid: %d, newSolid: %d",
+          block.getNum(), oldSolid, newSolid);
+      ExitManager.exit(msg, new EventExitException(e));
     }
   }
 

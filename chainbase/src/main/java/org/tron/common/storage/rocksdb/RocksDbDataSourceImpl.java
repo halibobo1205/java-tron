@@ -36,6 +36,7 @@ import org.rocksdb.Status;
 import org.rocksdb.WriteBatch;
 import org.rocksdb.WriteOptions;
 import org.slf4j.LoggerFactory;
+import org.tron.common.exit.ExitManager;
 import org.tron.common.setting.RocksDbSettings;
 import org.tron.common.storage.WriteOptionsWrapper;
 import org.tron.common.storage.metric.DbStat;
@@ -45,6 +46,7 @@ import org.tron.core.db.common.DbSourceInter;
 import org.tron.core.db.common.iterator.RockStoreIterator;
 import org.tron.core.db2.common.Instance;
 import org.tron.core.db2.common.WrappedByteArray;
+import org.tron.core.exception.DatabaseExitException;
 
 
 @Slf4j(topic = "DB")
@@ -266,13 +268,14 @@ public class RocksDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
           try {
             database = RocksDB.open(options, dbPath.toString());
           } catch (RocksDBException e) {
+            String msg;
             if (Objects.equals(e.getStatus().getCode(), Status.Code.Corruption)) {
-              logger.error("Database {} corrupted, please delete database directory({}) " +
-                      "and restart.", dataBaseName, parentPath, e);
+              msg = String.format("Database %s corrupted, please delete database directory(%s) "
+                  + "and restart.", dataBaseName, parentPath);
             } else {
-              logger.error("Open Database {} failed", dataBaseName, e);
+              msg = String.format("Open Database %s failed", dataBaseName);
             }
-            System.exit(1);
+            ExitManager.exit(msg, new DatabaseExitException(e));
           }
 
           alive = true;

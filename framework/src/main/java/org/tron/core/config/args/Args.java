@@ -1,7 +1,6 @@
 package org.tron.core.config.args;
 
 import static java.lang.Math.max;
-import static java.lang.System.exit;
 import static org.tron.core.Constant.ADD_PRE_FIX_BYTE_MAINNET;
 import static org.tron.core.Constant.DYNAMIC_ENERGY_INCREASE_FACTOR_RANGE;
 import static org.tron.core.Constant.DYNAMIC_ENERGY_MAX_FACTOR_RANGE;
@@ -49,6 +48,7 @@ import org.tron.common.args.GenesisBlock;
 import org.tron.common.args.Witness;
 import org.tron.common.config.DbBackupConfig;
 import org.tron.common.crypto.SignInterface;
+import org.tron.common.exit.ExitManager;
 import org.tron.common.logsfilter.EventPluginConfig;
 import org.tron.common.logsfilter.FilterQuery;
 import org.tron.common.logsfilter.TriggerConfig;
@@ -66,6 +66,7 @@ import org.tron.core.config.Configuration;
 import org.tron.core.config.Parameter.NetConstants;
 import org.tron.core.config.Parameter.NodeConstant;
 import org.tron.core.exception.CipherException;
+import org.tron.core.exception.ConfigExitException;
 import org.tron.core.store.AccountStore;
 import org.tron.keystore.Credentials;
 import org.tron.keystore.WalletUtils;
@@ -359,7 +360,7 @@ public class Args extends CommonParameter {
     JCommander.newBuilder().addObject(PARAMETER).build().parse(args);
     if (PARAMETER.version) {
       printVersion();
-      exit(0);
+      ExitManager.exit();
     }
 
     Config config = Configuration.getByFileName(PARAMETER.shellConfFileName, confFileName);
@@ -420,9 +421,8 @@ public class Args extends CommonParameter {
             String prikey = ByteArray.toHexString(sign.getPrivateKey());
             privateKeys.add(prikey);
           } catch (IOException | CipherException e) {
-            logger.error(e.getMessage());
-            logger.error("Witness node start failed!");
-            exit(-1);
+            String msg = "Witness node start failed!";
+            ExitManager.exit(msg, new ConfigExitException(e));
           }
         }
       }
