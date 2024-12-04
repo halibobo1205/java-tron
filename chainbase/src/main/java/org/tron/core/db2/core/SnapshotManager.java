@@ -29,6 +29,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.tron.common.error.TronDBException;
 import org.tron.common.es.ExecutorServiceManager;
+import org.tron.common.exit.ExitManager;
+import org.tron.common.exit.ExitReason;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.storage.WriteOptionsWrapper;
 import org.tron.common.utils.FileUtil;
@@ -41,6 +43,7 @@ import org.tron.core.db2.common.IRevokingDB;
 import org.tron.core.db2.common.Key;
 import org.tron.core.db2.common.Value;
 import org.tron.core.db2.common.WrappedByteArray;
+import org.tron.core.exception.ConfigException;
 import org.tron.core.exception.RevokingStoreIllegalStateException;
 import org.tron.core.store.CheckPointV2Store;
 import org.tron.core.store.CheckTmpStore;
@@ -68,7 +71,6 @@ public class SnapshotManager implements RevokingDatabase {
 
   private volatile int flushCount = 0;
 
-  private Thread exitThread;
   private volatile boolean  hitDown;
 
   private Map<String, ListeningExecutorService> flushServices = new HashMap<>();
@@ -105,15 +107,6 @@ public class SnapshotManager implements RevokingDatabase {
         }
       }, 10000, 3600, TimeUnit.MILLISECONDS);
     }
-    exitThread =  new Thread(() -> {
-      LockSupport.park();
-      // to Guarantee Some other thread invokes unpark with the current thread as the target
-      if (hitDown) {
-        System.exit(1);
-      }
-    });
-    exitThread.setName("exit-thread");
-    exitThread.start();
   }
 
   public static String simpleDecode(byte[] bytes) {
@@ -281,13 +274,6 @@ public class SnapshotManager implements RevokingDatabase {
     ExecutorServiceManager.shutdownAndAwaitTermination(pruneCheckpointThread, pruneName);
     flushServices.forEach((key, value) -> ExecutorServiceManager.shutdownAndAwaitTermination(value,
         "flush-service-" + key));
-    try {
-      exitThread.interrupt();
-      // help GC
-      exitThread = null;
-    } catch (Exception e) {
-      logger.warn("exitThread interrupt error", e);
-    }
   }
 
   public void updateSolidity(int hops) {
@@ -365,9 +351,9 @@ public class SnapshotManager implements RevokingDatabase {
             System.currentTimeMillis() - checkPointEnd
         );
       } catch (TronDBException e) {
-        logger.error(" Find fatal error, program will be exited soon.", e);
         hitDown = true;
-        LockSupport.unpark(exitThread);
+        ExitManager.getInstance().exit(ExitReason.DATABASE_ERROR,
+            "Find fatal error, program will be exited soon.", e);
       }
     }
   }
@@ -490,10 +476,10 @@ public class SnapshotManager implements RevokingDatabase {
     if (!isV2Open()) {
       List<String> cpList = getCheckpointList();
       if (cpList != null && cpList.size() != 0) {
-        logger.error("checkpoint check failed, the checkpoint version of database not match your " +
-            "config file, please set storage.checkpoint.version = 2 in your config file " +
-            "and restart the node.");
-        System.exit(-1);
+        String info = "checkpoint check failed, the checkpoint version of database not match your "
+            + "config file, please set storage.checkpoint.version = 2 in your config file "
+            + "and restart the node.";
+        ExitManager.getInstance().exit(ExitReason.CONFIG_ERROR, new ConfigException(info));
       }
       checkV1();
     } else {

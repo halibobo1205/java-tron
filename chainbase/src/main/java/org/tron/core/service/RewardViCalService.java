@@ -23,6 +23,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.tron.common.error.TronDBException;
 import org.tron.common.es.ExecutorServiceManager;
+import org.tron.common.exit.ExitManager;
+import org.tron.common.exit.ExitReason;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.MerkleRoot;
@@ -120,8 +122,8 @@ public class RewardViCalService {
         }
       }
     } catch (Exception e) {
-      logger.error(" Find fatal error, program will be exited soon.", e);
-      System.exit(1);
+      ExitManager.getInstance().exit(ExitReason.DATABASE_ERROR,
+          "Find fatal error, program will be exited soon", e);
     }
   }
 
