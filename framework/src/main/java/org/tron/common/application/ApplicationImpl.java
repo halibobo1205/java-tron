@@ -4,6 +4,8 @@ import java.util.concurrent.CountDownLatch;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.tron.common.exit.ExitManager;
+import org.tron.common.exit.ExitReason;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.core.ChainBaseManager;
 import org.tron.core.config.args.Args;
@@ -82,8 +84,8 @@ public class ApplicationImpl implements Application {
     try {
       services.start();
     } catch (Exception e) {
-      logger.error("Failed to start services", e);
-      System.exit(1);
+      ExitManager.getInstance().exit(ExitReason.INITIALIZATION_ERROR,
+          "Failed to start services", e);
     }
   }
 

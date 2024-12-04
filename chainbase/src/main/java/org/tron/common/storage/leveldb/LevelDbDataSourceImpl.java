@@ -47,6 +47,8 @@ import org.iq80.leveldb.ReadOptions;
 import org.iq80.leveldb.WriteBatch;
 import org.iq80.leveldb.WriteOptions;
 import org.slf4j.LoggerFactory;
+import org.tron.common.exit.ExitManager;
+import org.tron.common.exit.ExitReason;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.storage.WriteOptionsWrapper;
 import org.tron.common.storage.metric.DbStat;
@@ -176,13 +178,14 @@ public class LevelDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
                 dbOptions.cacheSize() / 1024 / 1024, dbOptions.maxOpenFiles());
       }
     } catch (IOException e) {
+      String info;
       if (e.getMessage().contains("Corruption:")) {
-        logger.error("Database {} corrupted, please delete database directory({}) and restart.",
-            dataBaseName, parentPath, e);
+        info = String.format("Database %s corrupted, please delete database directory(%s) "
+            + "and restart.", dataBaseName, parentPath);
       } else {
-        logger.error("Open Database {} failed", dataBaseName, e);
+        info = String.format("Open Database %s failed", dataBaseName);
       }
-      System.exit(1);
+      ExitManager.getInstance().exit(ExitReason.DATABASE_ERROR, info, e);
     }
   }
 

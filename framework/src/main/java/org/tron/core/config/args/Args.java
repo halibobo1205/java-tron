@@ -51,6 +51,8 @@ import org.tron.common.args.GenesisBlock;
 import org.tron.common.args.Witness;
 import org.tron.common.config.DbBackupConfig;
 import org.tron.common.crypto.SignInterface;
+import org.tron.common.exit.ExitManager;
+import org.tron.common.exit.ExitReason;
 import org.tron.common.logsfilter.EventPluginConfig;
 import org.tron.common.logsfilter.FilterQuery;
 import org.tron.common.logsfilter.TriggerConfig;
@@ -377,7 +379,7 @@ public class Args extends CommonParameter {
     JCommander.newBuilder().addObject(PARAMETER).build().parse(args);
     if (PARAMETER.version) {
       printVersion();
-      exit(0);
+      ExitManager.getInstance().exit(ExitReason.NORMAL_SHUTDOWN);
     }
 
     if (config.hasPath(Constant.NET_TYPE)
@@ -436,9 +438,8 @@ public class Args extends CommonParameter {
             String prikey = ByteArray.toHexString(sign.getPrivateKey());
             privateKeys.add(prikey);
           } catch (IOException | CipherException e) {
-            logger.error(e.getMessage());
-            logger.error("Witness node start failed!");
-            exit(-1);
+            ExitManager.getInstance().exit(ExitReason.INITIALIZATION_ERROR,
+                "Witness node start failed!", e);
           }
         }
       }

@@ -53,6 +53,8 @@ import org.tron.api.GrpcAPI.TransactionInfoList;
 import org.tron.common.args.GenesisBlock;
 import org.tron.common.bloom.Bloom;
 import org.tron.common.es.ExecutorServiceManager;
+import org.tron.common.exit.ExitManager;
+import org.tron.common.exit.ExitReason;
 import org.tron.common.logsfilter.EventPluginLoader;
 import org.tron.common.logsfilter.FilterQuery;
 import org.tron.common.logsfilter.capsule.BlockFilterCapsule;
@@ -119,6 +121,7 @@ import org.tron.core.exception.ContractSizeNotEqualToOneException;
 import org.tron.core.exception.ContractValidateException;
 import org.tron.core.exception.DupTransactionException;
 import org.tron.core.exception.EventBloomException;
+import org.tron.core.exception.GenesisBlockException;
 import org.tron.core.exception.ItemNotFoundException;
 import org.tron.core.exception.NonCommonBlockException;
 import org.tron.core.exception.ReceiptCheckErrException;
@@ -494,20 +497,19 @@ public class Manager {
       this.khaosDb.start(chainBaseManager.getBlockById(
           getDynamicPropertiesStore().getLatestBlockHeaderHash()));
     } catch (ItemNotFoundException e) {
-      logger.error(
-          "Can not find Dynamic highest block from DB! \nnumber={} \nhash={}",
+      String info = String.format(
+          "Can not find Dynamic highest block from DB! \nnumber=%s \nhash=%s",
           getDynamicPropertiesStore().getLatestBlockHeaderNumber(),
           getDynamicPropertiesStore().getLatestBlockHeaderHash());
       logger.error(
           "Please delete database directory({}) and restart",
           Args.getInstance().getOutputDirectory());
-      System.exit(1);
+      ExitManager.getInstance().exit(ExitReason.DATABASE_ERROR, info, e);
     } catch (BadItemException e) {
-      logger.error("DB data broken {}.", e.getMessage());
       logger.error(
           "Please delete database directory({}) and restart.",
           Args.getInstance().getOutputDirectory());
-      System.exit(1);
+      ExitManager.getInstance().exit(ExitReason.DATABASE_ERROR, "DB data broken", e);
     }
     getChainBaseManager().getForkController().init(this.chainBaseManager);
 
@@ -571,8 +573,7 @@ public class Manager {
     try {
       initAutoStop();
     } catch (IllegalArgumentException e) {
-      logger.error("Auto-stop params error: {}", e.getMessage());
-      System.exit(1);
+      ExitManager.getInstance().exit(ExitReason.CONFIG_ERROR, "Auto-stop params", e);
     }
 
     maxFlushCount = CommonParameter.getInstance().getStorage().getMaxFlushCount();
@@ -589,10 +590,10 @@ public class Manager {
       Args.getInstance().setChainId(genesisBlock.getBlockId().toString());
     } else {
       if (chainBaseManager.hasBlocks()) {
-        logger.error(
-            "Genesis block modify, please delete database directory({}) and restart.",
+        String info = String.format(
+            "Genesis block modify, please delete database directory(%s) and restart.",
             Args.getInstance().getOutputDirectory());
-        System.exit(1);
+        ExitManager.getInstance().exit(ExitReason.CONFIG_ERROR, new GenesisBlockException(info));
       } else {
         logger.info("Create genesis block.");
         Args.getInstance().setChainId(genesisBlock.getBlockId().toString());
@@ -744,9 +745,9 @@ public class Manager {
     }
 
     if (exitHeight == headNum && (!Args.getInstance().isP2pDisable())) {
-      logger.info("Auto-stop hit: shutDownBlockHeight: {}, currentHeaderNum: {}, exit now",
+      String info = String.format("Auto-stop hit: shutDownBlockHeight: %d, currentHeaderNum: %d",
           exitHeight, headNum);
-      System.exit(0);
+      ExitManager.getInstance().exit(ExitReason.NORMAL_SHUTDOWN, info);
     }
 
     if (exitCount > 0) {
@@ -1371,9 +1372,9 @@ public class Manager {
       // if event subscribe is enabled, post solidity trigger to queue
       postSolidityTrigger(oldSolid, newSolid);
     } catch (Exception e) {
-      logger.error("Block trigger failed. head: {}, oldSolid: {}, newSolid: {}",
-          block.getNum(), oldSolid, newSolid, e);
-      System.exit(1);
+      ExitManager.getInstance().exit(ExitReason.EVENT_ERROR, String.format(
+          "Block trigger failed. head: %d, oldSolid: %d, newSolid: %d",
+          block.getNum(), oldSolid, newSolid), e);
     }
   }
 

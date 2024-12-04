@@ -9,16 +9,14 @@ import io.prometheus.client.Histogram;
 import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.LockSupport;
-import javax.annotation.PostConstruct;
-import javax.annotation.PreDestroy;
 import lombok.Getter;
-import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.bouncycastle.util.encoders.Hex;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.tron.common.backup.socket.BackupServer;
+import org.tron.common.exit.ExitManager;
+import org.tron.common.exit.ExitReason;
 import org.tron.common.overlay.message.Message;
 import org.tron.common.prometheus.MetricKeys;
 import org.tron.common.prometheus.MetricLabels;
@@ -91,13 +89,8 @@ public class TronNetDelegate {
 
   private long timeout = 1000;
 
-  @Getter // for test
+  @Getter
   private volatile boolean  hitDown = false;
-
-  private Thread hitThread;
-
-  @Setter
-  private volatile boolean exit = true;
 
   private int maxUnsolidifiedBlocks = Args.getInstance().getMaxUnsolidifiedBlocks();
 
@@ -107,30 +100,6 @@ public class TronNetDelegate {
   private Cache<BlockId, Long> freshBlockId = CacheBuilder.newBuilder()
           .maximumSize(blockIdCacheSize).expireAfterWrite(1, TimeUnit.HOURS)
           .recordStats().build();
-
-  @PostConstruct
-  public void init() {
-    hitThread =  new Thread(() -> {
-      LockSupport.park();
-      // to Guarantee Some other thread invokes unpark with the current thread as the target
-      if (hitDown && exit) {
-        System.exit(0);
-      }
-    });
-    hitThread.setName("hit-thread");
-    hitThread.start();
-  }
-
-  @PreDestroy
-  public void close() {
-    try {
-      hitThread.interrupt();
-      // help GC
-      hitThread = null;
-    } catch (Exception e) {
-      logger.warn("hitThread interrupt error", e);
-    }
-  }
 
   public Collection<PeerConnection> getActivePeer() {
     return TronNetService.getPeers();
@@ -229,10 +198,6 @@ public class TronNetDelegate {
     }
   }
 
-  public void unparkHitThread() {
-    LockSupport.unpark(hitThread);
-  }
-
   public void markHitDown() {
     hitDown = true;
   }
@@ -241,13 +206,12 @@ public class TronNetDelegate {
     if (!hitDown && dbManager.getLatestSolidityNumShutDown() > 0
         && dbManager.getLatestSolidityNumShutDown() == dbManager.getDynamicPropertiesStore()
         .getLatestBlockHeaderNumberFromDB()) {
-
-      logger.info("Begin shutdown, currentBlockNum:{}, DbBlockNum:{}, solidifiedBlockNum:{}",
-          dbManager.getDynamicPropertiesStore().getLatestBlockHeaderNumber(),
-          dbManager.getDynamicPropertiesStore().getLatestBlockHeaderNumberFromDB(),
-          dbManager.getDynamicPropertiesStore().getLatestSolidifiedBlockNum());
+      String info = "Begin shutdown, currentBlockNum:" + dbManager.getDynamicPropertiesStore()
+          .getLatestBlockHeaderNumber() + ", DbBlockNum:" + dbManager.getDynamicPropertiesStore()
+          .getLatestBlockHeaderNumberFromDB() + ", solidifiedBlockNum:" + dbManager
+          .getDynamicPropertiesStore().getLatestSolidifiedBlockNum();
       markHitDown();
-      unparkHitThread();
+      ExitManager.getInstance().exit(ExitReason.NORMAL_SHUTDOWN, info);
       return;
     }
     if (hitDown) {

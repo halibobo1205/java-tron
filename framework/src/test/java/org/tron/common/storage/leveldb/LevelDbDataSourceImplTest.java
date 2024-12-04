@@ -46,10 +46,10 @@ import org.junit.Before;
 import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.contrib.java.lang.system.ExpectedSystemExit;
 import org.junit.rules.ExpectedException;
 import org.junit.rules.TemporaryFolder;
 import org.rocksdb.RocksDB;
+import org.tron.common.exit.TronExitException;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.storage.WriteOptionsWrapper;
 import org.tron.common.storage.rocksdb.RocksDbDataSourceImpl;
@@ -82,9 +82,6 @@ public class LevelDbDataSourceImplTest {
   private byte[] key4 = "00000004aa".getBytes();
   private byte[] key5 = "00000005aa".getBytes();
   private byte[] key6 = "00000006aa".getBytes();
-
-  @Rule
-  public final ExpectedSystemExit exit = ExpectedSystemExit.none();
 
   @Rule
   public final ExpectedException exception = ExpectedException.none();
@@ -395,7 +392,7 @@ public class LevelDbDataSourceImplTest {
 
   @Test
   public void initDbTest() {
-    exit.expectSystemExitWithStatus(1);
+    exception.expect(TronExitException.class);
     makeExceptionDb("test_initDb");
     LevelDbDataSourceImpl dataSource = new LevelDbDataSourceImpl(
         Args.getInstance().getOutputDirectory(), "test_initDb");

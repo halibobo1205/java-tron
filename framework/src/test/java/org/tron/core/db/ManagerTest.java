@@ -30,10 +30,11 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.contrib.java.lang.system.ExpectedSystemExit;
+import org.junit.rules.ExpectedException;
 import org.junit.rules.TemporaryFolder;
 import org.tron.common.application.TronApplicationContext;
 import org.tron.common.crypto.ECKey;
+import org.tron.common.exit.TronExitException;
 import org.tron.common.runtime.RuntimeImpl;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.JsonUtil;
@@ -92,7 +93,6 @@ import org.tron.protos.Protocol.Account;
 import org.tron.protos.Protocol.Block;
 import org.tron.protos.Protocol.Transaction;
 import org.tron.protos.Protocol.Transaction.Contract.ContractType;
-import org.tron.protos.Protocol.Transaction.raw;
 import org.tron.protos.contract.AccountContract;
 import org.tron.protos.contract.AssetIssueContractOuterClass;
 import org.tron.protos.contract.BalanceContract.TransferContract;
@@ -112,7 +112,7 @@ public class ManagerTest extends BlockGenerate {
   @Rule
   public TemporaryFolder temporaryFolder = new TemporaryFolder();
   @Rule
-  public final ExpectedSystemExit exit = ExpectedSystemExit.none();
+  public final ExpectedException exception = ExpectedException.none();
   private static AtomicInteger port = new AtomicInteger(0);
   private static String accountAddress =
       Wallet.getAddressPreFixString() + "548794500882809695a8a687866e76d4271a1abc";
@@ -1160,7 +1160,7 @@ public class ManagerTest extends BlockGenerate {
 
   @Test
   public void blockTrigger() {
-    exit.expectSystemExitWithStatus(1);
+    exception.expect(TronExitException.class);
     Manager manager = spy(new Manager());
     doThrow(new RuntimeException("postBlockTrigger mock")).when(manager).postBlockTrigger(any());
     manager.blockTrigger(new BlockCapsule(Block.newBuilder().build()), 1, 1);

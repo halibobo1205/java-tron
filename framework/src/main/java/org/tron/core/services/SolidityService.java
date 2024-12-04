@@ -11,6 +11,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.ObjectUtils;
 import org.tron.common.client.DatabaseGrpcClient;
+import org.tron.common.exit.ExitManager;
+import org.tron.common.exit.ExitReason;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.core.ChainBaseManager;
 import org.tron.core.capsule.BlockCapsule;
@@ -74,9 +76,9 @@ public class SolidityService {
       logger.info("Success to start solid node, ID: {}, remoteBlockNum: {}.", ID.get(),
           remoteBlockNum);
     } catch (Exception e) {
-      logger.error("Failed to start solid node, address: {}.",
-          CommonParameter.getInstance().getTrustNodeAddr());
-      System.exit(0);
+      String info = "Failed to start solid node, address: " + CommonParameter.getInstance()
+          .getTrustNodeAddr();
+      ExitManager.getInstance().exit(ExitReason.INITIALIZATION_ERROR, info, e);
     }
   }
 
@@ -111,12 +113,12 @@ public class SolidityService {
         sleep(exceptionSleepTime);
       }
     }
-    logger.info("Begin shutdown, currentBlockNum:{}, DbBlockNum:{}, solidifiedBlockNum:{}",
-        dbManager.getDynamicPropertiesStore().getLatestBlockHeaderNumber(),
-        dbManager.getDynamicPropertiesStore().getLatestBlockHeaderNumberFromDB(),
-        dbManager.getDynamicPropertiesStore().getLatestSolidifiedBlockNum());
+    String info = "Begin shutdown, currentBlockNum:" + dbManager.getDynamicPropertiesStore()
+        .getLatestBlockHeaderNumber() + ", DbBlockNum:" + dbManager.getDynamicPropertiesStore()
+        .getLatestBlockHeaderNumberFromDB() + ", solidifiedBlockNum:" + dbManager
+        .getDynamicPropertiesStore().getLatestSolidifiedBlockNum();
     tronNetDelegate.markHitDown();
-    tronNetDelegate.unparkHitThread();
+    ExitManager.getInstance().exit(ExitReason.NORMAL_SHUTDOWN, info);
   }
 
   private void loopProcessBlock(Block block) {

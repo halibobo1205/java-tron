@@ -2,14 +2,11 @@ package org.tron.core.services.stop;
 
 import com.google.common.collect.Maps;
 import com.google.protobuf.ByteString;
-import java.io.File;
 import java.io.IOException;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
@@ -25,8 +22,6 @@ import org.tron.common.application.TronApplicationContext;
 import org.tron.common.crypto.ECKey;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.ByteArray;
-import org.tron.common.utils.FileUtil;
-import org.tron.common.utils.LocalWitnesses;
 import org.tron.common.utils.PublicMethod;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.common.utils.Utils;
@@ -95,7 +90,6 @@ public abstract class ConditionallyStopTest extends BlockGenerate {
     consensusService.start();
     chainManager = dbManager.getChainBaseManager();
     tronNetDelegate = context.getBean(TronNetDelegate.class);
-    tronNetDelegate.setExit(false);
     currentHeader = dbManager.getDynamicPropertiesStore()
         .getLatestBlockHeaderNumberFromDB();
 
