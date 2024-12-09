@@ -11,7 +11,7 @@ import org.tron.core.store.AssetIssueStore;
 import org.tron.core.store.DynamicPropertiesStore;
 import org.tron.protos.Protocol.Exchange;
 
-@Slf4j(topic = "capsule")
+@Slf4j(topic = "banchor")
 public class ExchangeCapsule implements ProtoCapsule<Exchange> {
 
   private Exchange exchange;
@@ -114,9 +114,11 @@ public class ExchangeCapsule implements ProtoCapsule<Exchange> {
 
   public long transaction(byte[] sellTokenID, long sellTokenQuant, boolean useStrictMath) {
     long supply = 1_000_000_000_000_000_000L;
-    ExchangeProcessor processor = new ExchangeProcessor(supply, useStrictMath);
+    ExchangeProcessor processor = new ExchangeProcessor(supply, false);
+    ExchangeProcessor strictProcessor = new ExchangeProcessor(supply, true);
 
     long buyTokenQuant = 0;
+    long strictBuyTokenQuant = 0;
     long firstTokenBalance = this.exchange.getFirstTokenBalance();
     long secondTokenBalance = this.exchange.getSecondTokenBalance();
 
@@ -124,6 +126,13 @@ public class ExchangeCapsule implements ProtoCapsule<Exchange> {
       buyTokenQuant = processor.exchange(firstTokenBalance,
           secondTokenBalance,
           sellTokenQuant);
+      strictBuyTokenQuant = strictProcessor.exchange(firstTokenBalance,
+          secondTokenBalance,
+          sellTokenQuant);
+      if (buyTokenQuant != strictBuyTokenQuant) {
+        logger.error("1:{}\t{}\t{}\t{}\t{}", buyTokenQuant, strictBuyTokenQuant,
+            firstTokenBalance, secondTokenBalance, sellTokenQuant);
+      }
       this.exchange = this.exchange.toBuilder()
           .setFirstTokenBalance(firstTokenBalance + sellTokenQuant)
           .setSecondTokenBalance(secondTokenBalance - buyTokenQuant)
@@ -132,12 +141,21 @@ public class ExchangeCapsule implements ProtoCapsule<Exchange> {
       buyTokenQuant = processor.exchange(secondTokenBalance,
           firstTokenBalance,
           sellTokenQuant);
+      strictBuyTokenQuant = strictProcessor.exchange(secondTokenBalance,
+          firstTokenBalance,
+          sellTokenQuant);
+      if (buyTokenQuant != strictBuyTokenQuant) {
+        logger.error("2:{}\t{}\t{}\t{}\t{}", buyTokenQuant, strictBuyTokenQuant,
+            secondTokenBalance, firstTokenBalance, sellTokenQuant);
+      }
       this.exchange = this.exchange.toBuilder()
           .setFirstTokenBalance(firstTokenBalance - buyTokenQuant)
           .setSecondTokenBalance(secondTokenBalance + sellTokenQuant)
           .build();
     }
-
+    if (buyTokenQuant != strictBuyTokenQuant) {
+      throw new IllegalStateException("banchor check failed");
+    }
     return buyTokenQuant;
   }
 
