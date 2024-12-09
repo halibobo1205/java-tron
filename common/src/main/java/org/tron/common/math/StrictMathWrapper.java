@@ -7,6 +7,10 @@ import java.util.Objects;
 
 public class StrictMathWrapper {
 
+  private static final Map<PowData, Double> powData = Collections.synchronizedMap(new HashMap<>());
+  private static final String POW_B1 = "3f40624dd2f1a9fc"; // 1/2000 = 0.0005
+  private static final String POW_B2 = "409f400000000000"; //
+
   public static double pow(double a, double b) {
     double strictResult = StrictMath.pow(a, b);
     return powData.getOrDefault(new PowData(a, b), strictResult);
@@ -365,11 +369,8 @@ public class StrictMathWrapper {
     addPowData("3ff99efec0fbc5d8", POW_B1, "3ff000f6e0b478fe"); //  6806564
     addPowData("3ffffcf9acb020be", POW_B1, "3ff0016b472e0602"); //  5640221
     */
+    addPowData("3ff0192278704be3", POW_B1, "3ff000033518c576"); //  4137160
   }
-
-  private static final Map<PowData, Double> powData = Collections.synchronizedMap(new HashMap<>());
-  private static final String POW_B1 = "3f40624dd2f1a9fc"; // 1/2000 = 0.0005
-  private static final String POW_B2 = "409f400000000000"; //
 
   private static void addPowData(String a, String b, String ret) {
     powData.put(new PowData(hexToDouble(a), hexToDouble(b)), hexToDouble(ret));
