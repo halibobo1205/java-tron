@@ -375,6 +375,7 @@ public class StrictMathWrapper {
     addPowData("3ff0068cd52978ae", POW_B1, "3ff00000d676966c"); //  4109544
     addPowData("3ff0032fda05447d", POW_B1, "3ff0000068636fe0"); //  4123826
     addPowData("3ff00051c09cc796", POW_B1, "3ff000000a76c20e"); //  4166806
+    addPowData("3ff00bef8115b65d", POW_B1, "3ff0000186893de0"); //  4225778
   }
 
   private static void addPowData(String a, String b, String ret) {

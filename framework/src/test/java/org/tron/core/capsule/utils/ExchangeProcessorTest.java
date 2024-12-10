@@ -173,6 +173,12 @@ public class ExchangeProcessorTest extends BaseTest {
     processor = new ExchangeProcessor(supply, true);
     result = processor.exchange(64126212, 2895100109660L, 5000);
     Assert.assertEquals(anotherTokenQuant, result);
+
+    processor = new ExchangeProcessor(supply, false);
+    anotherTokenQuant = processor.exchange(56459055, 3288380567368L, 165000);
+    processor = new ExchangeProcessor(supply, true);
+    result = processor.exchange(56459055, 3288380567368L, 165000);
+    Assert.assertEquals(anotherTokenQuant, result);
   }
 
 
