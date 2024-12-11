@@ -154,7 +154,7 @@ public class ExchangeCapsule implements ProtoCapsule<Exchange> {
           .build();
     }
     if (buyTokenQuant != strictBuyTokenQuant) {
-      throw new IllegalStateException("banchor check failed");
+      System.exit(1);
     }
     return buyTokenQuant;
   }
