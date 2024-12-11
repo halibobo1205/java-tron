@@ -138,84 +138,29 @@ public class ExchangeProcessorTest extends BaseTest {
   @Test
   public void testStrictMath() {
     long supply = 1_000_000_000_000_000_000L;
-    ExchangeProcessor processor = new ExchangeProcessor(supply, false);
-    long anotherTokenQuant = processor.exchange(4732214, 2202692725330L, 29218);
-    processor = new ExchangeProcessor(supply, true);
-    long result = processor.exchange(4732214, 2202692725330L, 29218);
-    Assert.assertEquals(anotherTokenQuant, result);
+    long[][] testData = {
+        {4732214L, 2202692725330L, 29218L},
+        {5618633L, 556559904655L, 1L},
+        {9299554L, 1120271441185L, 7000L},
+        {62433133L, 12013267997895L, 100000L},
+        {64212664L, 725836766395L, 50000L},
+        {64126212L, 2895100109660L, 5000L},
+        {56459055L, 3288380567368L, 165000L},
+        {21084707L, 1589204008960L, 50000L},
+        {24120521L, 1243764649177L, 20000L},
+        {836877L, 212532333234L, 5293L},
+        {55879741L, 13424854054078L, 250000L},
+        {66388882L, 11300012790454L, 300000L},
+        {94470955L, 7941038150919L, 2000L},
+        // add pow data
+    };
 
-    processor = new ExchangeProcessor(supply, false);
-    anotherTokenQuant = processor.exchange(5618633, 556559904655L, 1);
-    processor = new ExchangeProcessor(supply, true);
-    result = processor.exchange(5618633, 556559904655L, 1);
-    Assert.assertEquals(anotherTokenQuant, result);
-
-    processor = new ExchangeProcessor(supply, false);
-    anotherTokenQuant = processor.exchange(9299554, 1120271441185L, 7000);
-    processor = new ExchangeProcessor(supply, true);
-    result = processor.exchange(9299554, 1120271441185L, 7000);
-    Assert.assertEquals(anotherTokenQuant, result);
-
-    processor = new ExchangeProcessor(supply, false);
-    anotherTokenQuant = processor.exchange(62433133, 12013267997895L, 100000);
-    processor = new ExchangeProcessor(supply, true);
-    result = processor.exchange(62433133, 12013267997895L, 100000);
-    Assert.assertEquals(anotherTokenQuant, result);
-
-    processor = new ExchangeProcessor(supply, false);
-    anotherTokenQuant = processor.exchange(64212664, 725836766395L, 50000);
-    processor = new ExchangeProcessor(supply, true);
-    result = processor.exchange(64212664, 725836766395L, 50000);
-    Assert.assertEquals(anotherTokenQuant, result);
-
-    processor = new ExchangeProcessor(supply, false);
-    anotherTokenQuant = processor.exchange(64126212, 2895100109660L, 5000);
-    processor = new ExchangeProcessor(supply, true);
-    result = processor.exchange(64126212, 2895100109660L, 5000);
-    Assert.assertEquals(anotherTokenQuant, result);
-
-    processor = new ExchangeProcessor(supply, false);
-    anotherTokenQuant = processor.exchange(56459055, 3288380567368L, 165000);
-    processor = new ExchangeProcessor(supply, true);
-    result = processor.exchange(56459055, 3288380567368L, 165000);
-    Assert.assertEquals(anotherTokenQuant, result);
-
-    processor = new ExchangeProcessor(supply, false);
-    anotherTokenQuant = processor.exchange(21084707, 1589204008960L, 50000);
-    processor = new ExchangeProcessor(supply, true);
-    result = processor.exchange(21084707, 1589204008960L, 50000);
-    Assert.assertEquals(anotherTokenQuant, result);
-
-    processor = new ExchangeProcessor(supply, false);
-    anotherTokenQuant = processor.exchange(24120521, 1243764649177L, 20000);
-    processor = new ExchangeProcessor(supply, true);
-    result = processor.exchange(24120521, 1243764649177L, 20000);
-    Assert.assertEquals(anotherTokenQuant, result);
-
-    processor = new ExchangeProcessor(supply, false);
-    anotherTokenQuant = processor.exchange(836877, 212532333234L, 5293);
-    processor = new ExchangeProcessor(supply, true);
-    result = processor.exchange(836877, 212532333234L, 5293);
-    Assert.assertEquals(anotherTokenQuant, result);
-
-    processor = new ExchangeProcessor(supply, false);
-    anotherTokenQuant = processor.exchange(55879741, 13424854054078L, 250000);
-    processor = new ExchangeProcessor(supply, true);
-    result = processor.exchange(55879741, 13424854054078L, 250000);
-    Assert.assertEquals(anotherTokenQuant, result);
-
-    processor = new ExchangeProcessor(supply, false);
-    anotherTokenQuant = processor.exchange(66388882, 11300012790454L, 300000);
-    processor = new ExchangeProcessor(supply, true);
-    result = processor.exchange(66388882, 11300012790454L, 300000);
-    Assert.assertEquals(anotherTokenQuant, result);
-
-    processor = new ExchangeProcessor(supply, false);
-    anotherTokenQuant = processor.exchange(94470955, 7941038150919L, 2000);
-    processor = new ExchangeProcessor(supply, true);
-    result = processor.exchange(94470955, 7941038150919L, 2000);
-    Assert.assertEquals(anotherTokenQuant, result);
+    for (long[] data : testData) {
+      ExchangeProcessor processor = new ExchangeProcessor(supply, false);
+      long anotherTokenQuant = processor.exchange(data[0], data[1], data[2]);
+      processor = new ExchangeProcessor(supply, true);
+      long result = processor.exchange(data[0], data[1], data[2]);
+      Assert.assertEquals(anotherTokenQuant, result);
+    }
   }
-
-
 }
