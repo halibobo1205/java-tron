@@ -162,7 +162,7 @@ public class ArgsTest {
     storage.put("storage.db.directory", "database");
     Config config = ConfigFactory.defaultOverrides().withFallback(ConfigFactory.parseMap(storage));
     // test default value
-    Args.setParam(new String[] {}, config);
+    Args.setParam(config);
     Assert.assertTrue(Args.getInstance().isRpcEnable());
     Assert.assertTrue(Args.getInstance().isRpcSolidityEnable());
     Assert.assertTrue(Args.getInstance().isRpcPBFTEnable());
@@ -185,7 +185,7 @@ public class ArgsTest {
     storage.put("node.jsonrpc.httpPBFTEnable", "true");
     config = ConfigFactory.defaultOverrides().withFallback(ConfigFactory.parseMap(storage));
     // test value
-    Args.setParam(new String[] {}, config);
+    Args.setParam(config);
     Assert.assertTrue(Args.getInstance().isRpcEnable());
     Assert.assertTrue(Args.getInstance().isRpcSolidityEnable());
     Assert.assertTrue(Args.getInstance().isRpcPBFTEnable());
@@ -208,7 +208,7 @@ public class ArgsTest {
     storage.put("node.jsonrpc.httpPBFTEnable", "false");
     config = ConfigFactory.defaultOverrides().withFallback(ConfigFactory.parseMap(storage));
     // test value
-    Args.setParam(new String[] {}, config);
+    Args.setParam(config);
     Assert.assertFalse(Args.getInstance().isRpcEnable());
     Assert.assertFalse(Args.getInstance().isRpcSolidityEnable());
     Assert.assertFalse(Args.getInstance().isRpcPBFTEnable());
@@ -231,7 +231,7 @@ public class ArgsTest {
     storage.put("node.jsonrpc.httpPBFTEnable", "true");
     config = ConfigFactory.defaultOverrides().withFallback(ConfigFactory.parseMap(storage));
     // test value
-    Args.setParam(new String[] {}, config);
+    Args.setParam(config);
     Assert.assertFalse(Args.getInstance().isRpcEnable());
     Assert.assertFalse(Args.getInstance().isRpcSolidityEnable());
     Assert.assertTrue(Args.getInstance().isRpcPBFTEnable());

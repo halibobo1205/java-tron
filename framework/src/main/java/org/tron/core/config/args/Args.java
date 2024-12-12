@@ -367,21 +367,19 @@ public class Args extends CommonParameter {
    * set parameters.
    */
   public static void setParam(final String[] args, final String confFileName) {
-    Config config = Configuration.getByFileName(PARAMETER.shellConfFileName, confFileName);
-    setParam(args, config);
-  }
-
-  /**
-   * set parameters.
-   */
-  public static void setParam(final String[] args, final Config config) {
-
     JCommander.newBuilder().addObject(PARAMETER).build().parse(args);
     if (PARAMETER.version) {
       printVersion();
       ExitManager.getInstance().exit(ExitReason.NORMAL_SHUTDOWN);
     }
+    Config config = Configuration.getByFileName(PARAMETER.shellConfFileName, confFileName);
+    setParam(config);
+  }
 
+  /**
+   * set parameters.
+   */
+  public static void setParam(final Config config) {
     if (config.hasPath(Constant.NET_TYPE)
         && Constant.TESTNET.equalsIgnoreCase(config.getString(Constant.NET_TYPE))) {
       Wallet.setAddressPreFixByte(Constant.ADD_PRE_FIX_BYTE_TESTNET);
