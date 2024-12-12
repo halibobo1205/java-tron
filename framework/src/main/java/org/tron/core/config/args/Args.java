@@ -367,16 +367,15 @@ public class Args extends CommonParameter {
    * set parameters.
    */
   public static void setParam(final String[] args, final String confFileName) {
+    JCommander.newBuilder().addObject(PARAMETER).build().parse(args);
     Config config = Configuration.getByFileName(PARAMETER.shellConfFileName, confFileName);
-    setParam(args, config);
+    setParam(config);
   }
 
   /**
    * set parameters.
    */
-  public static void setParam(final String[] args, final Config config) {
-
-    JCommander.newBuilder().addObject(PARAMETER).build().parse(args);
+  public static void setParam(final Config config) {
     if (PARAMETER.version) {
       printVersion();
       ExitManager.getInstance().exit(ExitReason.NORMAL_SHUTDOWN);
