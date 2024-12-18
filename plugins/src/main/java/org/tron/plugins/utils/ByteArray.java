@@ -98,4 +98,10 @@ public class ByteArray {
     }
     return Hex.decode(data);
   }
+
+  public static byte[] subArray(byte[] input, int start, int end) {
+    byte[] result = new byte[end - start];
+    System.arraycopy(input, start, result, 0, end - start);
+    return result;
+  }
 }

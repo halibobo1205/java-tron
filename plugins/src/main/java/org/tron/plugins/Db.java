@@ -16,6 +16,7 @@ import picocli.CommandLine;
         DbCheckpointCompare.class,
         DbCheckSum.class,
         DbMathCompare.class,
+        DbStateRoot.class,
     },
     commandListHeading = "%nCommands:%n%nThe most commonly used db commands are:%n"
 )
