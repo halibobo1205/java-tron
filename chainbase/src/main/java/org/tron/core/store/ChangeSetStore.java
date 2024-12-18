@@ -1,27 +1,21 @@
 package org.tron.core.store;
 
 import com.google.protobuf.InvalidProtocolBufferException;
-import java.util.Map;
 import java.util.Spliterator;
 import java.util.function.Consumer;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.ApplicationContext;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
-import org.tron.common.storage.WriteOptionsWrapper;
 import org.tron.core.db.TronDatabase;
 import org.tron.core.exception.BadItemException;
 import org.tron.core.exception.ItemNotFoundException;
-import org.tron.core.service.ChangeSetService;
 
 @Component
-public class CheckTmpStore extends TronDatabase<byte[]> {
+public class ChangeSetStore extends TronDatabase<byte[]> {
 
   @Autowired
-  private ChangeSetStore changeSetStore;
-
-  @Autowired
-  public CheckTmpStore(ApplicationContext ctx) {
-    super("tmp");
+  public ChangeSetStore(@Value("change-set") String dbName) {
+    super(dbName);
   }
 
   @Override
@@ -51,12 +45,5 @@ public class CheckTmpStore extends TronDatabase<byte[]> {
   @Override
   public Spliterator spliterator() {
     return null;
-  }
-
-  @Override
-  public void updateByBatch(Map<byte[], byte[]> rows, WriteOptionsWrapper writeOptions) {
-    Map<byte[], byte[]> changeSet = ChangeSetService.preparedChangeSet(rows);
-    super.updateByBatch(rows, writeOptions);
-    changeSetStore.updateByBatch(changeSet, writeOptions);
   }
 }

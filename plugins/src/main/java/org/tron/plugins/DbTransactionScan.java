@@ -35,6 +35,9 @@ public class DbTransactionScan implements Callable<Integer> {
       description = " db path for block")
   private Path db;
 
+  @CommandLine.Option(names = {"-s", "--start"}, defaultValue = "-1")
+  private long start;
+
   @CommandLine.Option(names = {"-h", "--help"}, help = true, description = "display a help message")
   private boolean help;
 
@@ -68,7 +71,12 @@ public class DbTransactionScan implements Callable<Integer> {
     }
     try (DBInterface database  = DbTool.getDB(this.db, DB);
          DBIterator iterator = database.iterator()) {
-      iterator.seekToFirst();
+      if (start < 0) {
+        iterator.seekToFirst();
+      } else {
+        iterator.seek(ByteArray.fromLong(start));
+      }
+
       if (!iterator.valid()) {
         spec.commandLine().getOut().println("No data found in the database.");
         logger.info("No data found in the database.");
