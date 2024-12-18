@@ -57,7 +57,7 @@ public class RootHashService {
       "ALLOW_TVM_ASSET_ISSUE", "ALLOW_TVM_STAKE",
       "MAX_VOTE_NUMBER", "MAX_FROZEN_NUMBER", "MAINTENANCE_TIME_INTERVAL",
       "LATEST_SOLIDIFIED_BLOCK_NUM", "BLOCK_NET_USAGE",
-      "BLOCK_FILLED_SLOTS_INDEX", "BLOCK_FILLED_SLOTS_NUMBER");
+      "BLOCK_FILLED_SLOTS_INDEX", "BLOCK_FILLED_SLOTS_NUMBER", "BLOCK_FILLED_SLOTS");
 
   @Autowired
   public RootHashService(@Autowired CorruptedCheckpointStore corruptedCheckpointStore,
@@ -121,13 +121,17 @@ public class RootHashService {
               .toBuilder().clearTotalMissed()
               .build().toByteArray(); // ignore totalMissed
         }
-        if ("account".equals(dbName)
-            || ("delegation".equals(dbName) && new String(realKey).endsWith(ACCOUNT_VOTE_SUFFIX))) {
+        if ("account".equals(dbName)) {
           Protocol.Account account = Protocol.Account.parseFrom(realValue);
           Map<String, Long> assets = new TreeMap<>(assetStore.getAllAssets(account));
           assets.entrySet().removeIf(entry -> entry.getValue() == 0);
           realValue = account.toBuilder().clearAsset().clearAssetV2().clearAssetOptimized()
               .putAllAssetV2(assets)
+              .build().toByteArray();
+        }
+        if ("delegation".equals(dbName) && new String(key).endsWith(ACCOUNT_VOTE_SUFFIX)) {
+          Protocol.Account account = Protocol.Account.parseFrom(realValue);
+          realValue = Protocol.Account.newBuilder().addAllVotes(account.getVotesList())
               .build().toByteArray();
         }
       }

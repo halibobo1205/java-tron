@@ -53,7 +53,7 @@ public class DbCheckSum implements Callable<Integer> {
       "ALLOW_TVM_ASSET_ISSUE", "ALLOW_TVM_STAKE",
       "MAX_VOTE_NUMBER", "MAX_FROZEN_NUMBER", "MAINTENANCE_TIME_INTERVAL",
       "LATEST_SOLIDIFIED_BLOCK_NUM", "BLOCK_NET_USAGE",
-      "BLOCK_FILLED_SLOTS_INDEX", "BLOCK_FILLED_SLOTS_NUMBER");
+      "BLOCK_FILLED_SLOTS_INDEX", "BLOCK_FILLED_SLOTS_NUMBER", "BLOCK_FILLED_SLOTS");
   private static final String ACCOUNT_VOTE_SUFFIX = "-account-vote";
 
   @CommandLine.Spec
@@ -169,8 +169,7 @@ public class DbCheckSum implements Callable<Integer> {
                 .toBuilder().clearTotalMissed()
                 .build().toByteArray(); // ignore totalMissed
           }
-          if ("account".equals(dbName)
-              || ("delegation".equals(dbName) && new String(key).endsWith(ACCOUNT_VOTE_SUFFIX))) {
+          if ("account".equals(dbName)) {
             Protocol.Account account = Protocol.Account.parseFrom(value);
             if (account.getAssetOptimized()) {
               value = account.toBuilder().clearAsset().clearAssetV2().clearAssetOptimized()
@@ -182,6 +181,11 @@ public class DbCheckSum implements Callable<Integer> {
                   .putAllAssetV2(asset)
                   .build().toByteArray();
             }
+          }
+          if ("delegation".equals(dbName) && new String(key).endsWith(ACCOUNT_VOTE_SUFFIX)) {
+            Protocol.Account account = Protocol.Account.parseFrom(value);
+            value = Protocol.Account.newBuilder().addAllVotes(account.getVotesList())
+                .build().toByteArray();
           }
           srcDbKeyCount = srcDbKeyCount.add(BigInteger.ONE);
           srcDbKeySum = checkSum(srcDbKeySum, key);
