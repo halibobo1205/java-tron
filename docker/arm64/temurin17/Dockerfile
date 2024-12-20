@@ -4,8 +4,8 @@ ENV TMP_DIR="/tron-build"
 ENV BASE_DIR="/java-tron"
 
 RUN set -o errexit -o nounset \
-    && apt update \
-    && apt -y install git p7zip-full wget \
+    && apt-get update \
+    && apt-get -y install git p7zip-full wget libtcmalloc-minimal4 \
     && echo "git clone" \
     && mkdir -p $TMP_DIR \
     && cd $TMP_DIR \
@@ -18,7 +18,11 @@ RUN set -o errexit -o nounset \
     && mv java-tron-1.0.0 $BASE_DIR \
     && rm -rf $TMP_DIR \
     && rm -rf ~/.gradle \
-    && apt clean all
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV LD_PRELOAD="/usr/lib/aarch64-linux-gnu/libtcmalloc_minimal.so.4"
+ENV TCMALLOC_RELEASE_RATE=10
 
 RUN wget -P $BASE_DIR/config https://raw.githubusercontent.com/tronprotocol/tron-deployment/master/main_net_config.conf
 
