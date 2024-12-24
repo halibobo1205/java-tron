@@ -16,6 +16,7 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -28,7 +29,9 @@ import org.tron.common.utils.Sha256Hash;
 import org.tron.core.db.TronDatabase;
 import org.tron.core.db2.common.Value;
 import org.tron.core.store.AccountAssetStore;
+import org.tron.core.store.AccountStore;
 import org.tron.core.store.CorruptedCheckpointStore;
+import org.tron.core.store.DynamicPropertiesStore;
 import org.tron.protos.Protocol;
 
 @Slf4j(topic = "DB")
@@ -39,6 +42,8 @@ public class RootHashService {
 
   private static Optional<CorruptedCheckpointStore> corruptedCheckpointStore = Optional.empty();
   private static AccountAssetStore assetStore;
+  private static AccountStore accountStore;
+  private static DynamicPropertiesStore propertiesStore;
   private static final List<String> stateDbs = Arrays.asList(
       "account", "account-asset", "asset-issue-v2",
       "code", "contract", "contract-state", "storage-row",
@@ -61,9 +66,13 @@ public class RootHashService {
 
   @Autowired
   public RootHashService(@Autowired CorruptedCheckpointStore corruptedCheckpointStore,
-  @Autowired AccountAssetStore assetStore) {
+                         @Autowired AccountAssetStore assetStore,
+                         @Autowired AccountStore accountStore,
+                         @Autowired DynamicPropertiesStore propertiesStore) {
     RootHashService.corruptedCheckpointStore = Optional.ofNullable(corruptedCheckpointStore);
     RootHashService.assetStore = assetStore;
+    RootHashService.accountStore = accountStore;
+    RootHashService.propertiesStore = propertiesStore;
   }
 
   public static Pair<Optional<Long>, Sha256Hash> getRootHash(Map<byte[], byte[]> rows) {
@@ -101,11 +110,14 @@ public class RootHashService {
       if (!stateDbs.contains(dbName)) {
         continue;
       }
+
       byte[] realKey = Arrays.copyOfRange(key, dbName.getBytes().length + Integer.BYTES,
           key.length);
+
       if ("witness_schedule".equals(dbName) && Arrays.equals(realKey, CURRENT_SHUFFLED_WITNESSES)) {
         continue;
       }
+
       if ("properties".equals(dbName)) {
         String keyStr = new String(realKey);
         if (ignoredProperties.contains(keyStr)
@@ -113,6 +125,7 @@ public class RootHashService {
           continue;
         }
       }
+
       byte[] value = e.getValue();
       byte[] realValue = value.length == 1 ? null : Arrays.copyOfRange(value, 1, value.length);
       if (realValue != null) {
@@ -121,14 +134,37 @@ public class RootHashService {
               .toBuilder().clearTotalMissed()
               .build().toByteArray(); // ignore totalMissed
         }
-        if ("account".equals(dbName)) {
-          Protocol.Account account = Protocol.Account.parseFrom(realValue);
-          Map<String, Long> assets = new TreeMap<>(assetStore.getAllAssets(account));
-          assets.entrySet().removeIf(entry -> entry.getValue() == 0);
-          realValue = account.toBuilder().clearAsset().clearAssetV2().clearAssetOptimized()
-              .putAllAssetV2(assets)
+
+        if ("account".equals(dbName)
+            && propertiesStore.getAllowAccountAssetOptimizationFromRoot() == 1) {
+          Protocol.Account accountNow = Protocol.Account.parseFrom(realValue);
+          Protocol.Account accountPre = accountStore.getFromRoot(
+              accountNow.getAddress().toByteArray()).getInstance();
+          Map<String, Long> assetsNow =  new TreeMap<>(accountNow.getAssetV2Map());
+          Map<String, Long> assetsPre = new TreeMap<>();
+          if (accountNow.getAssetOptimized()) {
+            assetsNow.keySet().forEach(id -> assetsPre.put(id,
+                assetStore.getBalance(accountNow, id.getBytes())));
+          } else if (accountPre.getAssetOptimized()) {
+            assetsPre.putAll(assetStore.getAllAssets(accountPre));
+          } else {
+            assetsPre.putAll(accountPre.getAssetV2Map());
+          }
+          Set<String> allKeys = Stream.concat(
+              assetsNow.keySet().stream(), assetsPre.keySet().stream())
+              .collect(Collectors.toSet());
+          Map<String, Long> assetsDiff = new TreeMap<>(allKeys.stream()
+              .collect(Collectors.toMap(
+                  k -> k,
+                  k -> assetsNow.getOrDefault(k, 0L) - assetsPre.getOrDefault(k, 0L)
+              )).entrySet().stream()
+              .filter(entry -> entry.getValue() != 0)
+              .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)));
+          realValue = accountNow.toBuilder().clearAsset().clearAssetV2().clearAssetOptimized()
+              .putAllAssetV2(assetsDiff)
               .build().toByteArray();
         }
+
         if ("delegation".equals(dbName) && new String(key).endsWith(ACCOUNT_VOTE_SUFFIX)) {
           Protocol.Account account = Protocol.Account.parseFrom(realValue);
           realValue = Protocol.Account.newBuilder().addAllVotes(account.getVotesList())

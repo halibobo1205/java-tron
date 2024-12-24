@@ -12,6 +12,7 @@ import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.db.TronStoreWithRevoking;
 import org.tron.core.db.accountstate.AccountStateCallBackUtils;
+import org.tron.core.exception.ItemNotFoundException;
 import org.tron.protos.contract.BalanceContract.TransactionBalanceTrace;
 import org.tron.protos.contract.BalanceContract.TransactionBalanceTrace.Operation;
 
@@ -56,6 +57,17 @@ public class AccountStore extends TronStoreWithRevoking<AccountCapsule> {
   public AccountCapsule get(byte[] key) {
     byte[] value = revokingDB.getUnchecked(key);
     return ArrayUtils.isEmpty(value) ? null : new AccountCapsule(value);
+  }
+
+  @Override
+  public AccountCapsule getFromRoot(byte[] key) {
+    byte[] value = null;
+    try {
+      value = revokingDB.getFromRoot(key);
+    } catch (ItemNotFoundException ignored) {
+    }
+    return ArrayUtils.isEmpty(value) ? null : new AccountCapsule(value);
+
   }
 
   @Override
