@@ -469,8 +469,7 @@ public class RocksDbDataSourceImplTest {
     String output = Paths
         .get(StorageUtils.getOutputDirectoryByDbName("newInst2"), CommonParameter
             .getInstance().getStorage().getDbDirectory()).toString();
-    RocksDbDataSourceImpl newInst2 = new RocksDbDataSourceImpl(output, "newInst2",
-        RocksDbSettings.getSettings(), null);
+    RocksDbDataSourceImpl newInst2 = new RocksDbDataSourceImpl(output, "newInst2");
     newInst2.initDB();
     newInst2.closeDB();
   }
