@@ -1,5 +1,7 @@
 package org.tron.core.actuator;
 
+import static org.tron.common.math.StrictMathWrapper.addExact;
+import static org.tron.common.math.StrictMathWrapper.subtractExact;
 import static org.tron.core.capsule.TransactionCapsule.getShieldTransactionHashIgnoreTypeException;
 import static org.tron.core.utils.ZenChainParams.ZC_ENCCIPHERTEXT_SIZE;
 import static org.tron.core.utils.ZenChainParams.ZC_OUTCIPHERTEXT_SIZE;
@@ -96,9 +98,9 @@ public class ShieldedTransferActuator extends AbstractActuator {
 
     //adjust and verify total shielded pool value
     try {
-      Commons.adjustTotalShieldedPoolValue(
-          Math.addExact(Math.subtractExact(shieldedTransferContract.getToAmount(),
-              shieldedTransferContract.getFromAmount()), fee), dynamicStore);
+      Commons.adjustTotalShieldedPoolValue(addExact(subtractExact(
+          shieldedTransferContract.getToAmount(),
+          shieldedTransferContract.getFromAmount()), fee), dynamicStore);
     } catch (ArithmeticException | BalanceInsufficientException e) {
       logger.debug(e.getMessage(), e);
       ret.setStatus(0, code.FAILED);
@@ -327,9 +329,11 @@ public class ShieldedTransferActuator extends AbstractActuator {
         long totalShieldedPoolValue = dynamicStore
             .getTotalShieldedPoolValue();
         try {
-          valueBalance = Math.addExact(Math.subtractExact(shieldedTransferContract.getToAmount(),
+          valueBalance = addExact(subtractExact(
+              shieldedTransferContract.getToAmount(),
               shieldedTransferContract.getFromAmount()), fee);
-          totalShieldedPoolValue = Math.subtractExact(totalShieldedPoolValue, valueBalance);
+          totalShieldedPoolValue = subtractExact(
+              totalShieldedPoolValue, valueBalance);
         } catch (ArithmeticException e) {
           logger.debug(e.getMessage(), e);
           throw new ZkProofValidateException(e.getMessage(), true);
@@ -452,7 +456,7 @@ public class ShieldedTransferActuator extends AbstractActuator {
       AccountCapsule toAccount = accountStore.get(toAddress);
       if (toAccount != null) {
         try {
-          Math.addExact(getZenBalance(toAccount), toAmount);
+          addExact(getZenBalance(toAccount), toAmount);
         } catch (ArithmeticException e) {
           logger.debug(e.getMessage(), e);
           throw new ContractValidateException(e.getMessage());

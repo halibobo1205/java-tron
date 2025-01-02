@@ -1,5 +1,7 @@
 package org.tron.core.capsule;
 
+import static org.tron.common.math.StrictMathWrapper.max;
+import static org.tron.common.math.StrictMathWrapper.min;
 import static org.tron.core.Constant.DYNAMIC_ENERGY_DECREASE_DIVISION;
 import static org.tron.core.Constant.DYNAMIC_ENERGY_FACTOR_DECIMAL;
 
@@ -108,7 +110,7 @@ public class ContractStateCapsule implements ProtoCapsule<ContractState> {
       double increasePercent = 1 + (double) increaseFactor / precisionFactor;
       this.contractState = ContractState.newBuilder()
           .setUpdateCycle(lastCycle)
-          .setEnergyFactor(Math.min(
+          .setEnergyFactor(min(
               maxFactor,
               (long) ((getEnergyFactor() + precisionFactor) * increasePercent) - precisionFactor))
           .build();
@@ -132,7 +134,7 @@ public class ContractStateCapsule implements ProtoCapsule<ContractState> {
     //  That means we merge this special case to normal cases)
     this.contractState = ContractState.newBuilder()
         .setUpdateCycle(newCycle)
-        .setEnergyFactor(Math.max(
+        .setEnergyFactor(max(
             0,
             (long) ((getEnergyFactor() + precisionFactor) * decreasePercent) - precisionFactor))
         .build();

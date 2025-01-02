@@ -1,5 +1,6 @@
 package org.tron.common.utils;
 
+import static org.tron.common.math.StrictMathWrapper.ceilAsInt;
 import static org.tron.common.utils.StringUtil.encode58Check;
 
 import com.google.common.collect.Maps;
@@ -98,8 +99,7 @@ public class ForkController {
         ++count;
       }
     }
-    return count >= Math
-        .ceil((double) versionEnum.getHardForkRate() * stats.length / 100);
+    return count >= ceilAsInt((double) versionEnum.getHardForkRate() * stats.length / 100);
   }
 
 

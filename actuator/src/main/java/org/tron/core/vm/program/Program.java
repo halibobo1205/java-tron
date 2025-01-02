@@ -1,12 +1,15 @@
 package org.tron.core.vm.program;
 
-import static java.lang.StrictMath.min;
 import static java.lang.String.format;
 import static org.apache.commons.lang3.ArrayUtils.EMPTY_BYTE_ARRAY;
 import static org.apache.commons.lang3.ArrayUtils.getLength;
 import static org.apache.commons.lang3.ArrayUtils.isEmpty;
 import static org.apache.commons.lang3.ArrayUtils.isNotEmpty;
 import static org.apache.commons.lang3.ArrayUtils.nullToEmpty;
+import static org.tron.common.math.StrictMathWrapper.addExact;
+import static org.tron.common.math.StrictMathWrapper.max;
+import static org.tron.common.math.StrictMathWrapper.min;
+import static org.tron.common.math.StrictMathWrapper.multiplyExact;
 import static org.tron.common.utils.ByteUtil.stripLeadingZeroes;
 import static org.tron.core.config.Parameter.ChainConstant.TRX_PRECISION;
 import static org.tron.protos.contract.Common.ResourceCode.BANDWIDTH;
@@ -629,7 +632,7 @@ public class Program {
       long balance = ownerCapsule.getBalance();
       long allowance = ownerCapsule.getAllowance();
       ownerCapsule.setInstance(ownerCapsule.getInstance().toBuilder()
-          .setBalance(Math.addExact(balance, allowance))
+          .setBalance(addExact(balance, allowance))
           .setAllowance(0)
           .setLatestWithdrawTime(getTimestamp().longValue() * 1000)
           .build());
@@ -1227,7 +1230,7 @@ public class Program {
 
   public DataWord getBlockHash(int index) {
     if (index < this.getNumber().longValue()
-        && index >= Math.max(256, this.getNumber().longValue()) - 256) {
+        && index >= max(256, this.getNumber().longValue()) - 256) {
 
       BlockCapsule blockCapsule = contractState.getBlockByNum(index);
 
@@ -2152,10 +2155,12 @@ public class Program {
       VoteWitnessParam param = new VoteWitnessParam();
       param.setVoterAddress(owner);
 
-      byte[] witnessArrayData = memoryChunk(Math.addExact(witnessArrayOffset, DataWord.WORD_SIZE),
-          Math.multiplyExact(witnessArrayLength, DataWord.WORD_SIZE));
-      byte[] amountArrayData = memoryChunk(Math.addExact(amountArrayOffset, DataWord.WORD_SIZE),
-          Math.multiplyExact(amountArrayLength, DataWord.WORD_SIZE));
+      byte[] witnessArrayData = memoryChunk(
+          addExact(witnessArrayOffset, DataWord.WORD_SIZE),
+          multiplyExact(witnessArrayLength, DataWord.WORD_SIZE));
+      byte[] amountArrayData = memoryChunk(
+          addExact(amountArrayOffset, DataWord.WORD_SIZE),
+          multiplyExact(amountArrayLength, DataWord.WORD_SIZE));
 
       for (int i = 0; i < witnessArrayLength; i++) {
         DataWord witness = new DataWord(Arrays.copyOfRange(witnessArrayData,

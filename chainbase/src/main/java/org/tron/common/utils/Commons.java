@@ -1,5 +1,8 @@
 package org.tron.common.utils;
 
+import static org.tron.common.math.StrictMathWrapper.addExact;
+import static org.tron.common.math.StrictMathWrapper.subtractExact;
+
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.tron.common.parameter.CommonParameter;
@@ -77,7 +80,7 @@ public class Commons {
           String.format("%s insufficient balance, balance: %d, amount: %d",
               StringUtil.createReadableString(account.createDbKey()), balance, -amount));
     }
-    account.setBalance(Math.addExact(balance, amount));
+    account.setBalance(addExact(balance, amount));
     accountStore.put(account.getAddress().toByteArray(), account);
   }
 
@@ -137,8 +140,8 @@ public class Commons {
 
   public static void adjustTotalShieldedPoolValue(long valueBalance,
       DynamicPropertiesStore dynamicPropertiesStore) throws BalanceInsufficientException {
-    long totalShieldedPoolValue = Math
-        .subtractExact(dynamicPropertiesStore.getTotalShieldedPoolValue(), valueBalance);
+    long totalShieldedPoolValue = subtractExact(
+        dynamicPropertiesStore.getTotalShieldedPoolValue(), valueBalance);
     if (totalShieldedPoolValue < 0) {
       throw new BalanceInsufficientException(String.format(
           "total shielded pool value can not below 0, actual: %d", totalShieldedPoolValue));

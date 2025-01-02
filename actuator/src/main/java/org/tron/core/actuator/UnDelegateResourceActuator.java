@@ -1,5 +1,6 @@
 package org.tron.core.actuator;
 
+import static org.tron.common.math.StrictMathWrapper.min;
 import static org.tron.core.actuator.ActuatorConstant.ACCOUNT_EXCEPTION_STR;
 import static org.tron.core.config.Parameter.ChainConstant.TRX_PRECISION;
 import static org.tron.protos.contract.Common.ResourceCode.BANDWIDTH;
@@ -82,7 +83,7 @@ public class UnDelegateResourceActuator extends AbstractActuator {
                 * ((double) (dynamicStore.getTotalNetLimit()) / dynamicStore.getTotalNetWeight()));
             transferUsage = (long) (receiverCapsule.getNetUsage()
                 * ((double) (unDelegateBalance) / receiverCapsule.getAllFrozenBalanceForBandwidth()));
-            transferUsage = Math.min(unDelegateMaxUsage, transferUsage);
+            transferUsage = min(unDelegateMaxUsage, transferUsage);
 
             receiverCapsule.addAcquiredDelegatedFrozenV2BalanceForBandwidth(-unDelegateBalance);
           }
@@ -105,7 +106,7 @@ public class UnDelegateResourceActuator extends AbstractActuator {
                 * ((double) (dynamicStore.getTotalEnergyCurrentLimit()) / dynamicStore.getTotalEnergyWeight()));
             transferUsage = (long) (receiverCapsule.getEnergyUsage()
                 * ((double) (unDelegateBalance) / receiverCapsule.getAllFrozenBalanceForEnergy()));
-            transferUsage = Math.min(unDelegateMaxUsage, transferUsage);
+            transferUsage = min(unDelegateMaxUsage, transferUsage);
 
             receiverCapsule.addAcquiredDelegatedFrozenV2BalanceForEnergy(-unDelegateBalance);
           }

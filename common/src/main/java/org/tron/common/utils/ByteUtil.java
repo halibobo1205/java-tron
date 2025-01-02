@@ -32,6 +32,8 @@ import java.util.zip.Deflater;
 import java.util.zip.Inflater;
 import org.tron.core.exception.EventBloomException;
 
+import static org.tron.common.math.StrictMathWrapper.min;
+
 public class ByteUtil {
 
   public static final byte[] EMPTY_BYTE_ARRAY = new byte[0];
@@ -70,7 +72,7 @@ public class ByteUtil {
     byte[] bytes = new byte[numBytes];
     byte[] biBytes = b.toByteArray();
     int start = (biBytes.length == numBytes + 1) ? 1 : 0;
-    int length = Math.min(biBytes.length, numBytes);
+    int length = min(biBytes.length, numBytes);
     System.arraycopy(biBytes, start, bytes, numBytes - length, length);
     return bytes;
   }
@@ -346,7 +348,7 @@ public class ByteUtil {
     }
 
     byte[] bytes = new byte[len];
-    System.arraycopy(input, offset, bytes, 0, Math.min(input.length - offset, len));
+    System.arraycopy(input, offset, bytes, 0, min(input.length - offset, len));
     return bytes;
   }
 

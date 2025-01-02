@@ -15,6 +15,8 @@
 
 package org.tron.core.actuator;
 
+import static org.tron.common.math.StrictMathWrapper.addExact;
+
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 import java.util.Arrays;
@@ -177,7 +179,7 @@ public class TransferAssetActuator extends AbstractActuator {
       assetBalance = toAccount.getAsset(dynamicStore, ByteArray.toStr(assetName));
       if (assetBalance != null) {
         try {
-          assetBalance = Math.addExact(assetBalance, amount); //check if overflow
+          assetBalance = addExact(assetBalance, amount); //check if overflow
         } catch (Exception e) {
           logger.debug(e.getMessage(), e);
           throw new ContractValidateException(e.getMessage());

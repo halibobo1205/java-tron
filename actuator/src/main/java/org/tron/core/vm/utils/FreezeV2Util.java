@@ -1,8 +1,10 @@
 package org.tron.core.vm.utils;
 
+import static org.tron.common.math.StrictMathWrapper.max;
+import static org.tron.common.math.StrictMathWrapper.min;
+
 import java.util.List;
 import java.util.stream.Collectors;
-
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.commons.lang3.tuple.Triple;
 import org.tron.core.actuator.UnfreezeBalanceV2Actuator;
@@ -162,7 +164,7 @@ public class FreezeV2Util {
       }
 
       long v2NetUsage = getV2NetUsage(accountCapsule, usage);
-      return Math.max(0L, frozenV2Resource - v2NetUsage);
+      return max(0L, frozenV2Resource - v2NetUsage);
     }
 
     if (type == 1) {
@@ -182,7 +184,7 @@ public class FreezeV2Util {
       }
 
       long v2EnergyUsage = getV2EnergyUsage(accountCapsule, usage);
-      return Math.max(0L, frozenV2Resource - v2EnergyUsage);
+      return max(0L, frozenV2Resource - v2EnergyUsage);
     }
 
     return 0L;
@@ -218,7 +220,7 @@ public class FreezeV2Util {
       return Triple.of(0L, 0L, 0L);
     }
 
-    amount = Math.min(amount, resourceLimit);
+    amount = min(amount, resourceLimit);
     if (resourceLimit <= usagePair.getLeft()) {
       return Triple.of(0L, amount, usagePair.getRight());
     }
@@ -243,7 +245,7 @@ public class FreezeV2Util {
         - ownerCapsule.getFrozenBalance()
         - ownerCapsule.getAcquiredDelegatedFrozenBalanceForBandwidth()
         - ownerCapsule.getAcquiredDelegatedFrozenV2BalanceForBandwidth();
-    return Math.max(0, v2NetUsage);
+    return max(0, v2NetUsage);
   }
 
   public static long getV2EnergyUsage(AccountCapsule ownerCapsule, long energyUsage) {
@@ -251,7 +253,7 @@ public class FreezeV2Util {
           - ownerCapsule.getEnergyFrozenBalance()
           - ownerCapsule.getAcquiredDelegatedFrozenBalanceForEnergy()
           - ownerCapsule.getAcquiredDelegatedFrozenV2BalanceForEnergy();
-    return Math.max(0, v2EnergyUsage);
+    return max(0, v2EnergyUsage);
   }
 
 }
