@@ -66,14 +66,11 @@ public class DBUtils {
 
   public static DB newLevelDb(Path db) throws IOException {
     File file = db.toFile();
-    org.iq80.leveldb.Options dbOptions = newDefaultLevelDbOptions();
-    if (MARKET_PAIR_PRICE_TO_ORDER.equalsIgnoreCase(file.getName())) {
-      dbOptions.comparator(new MarketOrderPriceComparatorForLevelDB());
-    }
+    org.iq80.leveldb.Options dbOptions = newDefaultLevelDbOptions(file.getName());
     return factory.open(file, dbOptions);
   }
 
-  public static org.iq80.leveldb.Options newDefaultLevelDbOptions() {
+ public static org.iq80.leveldb.Options newDefaultLevelDbOptions(String dbName) {
     org.iq80.leveldb.Options dbOptions = new org.iq80.leveldb.Options();
     dbOptions.createIfMissing(true);
     dbOptions.paranoidChecks(true);
@@ -83,6 +80,9 @@ public class DBUtils {
     dbOptions.writeBufferSize(10 * 1024 * 1024);
     dbOptions.cacheSize(10 * 1024 * 1024L);
     dbOptions.maxOpenFiles(1000);
+    if (MARKET_PAIR_PRICE_TO_ORDER.equalsIgnoreCase(dbName)) {
+      dbOptions.comparator(new MarketOrderPriceComparatorForLevelDB());
+    }
     return dbOptions;
   }
 

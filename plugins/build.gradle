@@ -35,6 +35,8 @@ dependencies {
     implementation group: 'org.rocksdb', name: 'rocksdbjni', version: '5.15.10'
     implementation 'io.github.tronprotocol:leveldbjni-all:1.18.2'
     implementation 'io.github.tronprotocol:leveldb:1.18.2'
+    // https://mvnrepository.com/artifact/org.xerial.snappy/snappy-java
+    implementation group: 'org.xerial.snappy', name: 'snappy-java', version: '1.1.8.4'
     implementation project(":protocol")
 }
 
