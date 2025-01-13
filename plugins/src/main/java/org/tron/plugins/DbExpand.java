@@ -205,31 +205,33 @@ public class DbExpand implements Callable<Integer> {
 
   private void generateColdData(DB source, DB coldData, int expendRate) {
     JniDBFactory.pushMemoryPool(2048 * 2048);
-    IntStream.range(0, expendRate - 1).parallel().forEach(i -> {
-      List<byte[]> keys = new ArrayList<>(BATCH);
-      List<byte[]> values = new ArrayList<>(BATCH);
-      try (DBIterator levelIterator = source.iterator(
-          new org.iq80.leveldb.ReadOptions().fillCache(false))) {
-        levelIterator.seekToFirst();
-        while (levelIterator.hasNext()) {
-          Map.Entry<byte[], byte[]> entry = levelIterator.next();
-          byte[] key = generateAddress();
-          keys.add(key);
-          values.add(entry.getValue());
-          if (keys.size() >= BATCH) {
+    try {
+      IntStream.range(0, expendRate - 1).parallel().forEach(i -> {
+        List<byte[]> keys = new ArrayList<>(BATCH);
+        List<byte[]> values = new ArrayList<>(BATCH);
+        try (DBIterator levelIterator = source.iterator(
+            new org.iq80.leveldb.ReadOptions().fillCache(false))) {
+          levelIterator.seekToFirst();
+          while (levelIterator.hasNext()) {
+            Map.Entry<byte[], byte[]> entry = levelIterator.next();
+            byte[] key = generateAddress();
+            keys.add(key);
+            values.add(entry.getValue());
+            if (keys.size() >= BATCH) {
+              insertToLevelDb(coldData, keys, values);
+            }
+          }
+          if (!keys.isEmpty()) {
             insertToLevelDb(coldData, keys, values);
           }
+        } catch (IOException e) {
+          throw new RuntimeException(e);
         }
-        if (!keys.isEmpty()) {
-          insertToLevelDb(coldData, keys, values);
-        }
-      } catch (IOException e) {
-        throw new RuntimeException(e);
-      } finally {
-        JniDBFactory.popMemoryPool();
-      }
-    });
+      });
 
+    } finally {
+      JniDBFactory.popMemoryPool();
+    }
   }
 
   private byte[] generateAddress() {
