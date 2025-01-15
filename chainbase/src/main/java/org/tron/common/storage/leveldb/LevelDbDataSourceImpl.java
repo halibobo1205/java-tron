@@ -51,6 +51,8 @@ import org.iq80.leveldb.WriteBatch;
 import org.iq80.leveldb.WriteOptions;
 import org.slf4j.LoggerFactory;
 import org.tron.common.parameter.CommonParameter;
+import org.tron.common.prometheus.MetricKeys;
+import org.tron.common.prometheus.Metrics;
 import org.tron.common.storage.WriteOptionsWrapper;
 import org.tron.common.storage.metric.DbStat;
 import org.tron.common.utils.FileUtil;
@@ -78,6 +80,18 @@ public class LevelDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
     @Override
     public void log(String message) {
       innerLogger.info("{} {}", dataBaseName, message);
+      if (message.startsWith("Recovering")) {
+        Metrics.counterInc(MetricKeys.Counter.DB_EVENT, 1, LEVELDB, dataBaseName, "recover");
+      }
+      if (message.startsWith("Compacting")) {
+        Metrics.counterInc(MetricKeys.Counter.DB_EVENT, 1, LEVELDB, dataBaseName, "compact");
+      }
+      if (message.startsWith("Delete")) {
+        Metrics.counterInc(MetricKeys.Counter.DB_EVENT, 1, LEVELDB, dataBaseName, "delete");
+      }
+      if (message.startsWith("Generated")) {
+        Metrics.counterInc(MetricKeys.Counter.DB_EVENT, 1, LEVELDB, dataBaseName, "create");
+      }
     }
   };
 
