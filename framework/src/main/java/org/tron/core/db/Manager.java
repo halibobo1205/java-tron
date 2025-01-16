@@ -1680,7 +1680,12 @@ public class Manager {
         logSize[0], logSize[1], logSize[2], logSize[3],
         pendingTransactions.size(), rePushTransactions.size(), postponedTrxCount,
         capsule.getSerializedSize());
-    Metrics.counterInc(MetricKeys.Counter.MINER, capsule.getTransactions().size(), address, "pack");
+    if (capsule.getTransactions().isEmpty()) {
+      Metrics.counterInc(MetricKeys.Counter.MINER, 1, address, "empty");
+    } else {
+      Metrics.counterInc(MetricKeys.Counter.MINER, capsule.getTransactions().size(),
+          address, "pack");
+    }
     return capsule;
   }
 
