@@ -1684,8 +1684,9 @@ public class Manager {
       Metrics.counterInc(MetricKeys.Counter.MINER, 1, address, "empty");
     } else {
       Metrics.counterInc(MetricKeys.Counter.MINER, capsule.getTransactions().size(),
-          address, "pack");
+          address, "trx");
     }
+    Metrics.counterInc(MetricKeys.Counter.MINER, 1, address, "block");
     return capsule;
   }
 
