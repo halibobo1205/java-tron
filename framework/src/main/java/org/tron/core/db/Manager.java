@@ -1252,7 +1252,7 @@ public class Manager {
         logger.info("Block num: {}, re-push-size: {}, pending-size: {}, "
                         + "block-tx-size: {}, verify-tx-size: {}",
                 block.getNum(), rePushTransactions.size(), pendingTransactions.size(),
-                block.getTransactions().size(), txs.size());
+                block.getTransactions().size(), block.generatedByMyself ? 0 : txs.size());
 
         if (CommonParameter.getInstance().getShutdownBlockTime() != null
                 && CommonParameter.getInstance().getShutdownBlockTime()
