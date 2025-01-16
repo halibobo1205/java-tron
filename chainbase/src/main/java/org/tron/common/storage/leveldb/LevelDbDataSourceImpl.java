@@ -39,6 +39,7 @@ import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
 import com.google.common.primitives.Bytes;
+import io.prometheus.client.Histogram;
 import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.iq80.leveldb.CompressionType;
@@ -211,10 +212,13 @@ public class LevelDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
   @Override
   public byte[] getData(byte[] key) {
     resetDbLock.readLock().lock();
-    try {
+    long startTime = System.nanoTime();
+    try (Histogram.Timer timer = Metrics.histogramStartTimer(
+        MetricKeys.Histogram.DB_OPERATE_LATENCY, LEVELDB, dataBaseName, "get")) {
       return database.get(key);
     } finally {
       resetDbLock.readLock().unlock();
+      innerLogger.info("get {} {}", dataBaseName, (System.nanoTime() - startTime) / 1000.0);
     }
   }
 
