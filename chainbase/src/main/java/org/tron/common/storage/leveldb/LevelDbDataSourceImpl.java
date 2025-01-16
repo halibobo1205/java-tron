@@ -19,6 +19,7 @@ import static org.fusesource.leveldbjni.JniDBFactory.factory;
 
 import com.google.common.collect.Sets;
 import com.google.common.primitives.Bytes;
+import io.prometheus.client.Histogram;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -48,6 +49,8 @@ import org.iq80.leveldb.WriteBatch;
 import org.iq80.leveldb.WriteOptions;
 import org.slf4j.LoggerFactory;
 import org.tron.common.parameter.CommonParameter;
+import org.tron.common.prometheus.MetricKeys;
+import org.tron.common.prometheus.Metrics;
 import org.tron.common.storage.WriteOptionsWrapper;
 import org.tron.common.storage.metric.DbStat;
 import org.tron.common.utils.FileUtil;
@@ -223,7 +226,8 @@ public class LevelDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
   @Override
   public byte[] getData(byte[] key) {
     resetDbLock.readLock().lock();
-    try {
+    try (Histogram.Timer timer = Metrics.histogramStartTimer(
+        MetricKeys.Histogram.DB_OPERATE_LATENCY, LEVELDB, dataBaseName, "get")) {
       return database.get(key);
     } finally {
       resetDbLock.readLock().unlock();

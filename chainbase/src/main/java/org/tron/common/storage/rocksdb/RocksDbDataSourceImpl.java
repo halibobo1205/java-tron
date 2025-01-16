@@ -3,6 +3,7 @@ package org.tron.common.storage.rocksdb;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Sets;
 import com.google.common.primitives.Bytes;
+import io.prometheus.client.Histogram;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -33,6 +34,8 @@ import org.rocksdb.Status;
 import org.rocksdb.WriteBatch;
 import org.rocksdb.WriteOptions;
 import org.slf4j.LoggerFactory;
+import org.tron.common.prometheus.MetricKeys;
+import org.tron.common.prometheus.Metrics;
 import org.tron.common.setting.RocksDbSettings;
 import org.tron.common.storage.WriteOptionsWrapper;
 import org.tron.common.storage.metric.DbStat;
@@ -279,7 +282,8 @@ public class RocksDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
   @Override
   public byte[] getData(byte[] key) {
     resetDbLock.readLock().lock();
-    try {
+    try (Histogram.Timer timer = Metrics.histogramStartTimer(
+        MetricKeys.Histogram.DB_OPERATE_LATENCY, ROCKSDB, dataBaseName, "get")) {
       throwIfNotAlive();
       checkArgNotNull(key, "key");
       return database.get(key);
