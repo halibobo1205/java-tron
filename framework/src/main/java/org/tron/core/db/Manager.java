@@ -1445,6 +1445,10 @@ public class Manager {
         MetricKeys.Histogram.PROCESS_TRANSACTION_LATENCY,
         Objects.nonNull(blockCap) ? MetricLabels.BLOCK : MetricLabels.TRX,
         contract.getType().name());
+    final Histogram.Timer requestLongCostTimer = Metrics.histogramStartTimer(
+        MetricKeys.Histogram.PROCESS_TRANSACTION_LATENCY,
+        Objects.nonNull(blockCap) ? MetricLabels.BLOCK + "-gt100" : MetricLabels.TRX + "-gt100",
+        contract.getType().name());
 
     long start = System.currentTimeMillis();
 
@@ -1535,6 +1539,7 @@ public class Manager {
       }
       logger.info("Process transaction {} cost {} ms during {}, {}",
              Hex.toHexString(transactionInfo.getId()), cost, type, contract.getType().name());
+      Metrics.histogramObserve(requestLongCostTimer);
     }
     Metrics.histogramObserve(requestTimer);
     return transactionInfo.getInstance();
