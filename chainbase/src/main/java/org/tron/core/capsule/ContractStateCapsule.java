@@ -12,7 +12,7 @@ import org.tron.core.store.DynamicPropertiesStore;
 import org.tron.protos.contract.SmartContractOuterClass;
 import org.tron.protos.contract.SmartContractOuterClass.ContractState;
 
-@Slf4j(topic = "capsule")
+@Slf4j(topic = "contract-state")
 public class ContractStateCapsule implements ProtoCapsule<ContractState> {
 
   private ContractState contractState;
@@ -121,12 +121,37 @@ public class ContractStateCapsule implements ProtoCapsule<ContractState> {
     if (cycleCount <= 0) {
       return true;
     }
+    double decreasePercent;
+    if (useStrictMath) {
+      // Calc the decrease percent (decrease factor [75% ~ 100%])
+      decreasePercent = Maths.pow(
+          1 - (double) increaseFactor / DYNAMIC_ENERGY_DECREASE_DIVISION / precisionFactor,
+          cycleCount, true
+      );
+    } else {
+      // Calc the decrease percent (decrease factor [75% ~ 100%])
+      decreasePercent = Maths.pow(
+          1 - (double) increaseFactor / DYNAMIC_ENERGY_DECREASE_DIVISION / precisionFactor,
+          cycleCount, false);
+      double decreasePercentStrict = Maths.pow(
+          1 - (double) increaseFactor / DYNAMIC_ENERGY_DECREASE_DIVISION / precisionFactor,
+          cycleCount, true
+      );
+      if (Double.compare(decreasePercent, decreasePercentStrict) != 0) {
+        long energyFactor = max(0,
+            (long) ((getEnergyFactor() + precisionFactor) * decreasePercent) - precisionFactor);
 
-    // Calc the decrease percent (decrease factor [75% ~ 100%])
-    double decreasePercent = Maths.pow(
-        1 - (double) increaseFactor / DYNAMIC_ENERGY_DECREASE_DIVISION / precisionFactor,
-        cycleCount, useStrictMath
-    );
+        long energyFactorStrict = max(0,
+            (long) ((getEnergyFactor() + precisionFactor)
+                * decreasePercentStrict) - precisionFactor);
+        if (energyFactor != energyFactorStrict) {
+          logger.error("{}\t{}\t{}\t{}\t{}\t{}", energyFactor, energyFactorStrict, decreasePercent,
+              decreasePercentStrict, increaseFactor, cycleCount);
+          System.exit(1);
+        }
+      }
+    }
+
 
     // Decrease to this cycle
     // (If long time no tx and factor is 100%,
