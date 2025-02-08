@@ -1,5 +1,7 @@
 package org.tron.core.db;
 
+import static org.tron.common.math.Maths.max;
+import static org.tron.common.math.Maths.min;
 import static org.tron.common.runtime.InternalTransaction.TrxType.TRX_CONTRACT_CALL_TYPE;
 import static org.tron.common.runtime.InternalTransaction.TrxType.TRX_CONTRACT_CREATION_TYPE;
 import static org.tron.core.config.Parameter.ChainConstant.WINDOW_SIZE_PRECISION;
@@ -244,9 +246,11 @@ public class TransactionTrace {
 
         callerAccount = callContract.getOwnerAddress().toByteArray();
         originAccount = contractCapsule.getOriginAddress();
-        percent = Math
-            .max(Constant.ONE_HUNDRED - contractCapsule.getConsumeUserResourcePercent(), 0);
-        percent = Math.min(percent, Constant.ONE_HUNDRED);
+        boolean useStrictMath2 = dynamicPropertiesStore.allowStrictMath2();
+        percent = max(Constant.ONE_HUNDRED - contractCapsule.getConsumeUserResourcePercent(
+            useStrictMath2), 0, useStrictMath2);
+        percent = min(percent, Constant.ONE_HUNDRED,
+            useStrictMath2);
         originEnergyLimit = contractCapsule.getOriginEnergyLimit();
         break;
       default:

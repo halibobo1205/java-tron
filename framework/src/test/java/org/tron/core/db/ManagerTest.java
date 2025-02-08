@@ -5,7 +5,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.spy;
 import static org.tron.common.utils.Commons.adjustAssetBalanceV2;
-import static org.tron.common.utils.Commons.adjustBalance;
 import static org.tron.common.utils.Commons.adjustTotalShieldedPoolValue;
 import static org.tron.common.utils.Commons.getExchangeStoreFinal;
 import static org.tron.core.exception.BadBlockException.TypeEnum.CALC_MERKLE_ROOT_FAILED;
@@ -35,14 +34,7 @@ import org.junit.rules.TemporaryFolder;
 import org.tron.common.application.TronApplicationContext;
 import org.tron.common.crypto.ECKey;
 import org.tron.common.runtime.RuntimeImpl;
-import org.tron.common.utils.ByteArray;
-import org.tron.common.utils.JsonUtil;
-import org.tron.common.utils.LocalWitnesses;
-import org.tron.common.utils.PublicMethod;
-import org.tron.common.utils.ReflectUtils;
-import org.tron.common.utils.Sha256Hash;
-import org.tron.common.utils.StringUtil;
-import org.tron.common.utils.Utils;
+import org.tron.common.utils.*;
 import org.tron.consensus.dpos.DposSlot;
 import org.tron.core.ChainBaseManager;
 import org.tron.core.Constant;
@@ -81,12 +73,7 @@ import org.tron.core.exception.VMIllegalException;
 import org.tron.core.exception.ValidateScheduleException;
 import org.tron.core.exception.ValidateSignatureException;
 import org.tron.core.exception.ZksnarkException;
-import org.tron.core.store.CodeStore;
-import org.tron.core.store.DynamicPropertiesStore;
-import org.tron.core.store.ExchangeStore;
-import org.tron.core.store.ExchangeV2Store;
-import org.tron.core.store.IncrementalMerkleTreeStore;
-import org.tron.core.store.StoreFactory;
+import org.tron.core.store.*;
 import org.tron.protos.Protocol;
 import org.tron.protos.Protocol.Account;
 import org.tron.protos.Protocol.Block;
@@ -1164,5 +1151,11 @@ public class ManagerTest extends BlockGenerate {
     Manager manager = spy(new Manager());
     doThrow(new RuntimeException("postBlockTrigger mock")).when(manager).postBlockTrigger(any());
     manager.blockTrigger(new BlockCapsule(Block.newBuilder().build()), 1, 1);
+  }
+
+  public void adjustBalance(AccountStore accountStore, byte[] accountAddress, long amount)
+      throws BalanceInsufficientException {
+    Commons.adjustBalance(accountStore, accountAddress, amount,
+        chainManager.getDynamicPropertiesStore().allowStrictMath2());
   }
 }
