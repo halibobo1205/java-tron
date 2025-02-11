@@ -9,9 +9,9 @@ name: arm64-Platform Matrix
 
 on:
   push:
-    branches: [ "exp/arm64" ]
+    branches: [ "exp/arm64", "develop" ]
   pull_request:
-    branches: [ "exp/arm64" ]
+    branches: [ "exp/arm64", "develop" ]
 
 jobs:
   build:

@@ -714,6 +714,10 @@ public class CommonParameter {
 
   @Getter
   @Setter
+  public long  consensusLogicOptimization;
+
+  @Getter
+  @Setter
   @Parameter(names = {"--check.root.disable"}, description = "disable check state root")
   public boolean checkRootHashDisable = false;
 

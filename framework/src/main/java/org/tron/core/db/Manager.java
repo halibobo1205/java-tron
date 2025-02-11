@@ -1,5 +1,8 @@
 package org.tron.core.db;
 
+import static org.tron.common.math.Maths.floorDiv;
+import static org.tron.common.math.Maths.max;
+import static org.tron.common.math.Maths.min;
 import static org.tron.common.utils.Commons.adjustBalance;
 import static org.tron.core.Constant.TRANSACTION_MAX_BYTE_SIZE;
 import static org.tron.core.exception.BadBlockException.TypeEnum.CALC_MERKLE_ROOT_FAILED;
@@ -918,19 +921,20 @@ public class Manager {
       throws AccountResourceInsufficientException {
     if (trx.getInstance().getSignatureCount() > 1) {
       long fee = getDynamicPropertiesStore().getMultiSignFee();
-
+      boolean useStrictMath2 = getDynamicPropertiesStore().allowStrictMath2();
       List<Contract> contracts = trx.getInstance().getRawData().getContractList();
       for (Contract contract : contracts) {
         byte[] address = TransactionCapsule.getOwner(contract);
         AccountCapsule accountCapsule = getAccountStore().get(address);
         try {
           if (accountCapsule != null) {
-            adjustBalance(getAccountStore(), accountCapsule, -fee);
+            adjustBalance(getAccountStore(), accountCapsule, -fee, useStrictMath2);
 
             if (getDynamicPropertiesStore().supportBlackHoleOptimization()) {
               getDynamicPropertiesStore().burnTrx(fee);
             } else {
-              adjustBalance(getAccountStore(), this.getAccountStore().getBlackhole(), +fee);
+              adjustBalance(getAccountStore(), this.getAccountStore().getBlackhole(), +fee,
+                  useStrictMath2);
             }
           }
         } catch (BalanceInsufficientException e) {
@@ -955,19 +959,20 @@ public class Manager {
     if (fee == 0) {
       return;
     }
-
+    boolean useStrictMath = getDynamicPropertiesStore().allowStrictMath2();
     List<Contract> contracts = trx.getInstance().getRawData().getContractList();
     for (Contract contract : contracts) {
       byte[] address = TransactionCapsule.getOwner(contract);
       AccountCapsule accountCapsule = getAccountStore().get(address);
       try {
         if (accountCapsule != null) {
-          adjustBalance(getAccountStore(), accountCapsule, -fee);
+          adjustBalance(getAccountStore(), accountCapsule, -fee, useStrictMath);
 
           if (getDynamicPropertiesStore().supportBlackHoleOptimization()) {
             getDynamicPropertiesStore().burnTrx(fee);
           } else {
-            adjustBalance(getAccountStore(), this.getAccountStore().getBlackhole(), +fee);
+            adjustBalance(getAccountStore(), this.getAccountStore().getBlackhole(), +fee,
+                useStrictMath);
           }
         }
       } catch (BalanceInsufficientException e) {
@@ -1849,9 +1854,10 @@ public class Manager {
       mortgageService.payStandbyWitness();
 
       if (chainBaseManager.getDynamicPropertiesStore().supportTransactionFeePool()) {
-        long transactionFeeReward = Math
-            .floorDiv(chainBaseManager.getDynamicPropertiesStore().getTransactionFeePool(),
-                Constant.TRANSACTION_FEE_POOL_PERIOD);
+        long transactionFeeReward = floorDiv(
+            chainBaseManager.getDynamicPropertiesStore().getTransactionFeePool(),
+                Constant.TRANSACTION_FEE_POOL_PERIOD,
+            chainBaseManager.getDynamicPropertiesStore().allowStrictMath2());
         mortgageService.payTransactionFeeReward(witnessCapsule.getAddress().toByteArray(),
             transactionFeeReward);
         chainBaseManager.getDynamicPropertiesStore().saveTransactionFeePool(
@@ -1865,9 +1871,10 @@ public class Manager {
           + chainBaseManager.getDynamicPropertiesStore().getWitnessPayPerBlock());
 
       if (chainBaseManager.getDynamicPropertiesStore().supportTransactionFeePool()) {
-        long transactionFeeReward = Math
-            .floorDiv(chainBaseManager.getDynamicPropertiesStore().getTransactionFeePool(),
-                Constant.TRANSACTION_FEE_POOL_PERIOD);
+        long transactionFeeReward = floorDiv(
+            chainBaseManager.getDynamicPropertiesStore().getTransactionFeePool(),
+                Constant.TRANSACTION_FEE_POOL_PERIOD,
+            chainBaseManager.getDynamicPropertiesStore().allowStrictMath2());
         account.setAllowance(account.getAllowance() + transactionFeeReward);
         chainBaseManager.getDynamicPropertiesStore().saveTransactionFeePool(
             chainBaseManager.getDynamicPropertiesStore().getTransactionFeePool()
@@ -2448,8 +2455,10 @@ public class Manager {
         }
         transactionCount += trx.getTransactionIds().size();
         long blockNum = trx.getNum();
-        maxBlock = Math.max(maxBlock, blockNum);
-        minBlock = Math.min(minBlock, blockNum);
+        maxBlock = max(maxBlock, blockNum,
+            chainBaseManager.getDynamicPropertiesStore().allowStrictMath2());
+        minBlock = min(minBlock, blockNum,
+            chainBaseManager.getDynamicPropertiesStore().allowStrictMath2());
         item.setBlockNum(blockNum);
         trx.getTransactionIds().forEach(
             tid -> chainBaseManager.getTransactionStore().put(Hex.decode(tid), item));

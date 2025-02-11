@@ -15,6 +15,10 @@
 
 package org.tron.core.capsule.utils;
 
+import static org.tron.common.math.Maths.addExact;
+import static org.tron.common.math.Maths.floorDiv;
+import static org.tron.common.math.Maths.multiplyExact;
+
 import com.google.protobuf.ByteString;
 import java.math.BigInteger;
 import java.util.Arrays;
@@ -230,8 +234,8 @@ public class MarketUtils {
   public static int comparePrice(long price1SellQuantity, long price1BuyQuantity,
       long price2SellQuantity, long price2BuyQuantity) {
     try {
-      return Long.compare(Math.multiplyExact(price1BuyQuantity, price2SellQuantity),
-          Math.multiplyExact(price2BuyQuantity, price1SellQuantity));
+      return Long.compare(multiplyExact(price1BuyQuantity, price2SellQuantity, true),
+          multiplyExact(price2BuyQuantity, price1SellQuantity, true));
 
     } catch (ArithmeticException ex) {
       // do nothing here, because we will use BigInteger to compute again
@@ -299,8 +303,8 @@ public class MarketUtils {
 
   public static long multiplyAndDivide(long a, long b, long c) {
     try {
-      long tmp = Math.multiplyExact(a, b);
-      return Math.floorDiv(tmp, c);
+      long tmp = multiplyExact(a, b, true);
+      return floorDiv(tmp, c, true);
     } catch (ArithmeticException ex) {
       // do nothing here, because we will use BigInteger to compute again
     }
@@ -320,8 +324,9 @@ public class MarketUtils {
     byte[] sellTokenId = orderCapsule.getSellTokenId();
     long sellTokenQuantityRemain = orderCapsule.getSellTokenQuantityRemain();
     if (Arrays.equals(sellTokenId, "_".getBytes())) {
-      accountCapsule.setBalance(Math.addExact(
-          accountCapsule.getBalance(), sellTokenQuantityRemain));
+      accountCapsule.setBalance(addExact(
+          accountCapsule.getBalance(), sellTokenQuantityRemain,
+          dynamicStore.allowStrictMath2()));
     } else {
       accountCapsule
           .addAssetAmountV2(sellTokenId, sellTokenQuantityRemain, dynamicStore, assetIssueStore);

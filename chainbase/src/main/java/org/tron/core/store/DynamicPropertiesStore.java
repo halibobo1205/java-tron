@@ -1,5 +1,6 @@
 package org.tron.core.store;
 
+import static org.tron.common.math.Maths.max;
 import static org.tron.core.config.Parameter.ChainConstant.BLOCK_PRODUCED_INTERVAL;
 import static org.tron.core.config.Parameter.ChainConstant.DELEGATE_PERIOD;
 
@@ -223,6 +224,9 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule> 
 
   private static final byte[] MAX_CREATE_ACCOUNT_TX_SIZE = "MAX_CREATE_ACCOUNT_TX_SIZE".getBytes();
   private static final byte[] ALLOW_STRICT_MATH = "ALLOW_STRICT_MATH".getBytes();
+
+  private static final byte[] CONSENSUS_LOGIC_OPTIMIZATION
+      = "CONSENSUS_LOGIC_OPTIMIZATION".getBytes();
 
   @Autowired
   private DynamicPropertiesStore(@Value("properties") String dbName) {
@@ -2240,7 +2244,7 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule> 
     long totalNetWeight = getTotalNetWeight();
     totalNetWeight += amount;
     if (allowNewReward()) {
-      totalNetWeight = Math.max(0, totalNetWeight);
+      totalNetWeight = max(0, totalNetWeight, allowStrictMath2());
     }
     saveTotalNetWeight(totalNetWeight);
   }
@@ -2253,7 +2257,7 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule> 
     long totalEnergyWeight = getTotalEnergyWeight();
     totalEnergyWeight += amount;
     if (allowNewReward()) {
-      totalEnergyWeight = Math.max(0, totalEnergyWeight);
+      totalEnergyWeight = max(0, totalEnergyWeight, allowStrictMath2());
     }
     saveTotalEnergyWeight(totalEnergyWeight);
   }
@@ -2266,7 +2270,7 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule> 
     long totalWeight = getTotalTronPowerWeight();
     totalWeight += amount;
     if (allowNewReward()) {
-      totalWeight = Math.max(0, totalWeight);
+      totalWeight = max(0, totalWeight, allowStrictMath2());
     }
     saveTotalTronPowerWeight(totalWeight);
   }
@@ -2889,6 +2893,26 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule> 
 
   public boolean allowStrictMath() {
     return getAllowStrictMath() == 1L;
+  }
+
+  public boolean allowStrictMath2() {
+    return this.allowConsensusLogicOptimization();
+  }
+
+  public void saveConsensusLogicOptimization(long value) {
+    this.put(CONSENSUS_LOGIC_OPTIMIZATION,
+      new BytesCapsule(ByteArray.fromLong(value)));
+  }
+
+  public long getConsensusLogicOptimization() {
+    return Optional.ofNullable(getUnchecked(CONSENSUS_LOGIC_OPTIMIZATION))
+      .map(BytesCapsule::getData)
+      .map(ByteArray::toLong)
+      .orElse(CommonParameter.getInstance().getConsensusLogicOptimization());
+  }
+
+  public boolean allowConsensusLogicOptimization() {
+    return getConsensusLogicOptimization() == 1L;
   }
 
   private static class DynamicResourceProperties {

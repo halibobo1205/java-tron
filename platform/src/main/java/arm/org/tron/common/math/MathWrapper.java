@@ -410,4 +410,68 @@ public class MathWrapper {
       return Objects.hash(a, b);
     }
   }
+
+  public static long addExact(long x, long y) {
+    return StrictMath.addExact(x, y);
+  }
+
+  public static int addExact(int x, int y) {
+    return StrictMath.addExact(x, y);
+  }
+
+  public static long floorDiv(long x, long y) {
+    return StrictMath.floorDiv(x, y);
+  }
+
+  public static int multiplyExact(int x, int y) {
+    return StrictMath.multiplyExact(x, y);
+  }
+
+  public static long multiplyExact(long x, long y) {
+    return StrictMath.multiplyExact(x, y);
+  }
+
+  public static long subtractExact(long x, long y) {
+    return StrictMath.subtractExact(x, y);
+  }
+
+  public static int min(int a, int b) {
+    return StrictMath.min(a, b);
+  }
+
+  public static long min(long a, long b) {
+    return StrictMath.min(a, b);
+  }
+
+  public static int max(int a, int b) {
+    return StrictMath.max(a, b);
+  }
+
+  public static long max(long a, long b) {
+    return StrictMath.max(a, b);
+  }
+
+  public static int round(float a) {
+    return StrictMath.round(a);
+  }
+
+  public static long round(double a) {
+    return StrictMath.round(a);
+  }
+
+  public static double ceil(double a) {
+    return StrictMath.ceil(a);
+  }
+
+  public static double signum(double a) {
+    return StrictMath.signum(a);
+  }
+
+  public static double random() {
+    return StrictMath.random();
+  }
+
+  public static long abs(long a) {
+    return StrictMath.abs(a);
+  }
 }
