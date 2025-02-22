@@ -934,6 +934,10 @@ public class Args extends CommonParameter {
           + "vm.saveInternalTx or vm.saveFeaturedInternalTx is off.");
     }
 
+    PARAMETER.saveCancelAllUnfreezeV2Details =
+        config.hasPath(Constant.VM_SAVE_CANCEL_ALL_UNFREEZE_V2_DETAILS)
+            && config.getBoolean(Constant.VM_SAVE_CANCEL_ALL_UNFREEZE_V2_DETAILS);
+
     // PARAMETER.allowShieldedTransaction =
     //     config.hasPath(Constant.COMMITTEE_ALLOW_SHIELDED_TRANSACTION) ? config
     //         .getInt(Constant.COMMITTEE_ALLOW_SHIELDED_TRANSACTION) : 0;

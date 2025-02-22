@@ -21,6 +21,8 @@ import org.tron.common.es.ExecutorServiceManager;
 import org.tron.common.log.layout.DesensitizedConverter;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.ByteArray;
+import org.tron.common.utils.ByteUtil;
+import org.tron.common.utils.DecodeUtil;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.ChainBaseManager;
 import org.tron.core.capsule.TransactionCapsule;
