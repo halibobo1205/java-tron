@@ -96,8 +96,6 @@ public class WorldStateQueryTest {
     Args.getInstance().dbBackupConfig = DbBackupConfig.getInstance();
     context = new TronApplicationContext(DefaultConfig.class);
     appTest = ApplicationFactory.create(context);
-    appTest.initServices(Args.getInstance());
-    appTest.startServices();
     appTest.startup();
     chainBaseManager = context.getBean(ChainBaseManager.class);
     // open account asset optimize

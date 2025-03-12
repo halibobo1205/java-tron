@@ -1,5 +1,7 @@
 package org.tron.core.db;
 
+import static org.tron.common.math.Maths.min;
+import static org.tron.common.math.Maths.round;
 import static org.tron.core.config.Parameter.ChainConstant.BLOCK_PRODUCED_INTERVAL;
 import static org.tron.core.config.Parameter.ChainConstant.WINDOW_SIZE_PRECISION;
 
@@ -66,7 +68,8 @@ abstract class ResourceProcessor {
       if (lastTime + windowSize > now) {
         long delta = now - lastTime;
         double decay = (windowSize - delta) / (double) windowSize;
-        averageLastUsage = Math.round(averageLastUsage * decay);
+        averageLastUsage = round(averageLastUsage * decay,
+            dynamicPropertiesStore.disableJavaLangMath());
       } else {
         averageLastUsage = 0;
       }
@@ -94,7 +97,8 @@ abstract class ResourceProcessor {
       if (lastTime + oldWindowSize > now) {
         long delta = now - lastTime;
         double decay = (oldWindowSize - delta) / (double) oldWindowSize;
-        averageLastUsage = Math.round(averageLastUsage * decay);
+        averageLastUsage = round(averageLastUsage * decay,
+            dynamicPropertiesStore.disableJavaLangMath());
       } else {
         averageLastUsage = 0;
       }
@@ -126,7 +130,8 @@ abstract class ResourceProcessor {
       if (lastTime + oldWindowSize > now) {
         long delta = now - lastTime;
         double decay = (oldWindowSize - delta) / (double) oldWindowSize;
-        averageLastUsage = Math.round(averageLastUsage * decay);
+        averageLastUsage = round(averageLastUsage * decay,
+            dynamicPropertiesStore.disableJavaLangMath());
       } else {
         averageLastUsage = 0;
       }
@@ -142,7 +147,8 @@ abstract class ResourceProcessor {
     long remainWindowSize = oldWindowSizeV2 - (now - lastTime) * WINDOW_SIZE_PRECISION;
     long newWindowSize = divideCeil(
         remainUsage * remainWindowSize + usage * this.windowSize * WINDOW_SIZE_PRECISION, newUsage);
-    newWindowSize = Math.min(newWindowSize, this.windowSize * WINDOW_SIZE_PRECISION);
+    newWindowSize = min(newWindowSize, this.windowSize * WINDOW_SIZE_PRECISION,
+        dynamicPropertiesStore.disableJavaLangMath());
     accountCapsule.setNewWindowSizeV2(resourceCode, newWindowSize);
     return newUsage;
   }
@@ -204,7 +210,8 @@ abstract class ResourceProcessor {
         divideCeil(
             ownerUsage * remainOwnerWindowSizeV2 + transferUsage * remainReceiverWindowSizeV2,
             newOwnerUsage);
-    newOwnerWindowSize = Math.min(newOwnerWindowSize, this.windowSize * WINDOW_SIZE_PRECISION);
+    newOwnerWindowSize = min(newOwnerWindowSize, this.windowSize * WINDOW_SIZE_PRECISION,
+        dynamicPropertiesStore.disableJavaLangMath());
     owner.setNewWindowSizeV2(resourceCode, newOwnerWindowSize);
     owner.setUsage(resourceCode, newOwnerUsage);
     owner.setLatestTime(resourceCode, now);
@@ -231,13 +238,15 @@ abstract class ResourceProcessor {
     try {
       long latestOperationTime = dynamicPropertiesStore.getLatestBlockHeaderTimestamp();
       accountCapsule.setLatestOperationTime(latestOperationTime);
-      Commons.adjustBalance(accountStore, accountCapsule, -fee);
+      Commons.adjustBalance(accountStore, accountCapsule, -fee,
+          dynamicPropertiesStore.disableJavaLangMath());
       if (dynamicPropertiesStore.supportTransactionFeePool()) {
         dynamicPropertiesStore.addTransactionFeePool(fee);
       } else if (dynamicPropertiesStore.supportBlackHoleOptimization()) {
         dynamicPropertiesStore.burnTrx(fee);
       } else {
-        Commons.adjustBalance(accountStore, accountStore.getBlackhole().createDbKey(), +fee);
+        Commons.adjustBalance(accountStore, accountStore.getBlackhole().createDbKey(), +fee,
+            dynamicPropertiesStore.disableJavaLangMath());
       }
 
       return true;
@@ -250,11 +259,13 @@ abstract class ResourceProcessor {
     try {
       long latestOperationTime = dynamicPropertiesStore.getLatestBlockHeaderTimestamp();
       accountCapsule.setLatestOperationTime(latestOperationTime);
-      Commons.adjustBalance(accountStore, accountCapsule, -fee);
+      Commons.adjustBalance(accountStore, accountCapsule, -fee,
+          dynamicPropertiesStore.disableJavaLangMath());
       if (dynamicPropertiesStore.supportBlackHoleOptimization()) {
         dynamicPropertiesStore.burnTrx(fee);
       } else {
-        Commons.adjustBalance(accountStore, accountStore.getBlackhole().createDbKey(), +fee);
+        Commons.adjustBalance(accountStore, accountStore.getBlackhole().createDbKey(), +fee,
+            dynamicPropertiesStore.disableJavaLangMath());
       }
 
       return true;

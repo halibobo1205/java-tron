@@ -4,6 +4,7 @@ import static java.lang.Long.max;
 import static org.tron.core.config.Parameter.ChainConstant.BLOCK_PRODUCED_INTERVAL;
 import static org.tron.core.config.Parameter.ChainConstant.TRX_PRECISION;
 
+import com.google.common.collect.HashBasedTable;
 import com.google.protobuf.ByteString;
 import java.util.HashMap;
 import java.util.Optional;
@@ -98,6 +99,7 @@ public class RepositoryStateImpl implements Repository {
   private final HashMap<Key, Value<byte[]>> delegationCache = new HashMap<>();
   private final HashMap<Key, Value<Protocol.DelegatedResourceAccountIndex>>
           delegatedResourceAccountIndexCache = new HashMap<>();
+  private final HashBasedTable<Key, Key, Value<byte[]>> transientStorage = HashBasedTable.create();
 
   public RepositoryStateImpl(Bytes32 rootHash, RepositoryStateImpl repository) {
     this.rootHash = rootHash;
@@ -417,6 +419,27 @@ public class RepositoryStateImpl implements Repository {
     return delegatedResourceAccountIndexCapsule;
   }
 
+  public byte[] getTransientStorageValue(byte[] address, byte[] key) {
+    Key cacheAddress = new Key(address);
+    Key cacheKey = new Key(key);
+    if (transientStorage.contains(cacheAddress, cacheKey)) {
+      return transientStorage.get(cacheAddress, cacheKey).getValue();
+    }
+
+    byte[] value;
+    if (parent != null) {
+      value = parent.getTransientStorageValue(address, key);
+    } else {
+      value = null;
+    }
+
+    if (value != null) {
+      transientStorage.put(cacheAddress, cacheKey, Value.create(value));
+    }
+
+    return value;
+  }
+
 
   @Override
   public void deleteContract(byte[] address) {
@@ -537,6 +560,11 @@ public class RepositoryStateImpl implements Repository {
                  DelegatedResourceAccountIndexCapsule delegatedResourceAccountIndexCapsule) {
     delegatedResourceAccountIndexCache.put(
             Key.create(word), Value.create(delegatedResourceAccountIndexCapsule, Type.DIRTY));
+  }
+
+  @Override
+  public void updateTransientStorageValue(byte[] address, byte[] key, byte[] value) {
+    transientStorage.put(Key.create(address), Key.create(key), Value.create(value, Type.DIRTY));
   }
 
   @Override
@@ -680,6 +708,7 @@ public class RepositoryStateImpl implements Repository {
     commitVotesCache(repository);
     commitDelegationCache(repository);
     commitDelegatedResourceAccountIndexCache(repository);
+    commitTransientStorage(repository);
   }
 
   @Override
@@ -736,6 +765,11 @@ public class RepositoryStateImpl implements Repository {
   @Override
   public void putDelegatedResourceAccountIndex(Key key, Value value) {
     delegatedResourceAccountIndexCache.put(key, value);
+  }
+
+  @Override
+  public void putTransientStorageValue(Key address, Key key, Value value) {
+    transientStorage.put(address, key, value);
   }
 
   @Override
@@ -968,6 +1002,17 @@ public class RepositoryStateImpl implements Repository {
         }
       }
     }));
+  }
+
+  public void commitTransientStorage(Repository deposit) {
+    if (deposit != null) {
+      transientStorage.cellSet().forEach(cell -> {
+        if (cell.getValue().getType().isDirty() || cell.getValue().getType().isCreate()) {
+          deposit.putTransientStorageValue(
+              cell.getRowKey(), cell.getColumnKey(), cell.getValue());
+        }
+      });
+    }
   }
 
   @Override

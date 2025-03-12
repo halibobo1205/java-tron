@@ -13,7 +13,6 @@ import org.apache.tuweni.bytes.Bytes32;
 import org.hyperledger.besu.ethereum.trie.KeyValueMerkleStorage;
 import org.hyperledger.besu.ethereum.trie.MerkleTrieException;
 import org.hyperledger.besu.storage.KeyValueStorage;
-import org.jetbrains.annotations.NotNull;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Conditional;
 import org.springframework.stereotype.Component;
@@ -44,7 +43,7 @@ public class KeyValueMerkleCacheStorage extends KeyValueMerkleStorage {
           CacheType.worldStateTrie.type + '.' + stateType.getName()),
           new CacheLoader<Bytes32, Optional<Bytes>>() {
             @Override
-            public Optional<Bytes> load(@NotNull Bytes32 key) {
+            public Optional<Bytes> load(Bytes32 key) {
               return get(key);
             }
           }, (key, value) -> Bytes32.SIZE + value.orElse(Bytes.EMPTY).size()));

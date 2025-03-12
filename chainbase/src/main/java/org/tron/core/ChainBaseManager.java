@@ -14,7 +14,6 @@ import org.apache.commons.collections4.CollectionUtils;
 import org.apache.tuweni.bytes.Bytes32;
 import org.hyperledger.besu.ethereum.trie.MerkleStorage;
 import org.hyperledger.besu.ethereum.trie.MerkleTrieException;
-import org.jetbrains.annotations.NotNull;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.tron.common.cache.CacheManager;
@@ -398,13 +397,22 @@ public class ChainBaseManager {
     cache = CacheManager.allocate(CacheType.worldStateQueryInstance,
             new CacheLoader<Bytes32, WorldStateQueryInstance>() {
             @Override
-            public WorldStateQueryInstance load(@NotNull Bytes32 key) throws Exception {
+            public WorldStateQueryInstance load( Bytes32 key) throws Exception {
               return new WorldStateQueryInstance(key, chainBaseManager);
             }
           });
 
     AssetUtil.setAccountAssetStore(manager.getAccountAssetStore());
     AssetUtil.setDynamicPropertiesStore(manager.getDynamicPropertiesStore());
+  }
+
+  public long getNextBlockSlotTime() {
+    long slotCount = 1;
+    if (dynamicPropertiesStore.getStateFlag() == 1) {
+      slotCount += dynamicPropertiesStore.getMaintenanceSkipSlots();
+    }
+    return dynamicPropertiesStore.getLatestBlockHeaderTimestamp()
+        + slotCount * BLOCK_PRODUCED_INTERVAL;
   }
 
   @PostConstruct

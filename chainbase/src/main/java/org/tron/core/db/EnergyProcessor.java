@@ -1,6 +1,8 @@
 package org.tron.core.db;
 
-import static java.lang.Long.max;
+import static org.tron.common.math.Maths.max;
+import static org.tron.common.math.Maths.min;
+import static org.tron.core.config.Parameter.ChainConstant.BLOCK_PRODUCED_INTERVAL;
 import static org.tron.core.config.Parameter.ChainConstant.TRX_PRECISION;
 
 import lombok.extern.slf4j.Slf4j;
@@ -69,11 +71,10 @@ public class EnergyProcessor extends ResourceProcessor {
           / AdaptiveResourceLimitConstants.EXPAND_RATE_DENOMINATOR;
       // logger.info(totalEnergyAverageUsage + "<" + targetTotalEnergyLimit + "\n" + result);
     }
-
-    result = Math.min(
-        Math.max(result, totalEnergyLimit),
-        totalEnergyLimit * dynamicPropertiesStore.getAdaptiveResourceLimitMultiplier()
-    );
+    boolean useStrict2 = dynamicPropertiesStore.disableJavaLangMath();
+    result = min(max(result, totalEnergyLimit, useStrict2),
+        totalEnergyLimit * dynamicPropertiesStore.getAdaptiveResourceLimitMultiplier(),
+        useStrict2);
 
     dynamicPropertiesStore.saveTotalEnergyCurrentLimit(result);
     logger.debug("Adjust totalEnergyCurrentLimit, old: {}, new: {}.",
@@ -169,7 +170,7 @@ public class EnergyProcessor extends ResourceProcessor {
 
     long newEnergyUsage = recovery(accountCapsule, ENERGY, energyUsage, latestConsumeTime, now);
 
-    return max(energyLimit - newEnergyUsage, 0); // us
+    return max(energyLimit - newEnergyUsage, 0, dynamicPropertiesStore.disableJavaLangMath()); // us
   }
 
 }
