@@ -645,4 +645,44 @@ public class JsonrpcServiceTest extends BaseTest {
       Assert.assertEquals("Incorrect hex syntax", e.getMessage());
     }
   }
+
+  @Test
+  public void testNewFilterFinalizedBlock() {
+
+    try {
+      tronJsonRpc.newFilter(new FilterRequest(null, null, null, null, null));
+    } catch (Exception e) {
+      Assert.fail();
+    }
+
+    try {
+      tronJsonRpc.newFilter(new FilterRequest("finalized", null, null, null, null));
+    } catch (Exception e) {
+      Assert.assertEquals("invalid block range params", e.getMessage());
+    }
+
+    try {
+      tronJsonRpc.newFilter(new FilterRequest(null, "finalized", null, null, null));
+    } catch (Exception e) {
+      Assert.assertEquals("invalid block range params", e.getMessage());
+    }
+
+    try {
+      tronJsonRpc.newFilter(new FilterRequest("finalized", "latest", null, null, null));
+    } catch (Exception e) {
+      Assert.assertEquals("invalid block range params", e.getMessage());
+    }
+
+    try {
+      tronJsonRpc.newFilter(new FilterRequest("0x1", "finalized", null, null, null));
+    } catch (Exception e) {
+      Assert.assertEquals("invalid block range params", e.getMessage());
+    }
+
+    try {
+      tronJsonRpc.newFilter(new FilterRequest("finalized", "finalized", null, null, null));
+    } catch (Exception e) {
+      Assert.assertEquals("invalid block range params", e.getMessage());
+    }
+  }
 }
