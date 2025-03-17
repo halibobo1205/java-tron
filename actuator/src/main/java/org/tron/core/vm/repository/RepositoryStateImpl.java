@@ -680,7 +680,7 @@ public class RepositoryStateImpl implements Repository {
           StringUtil.createReadableString(accountCapsule.createDbKey())
               + " insufficient balance");
     }
-    accountCapsule.setBalance(Math.addExact(balance, value));
+    accountCapsule.setBalance(StrictMath.addExact(balance, value));
     Key key = Key.create(address);
     accountCache.put(key, Value.create(accountCapsule,
         accountCache.get(key).getType().addType(Type.DIRTY)));
@@ -841,7 +841,7 @@ public class RepositoryStateImpl implements Repository {
       if (lastTime + windowSize > now) {
         long delta = now - lastTime;
         double decay = (windowSize - delta) / (double) windowSize;
-        averageLastUsage = Math.round(averageLastUsage * decay);
+        averageLastUsage = StrictMath.round(averageLastUsage * decay);
       } else {
         averageLastUsage = 0;
       }

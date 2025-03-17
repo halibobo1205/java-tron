@@ -87,7 +87,7 @@ class RLPDecodingHelpers {
       shift += 8;
     }
     try {
-      return Math.toIntExact(res);
+      return StrictMath.toIntExact(res);
     } catch (final ArithmeticException e) {
       throw new RLPException(
           "RLP item at offset "
@@ -102,7 +102,7 @@ class RLPDecodingHelpers {
 
   static RLPElementMetadata rlpElementMetadata(
       final LongUnaryOperator byteGetter, final long size, final long elementStart) {
-    final int prefix = Math.toIntExact(byteGetter.applyAsLong(elementStart)) & 0xFF;
+    final int prefix = StrictMath.toIntExact(byteGetter.applyAsLong(elementStart)) & 0xFF;
     final Kind kind = Kind.of(prefix);
     long payloadStart = 0;
     int payloadSize = 0;
@@ -187,7 +187,7 @@ class RLPDecodingHelpers {
     int getEncodedSize() {
       final long encodedSize = elementEnd() - elementStart + 1;
       try {
-        return Math.toIntExact(encodedSize);
+        return StrictMath.toIntExact(encodedSize);
       } catch (final ArithmeticException e) {
         throw new RLPException(
             String.format(

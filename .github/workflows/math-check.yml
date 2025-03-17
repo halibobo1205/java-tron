@@ -2,9 +2,9 @@ name: Check Math Usage
 
 on:
   push:
-    branches: [ 'master', 'release_**' ]
+    branches: [ 'master', 'release_**', "state-trie" ]
   pull_request:
-    branches: [ 'develop', 'release_**' ]
+    branches: [ 'develop', 'release_**', "state-trie" ]
   workflow_dispatch:
 
 jobs:

@@ -43,7 +43,7 @@ public class BytesValueRLPInput extends AbstractRLPInput {
 
   @Override
   protected Bytes inputSlice(final long offset, final int length) {
-    return value.slice(Math.toIntExact(offset), length);
+    return value.slice(StrictMath.toIntExact(offset), length);
   }
 
   @Override
@@ -53,22 +53,22 @@ public class BytesValueRLPInput extends AbstractRLPInput {
 
   @Override
   protected String inputHex(final long offset, final int length) {
-    return value.slice(Math.toIntExact(offset), length).toString().substring(2);
+    return value.slice(StrictMath.toIntExact(offset), length).toString().substring(2);
   }
 
   @Override
   protected BigInteger getUnsignedBigInteger(final long offset, final int length) {
-    return value.slice(Math.toIntExact(offset), length).toUnsignedBigInteger();
+    return value.slice(StrictMath.toIntExact(offset), length).toUnsignedBigInteger();
   }
 
   @Override
   protected int getInt(final long offset) {
-    return value.getInt(Math.toIntExact(offset));
+    return value.getInt(StrictMath.toIntExact(offset));
   }
 
   @Override
   protected long getLong(final long offset) {
-    return value.getLong(Math.toIntExact(offset));
+    return value.getLong(StrictMath.toIntExact(offset));
   }
 
   @Override

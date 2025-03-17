@@ -160,7 +160,7 @@ public interface Bytes extends Comparable<Bytes> {
 
     int size;
     try {
-      size = values.stream().mapToInt(Bytes::size).reduce(0, Math::addExact);
+      size = values.stream().mapToInt(Bytes::size).reduce(0, StrictMath::addExact);
     } catch (ArithmeticException e) {
       throw new IllegalArgumentException("Combined length of values is too long (> Integer.MAX_VALUE)");
     }
@@ -188,7 +188,7 @@ public interface Bytes extends Comparable<Bytes> {
 
     int size;
     try {
-      size = Arrays.stream(values).mapToInt(Bytes::size).reduce(0, Math::addExact);
+      size = Arrays.stream(values).mapToInt(Bytes::size).reduce(0, StrictMath::addExact);
     } catch (ArithmeticException e) {
       throw new IllegalArgumentException("Combined length of values is too long (> Integer.MAX_VALUE)");
     }
@@ -623,10 +623,10 @@ public interface Bytes extends Comparable<Bytes> {
    * @return an array of Bytes32 objects
    */
   static Bytes32[] segment(Bytes bytes) {
-    int segments = (int) Math.ceil(bytes.size() / 32.0);
+    int segments = (int) StrictMath.ceil(bytes.size() / 32.0);
     Bytes32[] result = new Bytes32[segments];
     for (int i = 0; i < segments; i++) {
-      result[i] = Bytes32.rightPad(bytes.slice(i * 32, Math.min(32, bytes.size() - i * 32)));
+      result[i] = Bytes32.rightPad(bytes.slice(i * 32, StrictMath.min(32, bytes.size() - i * 32)));
     }
     return result;
   }
@@ -1043,7 +1043,7 @@ public interface Bytes extends Comparable<Bytes> {
    * @return The result of a bit-wise AND.
    */
   default Bytes and(Bytes other) {
-    return and(other, MutableBytes.create(Math.max(size(), other.size())));
+    return and(other, MutableBytes.create(StrictMath.max(size(), other.size())));
   }
 
   /**
@@ -1083,7 +1083,7 @@ public interface Bytes extends Comparable<Bytes> {
    * @return The result of a bit-wise OR.
    */
   default Bytes or(Bytes other) {
-    return or(other, MutableBytes.create(Math.max(size(), other.size())));
+    return or(other, MutableBytes.create(StrictMath.max(size(), other.size())));
   }
 
   /**
@@ -1123,7 +1123,7 @@ public interface Bytes extends Comparable<Bytes> {
    * @return The result of a bit-wise XOR.
    */
   default Bytes xor(Bytes other) {
-    return xor(other, MutableBytes.create(Math.max(size(), other.size())));
+    return xor(other, MutableBytes.create(StrictMath.max(size(), other.size())));
   }
 
   /**

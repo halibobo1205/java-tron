@@ -465,7 +465,7 @@ public class Pruner implements Callable<Integer> {
       if (stateInitNumber == -1) {
         return null;
       }
-      if (reserveNumber > Math.subtractExact(latestBlockNumber, stateInitNumber)) {
+      if (reserveNumber > StrictMath.subtractExact(latestBlockNumber, stateInitNumber)) {
         errMsg = String.format("reserveNumber is bigger than the block gap. "
                 + "reserveNumber: %d, latestBlockNumber: %d, earliestBlockNumber: %d",
             reserveNumber, latestBlockNumber, stateInitNumber);
