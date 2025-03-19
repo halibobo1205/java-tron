@@ -29,9 +29,12 @@ dependencies {
     implementation group: 'com.typesafe', name: 'config', version: '1.3.2'
     implementation group: 'me.tongfei', name: 'progressbar', version: '0.9.3'
     implementation group: 'org.bouncycastle', name: 'bcprov-jdk15on', version: '1.69'
+    implementation 'com.halibobor:leveldbjni-all:1.18.3'
     implementation 'com.halibobor:leveldb:1.18.3'
     implementation project(":protocol")
-    implementation(project(":platform"))
+    implementation project(":platform"), {
+        exclude(group: 'org.fusesource.leveldbjni', module: 'leveldbjni-all')
+    }
 }
 
 check.dependsOn 'lint'
