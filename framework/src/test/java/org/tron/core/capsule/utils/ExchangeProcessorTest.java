@@ -2,30 +2,12 @@ package org.tron.core.capsule.utils;
 
 import lombok.extern.slf4j.Slf4j;
 import org.junit.Assert;
-import org.junit.BeforeClass;
 import org.junit.Test;
-import org.tron.common.BaseTest;
-import org.tron.core.Constant;
 import org.tron.core.capsule.ExchangeProcessor;
-import org.tron.core.config.args.Args;
 
 @Slf4j
-public class ExchangeProcessorTest extends BaseTest {
+public class ExchangeProcessorTest  {
 
-  private static ExchangeProcessor processor;
-
-  static {
-    Args.setParam(new String[]{"--output-directory", dbPath()}, Constant.TEST_CONF);
-  }
-
-  /**
-   * Init data.
-   */
-  @BeforeClass
-  public static void init() {
-    long supply = 1_000_000_000_000_000_000L;
-    processor = new ExchangeProcessor(supply, false);
-  }
 
   @Test
   public void testExchange() {
@@ -33,7 +15,7 @@ public class ExchangeProcessorTest extends BaseTest {
     long buyBalance = 128L * 1024 * 1024 * 1024;
     long sellQuant = 2_000_000_000_000L; // 2 million trx
 
-    long result = processor.exchange(sellBalance, buyBalance, sellQuant);
+    long result = ExchangeProcessor.exchange(sellBalance, buyBalance, sellQuant, false);
 
     Assert.assertEquals(2694881440L, result);
   }
@@ -44,13 +26,13 @@ public class ExchangeProcessorTest extends BaseTest {
     long buyBalance = 128L * 1024 * 1024 * 1024;
     long sellQuant = 1_000_000_000_000L; // 2 million trx
 
-    long result = processor.exchange(sellBalance, buyBalance, sellQuant);
+    long result = ExchangeProcessor.exchange(sellBalance, buyBalance, sellQuant, false);
     Assert.assertEquals(1360781717L, result);
 
     sellBalance += sellQuant;
     buyBalance -= result;
 
-    long result2 = processor.exchange(sellBalance, buyBalance, sellQuant);
+    long result2 = ExchangeProcessor.exchange(sellBalance, buyBalance, sellQuant, false);
     Assert.assertEquals(2694881440L - 1360781717L, result2);
 
   }
@@ -62,13 +44,13 @@ public class ExchangeProcessorTest extends BaseTest {
     long buyBalance = 128L * 1024 * 1024 * 1024;
     long sellQuant = 2_000_000_000_000L; // 2 million trx
 
-    long result = processor.exchange(sellBalance, buyBalance, sellQuant);
+    long result = ExchangeProcessor.exchange(sellBalance, buyBalance, sellQuant, false);
     Assert.assertEquals(2694881440L, result);
 
     sellBalance += sellQuant;
     buyBalance -= result;
 
-    long result2 = processor.exchange(buyBalance, sellBalance, result);
+    long result2 = ExchangeProcessor.exchange(buyBalance, sellBalance, result, false);
     Assert.assertEquals(1999999999542L, result2);
 
   }
@@ -79,7 +61,7 @@ public class ExchangeProcessorTest extends BaseTest {
     long buyBalance = 128L * 1024 * 1024 * 1024;
     long sellQuant = 2_000_000_000_000L; // 2 million trx
 
-    long result = processor.exchange(sellBalance, buyBalance, sellQuant);
+    long result = ExchangeProcessor.exchange(sellBalance, buyBalance, sellQuant, false);
     Assert.assertEquals(2694881440L, result);
 
     sellBalance += sellQuant;
@@ -88,13 +70,13 @@ public class ExchangeProcessorTest extends BaseTest {
     long quant1 = 2694881440L - 1360781717L;
     long quant2 = 1360781717L;
 
-    long result1 = processor.exchange(buyBalance, sellBalance, quant1);
+    long result1 = ExchangeProcessor.exchange(buyBalance, sellBalance, quant1,false);
     Assert.assertEquals(999999999927L, result1);
 
     buyBalance += quant1;
     sellBalance -= result1;
 
-    long result2 = processor.exchange(buyBalance, sellBalance, quant2);
+    long result2 = ExchangeProcessor.exchange(buyBalance, sellBalance, quant2, false);
     Assert.assertEquals(999999999587L, result2);
 
   }
@@ -105,14 +87,14 @@ public class ExchangeProcessorTest extends BaseTest {
     long buyBalance = 10_000_000L;
     long sellQuant = 10_000_000L; // 10 trx
 
-    long result = processor.exchange(sellBalance, buyBalance, sellQuant);
+    long result = ExchangeProcessor.exchange(sellBalance, buyBalance, sellQuant, false);
     Assert.assertEquals(99L, result);
 
     // inject
     sellBalance += 100_000_000000L;
     buyBalance += 1_000_000L;
 
-    long result2 = processor.exchange(sellBalance, buyBalance, sellQuant);
+    long result2 = ExchangeProcessor.exchange(sellBalance, buyBalance, sellQuant, false);
     Assert.assertEquals(99L, result2);
 
   }
@@ -123,21 +105,20 @@ public class ExchangeProcessorTest extends BaseTest {
     long buyBalance = 10_000_000L;
     long sellQuant = 10_000_000L; // 10 trx
 
-    long result = processor.exchange(sellBalance, buyBalance, sellQuant);
+    long result = ExchangeProcessor.exchange(sellBalance, buyBalance, sellQuant, false);
     Assert.assertEquals(99L, result);
 
     // inject
     sellBalance -= 800_000_000000L;
     buyBalance -= 8_000_000L;
 
-    long result2 = processor.exchange(sellBalance, buyBalance, sellQuant);
+    long result2 = ExchangeProcessor.exchange(sellBalance, buyBalance, sellQuant, false);
     Assert.assertEquals(99L, result2);
 
   }
 
   @Test
   public void testStrictMath() {
-    long supply = 1_000_000_000_000_000_000L;
     long[][] testData = {
         {4732214L, 2202692725330L, 29218L},
         {5618633L, 556559904655L, 1L},
@@ -190,10 +171,8 @@ public class ExchangeProcessorTest extends BaseTest {
     };
 
     for (long[] data : testData) {
-      ExchangeProcessor processor = new ExchangeProcessor(supply, false);
-      long anotherTokenQuant = processor.exchange(data[0], data[1], data[2]);
-      processor = new ExchangeProcessor(supply, true);
-      long result = processor.exchange(data[0], data[1], data[2]);
+      long anotherTokenQuant = ExchangeProcessor.exchange(data[0], data[1], data[2] ,false);
+      long result = ExchangeProcessor.exchange(data[0], data[1], data[2], true);
       Assert.assertNotEquals(anotherTokenQuant, result);
     }
   }

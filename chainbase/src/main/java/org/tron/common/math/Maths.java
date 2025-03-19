@@ -52,26 +52,13 @@ public class Maths {
     if (useStrictMath) {
       return strictResult;
     }
-    final boolean isNoStrict = Double.compare(result, strictResult) != 0;
-    Optional<Long> header = GlobalContext.getHeader();
-    header.ifPresent(h -> {
+    GlobalContext.getHeader().ifPresent(h -> {
       byte[] key = Bytes.concat(longToBytes(h), new byte[]{Op.POW.code},
           doubleToBytes(a), doubleToBytes(b));
-      if (isNoStrict) {
-        logger.info("{}\t{}\t{}\t{}\t{}\t{}", h, Op.POW.code, doubleToHex(a), doubleToHex(b),
-            doubleToHex(result), doubleToHex(strictResult));
-      }
       mathStore.ifPresent(s -> s.put(key, doubleToBytes(result)));
       strictMathStore.ifPresent(s -> s.put(key, doubleToBytes(strictResult)));
     });
     return result;
-  }
-
-  static String doubleToHex(double input) {
-    // Convert the starting value to the equivalent value in a long
-    long doubleAsLong = Double.doubleToRawLongBits(input);
-    // and then convert the long to a hex string
-    return Long.toHexString(doubleAsLong);
   }
 
   private static byte[] doubleToBytes(double value) {

@@ -113,25 +113,24 @@ public class ExchangeCapsule implements ProtoCapsule<Exchange> {
   }
 
   public long transaction(byte[] sellTokenID, long sellTokenQuant, boolean useStrictMath) {
-    long supply = 1_000_000_000_000_000_000L;
-    ExchangeProcessor processor = new ExchangeProcessor(supply, useStrictMath);
-
-    long buyTokenQuant = 0;
+    long buyTokenQuant;
     long firstTokenBalance = this.exchange.getFirstTokenBalance();
     long secondTokenBalance = this.exchange.getSecondTokenBalance();
 
     if (this.exchange.getFirstTokenId().equals(ByteString.copyFrom(sellTokenID))) {
-      buyTokenQuant = processor.exchange(firstTokenBalance,
+      buyTokenQuant = ExchangeProcessor.exchange(firstTokenBalance,
           secondTokenBalance,
-          sellTokenQuant);
+          sellTokenQuant,
+          useStrictMath);
       this.exchange = this.exchange.toBuilder()
           .setFirstTokenBalance(firstTokenBalance + sellTokenQuant)
           .setSecondTokenBalance(secondTokenBalance - buyTokenQuant)
           .build();
     } else {
-      buyTokenQuant = processor.exchange(secondTokenBalance,
+      buyTokenQuant = ExchangeProcessor.exchange(secondTokenBalance,
           firstTokenBalance,
-          sellTokenQuant);
+          sellTokenQuant,
+          useStrictMath);
       this.exchange = this.exchange.toBuilder()
           .setFirstTokenBalance(firstTokenBalance - buyTokenQuant)
           .setSecondTokenBalance(secondTokenBalance + sellTokenQuant)
