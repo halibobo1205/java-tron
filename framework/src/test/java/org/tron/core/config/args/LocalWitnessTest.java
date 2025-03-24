@@ -44,9 +44,12 @@ public class LocalWitnessTest {
 
   @Test
   public void whenSetEmptyPrivateKey() {
-    localWitness.setPrivateKeys(Lists.newArrayList(""));
-    Assert.assertNotNull(localWitness.getPrivateKey());
-    Assert.assertNotNull(localWitness.getPublicKey());
+    IllegalArgumentException thrown = Assert.assertThrows(IllegalArgumentException.class, () -> {
+      localWitness.setPrivateKeys(Lists.newArrayList(""));
+      Assert.assertNotNull(localWitness.getPrivateKey());
+      Assert.assertNotNull(localWitness.getPublicKey());
+    });
+    Assert.assertEquals("Scalar is not in the interval [1, n - 1]", thrown.getMessage());
   }
 
   @Test(expected = IllegalArgumentException.class)

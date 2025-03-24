@@ -280,7 +280,8 @@ public class ECKey implements Serializable, SignInterface {
 
   /**
    * Creates an ECKey given the private key only.
-   *
+   * NOTE: see <a href="https://github.com/bcgit/bc-java/issues/1851">
+   * curve25519 private key parsing fails since 1.74</a>
    * @param privKeyBytes -
    * @return -
    */

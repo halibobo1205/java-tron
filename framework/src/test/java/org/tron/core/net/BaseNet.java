@@ -13,9 +13,9 @@ import io.netty.handler.codec.protobuf.ProtobufVarint32FrameDecoder;
 import io.netty.handler.codec.protobuf.ProtobufVarint32LengthFieldPrepender;
 import io.netty.handler.timeout.ReadTimeoutHandler;
 import io.netty.handler.timeout.WriteTimeoutHandler;
-import java.io.File;
 import java.io.IOException;
 import java.util.Collection;
+import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -29,7 +29,6 @@ import org.tron.common.application.Application;
 import org.tron.common.application.ApplicationFactory;
 import org.tron.common.application.TronApplicationContext;
 import org.tron.common.parameter.CommonParameter;
-import org.tron.common.utils.FileUtil;
 import org.tron.common.utils.PublicMethod;
 import org.tron.common.utils.ReflectUtils;
 import org.tron.core.Constant;
@@ -123,10 +122,12 @@ public class BaseNet {
 
   @AfterClass
   public static void destroy() {
-    Collection<PeerConnection> peerConnections = ReflectUtils
-        .invokeMethod(tronNetDelegate, "getActivePeer");
-    for (PeerConnection peer : peerConnections) {
-      peer.getChannel().close();
+    if (Objects.nonNull(tronNetDelegate)) {
+      Collection<PeerConnection> peerConnections = ReflectUtils
+          .invokeMethod(tronNetDelegate, "getActivePeer");
+      for (PeerConnection peer : peerConnections) {
+        peer.getChannel().close();
+      }
     }
     Args.clearParam();
     context.destroy();

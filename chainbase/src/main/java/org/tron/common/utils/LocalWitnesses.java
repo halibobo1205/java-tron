@@ -15,6 +15,7 @@
 
 package org.tron.common.utils;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Lists;
 import java.util.List;
 import lombok.Getter;
@@ -29,6 +30,9 @@ import org.tron.core.config.Parameter.ChainConstant;
 @Slf4j(topic = "app")
 public class LocalWitnesses {
 
+  public static final String EMPTY_ADDRESS = "41dcc703c0e500b653ca82273b7bfad8045d85a470";
+  public static final byte[] ADDRESS = ByteArray.fromHexString(EMPTY_ADDRESS);
+
   @Getter
   private List<String> privateKeys = Lists.newArrayList();
 
@@ -41,15 +45,14 @@ public class LocalWitnesses {
     addPrivateKeys(privateKey);
   }
 
+  @VisibleForTesting
   public LocalWitnesses(List<String> privateKeys) {
     setPrivateKeys(privateKeys);
   }
 
   public byte[] getWitnessAccountAddress(boolean isECKeyCryptoEngine) {
     if (witnessAccountAddress == null) {
-      byte[] privateKey = ByteArray.fromHexString(getPrivateKey());
-      final SignInterface cryptoEngine = SignUtils.fromPrivate(privateKey, isECKeyCryptoEngine);
-      this.witnessAccountAddress = cryptoEngine.getAddress();
+      initWitnessAccountAddress(isECKeyCryptoEngine);
     }
     return witnessAccountAddress;
   }
@@ -61,6 +64,10 @@ public class LocalWitnesses {
   public void initWitnessAccountAddress(boolean isECKeyCryptoEngine) {
     if (witnessAccountAddress == null) {
       byte[] privateKey = ByteArray.fromHexString(getPrivateKey());
+      if (ByteUtil.EMPTY_BYTE_ARRAY == privateKey) {
+        this.witnessAccountAddress = ADDRESS;
+        return;
+      }
       final SignInterface ecKey = SignUtils.fromPrivate(privateKey,
           isECKeyCryptoEngine);
       this.witnessAccountAddress = ecKey.getAddress();
@@ -84,7 +91,7 @@ public class LocalWitnesses {
     if (StringUtils.startsWithIgnoreCase(privateKey, "0X")) {
       privateKey = privateKey.substring(2);
     }
-
+    // TODO FIXME why privateKey is allowed to set ""
     if (StringUtils.isNotBlank(privateKey)
         && privateKey.length() != ChainConstant.PRIVATE_KEY_LENGTH) {
       throw new IllegalArgumentException(
