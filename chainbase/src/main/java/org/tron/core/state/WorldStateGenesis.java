@@ -42,6 +42,7 @@ import org.tron.core.ChainBaseManager;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.db.BlockStore;
 import org.tron.core.exception.HeaderNotFound;
+import org.tron.core.exception.TronError;
 
 @Component("worldStateGenesis")
 @Slf4j(topic = "DB")
@@ -74,6 +75,15 @@ public class WorldStateGenesis {
 
   public synchronized void init(ChainBaseManager chainBaseManager) {
     if (!allowStateRoot) {
+      if (tryFindStateGenesisHeight() > -1) {
+        String msg = "StateRoot is not allowed, but archive db is found.\n";
+        msg += "You seem to be turning off the archive feature that is already turned on,";
+        msg += "please check the configuration.\n";
+        msg += "If you want to turn off the archive feature, please delete the archive db: ";
+        msg +=  stateGenesisPath  + ".\n";
+        msg += "To keep archive feature, please set the `storage.stateRoot.switch` to true.";
+        throw new TronError(msg, TronError.ErrCode.ARCHIVE_NODE_INIT);
+      }
       return;
     }
     this.chainBaseManager = chainBaseManager;
