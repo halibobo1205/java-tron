@@ -69,7 +69,7 @@ abstract class ResourceProcessor {
         long delta = now - lastTime;
         double decay = (windowSize - delta) / (double) windowSize;
         averageLastUsage = round(averageLastUsage * decay,
-            dynamicPropertiesStore.disableJavaLangMath());
+            this.disableJavaLangMath());
       } else {
         averageLastUsage = 0;
       }
@@ -98,7 +98,7 @@ abstract class ResourceProcessor {
         long delta = now - lastTime;
         double decay = (oldWindowSize - delta) / (double) oldWindowSize;
         averageLastUsage = round(averageLastUsage * decay,
-            dynamicPropertiesStore.disableJavaLangMath());
+            this.disableJavaLangMath());
       } else {
         averageLastUsage = 0;
       }
@@ -131,7 +131,7 @@ abstract class ResourceProcessor {
         long delta = now - lastTime;
         double decay = (oldWindowSize - delta) / (double) oldWindowSize;
         averageLastUsage = round(averageLastUsage * decay,
-            dynamicPropertiesStore.disableJavaLangMath());
+            this.disableJavaLangMath());
       } else {
         averageLastUsage = 0;
       }
@@ -148,7 +148,7 @@ abstract class ResourceProcessor {
     long newWindowSize = divideCeil(
         remainUsage * remainWindowSize + usage * this.windowSize * WINDOW_SIZE_PRECISION, newUsage);
     newWindowSize = min(newWindowSize, this.windowSize * WINDOW_SIZE_PRECISION,
-        dynamicPropertiesStore.disableJavaLangMath());
+        this.disableJavaLangMath());
     accountCapsule.setNewWindowSizeV2(resourceCode, newWindowSize);
     return newUsage;
   }
@@ -211,7 +211,7 @@ abstract class ResourceProcessor {
             ownerUsage * remainOwnerWindowSizeV2 + transferUsage * remainReceiverWindowSizeV2,
             newOwnerUsage);
     newOwnerWindowSize = min(newOwnerWindowSize, this.windowSize * WINDOW_SIZE_PRECISION,
-        dynamicPropertiesStore.disableJavaLangMath());
+        this.disableJavaLangMath());
     owner.setNewWindowSizeV2(resourceCode, newOwnerWindowSize);
     owner.setUsage(resourceCode, newOwnerUsage);
     owner.setLatestTime(resourceCode, now);
@@ -239,14 +239,14 @@ abstract class ResourceProcessor {
       long latestOperationTime = dynamicPropertiesStore.getLatestBlockHeaderTimestamp();
       accountCapsule.setLatestOperationTime(latestOperationTime);
       Commons.adjustBalance(accountStore, accountCapsule, -fee,
-          dynamicPropertiesStore.disableJavaLangMath());
+          this.disableJavaLangMath());
       if (dynamicPropertiesStore.supportTransactionFeePool()) {
         dynamicPropertiesStore.addTransactionFeePool(fee);
       } else if (dynamicPropertiesStore.supportBlackHoleOptimization()) {
         dynamicPropertiesStore.burnTrx(fee);
       } else {
         Commons.adjustBalance(accountStore, accountStore.getBlackhole().createDbKey(), +fee,
-            dynamicPropertiesStore.disableJavaLangMath());
+            this.disableJavaLangMath());
       }
 
       return true;
@@ -260,17 +260,21 @@ abstract class ResourceProcessor {
       long latestOperationTime = dynamicPropertiesStore.getLatestBlockHeaderTimestamp();
       accountCapsule.setLatestOperationTime(latestOperationTime);
       Commons.adjustBalance(accountStore, accountCapsule, -fee,
-          dynamicPropertiesStore.disableJavaLangMath());
+          this.disableJavaLangMath());
       if (dynamicPropertiesStore.supportBlackHoleOptimization()) {
         dynamicPropertiesStore.burnTrx(fee);
       } else {
         Commons.adjustBalance(accountStore, accountStore.getBlackhole().createDbKey(), +fee,
-            dynamicPropertiesStore.disableJavaLangMath());
+            this.disableJavaLangMath());
       }
 
       return true;
     } catch (BalanceInsufficientException e) {
       return false;
     }
+  }
+
+  protected boolean disableJavaLangMath() {
+    return dynamicPropertiesStore.disableJavaLangMath();
   }
 }
