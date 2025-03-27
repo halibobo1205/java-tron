@@ -267,6 +267,7 @@ public class TronNetDelegate {
               MetricKeys.Histogram.LOCK_ACQUIRE_LATENCY, MetricLabels.BLOCK));
           Histogram.Timer timer = Metrics.histogramStartTimer(
               MetricKeys.Histogram.BLOCK_PROCESS_LATENCY, String.valueOf(isSync));
+          block.generatedByMyself = block.generatedByMyself || isSync;
           dbManager.pushBlock(block);
           Metrics.histogramObserve(timer);
           freshBlockId.put(blockId, System.currentTimeMillis());

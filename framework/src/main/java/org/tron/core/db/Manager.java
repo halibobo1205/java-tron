@@ -1499,11 +1499,11 @@ public class Manager {
       chainBaseManager.getBalanceTraceStore().initCurrentTransactionBalanceTrace(trxCap);
       trxCap.setInBlock(true);
     }
-
-    validateTapos(trxCap);
-    validateCommon(trxCap);
-
-    validateDup(trxCap);
+    if (blockCap == null || !blockCap.generatedByMyself) {
+      validateTapos(trxCap);
+      validateCommon(trxCap);
+      validateDup(trxCap);
+    }
 
     if (!trxCap.validateSignature(chainBaseManager.getAccountStore(),
         chainBaseManager.getDynamicPropertiesStore())) {
