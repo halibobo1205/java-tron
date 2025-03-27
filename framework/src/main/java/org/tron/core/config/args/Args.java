@@ -44,11 +44,13 @@ import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.tron.common.arch.Arch;
 import org.tron.common.args.Account;
 import org.tron.common.args.GenesisBlock;
 import org.tron.common.args.Witness;
 import org.tron.common.config.DbBackupConfig;
 import org.tron.common.cron.CronExpression;
+import org.tron.common.context.GlobalContext;
 import org.tron.common.crypto.SignInterface;
 import org.tron.common.logsfilter.EventPluginConfig;
 import org.tron.common.logsfilter.FilterQuery;
@@ -129,7 +131,7 @@ public class Args extends CommonParameter {
     PARAMETER.activeNodes = new ArrayList<>();
     PARAMETER.passiveNodes = new ArrayList<>();
     PARAMETER.fastForwardNodes = new ArrayList<>();
-    PARAMETER.maxFastForwardNum = 3;
+    PARAMETER.maxFastForwardNum = 4;
     PARAMETER.nodeChannelReadTimeout = 0;
     PARAMETER.maxConnections = 30;
     PARAMETER.minConnections = 8;
@@ -245,6 +247,7 @@ public class Args extends CommonParameter {
     PARAMETER.consensusLogicOptimization = 0;
     PARAMETER.allowTvmCancun = 0;
     PARAMETER.allowTvmBlob = 0;
+    GlobalContext.removeHeader();
   }
 
   /**
@@ -1667,11 +1670,13 @@ public class Args extends CommonParameter {
         .getLong(prefix + "targetFileSizeBase") : 64;
     int targetFileSizeMultiplier = config.hasPath(prefix + "targetFileSizeMultiplier") ? config
         .getInt(prefix + "targetFileSizeMultiplier") : 1;
+    int maxOpenFiles = config.hasPath(prefix + "maxOpenFiles")
+        ? config.getInt(prefix + "maxOpenFiles") : 5000;
 
     PARAMETER.rocksDBCustomSettings = RocksDbSettings
         .initCustomSettings(levelNumber, compactThreads, blocksize, maxBytesForLevelBase,
             maxBytesForLevelMultiplier, level0FileNumCompactionTrigger,
-            targetFileSizeBase, targetFileSizeMultiplier);
+            targetFileSizeBase, targetFileSizeMultiplier, maxOpenFiles);
     RocksDbSettings.loggingSettings();
   }
 
@@ -1708,6 +1713,8 @@ public class Args extends CommonParameter {
   public static void logConfig() {
     CommonParameter parameter = CommonParameter.getInstance();
     logger.info("\n");
+    logger.info("************************ System info ************************");
+    logger.info("{}", Arch.withAll());
     logger.info("************************ Net config ************************");
     logger.info("P2P version: {}", parameter.getNodeP2pVersion());
     logger.info("LAN IP: {}", parameter.getNodeLanIp());

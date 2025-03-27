@@ -52,6 +52,7 @@ import org.tron.api.GrpcAPI.TransactionInfoList;
 import org.tron.common.args.GenesisBlock;
 import org.tron.common.bloom.Bloom;
 import org.tron.common.cron.CronExpression;
+import org.tron.common.context.GlobalContext;
 import org.tron.common.es.ExecutorServiceManager;
 import org.tron.common.exit.ExitManager;
 import org.tron.common.logsfilter.EventPluginLoader;
@@ -931,20 +932,20 @@ public class Manager {
       throws AccountResourceInsufficientException {
     if (trx.getInstance().getSignatureCount() > 1) {
       long fee = getDynamicPropertiesStore().getMultiSignFee();
-      boolean disableMath = getDynamicPropertiesStore().disableJavaLangMath();
+      boolean disableJavaLangMath = getDynamicPropertiesStore().disableJavaLangMath();
       List<Contract> contracts = trx.getInstance().getRawData().getContractList();
       for (Contract contract : contracts) {
         byte[] address = TransactionCapsule.getOwner(contract);
         AccountCapsule accountCapsule = getAccountStore().get(address);
         try {
           if (accountCapsule != null) {
-            adjustBalance(getAccountStore(), accountCapsule, -fee, disableMath);
+            adjustBalance(getAccountStore(), accountCapsule, -fee, disableJavaLangMath);
 
             if (getDynamicPropertiesStore().supportBlackHoleOptimization()) {
               getDynamicPropertiesStore().burnTrx(fee);
             } else {
               adjustBalance(getAccountStore(), this.getAccountStore().getBlackhole(), +fee,
-                  disableMath);
+                  disableJavaLangMath);
             }
           }
         } catch (BalanceInsufficientException e) {
@@ -969,20 +970,20 @@ public class Manager {
     if (fee == 0) {
       return;
     }
-    boolean disableMath = getDynamicPropertiesStore().disableJavaLangMath();
+    boolean disableJavaLangMath = getDynamicPropertiesStore().disableJavaLangMath();
     List<Contract> contracts = trx.getInstance().getRawData().getContractList();
     for (Contract contract : contracts) {
       byte[] address = TransactionCapsule.getOwner(contract);
       AccountCapsule accountCapsule = getAccountStore().get(address);
       try {
         if (accountCapsule != null) {
-          adjustBalance(getAccountStore(), accountCapsule, -fee, disableMath);
+          adjustBalance(getAccountStore(), accountCapsule, -fee, disableJavaLangMath);
 
           if (getDynamicPropertiesStore().supportBlackHoleOptimization()) {
             getDynamicPropertiesStore().burnTrx(fee);
           } else {
             adjustBalance(getAccountStore(), this.getAccountStore().getBlackhole(), +fee,
-                disableMath);
+                disableJavaLangMath);
           }
         }
       } catch (BalanceInsufficientException e) {
@@ -1033,8 +1034,20 @@ public class Manager {
       NonCommonBlockException, BadNumberBlockException, BadBlockException, ZksnarkException,
       EventBloomException {
     block.generatedByMyself = true;
-    long start = System.currentTimeMillis();
-    pushBlock(block);
+    final long start = System.currentTimeMillis();
+    Sha256Hash stateRoot = block.getStateRoot();
+    if (!CommonParameter.getInstance().isCheckRootHashDisable()
+        && !Objects.equals(Sha256Hash.ZERO_HASH, stateRoot)) {
+      GlobalContext.putBlockHash(block.getNum(), stateRoot);
+    }
+    // clear stateRoot for block
+    block.clearStateRoot();
+    try {
+      GlobalContext.setHeader(block.getNum());
+      pushBlock(block);
+    } finally {
+      GlobalContext.removeHeader();
+    }
     logger.info("Push block cost: {} ms, blockNum: {}, blockHash: {}, trx count: {}.",
         System.currentTimeMillis() - start,
         block.getNum(),
