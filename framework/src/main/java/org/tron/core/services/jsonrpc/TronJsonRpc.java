@@ -202,7 +202,7 @@ public interface TronJsonRpc {
   @JsonRpcMethod("eth_accounts")
   String[] getAccounts();
 
-  @JsonRpcMethod("eth_getAccounts")
+  @JsonRpcMethod("tron_getAccounts")
   @JsonRpcErrors({
       @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
   })

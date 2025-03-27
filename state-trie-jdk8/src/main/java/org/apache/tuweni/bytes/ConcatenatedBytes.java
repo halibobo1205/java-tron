@@ -43,7 +43,7 @@ final class ConcatenatedBytes extends AbstractBytes {
     for (Bytes value : values) {
       int size = value.size();
       try {
-        totalSize = Math.addExact(totalSize, size);
+        totalSize = StrictMath.addExact(totalSize, size);
       } catch (ArithmeticException e) {
         throw new IllegalArgumentException("Combined length of values is too long (> Integer.MAX_VALUE)");
       }
@@ -89,7 +89,7 @@ final class ConcatenatedBytes extends AbstractBytes {
     for (Bytes value : values) {
       int size = value.size();
       try {
-        totalSize = Math.addExact(totalSize, size);
+        totalSize = StrictMath.addExact(totalSize, size);
       } catch (ArithmeticException e) {
         throw new IllegalArgumentException("Combined length of values is too long (> Integer.MAX_VALUE)");
       }

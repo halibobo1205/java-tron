@@ -16,6 +16,7 @@ import io.netty.handler.timeout.WriteTimeoutHandler;
 import java.io.File;
 import java.io.IOException;
 import java.util.Collection;
+import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -30,12 +31,12 @@ import org.tron.common.application.ApplicationFactory;
 import org.tron.common.application.TronApplicationContext;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.FileUtil;
+import org.tron.common.utils.PublicMethod;
 import org.tron.common.utils.ReflectUtils;
 import org.tron.core.Constant;
 import org.tron.core.config.DefaultConfig;
 import org.tron.core.config.args.Args;
 import org.tron.core.net.peer.PeerConnection;
-import org.tron.core.services.RpcApiService;
 
 @Slf4j
 public class BaseNet {
@@ -48,7 +49,6 @@ public class BaseNet {
 
   protected static TronApplicationContext context;
 
-  private static RpcApiService rpcApiService;
   private static Application appT;
   private static TronNetDelegate tronNetDelegate;
 
@@ -98,10 +98,15 @@ public class BaseNet {
       parameter.setNodeListenPort(port);
       parameter.getSeedNode().getAddressList().clear();
       parameter.setNodeExternalIp(Constant.LOCAL_HOST);
+      parameter.setRpcEnable(true);
+      parameter.setRpcPort(PublicMethod.chooseRandomPort());
+      parameter.setRpcSolidityEnable(false);
+      parameter.setRpcPBFTEnable(false);
+      parameter.setFullNodeHttpEnable(false);
+      parameter.setSolidityNodeHttpEnable(false);
+      parameter.setPBFTHttpEnable(false);
       context = new TronApplicationContext(DefaultConfig.class);
       appT = ApplicationFactory.create(context);
-      rpcApiService = context.getBean(RpcApiService.class);
-      appT.addService(rpcApiService);
       appT.startup();
       try {
         Thread.sleep(2000);
@@ -119,10 +124,12 @@ public class BaseNet {
 
   @AfterClass
   public static void destroy() {
-    Collection<PeerConnection> peerConnections = ReflectUtils
-        .invokeMethod(tronNetDelegate, "getActivePeer");
-    for (PeerConnection peer : peerConnections) {
-      peer.getChannel().close();
+    if (Objects.nonNull(tronNetDelegate)) {
+      Collection<PeerConnection> peerConnections = ReflectUtils
+          .invokeMethod(tronNetDelegate, "getActivePeer");
+      for (PeerConnection peer : peerConnections) {
+        peer.getChannel().close();
+      }
     }
     Args.clearParam();
     context.destroy();

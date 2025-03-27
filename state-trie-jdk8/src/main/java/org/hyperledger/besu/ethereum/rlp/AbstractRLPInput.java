@@ -181,10 +181,10 @@ abstract class AbstractRLPInput implements RLPInput {
   }
 
   private String hex(final long start, final long taintedEnd) {
-    final long end = Math.min(taintedEnd, size);
+    final long end = StrictMath.min(taintedEnd, size);
     final long size = end - start;
     if (size < 10) {
-      return inputHex(start, Math.toIntExact(size));
+      return inputHex(start, StrictMath.toIntExact(size));
     } else {
       return String.format("%s...%s", inputHex(start, 4), inputHex(end - 4, 4));
     }
@@ -217,9 +217,9 @@ abstract class AbstractRLPInput implements RLPInput {
 
   private Object[] getErrorMessageSuffixParams() {
     final long start = currentItem;
-    final long end = Math.min(size, nextItem());
-    final long realStart = Math.max(0, start - 4);
-    final long realEnd = Math.min(size, end + 4);
+    final long end = StrictMath.min(size, nextItem());
+    final long realStart = StrictMath.max(0, start - 4);
+    final long realEnd = StrictMath.min(size, end + 4);
     return new Object[] {
       start,
       end,
@@ -422,7 +422,7 @@ abstract class AbstractRLPInput implements RLPInput {
       throw error("Cannot read current element as RLP, input is fully consumed");
     }
     final long next = nextItem();
-    final RLPInput res = RLP.input(inputSlice(currentItem, Math.toIntExact(next - currentItem)));
+    final RLPInput res = RLP.input(inputSlice(currentItem, StrictMath.toIntExact(next - currentItem)));
     setTo(next);
     return res;
   }
@@ -518,7 +518,7 @@ abstract class AbstractRLPInput implements RLPInput {
 
   @Override
   public int nextOffset() {
-    return Math.toIntExact(currentPayloadOffset);
+    return StrictMath.toIntExact(currentPayloadOffset);
   }
 
   @Override

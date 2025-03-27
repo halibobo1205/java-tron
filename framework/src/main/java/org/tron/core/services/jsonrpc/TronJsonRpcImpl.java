@@ -147,10 +147,14 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
   public static final String EARLIEST_STR = "earliest";
   public static final String PENDING_STR = "pending";
   public static final String LATEST_STR = "latest";
+  public static final String FINALIZED_STR = "finalized";
+  public static final String TAG_PENDING_SUPPORT_ERROR = "TAG pending not supported";
+  public static final String INVALID_BLOCK_RANGE = "invalid block range params";
 
   private static final String JSON_ERROR = "invalid json request";
   private static final String BLOCK_NUM_ERROR = "invalid block number";
-  private static final String TAG_NOT_SUPPORT_ERROR = "TAG [earliest | pending] not supported";
+  private static final String TAG_NOT_SUPPORT_ERROR =
+      "TAG [earliest | pending | finalized] not supported";
   private static final String QUANTITY_NOT_SUPPORT_ERROR =
       "QUANTITY not supported, just support TAG as latest";
   private static final String NO_BLOCK_HEADER = "header not found";
@@ -367,7 +371,8 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
     byte[] addressData = addressCompatibleToByteArray(address);
     Account reply;
     if (EARLIEST_STR.equalsIgnoreCase(blockNumOrTag)
-        || PENDING_STR.equalsIgnoreCase(blockNumOrTag)) {
+        || PENDING_STR.equalsIgnoreCase(blockNumOrTag)
+        || FINALIZED_STR.equalsIgnoreCase(blockNumOrTag)) {
       throw new JsonRpcInvalidParamsException(TAG_NOT_SUPPORT_ERROR);
     } else if (LATEST_STR.equalsIgnoreCase(blockNumOrTag)) {
       Account account = Account.newBuilder().setAddress(ByteString.copyFrom(addressData)).build();
@@ -589,7 +594,8 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
       throws JsonRpcInvalidParamsException {
     byte[] addressByte = addressCompatibleToByteArray(address);
     if (EARLIEST_STR.equalsIgnoreCase(blockNumOrTag)
-        || PENDING_STR.equalsIgnoreCase(blockNumOrTag)) {
+        || PENDING_STR.equalsIgnoreCase(blockNumOrTag)
+        || FINALIZED_STR.equalsIgnoreCase(blockNumOrTag)) {
       throw new JsonRpcInvalidParamsException(TAG_NOT_SUPPORT_ERROR);
     } else if (LATEST_STR.equalsIgnoreCase(blockNumOrTag)) {
       // get contract from contractStore
@@ -628,7 +634,8 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
       throws JsonRpcInvalidParamsException {
     byte[] addressData = addressCompatibleToByteArray(contractAddress);
     if (EARLIEST_STR.equalsIgnoreCase(blockNumOrTag)
-        || PENDING_STR.equalsIgnoreCase(blockNumOrTag)) {
+        || PENDING_STR.equalsIgnoreCase(blockNumOrTag)
+        || FINALIZED_STR.equalsIgnoreCase(blockNumOrTag)) {
       throw new JsonRpcInvalidParamsException(TAG_NOT_SUPPORT_ERROR);
     } else if (LATEST_STR.equalsIgnoreCase(blockNumOrTag)) {
       BytesMessage.Builder build = BytesMessage.newBuilder();
@@ -934,7 +941,8 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
     }
 
     if (EARLIEST_STR.equalsIgnoreCase(blockNumOrTag)
-        || PENDING_STR.equalsIgnoreCase(blockNumOrTag)) {
+        || PENDING_STR.equalsIgnoreCase(blockNumOrTag)
+        || FINALIZED_STR.equalsIgnoreCase(blockNumOrTag)) {
       throw new JsonRpcInvalidParamsException(TAG_NOT_SUPPORT_ERROR);
     } else if (LATEST_STR.equalsIgnoreCase(blockNumOrTag)) {
       byte[] addressData = addressCompatibleToByteArray(transactionCall.getFrom());
@@ -1423,6 +1431,12 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
   public String newFilter(FilterRequest fr) throws JsonRpcInvalidParamsException,
       JsonRpcMethodNotFoundException {
     disableInPBFT("eth_newFilter");
+
+    // not supports finalized as block parameter
+    if (FINALIZED_STR.equalsIgnoreCase(fr.getFromBlock())
+        || FINALIZED_STR.equalsIgnoreCase(fr.getToBlock())) {
+      throw new JsonRpcInvalidParamsException(INVALID_BLOCK_RANGE);
+    }
 
     Map<String, LogFilterAndResult> eventFilter2Result;
     if (getSource() == RequestSource.FULLNODE) {
