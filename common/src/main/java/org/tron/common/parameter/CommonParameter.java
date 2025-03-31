@@ -717,6 +717,21 @@ public class CommonParameter {
   @Setter
   public long allowTvmBlob;
 
+  @Getter
+  @Setter
+  @Parameter(names = {"--json-rpc-max-block-range"}, description =
+      "Specifies the maximum number of blocks to retrieve logs via JSON-RPC."
+          + " Must be >=0. 0 specifies no limit. (default: 5,000)")
+  public long jsonRpcMaxBlockRange = 5000L;
+
+  @Getter
+  @Setter
+  @Parameter(names = {"--json-rpc-max-topics"}, description =
+      "Specifies the maximum number of allowed topics within a topic criteria"
+          + " to retrieve logs via JSON-RPC."
+          + " Must be >=0. 0 specifies no limit. (default: 1,000)")
+  public long jsonRpcMaxTopics = 1000L;
+
   private static double calcMaxTimeRatio() {
     //return max(2.0, min(5.0, 5 * 4.0 / max(Runtime.getRuntime().availableProcessors(), 1)));
     return 5.0;

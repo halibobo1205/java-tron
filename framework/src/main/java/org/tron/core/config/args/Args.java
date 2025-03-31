@@ -245,6 +245,8 @@ public class Args extends CommonParameter {
     PARAMETER.consensusLogicOptimization = 0;
     PARAMETER.allowTvmCancun = 0;
     PARAMETER.allowTvmBlob = 0;
+    PARAMETER.jsonRpcMaxBlockRange = 5000L;
+    PARAMETER.jsonRpcMaxTopics = 1000L;
   }
 
   /**
@@ -1278,6 +1280,12 @@ public class Args extends CommonParameter {
         config.hasPath(Constant.COMMITTEE_ALLOW_TVM_BLOB) ? config
             .getInt(Constant.COMMITTEE_ALLOW_TVM_BLOB) : 0;
 
+    if (config.hasPath(Constant.NODE_JSONRPC_MAX_BLOCK_RANGE)) {
+      PARAMETER.jsonRpcMaxBlockRange = config.getLong(Constant.NODE_JSONRPC_MAX_BLOCK_RANGE);
+    }
+    if (config.hasPath(Constant.NODE_JSONRPC_MAX_TOPICS)) {
+      PARAMETER.jsonRpcMaxTopics = config.getLong(Constant.NODE_JSONRPC_MAX_TOPICS);
+    }
     logConfig();
   }
 

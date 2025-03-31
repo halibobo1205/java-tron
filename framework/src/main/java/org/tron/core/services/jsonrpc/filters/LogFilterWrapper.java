@@ -7,6 +7,7 @@ import lombok.Getter;
 import org.apache.commons.lang3.StringUtils;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.Wallet;
+import org.tron.core.config.args.Args;
 import org.tron.core.exception.JsonRpcInvalidParamsException;
 import org.tron.core.services.jsonrpc.JsonRpcApiUtil;
 import org.tron.core.services.jsonrpc.TronJsonRpc.FilterRequest;
@@ -82,10 +83,20 @@ public class LogFilterWrapper {
         } else if (fromBlockSrc >= 0 && toBlockSrc == -1) {
           toBlockSrc = Long.MAX_VALUE;
         }
-        if (fromBlockSrc > toBlockSrc) {
-          throw new JsonRpcInvalidParamsException("please verify: fromBlock <= toBlock");
-        }
       }
+    }
+    if (toBlockSrc > currentMaxBlockNum) {
+      toBlockSrc = currentMaxBlockNum;
+    }
+    if (fromBlockSrc < 0) {
+      fromBlockSrc = currentMaxBlockNum;
+    }
+    if (fromBlockSrc > toBlockSrc) {
+      throw new JsonRpcInvalidParamsException("please verify: fromBlock <= toBlock");
+    }
+    long maxRange = Args.getInstance().getJsonRpcMaxBlockRange();
+    if (maxRange > 0 && (toBlockSrc - fromBlockSrc) > maxRange) {
+      throw new JsonRpcInvalidParamsException("exceed block range: " + maxRange);
     }
 
     this.fromBlock = fromBlockSrc;

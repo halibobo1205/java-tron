@@ -7,6 +7,9 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.protobuf.ByteString;
 import io.prometheus.client.CollectorRegistry;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import javax.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.http.client.methods.CloseableHttpResponse;
@@ -683,5 +686,82 @@ public class JsonrpcServiceTest extends BaseTest {
     } catch (Exception e) {
       Assert.assertEquals("invalid block range params", e.getMessage());
     }
+  }
+
+  @Test
+  public void TestLogFilterWrapper() {
+    try {
+      new LogFilterWrapper(new FilterRequest("0x0", "0x1f40", null,
+          null, null), 10_000, null);
+    } catch (JsonRpcInvalidParamsException e) {
+      Assert.assertEquals(
+          "exceed block range: " + Args.getInstance().jsonRpcMaxBlockRange,
+          e.getMessage());
+    }
+    Args.getInstance().setJsonRpcMaxBlockRange(10_000);
+    try {
+      new LogFilterWrapper(new FilterRequest("0x0", "0x1f40", null,
+          null, null), 10_000, null);
+    } catch (JsonRpcInvalidParamsException e) {
+      Assert.fail();
+    }
+
+    Args.getInstance().setJsonRpcMaxBlockRange(0);
+    try {
+      new LogFilterWrapper(new FilterRequest("0x0", "0x1f40", null,
+          null, null), 10_000, null);
+    } catch (JsonRpcInvalidParamsException e) {
+      Assert.fail();
+    }
+
+    try {
+      new LogFilterWrapper(new FilterRequest("0x0", "0x186a0", null,
+          null, null), 10_000, null);
+    } catch (JsonRpcInvalidParamsException e) {
+      Assert.fail();
+    }
+
+    try {
+      new LogFilterWrapper(new FilterRequest("0x1f40", "0x0", null,
+          null, null), 10_000, null);
+    } catch (JsonRpcInvalidParamsException e) {
+      Assert.assertEquals("please verify: fromBlock <= toBlock", e.getMessage());
+    }
+
+    List<Object> topics = new ArrayList<>();
+    topics.add(new ArrayList<>(Collections.singletonList(
+        "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")));
+    topics.add(new ArrayList<>(Collections.EMPTY_LIST));
+    List<String> subTopics = new ArrayList<>();
+    for (int i = 0; i < Args.getInstance().getJsonRpcMaxTopics() + 1; i++) {
+      subTopics.add("0x0000000000000000000000414de17123a3c706ab197957e131350b2537dd4883");
+    }
+    topics.add(subTopics);
+
+    try {
+      new LogFilterWrapper(new FilterRequest("0xbb8", "0x1f40",
+          null, topics.toArray(), null), 10_000, null);
+    } catch (JsonRpcInvalidParamsException e) {
+      Assert.assertEquals(
+          "exceed max topics: " + Args.getInstance().getJsonRpcMaxTopics(),
+          e.getMessage());
+    }
+
+    Args.getInstance().setJsonRpcMaxTopics(2_000);
+    try {
+      new LogFilterWrapper(new FilterRequest("0xbb8", "0x1f40",
+          null, topics.toArray(), null), 10_000, null);
+    } catch (JsonRpcInvalidParamsException e) {
+      Assert.fail();
+    }
+
+    Args.getInstance().setJsonRpcMaxTopics(0);
+    try {
+      new LogFilterWrapper(new FilterRequest("0xbb8", "0x1f40",
+          null, topics.toArray(), null), 10_000, null);
+    } catch (JsonRpcInvalidParamsException e) {
+      Assert.fail();
+    }
+
   }
 }

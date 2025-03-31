@@ -13,6 +13,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.tron.common.bloom.Bloom;
 import org.tron.common.crypto.Hash;
 import org.tron.common.runtime.vm.DataWord;
+import org.tron.core.config.args.Args;
 import org.tron.core.exception.JsonRpcInvalidParamsException;
 import org.tron.core.services.jsonrpc.TronJsonRpc.FilterRequest;
 import org.tron.protos.Protocol.TransactionInfo.Log;
@@ -81,6 +82,10 @@ public class LogFilter {
         } else if (topic instanceof ArrayList) {
 
           List<byte[]> t = new ArrayList<>();
+          long maxSubTopics = Args.getInstance().getJsonRpcMaxTopics();
+          if (maxSubTopics > 0 && (((ArrayList<?>) topic).size() > maxSubTopics)) {
+            throw new JsonRpcInvalidParamsException("exceed max topics: " + maxSubTopics);
+          }
           for (Object s : ((ArrayList) topic)) {
             try {
               t.add(new DataWord(topicToByteArray((String) s)).getData());
