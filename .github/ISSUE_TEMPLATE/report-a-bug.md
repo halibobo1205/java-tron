@@ -6,6 +6,8 @@ labels: 'type:bug'
 assignees: ''
 
 ---
+<!-- Is your node running a Nile network? -->
+<!--   * Nile please visit: https://github.com/tron-nile-testnet/nile-testnet/issues -->
 
 <!-- Have you done the following? -->
 <!--   * Reproduced the issue in the latest version of the software -->
