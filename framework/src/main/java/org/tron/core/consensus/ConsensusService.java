@@ -61,7 +61,7 @@ public class ConsensusService {
         logger.info("Add witness: {}, size: {}",
             Hex.toHexString(privateKeyAddress), miners.size());
       }
-    } else {
+    } else if (Args.getLocalWitnesses().getPrivateKey() != null) {
       byte[] privateKey =
           fromHexString(Args.getLocalWitnesses().getPrivateKey());
       byte[] privateKeyAddress = SignUtils.fromPrivate(privateKey,
