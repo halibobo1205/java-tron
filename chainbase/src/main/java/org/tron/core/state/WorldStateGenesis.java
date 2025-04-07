@@ -74,16 +74,31 @@ public class WorldStateGenesis {
   private static final String ROCKSDB = "ROCKSDB";
 
   public synchronized void init(ChainBaseManager chainBaseManager) {
-    if (!allowStateRoot) {
-      if (tryFindStateGenesisHeight() > -1) {
+    long genesisStateHeight = tryFindStateGenesisHeight();
+    if (genesisStateHeight > -1) { // archive db is found
+      if (allowStateRoot) {
+        try {
+          BlockCapsule head = chainBaseManager.getHead();
+          if (Bytes32.ZERO.equals(head.getArchiveRoot()) && head.getNum() > genesisStateHeight) {
+            String msg = "StateRoot is allowed, but archive db is discontinuous and corrupted.\n";
+            msg += "Please delete the archive db: ";
+            msg += stateGenesisPath + ".\n";
+            throw new TronError(msg, TronError.ErrCode.ARCHIVE_NODE_INIT);
+          }
+        } catch (HeaderNotFound e) {
+          throw new TronError(e, TronError.ErrCode.ARCHIVE_NODE_INIT);
+        }
+      } else {
         String msg = "StateRoot is not allowed, but archive db is found.\n";
         msg += "You seem to be turning off the archive feature that is already turned on,";
         msg += "please check the configuration.\n";
         msg += "If you want to turn off the archive feature, please delete the archive db: ";
-        msg +=  stateGenesisPath  + ".\n";
+        msg += stateGenesisPath + ".\n";
         msg += "To keep archive feature, please set the `storage.stateRoot.switch` to true.";
         throw new TronError(msg, TronError.ErrCode.ARCHIVE_NODE_INIT);
       }
+    }
+    if (!allowStateRoot) {
       return;
     }
     this.chainBaseManager = chainBaseManager;
