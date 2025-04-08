@@ -3669,7 +3669,7 @@ public class Wallet {
           throw new ContractValidateException("The value in SpendNoteTRC20 must >= 0");
         }
         if (StringUtils.isEmpty(spendNote.getNote().getPaymentAddress())) {
-          throw new ContractValidateException("Payment Address in SpendNote should not be empty");
+          throw new ContractValidateException("PaymentAddress in SpendNote should not be empty");
         }
       }
     }
@@ -3680,7 +3680,7 @@ public class Wallet {
           throw new ContractValidateException("The value in ReceiveNote must >= 0");
         }
         if (StringUtils.isEmpty(receiveNote.getNote().getPaymentAddress())) {
-          throw new ContractValidateException("Payment Address in ReceiveNote should not be empty");
+          throw new ContractValidateException("PaymentAddress in ReceiveNote should not be empty");
         }
       }
     }
