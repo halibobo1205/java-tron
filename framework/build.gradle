@@ -158,7 +158,8 @@ def binaryRelease(taskName, jarName, mainClass) {
 
         // explicit_dependency
         dependsOn (project(':actuator').jar, project(':consensus').jar, project(':chainbase').jar,
-                project(':crypto').jar, project(':common').jar, project(':protocol').jar)
+                project(':crypto').jar, project(':common').jar, project(':protocol').jar,
+                project(':state-trie-jdk8').jar)
 
         from {
             configurations.runtimeClasspath.collect {
