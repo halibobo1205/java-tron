@@ -9,7 +9,6 @@ import java.io.IOException;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 import lombok.AllArgsConstructor;
-import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -24,9 +23,12 @@ import org.tron.core.exception.JsonRpcInvalidParamsException;
 import org.tron.core.exception.JsonRpcInvalidRequestException;
 import org.tron.core.exception.JsonRpcMethodNotFoundException;
 import org.tron.core.exception.JsonRpcTooManyResultException;
+import org.tron.core.services.jsonrpc.types.AccountResourceResult;
+import org.tron.core.services.jsonrpc.types.AccountResult;
 import org.tron.core.services.jsonrpc.types.BlockResult;
 import org.tron.core.services.jsonrpc.types.BuildArguments;
 import org.tron.core.services.jsonrpc.types.CallArguments;
+import org.tron.core.services.jsonrpc.types.Token10Result;
 import org.tron.core.services.jsonrpc.types.TransactionReceipt;
 import org.tron.core.services.jsonrpc.types.TransactionResult;
 
@@ -206,14 +208,14 @@ public interface TronJsonRpc {
   @JsonRpcErrors({
       @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
   })
-  List<JSONObject> getAccounts(String[] addressList, String blockNumOrTag)
+  List<AccountResult> getAccounts(String[] addressList, String blockNumOrTag)
       throws JsonRpcInvalidParamsException;
 
   @JsonRpcMethod("tron_getAccountResources")
   @JsonRpcErrors({
       @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
   })
-  List<JSONObject> getAccountResources(String[] addressList, String blockNumOrTag)
+  List<AccountResourceResult> getAccountResources(String[] addressList, String blockNumOrTag)
       throws JsonRpcInvalidParamsException;
 
 
@@ -494,21 +496,6 @@ public interface TronJsonRpc {
         topics[i] = ByteArray.toJsonHex(topicList.get(i).getData());
       }
       this.removed = removed;
-    }
-  }
-
-  @AllArgsConstructor
-  @JsonPropertyOrder
-  @EqualsAndHashCode
-  class Token10Result {
-    @Getter
-    private final String key;
-    @Getter
-    private final String value;
-
-    @Override
-    public String toString() {
-      return JSONObject.toJSONString(this);
     }
   }
 }

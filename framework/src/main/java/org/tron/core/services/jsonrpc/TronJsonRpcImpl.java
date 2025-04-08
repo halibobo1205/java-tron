@@ -11,17 +11,14 @@ import static org.tron.core.services.jsonrpc.JsonRpcApiUtil.getTxID;
 import static org.tron.core.services.jsonrpc.JsonRpcApiUtil.triggerCallContract;
 
 import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONObject;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.GeneratedMessageV3;
 import java.io.Closeable;
 import java.io.IOException;
-
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -33,7 +30,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
-
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
@@ -82,9 +78,12 @@ import org.tron.core.services.jsonrpc.filters.LogFilter;
 import org.tron.core.services.jsonrpc.filters.LogFilterAndResult;
 import org.tron.core.services.jsonrpc.filters.LogFilterWrapper;
 import org.tron.core.services.jsonrpc.filters.LogMatch;
+import org.tron.core.services.jsonrpc.types.AccountResourceResult;
+import org.tron.core.services.jsonrpc.types.AccountResult;
 import org.tron.core.services.jsonrpc.types.BlockResult;
 import org.tron.core.services.jsonrpc.types.BuildArguments;
 import org.tron.core.services.jsonrpc.types.CallArguments;
+import org.tron.core.services.jsonrpc.types.Token10Result;
 import org.tron.core.services.jsonrpc.types.TransactionReceipt;
 import org.tron.core.services.jsonrpc.types.TransactionResult;
 import org.tron.core.store.StorageRowStore;
@@ -425,11 +424,8 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
 
     List<Token10Result> token10s =  new ArrayList<>();
     if (reply != null) {
-      reply.getAssetV2Map().entrySet().stream().filter(e -> e.getValue() > 0).map(e ->
-              new Token10Result(ByteArray.toJsonHex(Long.parseUnsignedLong(e.getKey())),
-                      ByteArray.toJsonHex(e.getValue()))).forEach(token10s::add);
+      token10s = Token10Result.toHex(reply.getAssetV2Map());
     }
-    token10s.sort(Comparator.comparing(Token10Result::getKey));
     return token10s;
   }
 
@@ -476,7 +472,7 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
     if (reply != null) {
       amt = reply.getAssetV2Map().getOrDefault(tokenStr, 0L);
     }
-    return new Token10Result(tokenId, ByteArray.toJsonHex(amt));
+    return new Token10Result(tokenStr, amt);
   }
 
   private void callTriggerConstantContract(byte[] ownerAddressByte, byte[] contractAddressByte,
@@ -1047,7 +1043,7 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
   }
 
   @Override
-  public List<JSONObject> getAccounts(String[] addressList, String blockNumOrTag)
+  public List<AccountResult> getAccounts(String[] addressList, String blockNumOrTag)
       throws JsonRpcInvalidParamsException {
     if (addressList == null || addressList.length == 0) {
       return Collections.emptyList();
@@ -1080,12 +1076,11 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
         throw new JsonRpcInvalidParamsException(QUANTITY_NOT_SUPPORT_ERROR);
       }
     }
-    return reply.stream().map(Util::convertOutput).map(JSONObject::parseObject)
-        .collect(Collectors.toList());
+    return reply.stream().map(AccountResult::new).collect(Collectors.toList());
   }
 
   @Override
-  public List<JSONObject> getAccountResources(String[] addressList, String blockNumOrTag)
+  public List<AccountResourceResult> getAccountResources(String[] addressList, String blockNumOrTag)
       throws JsonRpcInvalidParamsException {
     if (addressList == null || addressList.length == 0) {
       return Collections.emptyList();
@@ -1118,10 +1113,7 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
         throw new JsonRpcInvalidParamsException(QUANTITY_NOT_SUPPORT_ERROR);
       }
     }
-    return reply.stream()
-        .map(r -> JsonFormat.printToString(r, false))
-        .map(JSONObject::parseObject)
-        .collect(Collectors.toList());
+    return reply.stream().map(AccountResourceResult::new).collect(Collectors.toList());
   }
 
   private TransactionJson buildCreateSmartContractTransaction(byte[] ownerAddress,

@@ -50,6 +50,7 @@ import org.tron.core.exception.StoreException;
 import org.tron.core.services.jsonrpc.TronJsonRpc;
 import org.tron.core.services.jsonrpc.TronJsonRpcImpl;
 import org.tron.core.services.jsonrpc.types.CallArguments;
+import org.tron.core.services.jsonrpc.types.Token10Result;
 import org.tron.core.state.store.StorageRowStateStore;
 import org.tron.core.vm.program.Storage;
 import org.tron.protos.Protocol;
@@ -88,8 +89,8 @@ public class WorldStateQueryTest {
   @BeforeClass
   public static void init() throws IOException {
 
-    Args.setParam(new String[]{"-d", temporaryFolder.newFolder().toString()},
-        "config-localtest.conf");
+    Args.setParam(new String[]{"-d", temporaryFolder.newFolder().toString(),
+            "--p2p-disable", "true"}, "config-localtest.conf");
     // allow account root
     Args.getInstance().setAllowAccountStateRoot(1);
     // init dbBackupConfig to avoid NPE
@@ -365,7 +366,7 @@ public class WorldStateQueryTest {
             .get(0));
 
     Map<String, Long> asset = new HashMap<>();
-    for (TronJsonRpc.Token10Result t : tronJsonRpc.getToken10(
+    for (Token10Result t : tronJsonRpc.getToken10(
             ByteArray.toHexString(account2Prikey.getAddress()), "latest")) {
       asset.put(Long.toString(ByteArray.jsonHexToLong(t.getKey())),
               ByteArray.jsonHexToLong(t.getValue()));
@@ -396,7 +397,7 @@ public class WorldStateQueryTest {
                     account2Prikey.getAddress()), ByteArray.toJsonHex(TOKEN_ID2),
             ByteArray.toJsonHex(blockNum)).getValue()));
 
-    List<TronJsonRpc.Token10Result> list = new ArrayList<>();
+    List<Token10Result> list = new ArrayList<>();
     list.add(tronJsonRpc.getToken10ById(ByteArray.toHexString(
                             account1Prikey.getAddress()), ByteArray.toJsonHex(TOKEN_ID1),
                     ByteArray.toJsonHex(blockNum)));

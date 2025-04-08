@@ -481,7 +481,7 @@ public class Wallet {
     long allTronPower = accountCapsule.getAllTronPower() / TRX_PRECISION;
 
     Map<String, Long> assetNetLimitMap = new HashMap<>();
-    Map<String, Long> allFreeAssetNetUsage = setAssetNetLimit(assetNetLimitMap, accountCapsule);
+    Map<String, Long> allFreeAssetNetUsage = setAssetV2NetLimit(assetNetLimitMap, accountCapsule);
     AccountResourceMessage.Builder builder = AccountResourceMessage.newBuilder();
     builder.setFreeNetUsed(accountCapsule.getFreeNetUsage())
         .setFreeNetLimit(freeNetLimit)
@@ -501,6 +501,17 @@ public class Wallet {
         .putAllAssetNetUsed(allFreeAssetNetUsage)
         .putAllAssetNetLimit(assetNetLimitMap);
     return builder.build();
+  }
+
+  private Map<String, Long> setAssetV2NetLimit(Map<String, Long> assetNetLimitMap,
+                                             AccountCapsule accountCapsule) {
+    Map<String, Long> allFreeAssetNetUsage = accountCapsule.getAllFreeAssetNetUsageV2();
+    allFreeAssetNetUsage.keySet().forEach(asset -> {
+      byte[] key = ByteArray.fromString(asset);
+      assetNetLimitMap.put(
+          asset, chainBaseManager.getAssetIssueV2Store().get(key).getFreeAssetNetLimit());
+    });
+    return allFreeAssetNetUsage;
   }
 
 
