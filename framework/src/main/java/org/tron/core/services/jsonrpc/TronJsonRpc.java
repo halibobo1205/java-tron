@@ -204,18 +204,18 @@ public interface TronJsonRpc {
   @JsonRpcMethod("eth_accounts")
   String[] getAccounts();
 
-  @JsonRpcMethod("tron_getAccounts")
+  @JsonRpcMethod("tron_getAccount")
   @JsonRpcErrors({
       @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
   })
-  List<AccountResult> getAccounts(String[] addressList, String blockNumOrTag)
+  AccountResult getAccount(String address, String blockNumOrTag)
       throws JsonRpcInvalidParamsException;
 
-  @JsonRpcMethod("tron_getAccountResources")
+  @JsonRpcMethod("tron_getAccountResource")
   @JsonRpcErrors({
       @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
   })
-  List<AccountResourceResult> getAccountResources(String[] addressList, String blockNumOrTag)
+  AccountResourceResult getAccountResource(String address, String blockNumOrTag)
       throws JsonRpcInvalidParamsException;
 
 

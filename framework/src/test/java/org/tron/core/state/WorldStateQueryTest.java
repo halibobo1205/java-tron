@@ -48,7 +48,6 @@ import org.tron.core.exception.JsonRpcInvalidParamsException;
 import org.tron.core.exception.JsonRpcInvalidRequestException;
 import org.tron.core.exception.StoreException;
 import org.tron.core.services.jsonrpc.TronJsonRpc;
-import org.tron.core.services.jsonrpc.TronJsonRpcImpl;
 import org.tron.core.services.jsonrpc.types.CallArguments;
 import org.tron.core.services.jsonrpc.types.Token10Result;
 import org.tron.core.state.store.StorageRowStateStore;
@@ -344,10 +343,10 @@ public class WorldStateQueryTest {
     addressList.add(ByteArray.toHexString(account1Prikey.getAddress()));
     addressList.add(ByteArray.toHexString(account2Prikey.getAddress()));
 
-    Assert.assertEquals(tronJsonRpc.getAccounts(
-            addressList.toArray(new String[0]), ByteArray.toJsonHex(blockNum)),
-        tronJsonRpc.getAccounts(
-            addressList.toArray(new String[0]), "latest"));
+    Assert.assertEquals(tronJsonRpc.getAccount(
+            ByteArray.toHexString(account1Prikey.getAddress()), ByteArray.toJsonHex(blockNum)),
+        tronJsonRpc.getAccount(
+            ByteArray.toHexString(account1Prikey.getAddress()), "latest"));
 
     Assert.assertEquals(wallet.getAccount(
         Protocol.Account.newBuilder().setAddress(ByteString.copyFrom(account1Prikey.getAddress()))
@@ -355,10 +354,10 @@ public class WorldStateQueryTest {
         wallet.getAccounts(Collections.singletonList(account1Prikey.getAddress()), blockNum)
             .get(0));
 
-    Assert.assertEquals(tronJsonRpc.getAccountResources(
-            addressList.toArray(new String[0]), ByteArray.toJsonHex(blockNum)),
-        tronJsonRpc.getAccountResources(
-            addressList.toArray(new String[0]), "latest"));
+    Assert.assertEquals(tronJsonRpc.getAccountResource(
+            ByteArray.toHexString(account1Prikey.getAddress()), ByteArray.toJsonHex(blockNum)),
+        tronJsonRpc.getAccountResource(
+            ByteArray.toHexString(account1Prikey.getAddress()), "latest"));
 
     Assert.assertEquals(wallet.getAccountResource(
             ByteString.copyFrom(account1Prikey.getAddress())),
@@ -412,18 +411,6 @@ public class WorldStateQueryTest {
     } catch (StoreException e) {
       Assert.fail();
     }
-  }
-
-  @Test
-  public void testGetAccounts() {
-    List<String> addressList2 = new ArrayList<>();
-    for (int i = 0; i < 101; i++) {
-      addressList2.add("0x" + i);
-    }
-    Assert.assertThrows("The maximum number of addresses is "
-           + TronJsonRpcImpl.MAX_BATCH_SIZE,
-        JsonRpcInvalidParamsException.class, () ->
-            tronJsonRpc.getAccounts(addressList2.toArray(new String[0]), "latest"));
   }
 
   private BlockCapsule buildTransferBlock(BlockCapsule parentBlock) {
