@@ -3,12 +3,14 @@ package org.tron.core.services.jsonrpc.types;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import java.util.List;
+import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import org.tron.api.GrpcAPI;
 
 @Getter
 @JsonPropertyOrder(alphabetic = true)
 @JsonInclude(JsonInclude.Include.NON_EMPTY)
+@EqualsAndHashCode(callSuper = false)
 public class AccountResourceResult extends Result {
 
   private final String freeNetUsed;

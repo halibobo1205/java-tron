@@ -6,12 +6,14 @@ import com.google.protobuf.ByteString;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
+import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import org.tron.protos.Protocol;
 
 @Getter
 @JsonPropertyOrder(alphabetic = true)
 @JsonInclude(JsonInclude.Include.NON_EMPTY)
+@EqualsAndHashCode(callSuper = false)
 public class AccountResult extends Result {
 
   private final String accountName;
@@ -139,6 +141,7 @@ public class AccountResult extends Result {
   @Getter
   @JsonPropertyOrder(alphabetic = true)
   @JsonInclude(JsonInclude.Include.NON_EMPTY)
+  @EqualsAndHashCode(callSuper = false)
   public static class AccountResource {
     private final String energyUsage;
     private final Frozen frozenBalanceForEnergy;
@@ -176,6 +179,7 @@ public class AccountResult extends Result {
   @Getter
   @JsonPropertyOrder(alphabetic = true)
   @JsonInclude(JsonInclude.Include.NON_EMPTY)
+  @EqualsAndHashCode(callSuper = false)
   public static class Permission {
     private final String type;
     private final String id;
@@ -199,6 +203,7 @@ public class AccountResult extends Result {
   @Getter
   @JsonPropertyOrder(alphabetic = true)
   @JsonInclude(JsonInclude.Include.NON_EMPTY)
+  @EqualsAndHashCode(callSuper = false)
   public static class Key {
     private final String address;
     private final String weight;
@@ -212,6 +217,7 @@ public class AccountResult extends Result {
   @Getter
   @JsonPropertyOrder(alphabetic = true)
   @JsonInclude(JsonInclude.Include.NON_EMPTY)
+  @EqualsAndHashCode(callSuper = false)
   public static class Frozen {
     private final String frozenBalance;
     private final String expireTime;
@@ -225,6 +231,7 @@ public class AccountResult extends Result {
   @Getter
   @JsonPropertyOrder(alphabetic = true)
   @JsonInclude(JsonInclude.Include.NON_EMPTY)
+  @EqualsAndHashCode(callSuper = false)
   public static class FreezeV2 {
     private final String type;
     private final String amount;
@@ -238,6 +245,7 @@ public class AccountResult extends Result {
   @Getter
   @JsonPropertyOrder(alphabetic = true)
   @JsonInclude(JsonInclude.Include.NON_EMPTY)
+  @EqualsAndHashCode(callSuper = false)
   public static class UnFreezeV2 {
     private final String type;
     private final String unfreezeAmount;
@@ -253,6 +261,7 @@ public class AccountResult extends Result {
   @Getter
   @JsonPropertyOrder(alphabetic = true)
   @JsonInclude(JsonInclude.Include.NON_EMPTY)
+  @EqualsAndHashCode(callSuper = false)
   public static class Vote {
     private final String voteAddress;
     private final String voteCount;
