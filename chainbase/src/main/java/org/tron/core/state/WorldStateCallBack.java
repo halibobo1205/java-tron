@@ -40,8 +40,7 @@ public class WorldStateCallBack {
   private volatile TrieImpl2 trie;
 
   public WorldStateCallBack() {
-    // set false when p2p is disabled
-    this.execute = !CommonParameter.getInstance().isP2pDisable();
+    this.execute = true;
     this.allowGenerateRoot = CommonParameter.getInstance().getStorage().isAllowStateRoot();
   }
 
