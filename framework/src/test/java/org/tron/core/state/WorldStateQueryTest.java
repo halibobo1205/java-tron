@@ -49,7 +49,6 @@ import org.tron.core.exception.JsonRpcInvalidRequestException;
 import org.tron.core.exception.StoreException;
 import org.tron.core.services.jsonrpc.TronJsonRpc;
 import org.tron.core.services.jsonrpc.types.CallArguments;
-import org.tron.core.services.jsonrpc.types.Token10Result;
 import org.tron.core.state.store.StorageRowStateStore;
 import org.tron.core.vm.program.Storage;
 import org.tron.protos.Protocol;
@@ -328,16 +327,16 @@ public class WorldStateQueryTest {
             tronJsonRpc.getTrxBalance(
                     ByteArray.toHexString(account1Prikey.getAddress()), "latest"));
 
-    Assert.assertEquals(tronJsonRpc.getToken10(
+    Assert.assertEquals(tronJsonRpc.getAccount(
                     ByteArray.toHexString(account1Prikey.getAddress()),
                     ByteArray.toJsonHex(blockNum)),
-            tronJsonRpc.getToken10(
+            tronJsonRpc.getAccount(
                     ByteArray.toHexString(account1Prikey.getAddress()), "latest"));
 
-    Assert.assertEquals(tronJsonRpc.getToken10(
+    Assert.assertEquals(tronJsonRpc.getAccount(
                     ByteArray.toHexString(account2Prikey.getAddress()),
                     ByteArray.toJsonHex(blockNum)),
-            tronJsonRpc.getToken10(
+            tronJsonRpc.getAccount(
                     ByteArray.toHexString(account2Prikey.getAddress()), "latest"));
     List<String> addressList = new ArrayList<>();
     addressList.add(ByteArray.toHexString(account1Prikey.getAddress()));
@@ -364,47 +363,9 @@ public class WorldStateQueryTest {
         wallet.getAccountResources(Collections.singletonList(account1Prikey.getAddress()), blockNum)
             .get(0));
 
-    Map<String, Long> asset = new HashMap<>();
-    for (Token10Result t : tronJsonRpc.getToken10(
-            ByteArray.toHexString(account2Prikey.getAddress()), "latest")) {
-      asset.put(Long.toString(ByteArray.jsonHexToLong(t.getKey())),
-              ByteArray.jsonHexToLong(t.getValue()));
-    }
-    Assert.assertEquals(account2Capsule.getAssetMapV2(), asset);
-
-    Assert.assertEquals(tronJsonRpc.getToken10(
+    Assert.assertEquals(tronJsonRpc.getAccount(
             ByteArray.toHexString(account1Prikey.getAddress()), "latest"),
-            tronJsonRpc.getToken10(
-            ByteArray.toHexString(account1Prikey.getAddress()), ByteArray.toJsonHex(blockNum)));
-
-    Assert.assertEquals(tronJsonRpc.getToken10ById(ByteArray.toHexString(
-            account2Prikey.getAddress()), ByteArray.toJsonHex(TOKEN_ID1),
-                    ByteArray.toJsonHex(blockNum)),
-            tronJsonRpc.getToken10ById(ByteArray.toHexString(
-                    account2Prikey.getAddress()), ByteArray.toJsonHex(TOKEN_ID1),
-                    "latest"));
-
-    Assert.assertEquals(tronJsonRpc.getToken10ById(ByteArray.toHexString(
-                            account2Prikey.getAddress()), ByteArray.toJsonHex(TOKEN_ID2),
-                    ByteArray.toJsonHex(blockNum)),
-            tronJsonRpc.getToken10ById(ByteArray.toHexString(
-                            account2Prikey.getAddress()), ByteArray.toJsonHex(TOKEN_ID2),
-                    "latest"));
-
-    Assert.assertEquals(account2Capsule.getAssetV2(Long.toString(TOKEN_ID2)),
-            ByteArray.jsonHexToLong(tronJsonRpc.getToken10ById(ByteArray.toHexString(
-                    account2Prikey.getAddress()), ByteArray.toJsonHex(TOKEN_ID2),
-            ByteArray.toJsonHex(blockNum)).getValue()));
-
-    List<Token10Result> list = new ArrayList<>();
-    list.add(tronJsonRpc.getToken10ById(ByteArray.toHexString(
-                            account1Prikey.getAddress()), ByteArray.toJsonHex(TOKEN_ID1),
-                    ByteArray.toJsonHex(blockNum)));
-    list.add(tronJsonRpc.getToken10ById(ByteArray.toHexString(
-                    account1Prikey.getAddress()), ByteArray.toJsonHex(TOKEN_ID2),
-            ByteArray.toJsonHex(blockNum)));
-
-    Assert.assertEquals(list, tronJsonRpc.getToken10(
+            tronJsonRpc.getAccount(
             ByteArray.toHexString(account1Prikey.getAddress()), ByteArray.toJsonHex(blockNum)));
     try {
       Assert.assertNotNull(worldStateQueryInstance.getBlockByNum(blockNum));

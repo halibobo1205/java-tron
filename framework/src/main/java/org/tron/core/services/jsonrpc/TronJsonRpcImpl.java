@@ -16,7 +16,6 @@ import com.google.protobuf.GeneratedMessageV3;
 import java.io.Closeable;
 import java.io.IOException;
 import java.math.BigInteger;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -29,7 +28,6 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
@@ -52,7 +50,6 @@ import org.tron.common.parameter.CommonParameter;
 import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.ByteUtil;
-import org.tron.core.Constant;
 import org.tron.core.Wallet;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
@@ -83,7 +80,6 @@ import org.tron.core.services.jsonrpc.types.AccountResult;
 import org.tron.core.services.jsonrpc.types.BlockResult;
 import org.tron.core.services.jsonrpc.types.BuildArguments;
 import org.tron.core.services.jsonrpc.types.CallArguments;
-import org.tron.core.services.jsonrpc.types.Token10Result;
 import org.tron.core.services.jsonrpc.types.TransactionReceipt;
 import org.tron.core.services.jsonrpc.types.TransactionResult;
 import org.tron.core.store.StorageRowStore;
@@ -115,7 +111,6 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
 
   private static final String FILTER_NOT_FOUND = "filter not found";
   public static final int EXPIRE_SECONDS = 5 * 60;
-  public static final int MAX_BATCH_SIZE = 100; // max batch size for getAccounts
   /**
    * for log filter in Full Json-RPC
    */
@@ -395,84 +390,6 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
       balance = reply.getBalance();
     }
     return ByteArray.toJsonHex(balance);
-  }
-
-  @Override
-  public List<Token10Result> getToken10(String address, String blockNumOrTag)
-          throws JsonRpcInvalidParamsException {
-    byte[] addressData = addressCompatibleToByteArray(address);
-    Account reply;
-    if (EARLIEST_STR.equalsIgnoreCase(blockNumOrTag)
-            || PENDING_STR.equalsIgnoreCase(blockNumOrTag)) {
-      throw new JsonRpcInvalidParamsException(TAG_NOT_SUPPORT_ERROR);
-    } else if (LATEST_STR.equalsIgnoreCase(blockNumOrTag)) {
-      Account account = Account.newBuilder().setAddress(ByteString.copyFrom(addressData)).build();
-      reply = wallet.getAccount(account);
-    } else {
-      BigInteger blockNumber;
-      try {
-        blockNumber = ByteArray.hexToBigInteger(blockNumOrTag);
-      } catch (Exception e) {
-        throw new JsonRpcInvalidParamsException(BLOCK_NUM_ERROR);
-      }
-      if (allowStateRoot) {
-        reply = wallet.getAccountToken10(addressData, -1, blockNumber.longValue());
-      } else {
-        throw new JsonRpcInvalidParamsException(QUANTITY_NOT_SUPPORT_ERROR);
-      }
-    }
-
-    List<Token10Result> token10s =  new ArrayList<>();
-    if (reply != null) {
-      token10s = Token10Result.toHex(reply.getAssetV2Map());
-    }
-    return token10s;
-  }
-
-  @Override
-  public Token10Result getToken10ById(String address, String tokenId, String blockNumOrTag)
-          throws JsonRpcInvalidParamsException {
-
-    long tokenNum;
-    String tokenStr;
-    try {
-      tokenNum = ByteArray.hexToBigInteger(tokenId).longValue();
-      if (tokenNum < Constant.TOKEN_NUM_START
-              || tokenNum > manager.getDynamicPropertiesStore().getTokenIdNum()) {
-        throw new JsonRpcInvalidParamsException("invalid token id");
-      }
-      tokenStr = Long.toString(tokenNum);
-    } catch (Exception e) {
-      throw new JsonRpcInvalidParamsException("invalid token id");
-    }
-
-    byte[] addressData = addressCompatibleToByteArray(address);
-    Account reply;
-    if (EARLIEST_STR.equalsIgnoreCase(blockNumOrTag)
-            || PENDING_STR.equalsIgnoreCase(blockNumOrTag)) {
-      throw new JsonRpcInvalidParamsException(TAG_NOT_SUPPORT_ERROR);
-    } else if (LATEST_STR.equalsIgnoreCase(blockNumOrTag)) {
-      Account account = Account.newBuilder().setAddress(ByteString.copyFrom(addressData)).build();
-      reply = wallet.getAccount(account);
-    } else {
-      BigInteger blockNumber;
-      try {
-        blockNumber = ByteArray.hexToBigInteger(blockNumOrTag);
-      } catch (Exception e) {
-        throw new JsonRpcInvalidParamsException(BLOCK_NUM_ERROR);
-      }
-      if (allowStateRoot) {
-        reply = wallet.getAccountToken10(addressData, tokenNum, blockNumber.longValue());
-      } else {
-        throw new JsonRpcInvalidParamsException(QUANTITY_NOT_SUPPORT_ERROR);
-      }
-    }
-
-    long amt = 0;
-    if (reply != null) {
-      amt = reply.getAssetV2Map().getOrDefault(tokenStr, 0L);
-    }
-    return new Token10Result(tokenStr, amt);
   }
 
   private void callTriggerConstantContract(byte[] ownerAddressByte, byte[] contractAddressByte,

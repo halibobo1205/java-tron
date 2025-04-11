@@ -28,7 +28,6 @@ import org.tron.core.services.jsonrpc.types.AccountResult;
 import org.tron.core.services.jsonrpc.types.BlockResult;
 import org.tron.core.services.jsonrpc.types.BuildArguments;
 import org.tron.core.services.jsonrpc.types.CallArguments;
-import org.tron.core.services.jsonrpc.types.Token10Result;
 import org.tron.core.services.jsonrpc.types.TransactionReceipt;
 import org.tron.core.services.jsonrpc.types.TransactionResult;
 
@@ -90,21 +89,6 @@ public interface TronJsonRpc {
       @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
   })
   String getTrxBalance(String address, String blockNumOrTag) throws JsonRpcInvalidParamsException;
-
-
-  @JsonRpcMethod("tron_getAssets")
-  @JsonRpcErrors({
-      @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
-  })
-  List<Token10Result> getToken10(String address, String blockNumOrTag)
-      throws JsonRpcInvalidParamsException;
-
-  @JsonRpcMethod("tron_getAssetById")
-  @JsonRpcErrors({
-      @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
-  })
-  Token10Result getToken10ById(String address, String tokenId, String blockNumOrTag)
-      throws JsonRpcInvalidParamsException;
 
   @JsonRpcMethod("eth_getStorageAt")
   @JsonRpcErrors({
@@ -217,7 +201,6 @@ public interface TronJsonRpc {
   })
   AccountResourceResult getAccountResource(String address, String blockNumOrTag)
       throws JsonRpcInvalidParamsException;
-
 
   @JsonRpcMethod("buildTransaction")
   @JsonRpcErrors({
