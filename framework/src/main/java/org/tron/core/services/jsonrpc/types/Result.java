@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import org.tron.common.utils.ByteArray;
+import org.tron.common.utils.DecodeUtil;
 
 public abstract class Result {
 
@@ -23,6 +24,14 @@ public abstract class Result {
   }
 
   public static String toHex(ByteString bytes) {
+    return bytes.isEmpty() ? null : ByteArray.toJsonHex(bytes.toByteArray());
+  }
+
+  public static String toEthHexAddress(ByteString bytes) {
+    if (bytes.size() == DecodeUtil.ADDRESS_SIZE / 2
+        && bytes.byteAt(0) == DecodeUtil.addressPreFixByte) {
+      return ByteArray.toJsonHex(bytes.substring(1).toByteArray());
+    }
     return bytes.isEmpty() ? null : ByteArray.toJsonHex(bytes.toByteArray());
   }
 

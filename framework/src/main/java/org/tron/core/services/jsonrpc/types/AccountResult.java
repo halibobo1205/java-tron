@@ -59,8 +59,9 @@ public class AccountResult extends Result {
 
   public AccountResult(Protocol.Account account) {
     this.accountName = toHex(account.getAccountName());
-    this.type = toHex(account.getType().getNumber());
-    this.address = toHex(account.getAddress());
+    this.type = account == Protocol.Account.getDefaultInstance()
+        ? null : toHex(account.getType().getNumber());
+    this.address = toEthHexAddress(account.getAddress());
     this.balance = toHex(account.getBalance());
     this.votes = toVotes(account.getVotesList());
     this.assetV2 = toHex(account.getAssetV2Map());
@@ -71,7 +72,9 @@ public class AccountResult extends Result {
     this.delegatedFrozenBalanceForBandwidth =
         toHex(account.getDelegatedFrozenBalanceForBandwidth());
     this.oldTronPower = toHex(account.getOldTronPower());
-    this.tronPower = account.hasTronPower() ? new Frozen(account.getTronPower()) : null;
+    this.tronPower = account.hasTronPower()
+        && Protocol.Account.Frozen.getDefaultInstance() != account.getTronPower()
+        ? new Frozen(account.getTronPower()) : null;
     this.assetOptimized = toHex(account.getAssetOptimized());
     this.createTime = toHex(account.getCreateTime());
     this.latestOperationTime = toHex(account.getLatestOprationTime());
@@ -93,11 +96,14 @@ public class AccountResult extends Result {
     this.netWindowSize = toHex(account.getNetWindowSize());
     this.netWindowOptimized = toHex(account.getNetWindowOptimized());
     this.accountResource = account.hasAccountResource()
+        && Protocol.Account.AccountResource.getDefaultInstance() != account.getAccountResource()
         ? new AccountResource(account.getAccountResource()) : null;
     this.codeHash = toHex(account.getCodeHash());
     this.ownerPermission = account.hasOwnerPermission()
+        && Protocol.Permission.getDefaultInstance() != account.getOwnerPermission()
         ? new Permission(account.getOwnerPermission()) : null;
     this.witnessPermission = account.hasWitnessPermission()
+        && Protocol.Permission.getDefaultInstance() != account.getWitnessPermission()
         ? new Permission(account.getWitnessPermission()) : null;
     this.activePermissions = toActivePermissions(account.getActivePermissionList());
     this.frozenV2 = toFrozenV2(account.getFrozenV2List());
@@ -109,32 +115,50 @@ public class AccountResult extends Result {
   }
 
   private static List<Vote> toVotes(List<Protocol.Vote> votes) {
-    return votes.stream().map(Vote::new).filter(v -> Objects.nonNull(v.voteCount))
+    return votes.stream()
+        .filter(v -> v != Protocol.Vote.getDefaultInstance())
+        .map(Vote::new)
+        .filter(v -> Objects.nonNull(v.voteCount))
         .collect(Collectors.toList());
   }
 
   private static List<Frozen> toFrozen(List<Protocol.Account.Frozen> frozenList) {
-    return frozenList.stream().map(Frozen::new).filter(f -> Objects.nonNull(f.frozenBalance))
+    return frozenList.stream()
+        .filter(f -> f != Protocol.Account.Frozen.getDefaultInstance())
+        .map(Frozen::new)
+        .filter(f -> Objects.nonNull(f.frozenBalance))
         .collect(Collectors.toList());
   }
 
   private static List<FreezeV2> toFrozenV2(List<Protocol.Account.FreezeV2> frozenList) {
-    return frozenList.stream().map(FreezeV2::new).filter(f -> Objects.nonNull(f.amount))
+    return frozenList.stream()
+        .filter(f -> f != Protocol.Account.FreezeV2.getDefaultInstance())
+        .map(FreezeV2::new)
+        .filter(f -> Objects.nonNull(f.amount))
         .collect(Collectors.toList());
   }
 
   private static List<UnFreezeV2> toUnfrozenV2(List<Protocol.Account.UnFreezeV2> unfrozenList) {
-    return unfrozenList.stream().map(UnFreezeV2::new).filter(f -> Objects.nonNull(f.unfreezeAmount))
+    return unfrozenList.stream()
+        .filter(u -> u != Protocol.Account.UnFreezeV2.getDefaultInstance())
+        .map(UnFreezeV2::new)
+        .filter(f -> Objects.nonNull(f.unfreezeAmount))
         .collect(Collectors.toList());
   }
 
   private static List<Key> toKeys(List<Protocol.Key> keys) {
-    return keys.stream().map(Key::new).filter(k -> Objects.nonNull(k.weight))
+    return keys.stream()
+        .filter(k -> k != Protocol.Key.getDefaultInstance())
+        .map(Key::new)
+        .filter(k -> Objects.nonNull(k.weight))
         .collect(Collectors.toList());
   }
 
   private static List<Permission> toActivePermissions(List<Protocol.Permission> permissions) {
-    return permissions.stream().map(Permission::new).filter(p -> Objects.nonNull(p.threshold))
+    return permissions.stream()
+        .filter(p -> p != Protocol.Permission.getDefaultInstance())
+        .map(Permission::new)
+        .filter(p -> Objects.nonNull(p.threshold))
         .collect(Collectors.toList());
   }
 
@@ -209,7 +233,7 @@ public class AccountResult extends Result {
     private final String weight;
 
     public Key(Protocol.Key key) {
-      this.address = toHex(key.getAddress());
+      this.address = toEthHexAddress(key.getAddress());
       this.weight = toHex(key.getWeight());
     }
   }
@@ -267,7 +291,7 @@ public class AccountResult extends Result {
     private final String voteCount;
 
     public Vote(Protocol.Vote vote) {
-      this.voteAddress = toHex(vote.getVoteAddress());
+      this.voteAddress = toEthHexAddress(vote.getVoteAddress());
       this.voteCount = toHex(vote.getVoteCount());
     }
   }
