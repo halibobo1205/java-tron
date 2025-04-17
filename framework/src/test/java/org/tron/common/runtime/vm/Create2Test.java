@@ -5,10 +5,10 @@ import static org.tron.core.db.TransactionTrace.convertToTronAddress;
 
 import java.util.Arrays;
 import java.util.Collections;
-
 import lombok.extern.slf4j.Slf4j;
 import org.bouncycastle.util.encoders.Hex;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 import org.tron.common.runtime.TVMTestResult;
 import org.tron.common.runtime.TvmTestUtils;
@@ -26,6 +26,7 @@ import org.tron.core.exception.ReceiptCheckErrException;
 import org.tron.core.exception.VMIllegalException;
 import org.tron.core.services.NodeInfoService;
 import org.tron.core.services.jsonrpc.TronJsonRpcImpl;
+import org.tron.core.vm.config.ConfigLoader;
 import org.tron.core.state.WorldStateCallBack;
 import org.tron.protos.Protocol.Transaction;
 
@@ -109,6 +110,11 @@ public class Create2Test extends VMTestBase {
 
   private WorldStateCallBack worldStateCallBack;
 
+  @Before
+  public void before() {
+    ConfigLoader.disable = false;
+  }
+
   @Test
   public void testCreate2()
       throws ContractExeException, ReceiptCheckErrException,
@@ -169,9 +175,16 @@ public class Create2Test extends VMTestBase {
     // Trigger contract method: deploy(bytes,uint)
     long salt = 100L;
     String hexInput = AbiUtil.parseMethod(methodSign, Arrays.asList(testCode, salt));
+
+    long preTime = manager.getDynamicPropertiesStore().getMaxCpuTimeOfOneTx();
+    // set max cpu time to 500
+    manager.getDynamicPropertiesStore().saveMaxCpuTimeOfOneTx(500L);
     TVMTestResult result = TvmTestUtils
         .triggerContractAndReturnTvmTestResult(Hex.decode(OWNER_ADDRESS),
             factoryAddress, Hex.decode(hexInput), 0, fee, manager, null);
+    // restore max cpu time
+    manager.getDynamicPropertiesStore().saveMaxCpuTimeOfOneTx(preTime);
+
     Assert.assertNull(result.getRuntime().getRuntimeError());
 
     byte[] returnValue = result.getRuntime().getResult().getHReturn();

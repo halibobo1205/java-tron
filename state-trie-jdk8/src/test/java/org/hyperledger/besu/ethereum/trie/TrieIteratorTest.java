@@ -114,12 +114,12 @@ public class TrieIteratorTest {
     final Random random = new Random(-5407159858935967790L);
     Bytes32 startAtHash = Bytes32.ZERO;
     Bytes32 stopAtHash = Bytes32.ZERO;
-    final int totalNodes = Math.abs(random.nextInt(1000));
-    final int startNodeNumber = random.nextInt(Math.max(1, totalNodes - 1));
-    final int stopNodeNumber = random.nextInt(Math.max(1, totalNodes - 1));
+    final int totalNodes = StrictMath.abs(random.nextInt(1000));
+    final int startNodeNumber = random.nextInt(StrictMath.max(1, totalNodes - 1));
+    final int stopNodeNumber = random.nextInt(StrictMath.max(1, totalNodes - 1));
     for (int i = 0; i < totalNodes; i++) {
       final Bytes32 keyHash =
-          Hash.keccak256(UInt256.valueOf(Math.abs(random.nextInt(Integer.MAX_VALUE))));
+          Hash.keccak256(UInt256.valueOf(StrictMath.abs(random.nextInt(Integer.MAX_VALUE))));
       root = root.accept(new PutVisitor<>(nodeFactory, "Value"), bytesToPath(keyHash));
       expectedKeyHashes.add(keyHash);
       if (i == startNodeNumber) {

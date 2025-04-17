@@ -9,7 +9,6 @@ import java.io.IOException;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 import lombok.AllArgsConstructor;
-import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -24,6 +23,8 @@ import org.tron.core.exception.JsonRpcInvalidParamsException;
 import org.tron.core.exception.JsonRpcInvalidRequestException;
 import org.tron.core.exception.JsonRpcMethodNotFoundException;
 import org.tron.core.exception.JsonRpcTooManyResultException;
+import org.tron.core.services.jsonrpc.types.AccountResourceResult;
+import org.tron.core.services.jsonrpc.types.AccountResult;
 import org.tron.core.services.jsonrpc.types.BlockResult;
 import org.tron.core.services.jsonrpc.types.BuildArguments;
 import org.tron.core.services.jsonrpc.types.CallArguments;
@@ -88,21 +89,6 @@ public interface TronJsonRpc {
       @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
   })
   String getTrxBalance(String address, String blockNumOrTag) throws JsonRpcInvalidParamsException;
-
-
-  @JsonRpcMethod("tron_getAssets")
-  @JsonRpcErrors({
-      @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
-  })
-  List<Token10Result> getToken10(String address, String blockNumOrTag)
-      throws JsonRpcInvalidParamsException;
-
-  @JsonRpcMethod("tron_getAssetById")
-  @JsonRpcErrors({
-      @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
-  })
-  Token10Result getToken10ById(String address, String tokenId, String blockNumOrTag)
-      throws JsonRpcInvalidParamsException;
 
   @JsonRpcMethod("eth_getStorageAt")
   @JsonRpcErrors({
@@ -202,20 +188,19 @@ public interface TronJsonRpc {
   @JsonRpcMethod("eth_accounts")
   String[] getAccounts();
 
-  @JsonRpcMethod("eth_getAccounts")
+  @JsonRpcMethod("tron_getAccount")
   @JsonRpcErrors({
       @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
   })
-  List<JSONObject> getAccounts(String[] addressList, String blockNumOrTag)
+  AccountResult getAccount(String address, String blockNumOrTag)
       throws JsonRpcInvalidParamsException;
 
-  @JsonRpcMethod("tron_getAccountResources")
+  @JsonRpcMethod("tron_getAccountResource")
   @JsonRpcErrors({
       @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
   })
-  List<JSONObject> getAccountResources(String[] addressList, String blockNumOrTag)
+  AccountResourceResult getAccountResource(String address, String blockNumOrTag)
       throws JsonRpcInvalidParamsException;
-
 
   @JsonRpcMethod("buildTransaction")
   @JsonRpcErrors({
@@ -494,21 +479,6 @@ public interface TronJsonRpc {
         topics[i] = ByteArray.toJsonHex(topicList.get(i).getData());
       }
       this.removed = removed;
-    }
-  }
-
-  @AllArgsConstructor
-  @JsonPropertyOrder
-  @EqualsAndHashCode
-  class Token10Result {
-    @Getter
-    private final String key;
-    @Getter
-    private final String value;
-
-    @Override
-    public String toString() {
-      return JSONObject.toJSONString(this);
     }
   }
 }

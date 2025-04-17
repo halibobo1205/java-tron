@@ -42,6 +42,7 @@ import org.tron.core.ChainBaseManager;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.db.BlockStore;
 import org.tron.core.exception.HeaderNotFound;
+import org.tron.core.exception.TronError;
 
 @Component("worldStateGenesis")
 @Slf4j(topic = "DB")
@@ -73,6 +74,30 @@ public class WorldStateGenesis {
   private static final String ROCKSDB = "ROCKSDB";
 
   public synchronized void init(ChainBaseManager chainBaseManager) {
+    long genesisStateHeight = tryFindStateGenesisHeight();
+    if (genesisStateHeight > -1) { // archive db is found
+      if (allowStateRoot) {
+        try {
+          BlockCapsule head = chainBaseManager.getHead();
+          if (Bytes32.ZERO.equals(head.getArchiveRoot()) && head.getNum() > genesisStateHeight) {
+            String msg = "StateRoot is allowed, but archive db is discontinuous and corrupted.\n";
+            msg += "Please delete the archive db: ";
+            msg += stateGenesisPath + ".\n";
+            throw new TronError(msg, TronError.ErrCode.ARCHIVE_NODE_INIT);
+          }
+        } catch (HeaderNotFound e) {
+          throw new TronError(e, TronError.ErrCode.ARCHIVE_NODE_INIT);
+        }
+      } else {
+        String msg = "StateRoot is not allowed, but archive db is found.\n";
+        msg += "You seem to be turning off the archive feature that is already turned on,";
+        msg += "please check the configuration.\n";
+        msg += "If you want to turn off the archive feature, please delete the archive db: ";
+        msg += stateGenesisPath + ".\n";
+        msg += "To keep archive feature, please set the `storage.stateRoot.switch` to true.";
+        throw new TronError(msg, TronError.ErrCode.ARCHIVE_NODE_INIT);
+      }
+    }
     if (!allowStateRoot) {
       return;
     }
@@ -332,7 +357,7 @@ public class WorldStateGenesis {
       options.setTargetFileSizeBase(64 * 1024 * 1024);
       options.setTargetFileSizeMultiplier(1);
       options.setMaxBytesForLevelBase(512 * 1024 * 1024);
-      options.setMaxBackgroundCompactions(Math.max(1, Runtime.getRuntime().availableProcessors()));
+      options.setMaxBackgroundCompactions(StrictMath.max(1, Runtime.getRuntime().availableProcessors()));
       options.setLevel0FileNumCompactionTrigger(4);
       options.setLevelCompactionDynamicLevelBytes(true);
       final BlockBasedTableConfig tableCfg;

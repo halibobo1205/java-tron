@@ -48,7 +48,6 @@ import org.tron.core.exception.JsonRpcInvalidParamsException;
 import org.tron.core.exception.JsonRpcInvalidRequestException;
 import org.tron.core.exception.StoreException;
 import org.tron.core.services.jsonrpc.TronJsonRpc;
-import org.tron.core.services.jsonrpc.TronJsonRpcImpl;
 import org.tron.core.services.jsonrpc.types.CallArguments;
 import org.tron.core.state.store.StorageRowStateStore;
 import org.tron.core.vm.program.Storage;
@@ -88,16 +87,14 @@ public class WorldStateQueryTest {
   @BeforeClass
   public static void init() throws IOException {
 
-    Args.setParam(new String[]{"-d", temporaryFolder.newFolder().toString()},
-        "config-localtest.conf");
+    Args.setParam(new String[]{"-d", temporaryFolder.newFolder().toString(),
+            "--p2p-disable", "true"}, "config-localtest.conf");
     // allow account root
     Args.getInstance().setAllowAccountStateRoot(1);
     // init dbBackupConfig to avoid NPE
     Args.getInstance().dbBackupConfig = DbBackupConfig.getInstance();
     context = new TronApplicationContext(DefaultConfig.class);
     appTest = ApplicationFactory.create(context);
-    appTest.initServices(Args.getInstance());
-    appTest.startServices();
     appTest.startup();
     chainBaseManager = context.getBean(ChainBaseManager.class);
     // open account asset optimize
@@ -330,25 +327,25 @@ public class WorldStateQueryTest {
             tronJsonRpc.getTrxBalance(
                     ByteArray.toHexString(account1Prikey.getAddress()), "latest"));
 
-    Assert.assertEquals(tronJsonRpc.getToken10(
+    Assert.assertEquals(tronJsonRpc.getAccount(
                     ByteArray.toHexString(account1Prikey.getAddress()),
                     ByteArray.toJsonHex(blockNum)),
-            tronJsonRpc.getToken10(
+            tronJsonRpc.getAccount(
                     ByteArray.toHexString(account1Prikey.getAddress()), "latest"));
 
-    Assert.assertEquals(tronJsonRpc.getToken10(
+    Assert.assertEquals(tronJsonRpc.getAccount(
                     ByteArray.toHexString(account2Prikey.getAddress()),
                     ByteArray.toJsonHex(blockNum)),
-            tronJsonRpc.getToken10(
+            tronJsonRpc.getAccount(
                     ByteArray.toHexString(account2Prikey.getAddress()), "latest"));
     List<String> addressList = new ArrayList<>();
     addressList.add(ByteArray.toHexString(account1Prikey.getAddress()));
     addressList.add(ByteArray.toHexString(account2Prikey.getAddress()));
 
-    Assert.assertEquals(tronJsonRpc.getAccounts(
-            addressList.toArray(new String[0]), ByteArray.toJsonHex(blockNum)),
-        tronJsonRpc.getAccounts(
-            addressList.toArray(new String[0]), "latest"));
+    Assert.assertEquals(tronJsonRpc.getAccount(
+            ByteArray.toHexString(account1Prikey.getAddress()), ByteArray.toJsonHex(blockNum)),
+        tronJsonRpc.getAccount(
+            ByteArray.toHexString(account1Prikey.getAddress()), "latest"));
 
     Assert.assertEquals(wallet.getAccount(
         Protocol.Account.newBuilder().setAddress(ByteString.copyFrom(account1Prikey.getAddress()))
@@ -356,75 +353,25 @@ public class WorldStateQueryTest {
         wallet.getAccounts(Collections.singletonList(account1Prikey.getAddress()), blockNum)
             .get(0));
 
-    Assert.assertEquals(tronJsonRpc.getAccountResources(
-            addressList.toArray(new String[0]), ByteArray.toJsonHex(blockNum)),
-        tronJsonRpc.getAccountResources(
-            addressList.toArray(new String[0]), "latest"));
+    Assert.assertEquals(tronJsonRpc.getAccountResource(
+            ByteArray.toHexString(account1Prikey.getAddress()), ByteArray.toJsonHex(blockNum)),
+        tronJsonRpc.getAccountResource(
+            ByteArray.toHexString(account1Prikey.getAddress()), "latest"));
 
     Assert.assertEquals(wallet.getAccountResource(
             ByteString.copyFrom(account1Prikey.getAddress())),
         wallet.getAccountResources(Collections.singletonList(account1Prikey.getAddress()), blockNum)
             .get(0));
 
-    Map<String, Long> asset = new HashMap<>();
-    for (TronJsonRpc.Token10Result t : tronJsonRpc.getToken10(
-            ByteArray.toHexString(account2Prikey.getAddress()), "latest")) {
-      asset.put(Long.toString(ByteArray.jsonHexToLong(t.getKey())),
-              ByteArray.jsonHexToLong(t.getValue()));
-    }
-    Assert.assertEquals(account2Capsule.getAssetMapV2(), asset);
-
-    Assert.assertEquals(tronJsonRpc.getToken10(
+    Assert.assertEquals(tronJsonRpc.getAccount(
             ByteArray.toHexString(account1Prikey.getAddress()), "latest"),
-            tronJsonRpc.getToken10(
-            ByteArray.toHexString(account1Prikey.getAddress()), ByteArray.toJsonHex(blockNum)));
-
-    Assert.assertEquals(tronJsonRpc.getToken10ById(ByteArray.toHexString(
-            account2Prikey.getAddress()), ByteArray.toJsonHex(TOKEN_ID1),
-                    ByteArray.toJsonHex(blockNum)),
-            tronJsonRpc.getToken10ById(ByteArray.toHexString(
-                    account2Prikey.getAddress()), ByteArray.toJsonHex(TOKEN_ID1),
-                    "latest"));
-
-    Assert.assertEquals(tronJsonRpc.getToken10ById(ByteArray.toHexString(
-                            account2Prikey.getAddress()), ByteArray.toJsonHex(TOKEN_ID2),
-                    ByteArray.toJsonHex(blockNum)),
-            tronJsonRpc.getToken10ById(ByteArray.toHexString(
-                            account2Prikey.getAddress()), ByteArray.toJsonHex(TOKEN_ID2),
-                    "latest"));
-
-    Assert.assertEquals(account2Capsule.getAssetV2(Long.toString(TOKEN_ID2)),
-            ByteArray.jsonHexToLong(tronJsonRpc.getToken10ById(ByteArray.toHexString(
-                    account2Prikey.getAddress()), ByteArray.toJsonHex(TOKEN_ID2),
-            ByteArray.toJsonHex(blockNum)).getValue()));
-
-    List<TronJsonRpc.Token10Result> list = new ArrayList<>();
-    list.add(tronJsonRpc.getToken10ById(ByteArray.toHexString(
-                            account1Prikey.getAddress()), ByteArray.toJsonHex(TOKEN_ID1),
-                    ByteArray.toJsonHex(blockNum)));
-    list.add(tronJsonRpc.getToken10ById(ByteArray.toHexString(
-                    account1Prikey.getAddress()), ByteArray.toJsonHex(TOKEN_ID2),
-            ByteArray.toJsonHex(blockNum)));
-
-    Assert.assertEquals(list, tronJsonRpc.getToken10(
+            tronJsonRpc.getAccount(
             ByteArray.toHexString(account1Prikey.getAddress()), ByteArray.toJsonHex(blockNum)));
     try {
       Assert.assertNotNull(worldStateQueryInstance.getBlockByNum(blockNum));
     } catch (StoreException e) {
       Assert.fail();
     }
-  }
-
-  @Test
-  public void testGetAccounts() {
-    List<String> addressList2 = new ArrayList<>();
-    for (int i = 0; i < 101; i++) {
-      addressList2.add("0x" + i);
-    }
-    Assert.assertThrows("The maximum number of addresses is "
-           + TronJsonRpcImpl.MAX_BATCH_SIZE,
-        JsonRpcInvalidParamsException.class, () ->
-            tronJsonRpc.getAccounts(addressList2.toArray(new String[0]), "latest"));
   }
 
   private BlockCapsule buildTransferBlock(BlockCapsule parentBlock) {
