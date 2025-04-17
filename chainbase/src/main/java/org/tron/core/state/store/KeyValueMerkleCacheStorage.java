@@ -44,7 +44,7 @@ public class KeyValueMerkleCacheStorage extends KeyValueMerkleStorage {
           new CacheLoader<Bytes32, Optional<Bytes>>() {
             @Override
             public Optional<Bytes> load(Bytes32 key) {
-              return get(key);
+              return getFromDB(key);
             }
           }, (key, value) -> Bytes32.SIZE + value.orElse(Bytes.EMPTY).size()));
     }
@@ -57,14 +57,14 @@ public class KeyValueMerkleCacheStorage extends KeyValueMerkleStorage {
       if (stateType != StateType.UNDEFINED) {
         return cache.get(stateType).get(hash);
       }
-      return get(hash);
+      return getFromDB(hash);
     } catch (ExecutionException e) {
       throw new MerkleTrieException(e.getMessage(), hash, location);
     }
   }
 
 
-  private Optional<Bytes> get(final Bytes32 hash) {
+  private Optional<Bytes> getFromDB(final Bytes32 hash) {
     return super.get(null, hash);
   }
 
