@@ -2027,6 +2027,7 @@ public class Manager {
     Histogram.Timer requestTimer = Metrics.histogramStartTimer(
         MetricKeys.Histogram.VERIFY_SIGN_LATENCY, MetricLabels.TRX);
     try {
+      final long start = System.currentTimeMillis();
       CountDownLatch countDownLatch = new CountDownLatch(transSize);
       List<Future<Boolean>> futures = new ArrayList<>(transSize);
 
@@ -2044,6 +2045,8 @@ public class Manager {
           throw new ValidateSignatureException(e.getCause().getMessage());
         }
       }
+      long cost = System.currentTimeMillis() - start;
+      logger.info("Parallel check sign cost {} ms for {} transactions.", cost, transSize);
     } finally {
       Metrics.histogramObserve(requestTimer);
     }
