@@ -6,6 +6,7 @@ import java.math.BigInteger;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.bouncycastle.util.encoders.Hex;
+import org.tron.protos.Protocol;
 
 public class ByteArray {
 
@@ -97,5 +98,36 @@ public class ByteArray {
       data = "0" + data;
     }
     return Hex.decode(data);
+  }
+
+  /**
+   * Generate a subarray of a given byte array.
+   *
+   * @param input the input byte array
+   * @param start the start index
+   * @param end the end index
+   * @return a subarray of <tt>input</tt>, ranging from <tt>start</tt> (inclusively) to <tt>end</tt>
+   * (exclusively)
+   */
+  public static byte[] subArray(byte[] input, int start, int end) {
+    byte[] result = new byte[end - start];
+    System.arraycopy(input, start, result, 0, end - start);
+    return result;
+  }
+
+  public static Protocol.Account toAccount(byte[] base) {
+    try {
+      return Protocol.Account.parseFrom(base);
+    } catch (Exception e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  public static Protocol.Witness toWitness(byte[] base) {
+    try {
+      return Protocol.Witness.parseFrom(base);
+    } catch (Exception e) {
+      throw new RuntimeException(e);
+    }
   }
 }

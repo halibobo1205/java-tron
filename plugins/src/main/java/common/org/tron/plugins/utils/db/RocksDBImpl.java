@@ -1,9 +1,9 @@
 package org.tron.plugins.utils.db;
 
+import com.google.common.collect.Streams;
 import java.io.IOException;
 import lombok.Getter;
 import org.rocksdb.RocksDBException;
-import org.rocksdb.RocksIterator;
 
 public class RocksDBImpl implements DBInterface {
 
@@ -47,19 +47,15 @@ public class RocksDBImpl implements DBInterface {
 
   @Override
   public DBIterator iterator() {
-    return new RockDBIterator(rocksDB.newIterator(
-        new org.rocksdb.ReadOptions().setFillCache(false)));
+    return new RockDBIterator(rocksDB);
   }
 
   @Override
-  public long size() {
-    RocksIterator iterator = rocksDB.newIterator();
-    long size = 0;
-    for (iterator.seekToFirst(); iterator.isValid(); iterator.next()) {
-      size++;
+  public long size() throws IOException {
+    try (DBIterator iterator = this.iterator()) {
+      iterator.seekToFirst();
+      return Streams.stream(iterator).count();
     }
-    iterator.close();
-    return size;
   }
 
   @Override

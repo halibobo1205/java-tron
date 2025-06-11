@@ -308,7 +308,9 @@ public class RocksDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
 
   @Override
   public void updateByBatch(Map<byte[], byte[]> rows) {
-    this.updateByBatch(rows, new WriteOptions());
+    try (WriteOptions writeOptions = new WriteOptions()) {
+      this.updateByBatch(rows, writeOptions);
+    }
   }
 
   private void updateByBatch(Map<byte[], byte[]> rows, WriteOptions options) {
@@ -419,6 +421,22 @@ public class RocksDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
     }
   }
 
+  /**
+   * Returns an iterator over the database.
+   *
+   * <p><b>CRITICAL:</b> The returned iterator holds native resources and <b>MUST</b> be closed
+   * after use to prevent memory leaks. It is strongly recommended to use a try-with-resources
+   * statement.
+   *
+   * <p>Example of correct usage:
+   * <pre>{@code
+   * try (RocksIterator iterator = getRocksIterator()) {
+   *  // do something
+   * }
+   * }</pre>
+   *
+   * @return a new database iterator that must be closed.
+   */
   private RocksIterator getRocksIterator() {
     try (ReadOptions readOptions = new ReadOptions().setFillCache(false)) {
       throwIfNotAlive();
