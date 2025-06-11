@@ -307,6 +307,11 @@ public class TronNetDelegate {
     }
   }
 
+  public void pushVerifiedBlock(BlockCapsule block) throws  P2pException {
+    block.generatedByMyself = true;
+    processBlock(block, true);
+  }
+
   public void pushTransaction(TransactionCapsule trx) throws P2pException {
     try {
       trx.setTime(System.currentTimeMillis());

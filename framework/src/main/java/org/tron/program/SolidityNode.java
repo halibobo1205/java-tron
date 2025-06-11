@@ -22,6 +22,7 @@ import org.tron.core.config.DefaultConfig;
 import org.tron.core.config.args.Args;
 import org.tron.core.db.Manager;
 import org.tron.core.exception.TronError;
+import org.tron.core.net.TronNetDelegate;
 import org.tron.protos.Protocol.Block;
 
 @Slf4j(topic = "app")
@@ -30,6 +31,8 @@ public class SolidityNode {
   private Manager dbManager;
 
   private ChainBaseManager chainBaseManager;
+
+  private TronNetDelegate tronNetDelegate;
 
   private DatabaseGrpcClient databaseGrpcClient;
 
@@ -43,9 +46,10 @@ public class SolidityNode {
 
   private volatile boolean flag = true;
 
-  public SolidityNode(Manager dbManager) {
+  public SolidityNode(Manager dbManager, TronNetDelegate tronNetDelegate) {
     this.dbManager = dbManager;
     this.chainBaseManager = dbManager.getChainBaseManager();
+    this.tronNetDelegate = tronNetDelegate;
     resolveCompatibilityIssueIfUsingFullNodeDatabase();
     ID.set(chainBaseManager.getDynamicPropertiesStore().getLatestSolidifiedBlockNum());
     databaseGrpcClient = new DatabaseGrpcClient(CommonParameter.getInstance().getTrustNodeAddr());
@@ -87,7 +91,8 @@ public class SolidityNode {
     Application appT = ApplicationFactory.create(context);
     context.registerShutdownHook();
     appT.startup();
-    SolidityNode node = new SolidityNode(appT.getDbManager());
+    SolidityNode node = new SolidityNode(appT.getDbManager(),
+        context.getBean(TronNetDelegate.class));
     node.start();
     appT.blockUntilShutdown();
   }
@@ -140,7 +145,7 @@ public class SolidityNode {
     while (flag) {
       long blockNum = block.getBlockHeader().getRawData().getNumber();
       try {
-        dbManager.pushVerifiedBlock(new BlockCapsule(block));
+        tronNetDelegate.pushVerifiedBlock(new BlockCapsule(block));
         chainBaseManager.getDynamicPropertiesStore().saveLatestSolidifiedBlockNum(blockNum);
         logger
             .info("Success to process block: {}, blockQueueSize: {}.", blockNum, blockQueue.size());
