@@ -25,6 +25,7 @@ import javax.annotation.PostConstruct;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.tron.common.error.TronDBException;
 import org.tron.common.es.ExecutorServiceManager;
@@ -78,6 +79,9 @@ public class SnapshotManager implements RevokingDatabase {
   @Setter
   @Getter
   private CheckTmpStore checkTmpStore;
+
+  @Autowired
+  private ObjectFactory<CheckPointV2Store> checkPointV2Store;
 
   @Setter
   private volatile int maxFlushCount = DEFAULT_MIN_FLUSH_COUNT;
@@ -385,8 +389,7 @@ public class SnapshotManager implements RevokingDatabase {
         }
       }
       if (isV2Open()) {
-        String dbName = String.valueOf(System.currentTimeMillis());
-        checkPointStore = getCheckpointDB(dbName);
+        checkPointStore = checkPointV2Store.getObject();
       } else {
         checkPointStore = checkTmpStore;
       }
@@ -405,7 +408,7 @@ public class SnapshotManager implements RevokingDatabase {
   }
 
   private TronDatabase<byte[]> getCheckpointDB(String dbName) {
-    return new CheckPointV2Store(CHECKPOINT_V2_DIR+"/"+dbName);
+    return new CheckPointV2Store(CHECKPOINT_V2_DIR, dbName);
   }
 
   public List<String> getCheckpointList() {
