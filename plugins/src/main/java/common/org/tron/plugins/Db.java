@@ -12,7 +12,11 @@ import picocli.CommandLine;
         DbConvert.class,
         DbLite.class,
         DbCopy.class,
-        DbRoot.class
+        DbRoot.class,
+        DbCheckSum.class,
+        DbQueryProperties.class,
+        DbCompare.class,
+        DbCheckSumTwo.class
     },
     commandListHeading = "%nCommands:%n%nThe most commonly used db commands are:%n"
 )

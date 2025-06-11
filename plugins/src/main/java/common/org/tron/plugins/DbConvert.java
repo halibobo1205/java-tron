@@ -223,8 +223,8 @@ public class DbConvert implements Callable<Integer> {
      * @throws Exception RocksDBException
      */
     private void write(RocksDB rocks, org.rocksdb.WriteBatch batch) throws Exception {
-      try {
-        rocks.write(new org.rocksdb.WriteOptions(), batch);
+      try (org.rocksdb.WriteOptions writeOptions = new org.rocksdb.WriteOptions()) {
+        rocks.write(writeOptions, batch);
       } catch (RocksDBException e) {
         // retry
         if (maybeRetry(e)) {
