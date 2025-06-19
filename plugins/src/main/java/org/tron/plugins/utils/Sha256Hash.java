@@ -21,6 +21,7 @@ import static com.google.common.base.Preconditions.checkArgument;
 
 import com.google.common.io.ByteStreams;
 import com.google.common.primitives.Ints;
+import com.google.common.primitives.Longs;
 import com.google.protobuf.ByteString;
 import java.io.File;
 import java.io.FileInputStream;
@@ -29,6 +30,7 @@ import java.io.Serializable;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
+import lombok.Getter;
 import org.bouncycastle.crypto.digests.SM3Digest;
 
 
@@ -206,5 +208,53 @@ public class Sha256Hash implements Serializable, Comparable<Sha256Hash> {
       }
     }
     return 0;
+  }
+
+  @Getter
+  public static class BlockId extends Sha256Hash {
+
+    private long num;
+
+    public BlockId(Sha256Hash blockId) {
+      super(blockId.getBytes());
+      byte[] blockNum = new byte[8];
+      System.arraycopy(blockId.getBytes(), 0, blockNum, 0, 8);
+      num = Longs.fromByteArray(blockNum);
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      if (this == o) {
+        return true;
+      }
+      if (o == null || (getClass() != o.getClass() && !(o instanceof Sha256Hash))) {
+        return false;
+      }
+      return Arrays.equals(getBytes(), ((Sha256Hash) o).getBytes());
+    }
+
+    public String getString() {
+      return "Num:" + num + ",ID:" + super.toString();
+    }
+
+    @Override
+    public String toString() {
+      return super.toString();
+    }
+
+    @Override
+    public int hashCode() {
+      return super.hashCode();
+    }
+
+    @Override
+    public int compareTo(Sha256Hash other) {
+      if (other.getClass().equals(BlockId.class)) {
+        long otherNum = ((BlockId) other).getNum();
+        return Long.compare(num, otherNum);
+      }
+      return super.compareTo(other);
+    }
+
   }
 }
