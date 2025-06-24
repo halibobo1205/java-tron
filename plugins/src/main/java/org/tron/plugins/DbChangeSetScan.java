@@ -1,24 +1,7 @@
 package org.tron.plugins;
 
 import com.google.common.primitives.Ints;
-import com.google.common.primitives.Longs;
-import com.google.protobuf.InvalidProtocolBufferException;
-import lombok.extern.slf4j.Slf4j;
-import me.tongfei.progressbar.ProgressBar;
-import org.apache.commons.lang3.tuple.Pair;
-import org.apache.commons.lang3.tuple.Triple;
-import org.rocksdb.RocksDBException;
-import org.tron.plugins.utils.ByteArray;
-import org.tron.plugins.utils.Sha256Hash;
-import org.tron.plugins.utils.db.DBInterface;
-import org.tron.plugins.utils.db.DBIterator;
-import org.tron.plugins.utils.db.DbTool;
-import org.tron.protos.Protocol;
-import picocli.CommandLine;
-
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
@@ -26,7 +9,13 @@ import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.stream.Collectors;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.tuple.Triple;
+import org.rocksdb.RocksDBException;
+import org.tron.plugins.utils.db.DBInterface;
+import org.tron.plugins.utils.db.DBIterator;
+import org.tron.plugins.utils.db.DbTool;
+import picocli.CommandLine;
 
 @Slf4j(topic = "change-set-scan")
 @CommandLine.Command(name = "change-set-scan",
