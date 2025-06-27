@@ -11,9 +11,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
-
+import io.prometheus.client.Histogram;
+import org.tron.common.prometheus.MetricKeys;
+import org.tron.common.prometheus.Metrics;
 import org.tron.common.utils.ByteUtil;
-import org.tron.common.utils.Pair;
 import org.tron.core.capsule.utils.MarketUtils;
 import org.tron.core.db2.common.IRevokingDB;
 import org.tron.core.db2.common.LevelDB;
@@ -322,31 +323,41 @@ public class Chainbase implements IRevokingDB {
 
     Map<WrappedByteArray, WrappedByteArray> collection = new HashMap<>();
     if (head.getPrevious() != null) {
-      ((SnapshotImpl) head).collect(collection);
+      try (Histogram.Timer t = Metrics.histogramStartTimer(
+          MetricKeys.Histogram.CHAINBASE_GET_NEXT_LATENCY, "collect")) {
+        ((SnapshotImpl) head).collect(collection);
+      }
     }
 
     Map<WrappedByteArray, WrappedByteArray> levelDBMap = new HashMap<>();
 
-    if (((SnapshotRoot) head.getRoot()).db.getClass() == LevelDB.class) {
-      ((LevelDB) ((SnapshotRoot) head.getRoot()).db).getDb().getNext(key, limit).entrySet().stream()
-          .map(e -> Maps
-              .immutableEntry(WrappedByteArray.of(e.getKey()), WrappedByteArray.of(e.getValue())))
-          .forEach(e -> levelDBMap.put(e.getKey(), e.getValue()));
-    } else if (((SnapshotRoot) head.getRoot()).db.getClass() == RocksDB.class) {
-      ((RocksDB) ((SnapshotRoot) head.getRoot()).db).getDb().getNext(key, limit).entrySet().stream()
-          .map(e -> Maps
-              .immutableEntry(WrappedByteArray.of(e.getKey()), WrappedByteArray.of(e.getValue())))
-          .forEach(e -> levelDBMap.put(e.getKey(), e.getValue()));
+    try (Histogram.Timer t = Metrics.histogramStartTimer(
+        MetricKeys.Histogram.CHAINBASE_GET_NEXT_LATENCY, "seek")) {
+      if (((SnapshotRoot) head.getRoot()).db.getClass() == LevelDB.class) {
+        ((LevelDB) ((SnapshotRoot) head.getRoot()).db).getDb().getNext(key, limit).entrySet().stream()
+            .map(e -> Maps
+                .immutableEntry(WrappedByteArray.of(e.getKey()), WrappedByteArray.of(e.getValue())))
+            .forEach(e -> levelDBMap.put(e.getKey(), e.getValue()));
+      } else if (((SnapshotRoot) head.getRoot()).db.getClass() == RocksDB.class) {
+        ((RocksDB) ((SnapshotRoot) head.getRoot()).db).getDb().getNext(key, limit).entrySet().stream()
+            .map(e -> Maps
+                .immutableEntry(WrappedByteArray.of(e.getKey()), WrappedByteArray.of(e.getValue())))
+            .forEach(e -> levelDBMap.put(e.getKey(), e.getValue()));
+      }
     }
 
     levelDBMap.putAll(collection);
 
-    return levelDBMap.entrySet().stream()
-        .map(e -> Maps.immutableEntry(e.getKey().getBytes(), e.getValue().getBytes()))
-        .sorted((e1, e2) -> ByteUtil.compare(e1.getKey(), e2.getKey()))
-        .filter(e -> ByteUtil.greaterOrEquals(e.getKey(), key))
-        .limit(limit)
-        .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+    try (Histogram.Timer t = Metrics.histogramStartTimer(
+        MetricKeys.Histogram.CHAINBASE_GET_NEXT_LATENCY, "pack")) {
+      return levelDBMap.entrySet().stream()
+          .map(e -> Maps.immutableEntry(e.getKey().getBytes(), e.getValue().getBytes()))
+          .sorted((e1, e2) -> ByteUtil.compare(e1.getKey(), e2.getKey()))
+          .filter(e -> ByteUtil.greaterOrEquals(e.getKey(), key))
+          .limit(limit)
+          .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+    }
   }
 
   public Map<WrappedByteArray, byte[]> prefixQuery(byte[] key) {

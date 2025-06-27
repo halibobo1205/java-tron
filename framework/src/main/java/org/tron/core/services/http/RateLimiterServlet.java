@@ -105,11 +105,12 @@ public abstract class RateLimiterServlet extends HttpServlet {
       resp.setContentType("application/json; charset=utf-8");
 
       if (acquireResource) {
-        Histogram.Timer requestTimer = Metrics.histogramStartTimer(
-            MetricKeys.Histogram.HTTP_SERVICE_LATENCY, url);
-        super.service(req, resp);
-        Metrics.histogramObserve(requestTimer);
+        try (Histogram.Timer t = Metrics.histogramStartTimer(
+            MetricKeys.Histogram.HTTP_SERVICE_LATENCY, url)) {
+          super.service(req, resp);
+        }
       } else {
+        resp.setStatus(HttpServletResponse.SC_NOT_ACCEPTABLE);
         resp.getWriter()
             .println(Util.printErrorMsg(new IllegalAccessException("lack of computing resources")));
       }

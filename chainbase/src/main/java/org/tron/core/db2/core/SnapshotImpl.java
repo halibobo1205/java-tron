@@ -11,6 +11,8 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import lombok.Getter;
 import org.tron.core.db2.common.HashDB;
 import org.tron.core.db2.common.Key;
@@ -23,16 +25,21 @@ public class SnapshotImpl extends AbstractSnapshot<Key, Value> {
   @Getter
   protected Snapshot root;
 
+  private final ReadWriteLock resetDbLock = new ReentrantReadWriteLock();
+
   SnapshotImpl(Snapshot snapshot) {
-    root = snapshot.getRoot();
-    synchronized (this) {
+    try {
+      resetDbLock.writeLock().lock();
+      root = snapshot.getRoot();
       db = new HashDB(SnapshotImpl.class.getSimpleName() + ":" + root.getDbName());
-    }
-    previous = snapshot;
-    snapshot.setNext(this);
-    isOptimized = snapshot.isOptimized();
-    if (isOptimized &&  root == previous) {
-      Streams.stream(root.iterator()).forEach( e -> put(e.getKey(),e.getValue()));
+      previous = snapshot;
+      snapshot.setNext(this);
+      isOptimized = snapshot.isOptimized();
+      if (isOptimized &&  root == previous) {
+        Streams.stream(root.iterator()).forEach(e -> put(e.getKey(), e.getValue()));
+      }
+    } finally {
+      resetDbLock.writeLock().unlock();
     }
   }
 
@@ -125,24 +132,34 @@ public class SnapshotImpl extends AbstractSnapshot<Key, Value> {
             e -> !keys.contains(WrappedByteArray.of(e.getKey()))));
   }
 
-  synchronized void collect(Map<WrappedByteArray, WrappedByteArray> all) {
-    Snapshot next = getRoot().getNext();
-    while (next != null) {
-      Streams.stream(((SnapshotImpl) next).db)
-          .forEach(e -> all.put(WrappedByteArray.of(e.getKey().getBytes()),
-              WrappedByteArray.of(e.getValue().getBytes())));
-      next = next.getNext();
+  void collect(Map<WrappedByteArray, WrappedByteArray> all) {
+    try {
+      resetDbLock.readLock().lock();
+      Snapshot next = getRoot().getNext();
+      while (next != null) {
+        Streams.stream(((SnapshotImpl) next).db)
+            .forEach(e -> all.put(WrappedByteArray.of(e.getKey().getBytes()),
+                WrappedByteArray.of(e.getValue().getBytes())));
+        next = next.getNext();
+      }
+    } finally {
+      resetDbLock.readLock().unlock();
     }
   }
 
-  synchronized void collect(Map<WrappedByteArray, WrappedByteArray> all, byte[] prefix) {
-    Snapshot next = getRoot().getNext();
-    while (next != null) {
-      Streams.stream(((SnapshotImpl) next).db).filter(e -> Bytes.indexOf(
-              Objects.requireNonNull(e.getKey().getBytes()), prefix) == 0)
-          .forEach(e -> all.put(WrappedByteArray.of(e.getKey().getBytes()),
-              WrappedByteArray.of(e.getValue().getBytes())));
-      next = next.getNext();
+  void collect(Map<WrappedByteArray, WrappedByteArray> all, byte[] prefix) {
+    try {
+      resetDbLock.readLock().lock();
+      Snapshot next = getRoot().getNext();
+      while (next != null) {
+        Streams.stream(((SnapshotImpl) next).db).filter(e -> Bytes.indexOf(
+                Objects.requireNonNull(e.getKey().getBytes()), prefix) == 0)
+            .forEach(e -> all.put(WrappedByteArray.of(e.getKey().getBytes()),
+                WrappedByteArray.of(e.getValue().getBytes())));
+        next = next.getNext();
+      }
+    } finally {
+      resetDbLock.readLock().unlock();
     }
   }
 
@@ -155,12 +172,17 @@ public class SnapshotImpl extends AbstractSnapshot<Key, Value> {
    * so we need Operator value to determine next step.
    * */
   synchronized void collectUnique(Map<WrappedByteArray, Operator> all) {
-    Snapshot next = getRoot().getNext();
-    while (next != null) {
-      Streams.stream(((SnapshotImpl) next).db)
-          .forEach(e -> all.put(WrappedByteArray.of(e.getKey().getBytes()),
-              e.getValue().getOperator()));
-      next = next.getNext();
+    try {
+      resetDbLock.readLock().lock();
+      Snapshot next = getRoot().getNext();
+      while (next != null) {
+        Streams.stream(((SnapshotImpl) next).db)
+            .forEach(e -> all.put(WrappedByteArray.of(e.getKey().getBytes()),
+                e.getValue().getOperator()));
+        next = next.getNext();
+      }
+    } finally {
+      resetDbLock.readLock().unlock();
     }
   }
 
