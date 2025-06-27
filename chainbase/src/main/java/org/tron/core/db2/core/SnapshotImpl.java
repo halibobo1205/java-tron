@@ -28,18 +28,18 @@ public class SnapshotImpl extends AbstractSnapshot<Key, Value> {
   private final ReadWriteLock resetDbLock = new ReentrantReadWriteLock();
 
   SnapshotImpl(Snapshot snapshot) {
+    root = snapshot.getRoot();
     try {
       resetDbLock.writeLock().lock();
-      root = snapshot.getRoot();
       db = new HashDB(SnapshotImpl.class.getSimpleName() + ":" + root.getDbName());
-      previous = snapshot;
-      snapshot.setNext(this);
-      isOptimized = snapshot.isOptimized();
-      if (isOptimized &&  root == previous) {
-        Streams.stream(root.iterator()).forEach(e -> put(e.getKey(), e.getValue()));
-      }
     } finally {
       resetDbLock.writeLock().unlock();
+    }
+    previous = snapshot;
+    snapshot.setNext(this);
+    isOptimized = snapshot.isOptimized();
+    if (isOptimized &&  root == previous) {
+      Streams.stream(root.iterator()).forEach( e -> put(e.getKey(),e.getValue()));
     }
   }
 
