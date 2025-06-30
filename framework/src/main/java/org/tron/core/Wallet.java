@@ -4285,13 +4285,27 @@ public class Wallet {
     checkAccountIdentifier(accountIdentifier);
     BlockBalanceTrace.BlockIdentifier blockIdentifier = request.getBlockIdentifier();
     checkBlockIdentifier(blockIdentifier);
+
     AccountTraceStore accountTraceStore = chainBaseManager.getAccountTraceStore();
+    BlockIndexStore blockIndexStore = chainBaseManager.getBlockIndexStore();
+    BlockId blockId = blockIndexStore.get(blockIdentifier.getNumber());
+    if (!blockId.getByteString().equals(blockIdentifier.getHash())) {
+      throw new IllegalArgumentException("number and hash do not match");
+    }
+
     Pair<Long, Long> pair = accountTraceStore.getPrevBalance(
         accountIdentifier.getAddress().toByteArray(), blockIdentifier.getNumber());
     BalanceContract.AccountBalanceResponse.Builder builder =
         BalanceContract.AccountBalanceResponse.newBuilder();
-    builder.setBlockIdentifier(BlockBalanceTrace.BlockIdentifier.newBuilder()
-          .setNumber(pair.getLeft()));
+    if (pair.getLeft() == blockIdentifier.getNumber()) {
+      builder.setBlockIdentifier(blockIdentifier);
+    } else {
+      blockId = blockIndexStore.get(pair.getLeft());
+      builder.setBlockIdentifier(BlockBalanceTrace.BlockIdentifier.newBuilder()
+          .setNumber(pair.getLeft())
+          .setHash(blockId.getByteString()));
+    }
+
     builder.setBalance(pair.getRight());
     return builder.build();
   }
@@ -4322,6 +4336,10 @@ public class Wallet {
     if (blockIdentifier.getNumber() < 0) {
       throw new IllegalArgumentException("block_identifier number less than 0");
     }
+    if (blockIdentifier.getHash().size() != 32) {
+      throw new IllegalArgumentException("block_identifier hash length not equals 32");
+    }
+
   }
 
   public void checkAccountIdentifier(BalanceContract.AccountIdentifier accountIdentifier) {

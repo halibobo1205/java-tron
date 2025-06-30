@@ -11,8 +11,6 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.locks.ReadWriteLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 import lombok.Getter;
 import org.tron.core.db2.common.HashDB;
 import org.tron.core.db2.common.Key;
@@ -25,15 +23,10 @@ public class SnapshotImpl extends AbstractSnapshot<Key, Value> {
   @Getter
   protected Snapshot root;
 
-  private final ReadWriteLock resetDbLock = new ReentrantReadWriteLock();
-
   SnapshotImpl(Snapshot snapshot) {
     root = snapshot.getRoot();
-    try {
-      resetDbLock.writeLock().lock();
+    synchronized (this) {
       db = new HashDB(SnapshotImpl.class.getSimpleName() + ":" + root.getDbName());
-    } finally {
-      resetDbLock.writeLock().unlock();
     }
     previous = snapshot;
     snapshot.setNext(this);
@@ -133,33 +126,23 @@ public class SnapshotImpl extends AbstractSnapshot<Key, Value> {
   }
 
   void collect(Map<WrappedByteArray, WrappedByteArray> all) {
-    try {
-      resetDbLock.readLock().lock();
-      Snapshot next = getRoot().getNext();
-      while (next != null) {
-        Streams.stream(((SnapshotImpl) next).db)
-            .forEach(e -> all.put(WrappedByteArray.of(e.getKey().getBytes()),
-                WrappedByteArray.of(e.getValue().getBytes())));
-        next = next.getNext();
-      }
-    } finally {
-      resetDbLock.readLock().unlock();
+    Snapshot next = getRoot().getNext();
+    while (next != null) {
+      Streams.stream(((SnapshotImpl) next).db)
+          .forEach(e -> all.put(WrappedByteArray.of(e.getKey().getBytes()),
+              WrappedByteArray.of(e.getValue().getBytes())));
+      next = next.getNext();
     }
   }
 
   void collect(Map<WrappedByteArray, WrappedByteArray> all, byte[] prefix) {
-    try {
-      resetDbLock.readLock().lock();
-      Snapshot next = getRoot().getNext();
-      while (next != null) {
-        Streams.stream(((SnapshotImpl) next).db).filter(e -> Bytes.indexOf(
-                Objects.requireNonNull(e.getKey().getBytes()), prefix) == 0)
-            .forEach(e -> all.put(WrappedByteArray.of(e.getKey().getBytes()),
-                WrappedByteArray.of(e.getValue().getBytes())));
-        next = next.getNext();
-      }
-    } finally {
-      resetDbLock.readLock().unlock();
+    Snapshot next = getRoot().getNext();
+    while (next != null) {
+      Streams.stream(((SnapshotImpl) next).db).filter(e -> Bytes.indexOf(
+              Objects.requireNonNull(e.getKey().getBytes()), prefix) == 0)
+          .forEach(e -> all.put(WrappedByteArray.of(e.getKey().getBytes()),
+              WrappedByteArray.of(e.getValue().getBytes())));
+      next = next.getNext();
     }
   }
 
@@ -171,18 +154,13 @@ public class SnapshotImpl extends AbstractSnapshot<Key, Value> {
    * More than that, there will be some item which has been deleted, but just assigned in Operator,
    * so we need Operator value to determine next step.
    * */
-  synchronized void collectUnique(Map<WrappedByteArray, Operator> all) {
-    try {
-      resetDbLock.readLock().lock();
-      Snapshot next = getRoot().getNext();
-      while (next != null) {
-        Streams.stream(((SnapshotImpl) next).db)
-            .forEach(e -> all.put(WrappedByteArray.of(e.getKey().getBytes()),
-                e.getValue().getOperator()));
-        next = next.getNext();
-      }
-    } finally {
-      resetDbLock.readLock().unlock();
+  void collectUnique(Map<WrappedByteArray, Operator> all) {
+    Snapshot next = getRoot().getNext();
+    while (next != null) {
+      Streams.stream(((SnapshotImpl) next).db)
+          .forEach(e -> all.put(WrappedByteArray.of(e.getKey().getBytes()),
+              e.getValue().getOperator()));
+      next = next.getNext();
     }
   }
 
