@@ -5,7 +5,6 @@ import static org.tron.core.config.Parameter.ChainConstant.BLOCK_PRODUCED_INTERV
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.atomic.AtomicLong;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.BooleanUtils;
 import org.springframework.beans.factory.support.DefaultListableBeanFactory;
 import org.springframework.util.ObjectUtils;
 import org.tron.common.application.Application;
@@ -61,14 +60,13 @@ public class SolidityNode {
    */
   public static void main(String[] args) {
     ExitManager.initExceptionHandler();
-    logger.info("Solidity node is running.");
     Args.setParam(args, Constant.TESTNET_CONF);
+    run();
+  }
+
+  public static void run() {
+    logger.info("Solidity node is running.");
     CommonParameter parameter = CommonParameter.getInstance();
-
-    logger.info("index switch is {}",
-        BooleanUtils.toStringOnOff(BooleanUtils
-            .toBoolean(parameter.getStorage().getIndexSwitch())));
-
     if (ObjectUtils.isEmpty(parameter.getTrustNodeAddr())) {
       logger.error("Trust node is not set.");
       return;
