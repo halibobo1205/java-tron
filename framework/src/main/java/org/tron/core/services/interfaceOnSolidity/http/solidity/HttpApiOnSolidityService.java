@@ -3,8 +3,6 @@ package org.tron.core.services.interfaceOnSolidity.http.solidity;
 import java.util.EnumSet;
 import javax.servlet.DispatcherType;
 import lombok.extern.slf4j.Slf4j;
-import org.eclipse.jetty.server.ConnectionLimit;
-import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.servlet.FilterHolder;
 import org.eclipse.jetty.servlet.ServletContextHandler;
 import org.eclipse.jetty.servlet.ServletHolder;
@@ -14,6 +12,7 @@ import org.tron.core.config.args.Args;
 import org.tron.core.services.filter.HttpApiAccessFilter;
 import org.tron.core.services.filter.LiteFnQueryHttpFilter;
 import org.tron.core.services.interfaceOnSolidity.http.EstimateEnergyOnSolidityServlet;
+import org.tron.core.services.interfaceOnSolidity.http.GetAccountBalanceOnSolidityServlet;
 import org.tron.core.services.interfaceOnSolidity.http.GetAccountByIdOnSolidityServlet;
 import org.tron.core.services.interfaceOnSolidity.http.GetAccountOnSolidityServlet;
 import org.tron.core.services.interfaceOnSolidity.http.GetAssetIssueByIdOnSolidityServlet;
@@ -169,6 +168,9 @@ public class HttpApiOnSolidityService extends HttpService {
   private GetEnergyPricesOnSolidityServlet getEnergyPricesOnSolidityServlet;
 
   @Autowired
+  private GetAccountBalanceOnSolidityServlet getAccountBalanceOnSolidityServlet;
+
+  @Autowired
   private LiteFnQueryHttpFilter liteFnQueryHttpFilter;
 
   @Autowired
@@ -285,6 +287,9 @@ public class HttpApiOnSolidityService extends HttpService {
 
     context.addServlet(new ServletHolder(getBlockOnSolidityServlet),
         "/walletsolidity/getblock");
+
+    context.addServlet(new ServletHolder(getAccountBalanceOnSolidityServlet),
+        "/walletsolidity/getaccountbalance");
 
   }
 
