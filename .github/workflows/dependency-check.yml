@@ -42,7 +42,7 @@ jobs:
         with:
           project: 'java-tron'
           path: '.'
-          format: 'JSON'
+          format: 'CSV'
           out: 'reports'
       - name: Generate timestamp
         run: echo "BUILD_TIMESTAMP=$(date -u +"%Y%m%d-%H%M%S")" >> $GITHUB_ENV
