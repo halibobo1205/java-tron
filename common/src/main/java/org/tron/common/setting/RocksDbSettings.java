@@ -1,5 +1,6 @@
 package org.tron.common.setting;
 
+import java.util.Arrays;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.rocksdb.BlockBasedTableConfig;
@@ -43,6 +44,15 @@ public class RocksDbSettings {
   }
 
   private static final LRUCache cache = new LRUCache(1 * 1024 * 1024 * 1024L);
+
+  private static final String[] CI_ENVIRONMENT_VARIABLES = {
+      "CI",
+      "JENKINS_URL",
+      "TRAVIS",
+      "CIRCLECI",
+      "GITHUB_ACTIONS",
+      "GITLAB_CI"
+  };
 
   private RocksDbSettings() {
 
@@ -185,6 +195,18 @@ public class RocksDbSettings {
       options.setComparator(new MarketOrderPriceComparatorForRocksDB(comparatorOptions));
     }
 
+    if (isRunningInCI()) {
+      options.setAllowFAllocate(false);
+      options.setMaxTotalWalSize(2 * 1024 * 1024);
+      options.setRecycleLogFileNum(1);
+      options.setCreateMissingColumnFamilies(true);
+      options.setMaxBackgroundFlushes(1);
+    }
+
     return options;
+  }
+
+  private static boolean isRunningInCI() {
+    return Arrays.stream(CI_ENVIRONMENT_VARIABLES).anyMatch(System.getenv()::containsKey);
   }
 }
