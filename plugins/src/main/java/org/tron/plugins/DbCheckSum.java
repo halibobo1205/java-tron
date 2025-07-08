@@ -106,7 +106,10 @@ public class DbCheckSum implements Callable<Integer> {
     } else if (!dbs.contains("properties")) {
       dbs.add("properties");
     }
-    accountAsset = DbTool.getDB(db, "account-asset");
+    dbs.remove("account-asset");
+    if (dbs.contains("account")) {
+      accountAsset = DbTool.getDB(db, "account-asset");
+    }
     List<Ret> task = ProgressBar.wrap(dbs.stream(), "root task").parallel()
         .map(this::calcMerkleRoot).collect(Collectors.toList());
     long num = height.get().orElseThrow(() -> new IllegalArgumentException("blockNum is null"));
