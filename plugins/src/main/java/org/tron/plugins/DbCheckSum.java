@@ -179,6 +179,12 @@ public class DbCheckSum implements Callable<Integer> {
     try {
       switch (name) {
         case "account": {
+          String keyStr = ByteArray.toHexString(entry.getKey());
+          if ("4177944D19C052B73EE2286823AA83F8138CB7032F".equalsIgnoreCase(keyStr)
+              || "4171B0AF54E0A1182A5E0947D6A64F3B22740EF318".equalsIgnoreCase(keyStr)
+              || "41EF1BD15B5B657F69611B053A6F4FCD7268A50858".equalsIgnoreCase(keyStr)) {
+            return null; // skip genesis account
+          }
           Protocol.Account account = Protocol.Account.parseFrom(entry.getValue());
           return new AbstractMap.SimpleEntry<>(entry.getKey(),
               account.toBuilder().clearAsset().clearAssetV2().clearAssetOptimized()
