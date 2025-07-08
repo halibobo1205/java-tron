@@ -189,7 +189,8 @@ public class DbCheckSum implements Callable<Integer> {
                   .build().toByteArray());
         }
         case "delegation": {
-          if (new String(entry.getValue()).endsWith(ACCOUNT_VOTE_SUFFIX)) {
+          String keyStr = new String(entry.getKey());
+          if (keyStr.endsWith(ACCOUNT_VOTE_SUFFIX)) {
             return new AbstractMap.SimpleEntry<>(entry.getKey(),
                 Protocol.Account.newBuilder().addAllVotes(
                     Protocol.Account.parseFrom(
