@@ -14,6 +14,7 @@ import picocli.CommandLine;
         DbCopy.class,
         DbRoot.class,
         DbCheckSum.class,
+        DbQueryProperties.class,
     },
     commandListHeading = "%nCommands:%n%nThe most commonly used db commands are:%n"
 )
