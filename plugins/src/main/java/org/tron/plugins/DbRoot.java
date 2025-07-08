@@ -5,10 +5,10 @@ import com.google.common.primitives.Bytes;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import me.tongfei.progressbar.ProgressBar;
@@ -22,7 +22,7 @@ import picocli.CommandLine;
 
 @Slf4j(topic = "db-root")
 @CommandLine.Command(name = "root",
-    description = "compute merkle root for tiny db. NOTE: large db may GC overhead limit exceeded.",
+    description = "compute merkle root  db.",
     exitCodeListHeading = "Exit Codes:%n",
     exitCodeList = {
         "0:Successful",
@@ -84,13 +84,12 @@ public class DbRoot implements Callable<Integer> {
     try (DBInterface database = DbTool.getDB(this.db, name)) {
       DBIterator iterator = database.iterator();
       iterator.seekToFirst();
-      ArrayList<Sha256Hash> ids = Streams.stream(iterator)
-          .map(this::getHash)
-          .collect(Collectors.toCollection(ArrayList::new));
-      Sha256Hash root = MerkleRoot.root(ids);
-      logger.info("db: {},root: {}", database.getName(), root);
+      final AtomicReference<Sha256Hash> root = new AtomicReference<>(Sha256Hash.ZERO_HASH);
+      Streams.stream(iterator).map(this::getHash)
+          .forEach(hash -> root.getAndUpdate(v -> MerkleRoot.computeHash(v, hash)));
+      logger.info("db: {},root: {}", database.getName(), root.get());
       info.code = 0;
-      info.msg = String.format("db: %s,root: %s", database.getName(), root);
+      info.msg = String.format("db: %s,root: %s", database.getName(), root.get());
     } catch (RocksDBException | IOException e) {
       logger.error("calc db {} fail", name, e);
       info.code = 1;
