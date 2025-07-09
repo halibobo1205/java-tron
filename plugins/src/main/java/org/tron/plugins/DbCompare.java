@@ -4,10 +4,7 @@ import com.google.common.primitives.Bytes;
 import com.google.common.primitives.Longs;
 import java.io.IOException;
 import java.nio.file.Path;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.TreeMap;
+import java.util.*;
 import java.util.concurrent.Callable;
 import lombok.extern.slf4j.Slf4j;
 import org.tron.plugins.utils.ByteArray;
@@ -34,6 +31,10 @@ public class DbCompare implements Callable<Integer> {
   @CommandLine.Parameters(index = "1",
       description = "input path for compare")
   private Path compare;
+
+  @CommandLine.Option(names = { "-s", "--start"},
+      description = "start key")
+  private String key;
   @CommandLine.Option(names = {"-h", "--help"}, help = true, description = "display a help message")
   private boolean help;
 
@@ -69,6 +70,18 @@ public class DbCompare implements Callable<Integer> {
       spec.commandLine().getOut().println("compare account start");
       baseIterator.seekToFirst();
       dstIterator.seekToFirst();
+      if (key != null && !key.isEmpty()) {
+        byte[] startKey = ByteArray.fromHexString(key);
+        baseIterator.seek(startKey);
+        dstIterator.seek(startKey);
+        // skip start key
+        if (Arrays.equals(baseIterator.getKey(), startKey)) {
+          baseIterator.next();
+        }
+        if (Arrays.equals(dstIterator.getKey(), startKey)) {
+          dstIterator.next();
+        }
+      }
       for (; baseIterator.hasNext() && dstIterator.hasNext();
            baseIterator.next(), dstIterator.next()) {
         byte[] baseValue = baseIterator.getValue();
