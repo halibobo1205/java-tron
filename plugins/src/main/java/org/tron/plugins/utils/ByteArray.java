@@ -2,10 +2,14 @@ package org.tron.plugins.utils;
 
 import com.google.common.primitives.Ints;
 import com.google.common.primitives.Longs;
+import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.Message;
+import com.google.protobuf.util.JsonFormat;
 import java.math.BigInteger;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.bouncycastle.util.encoders.Hex;
+import org.tron.protos.Protocol;
 
 public class ByteArray {
 
@@ -112,5 +116,26 @@ public class ByteArray {
     byte[] result = new byte[end - start];
     System.arraycopy(input, start, result, 0, end - start);
     return result;
+  }
+
+  public static Protocol.Account toAccount(byte[] base) {
+    if (base == null || base.length == 0) {
+      return Protocol.Account.getDefaultInstance();
+    }
+    try {
+      return Protocol.Account.parseFrom(base);
+    } catch (Exception e) {
+      throw new RuntimeException("Failed to parse account from byte array", e);
+    }
+  }
+
+  public static String prettyPrint(Message message) {
+    try {
+      return JsonFormat.printer()
+         .omittingInsignificantWhitespace()
+         .print(message);
+    } catch (InvalidProtocolBufferException e) {
+      throw new RuntimeException(e);
+    }
   }
 }
