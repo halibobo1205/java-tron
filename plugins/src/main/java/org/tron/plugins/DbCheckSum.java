@@ -61,7 +61,7 @@ public class DbCheckSum implements Callable<Integer> {
   private static final List<String> stateDbs = Arrays.asList(
       "account", "asset-issue-v2",
       "code", "contract", "contract-state", "storage-row",
-      "delegation", "DelegatedResource",
+      "delegation", "DelegatedResource", "DelegatedResourceAccountIndex",
       "exchange-v2",
       "market_account", "market_order", "market_pair_price_to_order", "market_pair_to_price",
       "properties", "proposal",
