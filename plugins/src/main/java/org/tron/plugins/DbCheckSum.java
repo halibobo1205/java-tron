@@ -31,6 +31,7 @@ import org.tron.plugins.utils.db.DBInterface;
 import org.tron.plugins.utils.db.DBIterator;
 import org.tron.plugins.utils.db.DbTool;
 import org.tron.protos.Protocol;
+import org.tron.protos.contract.SmartContractOuterClass;
 import picocli.CommandLine;
 
 @Slf4j(topic = "db-root")
@@ -79,6 +80,7 @@ public class DbCheckSum implements Callable<Integer> {
       "MAX_VOTE_NUMBER", "MAX_FROZEN_NUMBER", "MAINTENANCE_TIME_INTERVAL",
       "LATEST_SOLIDIFIED_BLOCK_NUM", "BLOCK_NET_USAGE",
       "VERSION_NUMBER",
+      "SHIELDED_TRANSACTION_FEE",
       "BLOCK_FILLED_SLOTS_INDEX", "BLOCK_FILLED_SLOTS_NUMBER", "BLOCK_FILLED_SLOTS");
 
   @Override
@@ -184,6 +186,12 @@ public class DbCheckSum implements Callable<Integer> {
               account.toBuilder().clearAsset().clearAssetV2().clearAssetOptimized()
                   .putAllAssetV2(getAllAssets(account))
                   .build().toByteArray());
+        }
+        case "contract": {
+          SmartContractOuterClass.SmartContract contract =
+              SmartContractOuterClass.SmartContract.parseFrom(entry.getValue());
+          return new AbstractMap.SimpleEntry<>(entry.getKey(),
+              contract.toBuilder().clearAbi().build().toByteArray());
         }
         case "witness": {
           return new AbstractMap.SimpleEntry<>(entry.getKey(),
