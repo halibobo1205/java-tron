@@ -108,7 +108,7 @@ public class DbStat implements Callable<Integer> {
       try (
           DBInterface db = DbTool.getDB(srcDir, dbName);
           DBIterator iterator = db.iterator()) {
-
+        iterator.seekToFirst();
         Streams.stream(iterator).forEach(e -> {
           byte[] key = e.getKey();
           byte[] value = e.getValue();
