@@ -49,7 +49,7 @@ public class DbCheckSum implements Callable<Integer> {
       description = "Input path. Default: ${DEFAULT-VALUE}")
   private Path db;
 
-  @CommandLine.Option(names = { "--db"},
+  @CommandLine.Option(names = { "--db"}, split = ",",
       description = "db name for show root")
   private List<String> dbs;
 
