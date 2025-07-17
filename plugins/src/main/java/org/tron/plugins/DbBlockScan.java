@@ -1,7 +1,6 @@
 package org.tron.plugins;
 
 import com.google.common.primitives.Bytes;
-import com.google.protobuf.InvalidProtocolBufferException;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
@@ -13,7 +12,6 @@ import org.tron.plugins.utils.db.DBInterface;
 import org.tron.plugins.utils.db.DBIterator;
 import org.tron.plugins.utils.db.DbTool;
 import org.tron.protos.Protocol;
-import org.tron.protos.contract.AssetIssueContractOuterClass;
 import picocli.CommandLine;
 
 
@@ -68,16 +66,8 @@ public class DbBlockScan implements Callable<Integer> {
                 byte[] key = iterator.getKey();
                 if (Bytes.indexOf(key, number) == 0) {
                   Protocol.Block block = Protocol.Block.parseFrom(iterator.getValue());
-                  block.getTransactionsList().stream().filter(this::filter)
-                      .findFirst().map(t -> {
-                        try {
-                          return t.getRawData().getContract(0).getParameter()
-                              .unpack(AssetIssueContractOuterClass.TransferAssetContract.class);
-                        } catch (InvalidProtocolBufferException e) {
-                          throw new RuntimeException(e);
-                        }
-                      }).ifPresent(transferAssetContract ->
-                          print(ByteArray.toLong(number), transferAssetContract));
+                  long size = block.getTransactionsList().stream().filter(this::filter).count();
+                  print(ByteArray.toLong(number), size);
                 }
               }
             } catch (IOException e) {
@@ -88,16 +78,11 @@ public class DbBlockScan implements Callable<Integer> {
     return 0;
   }
 
-  private  void print(long number, AssetIssueContractOuterClass.TransferAssetContract
-      transferAssetContract) {
-    long amount = transferAssetContract.getAmount();
-    String token = ByteArray.toStr(transferAssetContract.getAssetName().toByteArray());
-    String owner = ByteArray.toHexString(transferAssetContract.getOwnerAddress().toByteArray());
-    String to = ByteArray.toHexString(transferAssetContract.getToAddress().toByteArray());
-    spec.commandLine().getOut().format("%d,%d,%s,%s,%s ", number, amount, token, owner, to)
-        .println();
-    logger.info("block number: {}, amount: {}, token, {}, owner: {}, to: {}",
-        number, amount, token, owner, to);
+  private  void print(long number, long size) {
+    if (size == 1) {
+      spec.commandLine().getOut().format("%d,%d", number, size).println();
+      logger.info("block number: {}, size: {}", number, size);
+    }
   }
 
   private boolean filter(Protocol.Transaction transaction) {
