@@ -13,7 +13,7 @@ import org.tron.plugins.utils.db.DBInterface;
 import org.tron.plugins.utils.db.DBIterator;
 import org.tron.plugins.utils.db.DbTool;
 import org.tron.protos.Protocol;
-import org.tron.protos.contract.BalanceContract;
+import org.tron.protos.contract.AssetIssueContractOuterClass;
 import picocli.CommandLine;
 
 
@@ -72,12 +72,12 @@ public class DbBlockScan implements Callable<Integer> {
                       .findFirst().map(t -> {
                         try {
                           return t.getRawData().getContract(0).getParameter()
-                              .unpack(BalanceContract.TransferContract.class);
+                              .unpack(AssetIssueContractOuterClass.TransferAssetContract.class);
                         } catch (InvalidProtocolBufferException e) {
                           throw new RuntimeException(e);
                         }
-                      }).ifPresent(transferContract ->
-                          print(ByteArray.toLong(number), transferContract));
+                      }).ifPresent(transferAssetContract ->
+                          print(ByteArray.toLong(number), transferAssetContract));
                 }
               }
             } catch (IOException e) {
@@ -88,18 +88,20 @@ public class DbBlockScan implements Callable<Integer> {
     return 0;
   }
 
-  private  void print(long number, BalanceContract.TransferContract transferContract) {
-    long amount = transferContract.getAmount();
-    String owner = ByteArray.toHexString(transferContract.getOwnerAddress().toByteArray());
-    String to = ByteArray.toHexString(transferContract.getToAddress().toByteArray());
-    spec.commandLine().getOut().format("%d, %d, %s, %s ", number, amount, owner, to).println();
-    logger.info("block number: {}, amount: {}, owner: {}, to: {}",
-        number, amount, owner, to);
+  private  void print(long number, AssetIssueContractOuterClass.TransferAssetContract
+      transferAssetContract) {
+    long amount = transferAssetContract.getAmount();
+    String token = ByteArray.toStr(transferAssetContract.getAssetName().toByteArray());
+    String owner = ByteArray.toHexString(transferAssetContract.getOwnerAddress().toByteArray());
+    String to = ByteArray.toHexString(transferAssetContract.getToAddress().toByteArray());
+    spec.commandLine().getOut().format("%d,%d,%s,%s,%s ", number, amount, token, owner, to)
+        .println();
+    logger.info("block number: {}, amount: {}, token, {}, owner: {}, to: {}",
+        number, amount, token, owner, to);
   }
 
   private boolean filter(Protocol.Transaction transaction) {
     return transaction.getRawData().getContract(0).getType().equals(
-        Protocol.Transaction.Contract.ContractType.TransferContract);
-
+        Protocol.Transaction.Contract.ContractType.TransferAssetContract);
   }
 }
