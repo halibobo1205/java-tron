@@ -53,6 +53,10 @@ public class DbCheckSum implements Callable<Integer> {
       description = "db name for show root")
   private List<String> dbs;
 
+  @CommandLine.Option(names = {"--ignore-asset"},
+      description = "ignore asset in account, default: ${DEFAULT-VALUE}")
+  private boolean ignoreAsset;
+
   @CommandLine.Option(names = {"-h", "--help"}, help = true, description = "display a help message")
   private boolean help;
 
@@ -150,6 +154,9 @@ public class DbCheckSum implements Callable<Integer> {
 
   private Map<String, Long> getAllAssets(Protocol.Account account) {
     Map<String, Long> assets = new TreeMap<>();
+    if (ignoreAsset) {
+      return assets;
+    }
     int addressSize = account.getAddress().toByteArray().length;
     if (account.getAssetOptimized()) {
       Map<byte[], byte[]> map = prefixQuery(account.getAddress().toByteArray());
