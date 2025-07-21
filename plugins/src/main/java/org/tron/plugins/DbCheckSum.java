@@ -112,8 +112,9 @@ public class DbCheckSum implements Callable<Integer> {
     } else if (!dbs.contains("properties")) {
       dbs.add("properties");
     }
-    dbs.remove("account-asset");
+
     if (dbs.contains("account")) {
+      dbs.remove("account-asset");
       accountAsset = DbTool.getDB(db, "account-asset");
     }
     List<Ret> task = ProgressBar.wrap(dbs.stream(), "root task").parallel()
