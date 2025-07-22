@@ -38,10 +38,8 @@ public class DbCompare implements Callable<Integer> {
   @CommandLine.Option(names = {"-h", "--help"}, help = true, description = "display a help message")
   private boolean help;
 
-  DBIterator accountAssetBase;
-  DBIterator accountAssetCompare;
-  DBInterface accountBase;
-  DBInterface accountCompare;
+  DBInterface assetBase;
+  DBInterface assetCompare;
 
   private long count = 0;
 
@@ -52,20 +50,18 @@ public class DbCompare implements Callable<Integer> {
       return 0;
     }
 
-    accountAssetBase = DbTool.getDB(base, "account-asset").iterator();
-    accountAssetCompare = DbTool.getDB(compare, "account-asset").iterator();
-    accountBase = DbTool.getDB(base, "account");
-    accountCompare = DbTool.getDB(compare, "account");
+    assetBase = DbTool.getDB(base, "account-asset");
+    assetCompare = DbTool.getDB(compare, "account-asset");
     boolean result = compare();
-    spec.commandLine().getOut().format("compare account cnt %d", count).println();
-    logger.info("compare account cnt {}", count);
+    spec.commandLine().getOut().format("compare asset diff cnt %d", count).println();
+    logger.info("compare asset diff cnt {}", count);
     return result ? 0 : 1;
   }
 
 
   private boolean compare() throws IOException {
-    try (DBIterator baseIterator = accountBase.iterator();
-         DBIterator dstIterator = accountCompare.iterator()) {
+    try (DBIterator baseIterator = assetBase.iterator();
+         DBIterator dstIterator = assetCompare.iterator()) {
       logger.info("compare account start");
       spec.commandLine().getOut().println("compare account start");
       baseIterator.seekToFirst();
@@ -89,33 +85,33 @@ public class DbCompare implements Callable<Integer> {
         byte[] dstKey = dstIterator.getKey();
         byte[] dstValue = dstIterator.getValue();
         if (Arrays.equals(baseKey, dstKey) && notEqual(baseKey, baseValue, dstValue)) {
-          return false;
+          //return false;
         }
         if (!Arrays.equals(baseKey, dstKey)) {
-          byte[] dstValueTmp = accountBase.get(dstKey);
-          byte[] baseValueTmp = accountCompare.get(baseKey);
+          byte[] dstValueTmp = assetBase.get(dstKey);
+          byte[] baseValueTmp = assetCompare.get(baseKey);
           if (notEqual(baseKey, baseValue, baseValueTmp)) {
-            return false;
+            //return false;
           }
           if (notEqual(dstKey, dstValueTmp, dstValue)) {
-            return false;
+           // return false;
           }
         }
       }
       for (; baseIterator.hasNext(); baseIterator.next()) {
         byte[] key = baseIterator.getKey();
         byte[] baseValue = baseIterator.getValue();
-        byte[] destValue = accountCompare.get(key);
+        byte[] destValue = assetCompare.get(key);
         if (notEqual(key, baseValue, destValue)) {
-          return false;
+          //return false;
         }
       }
       for (; dstIterator.hasNext(); dstIterator.next()) {
         byte[] key = dstIterator.getKey();
         byte[] destValue = dstIterator.getValue();
-        byte[] baseValue = accountBase.get(key);
+        byte[] baseValue = assetBase.get(key);
         if (notEqual(key, baseValue, destValue)) {
-          return false;
+         // return false;
         }
       }
     }
@@ -125,17 +121,17 @@ public class DbCompare implements Callable<Integer> {
   }
 
   private boolean notEqual(byte[] key, byte[] base, byte[] exp) {
-    Protocol.Account baseAccount = fillAllAssets(accountAssetBase, ByteArray.toAccount(base));
-    Protocol.Account expAccount = fillAllAssets(accountAssetCompare, ByteArray.toAccount(exp));
-    boolean ret = !baseAccount.equals(expAccount);
-    count++;
+    long baseAmount = base == null ? 0 : Longs.fromByteArray(base);
+    long expAmount = exp == null ? 0 : Longs.fromByteArray(exp);
+    boolean ret = !(baseAmount == expAmount);
     if (ret) {
-      spec.commandLine().getOut().format("%s\t%s\t%s.",
-          ByteArray.toHexString(key),
-          ByteArray.prettyPrint(baseAccount), ByteArray.prettyPrint(expAccount)).println();
-      logger.info("{}\t{}\t{}",
-          ByteArray.toHexString(key),
-          ByteArray.prettyPrint(baseAccount), ByteArray.prettyPrint(expAccount));
+      count++;
+      String address = ByteArray.toHexString(ByteArray.subArray(key, 0, 21));
+      String assetId = ByteArray.toStr(ByteArray.subArray(key, 21, key.length));
+      spec.commandLine().getOut()
+          .format("%s,%s,%d,%d", address, assetId, baseAmount, expAmount).println();
+      logger.info("address: {}, assetId: {}, base: {}, exp: {}",
+          address, assetId, baseAmount, expAmount);
     }
     return ret;
   }
