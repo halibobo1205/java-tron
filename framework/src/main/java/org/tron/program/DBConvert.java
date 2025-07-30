@@ -32,6 +32,7 @@ import org.rocksdb.RocksDB;
 import org.rocksdb.RocksDBException;
 import org.rocksdb.RocksIterator;
 import org.rocksdb.Status;
+import org.tron.common.arch.Arch;
 import org.tron.common.utils.FileUtil;
 import org.tron.common.utils.MarketOrderPriceComparatorForLevelDB;
 import org.tron.common.utils.MarketOrderPriceComparatorForRocksDB;
@@ -91,6 +92,7 @@ public class DBConvert implements Callable<Boolean> {
   }
 
   public static void main(String[] args) {
+    Arch.throwUnsupportedArm64Exception();
     int code = run(args);
     logger.info("exit code {}.", code);
     System.out.printf("exit code %d.\n", code);

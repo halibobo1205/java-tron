@@ -11,7 +11,7 @@ static def isX86() {
 
 static def isArm64() {
     def arch = System.getProperty("os.arch").toLowerCase()
-    return new Architectures.KnownArchitecture("arm64", "aarch64").isAlias(arch)
+    return Architectures.AARCH64.isAlias(arch)
 }
 
 if (isArm64() && !JavaVersion.current().is(JavaVersion.VERSION_17)) {

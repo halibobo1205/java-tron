@@ -1,3 +1,5 @@
+import org.gradle.nativeplatform.platform.internal.Architectures
+
 plugins {
     id "org.gradle.test-retry" version "1.5.9"
     id "org.sonarqube" version "2.6"
@@ -32,6 +34,11 @@ static def isWindows() {
 
 task version(type: Exec) {
     commandLine 'bash', '-c', '../ver.sh'
+}
+
+static def isArm64() {
+    def arch = System.getProperty("os.arch").toLowerCase()
+    return Architectures.AARCH64.isAlias(arch)
 }
 
 dependencies {
@@ -121,6 +128,18 @@ test {
     jacoco {
         destinationFile = file("$buildDir/jacoco/jacocoTest.exec")
         classDumpDir = file("$buildDir/jacoco/classpathdumps")
+    }
+    if (isArm64()) {
+        exclude { element ->
+            element.file.name.toLowerCase().contains('leveldb')
+        }
+        exclude('org/tron/program/DBConvertTest.class')
+        filter {
+            excludeTestsMatching '*.*leveldb*'
+            excludeTestsMatching '*.*Leveldb*'
+            excludeTestsMatching '*.*LevelDB*'
+            excludeTestsMatching '*.*LevelDb*'
+        }
     }
     if (isWindows()) {
         exclude '**/ShieldedTransferActuatorTest.class'

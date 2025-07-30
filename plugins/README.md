@@ -6,6 +6,9 @@ This package contains a set of tools for TRON, the followings are the documentat
 
 DB archive provides the ability to reformat the manifest according to the current `database`, parameters are compatible with the previous `ArchiveManifest`.
 
+### Note
+**Doesn't work for arm architecture.**
+
 ### Available parameters:
 
 - `-b | --batch-size`: Specify the batch manifest size, default: 80000.
@@ -29,6 +32,9 @@ DB archive provides the ability to reformat the manifest according to the curren
 ## DB Convert
 
 DB convert provides a helper which can convert LevelDB data to RocksDB data, parameters are compatible with previous `DBConvert`.
+
+### Note
+**Not available for arm architecture.**
 
 ### Available parameters:
 
@@ -67,6 +73,9 @@ DB copy provides a helper which can copy LevelDB or RocksDB data quickly on the 
 ## DB Lite
 
 DB lite provides lite database, parameters are compatible with previous `LiteFullNodeTool`.
+
+### Note
+**Not available for arm architecture if database is LevelDB.**
 
 ### Available parameters:
 
@@ -137,6 +146,9 @@ Execute move command.
 DB root provides a helper which can compute merkle root for tiny db.
 
 NOTE: large db may GC overhead limit exceeded.
+
+### Note
+**Not available for arm architecture if database is LevelDB.**
 
 ### Available parameters:
 

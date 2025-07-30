@@ -10,21 +10,15 @@ static def isX86() {
 
 static def isArm64() {
     def arch = System.getProperty("os.arch").toLowerCase()
-    return new Architectures.KnownArchitecture("arm64", "aarch64").isAlias(arch)
+    return Architectures.AARCH64.isAlias(arch)
 }
 
 if (isX86()) {
     ext {
-        leveldbGroup = "org.fusesource.leveldbjni"
-        leveldbName = "leveldbjni-all"
-        leveldbVersion = "1.8"
         rocksDBVersion = "5.15.10"
     }
 } else if (isArm64()) {
     ext {
-        leveldbGroup = "com.halibobor"
-        leveldbName = "leveldbjni-all"
-        leveldbVersion = "1.18.3"
         rocksDBVersion = "7.7.3"
     }
 } else {
@@ -45,8 +39,9 @@ sourceSets {
 }
 
 dependencies {
-    api group: leveldbGroup, name: leveldbName, version: leveldbVersion
+    api group: 'org.fusesource.leveldbjni', name: 'leveldbjni-all', version: '1.8'
     api group: 'org.rocksdb', name: 'rocksdbjni', version: rocksDBVersion
+    api 'io.github.tronprotocol:zksnark-java-sdk:1.0.0'
 }
 
 tasks.withType(JavaCompile).configureEach {
