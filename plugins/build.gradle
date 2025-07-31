@@ -156,7 +156,7 @@ if (JavaVersion.current().is(JavaVersion.VERSION_17)) {
         into "bin"
     }
 } else {
-    throw new GradleException("Java 8 or Java17 is supported to build Java-Tron.\n" +
+    throw new GradleException("Java 8 or Java 17 is supported to build Java-Tron.\n" +
             "  Detected version ${JavaVersion.current()}")
 }
 createScript(project, 'org.tron.plugins.ArchiveManifest', 'ArchiveManifest')
