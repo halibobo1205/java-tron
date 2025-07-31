@@ -49,7 +49,7 @@ public final class StoreIterator implements org.tron.core.db.common.iterator.DBI
       try {
         close();
       } catch (Exception e1) {
-        logger.error(e.getMessage(), e1);
+        logger.error(e1.getMessage(), e1);
       }
     }
 

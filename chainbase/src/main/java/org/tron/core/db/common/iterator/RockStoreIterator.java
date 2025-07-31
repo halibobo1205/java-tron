@@ -47,7 +47,7 @@ public final class RockStoreIterator implements DBIterator {
       try {
         close();
       } catch (Exception e1) {
-        logger.error(e.getMessage(), e1);
+        logger.error(e1.getMessage(), e1);
       }
     }
     return hasNext;
