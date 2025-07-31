@@ -22,7 +22,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
-import org.iq80.leveldb.DBException;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -32,8 +31,8 @@ import org.junit.Test;
 import org.junit.rules.ExpectedException;
 import org.junit.rules.TemporaryFolder;
 import org.rocksdb.RocksDBException;
+import org.tron.common.error.TronDBException;
 import org.tron.common.parameter.CommonParameter;
-import org.tron.common.setting.RocksDbSettings;
 import org.tron.common.storage.WriteOptionsWrapper;
 import org.tron.common.storage.rocksdb.RocksDbDataSourceImpl;
 import org.tron.common.utils.ByteArray;
@@ -107,7 +106,7 @@ public class RocksDbDataSourceImplTest {
     dataSourceTest.stat();
     dataSourceTest.closeDB();
     dataSourceTest.stat(); // stat again
-    expectedException.expect(DBException.class);
+    expectedException.expect(TronDBException.class);
     dataSourceTest.deleteData(key);
   }
 

@@ -33,6 +33,7 @@ import org.rocksdb.Status;
 import org.rocksdb.WriteBatch;
 import org.rocksdb.WriteOptions;
 import org.slf4j.LoggerFactory;
+import org.tron.common.error.TronDBException;
 import org.tron.common.setting.RocksDbSettings;
 import org.tron.common.storage.WriteOptionsWrapper;
 import org.tron.common.storage.metric.DbStat;
@@ -116,7 +117,7 @@ public class RocksDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
 
   private void throwIfNotAlive() {
     if (!isAlive()) {
-      throw new org.iq80.leveldb.DBException("DB " + this.getDBName() + " is closed.");
+      throw new TronDBException("DB " + this.getDBName() + " is closed.");
     }
   }
 
