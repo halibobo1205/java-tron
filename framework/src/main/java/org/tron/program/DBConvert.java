@@ -92,7 +92,12 @@ public class DBConvert implements Callable<Boolean> {
   }
 
   public static void main(String[] args) {
-    Arch.throwUnsupportedArm64Exception();
+    if (Arch.isArm64()) {
+      String tips = String.format("This tool is not supported on %s platform.", Arch.getOsArch());
+      System.err.println(tips);
+      logger.error(tips);
+      return;
+    }
     int code = run(args);
     logger.info("exit code {}.", code);
     System.out.printf("exit code %d.\n", code);
