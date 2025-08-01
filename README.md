@@ -61,7 +61,7 @@ TRON enables large-scale development and engagement. With over 2000 transactions
 
 Building java-tron requires `git` package
 
-## operating systems
+## Operating systems
 Make sure you operate on `Linux` or `MacOS` operating systems, other operating systems are not supported yet.
 
 ## Architecture
@@ -89,7 +89,7 @@ $ ./gradlew clean build -x test
 
 # Running java-tron
 
-## operating systems
+## Operating systems
 Make sure you operate on `Linux` or `MacOS` operating systems, other operating systems are not supported yet.
 
 ## Architecture
@@ -123,7 +123,7 @@ Recommended:
 
 Full node has full historical data, it is the entry point into the TRON network, it can be used by other processes as a gateway into the TRON network via HTTP and GRPC endpoints. You can interact with the TRON network through full node：transfer assets, deploy contracts, interact with contracts and so on. `-c` parameter specifies a configuration file to run a full node:
 
-### x86_64 JDK8
+### x86_64 JDK 1.8
 ```bash
 $ nohup java -Xms9G -Xmx9G -XX:ReservedCodeCacheSize=256m \
              -XX:MetaspaceSize=256m -XX:MaxMetaspaceSize=512m \
@@ -135,7 +135,7 @@ $ nohup java -Xms9G -Xmx9G -XX:ReservedCodeCacheSize=256m \
              -XX:+UseCMSInitiatingOccupancyOnly  -XX:CMSInitiatingOccupancyFraction=70 \
              -jar FullNode.jar -c main_net_config.conf >> start.log 2>&1 &
 ```
-### ARM64 JDK17
+### ARM64 JDK 17
 ```bash
 $ nohup java -Xms9G -Xmx9G -XX:+UseZGC \
              -Xlog:gc*:file=gc.log:time,uptime,level,tags:filecount=50,filesize=100M \
@@ -163,7 +163,7 @@ Fill in the private key of a super representative address into the `localwitness
 
 then run the following command to start the node:
 
-### x86_64 JDK8
+### x86_64 JDK 1.8
 ```bash
 $ nohup java -Xms9G -Xmx9G -XX:ReservedCodeCacheSize=256m \
              -XX:MetaspaceSize=256m -XX:MaxMetaspaceSize=512m \
@@ -175,7 +175,7 @@ $ nohup java -Xms9G -Xmx9G -XX:ReservedCodeCacheSize=256m \
              -XX:+UseCMSInitiatingOccupancyOnly  -XX:CMSInitiatingOccupancyFraction=70 \
              -jar FullNode.jar --witness -c main_net_config.conf >> start.log 2>&1 &
 ```
-### ARM64 JDK17
+### ARM64 JDK 17
 ```bash
 $ nohup java -Xms9G -Xmx9G -XX:+UseZGC \
              -Xlog:gc*:file=gc.log:time,uptime,level,tags:filecount=50,filesize=100M \
