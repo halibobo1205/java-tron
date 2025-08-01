@@ -60,7 +60,7 @@ public final class Arch {
 
   public static void throwUnsupportedArm64Exception() {
     if (isArm64()) {
-      throw new UnsupportedOperationException("Unsupported OS: " + getOsArch());
+      throw new UnsupportedOperationException("unsupported on " + getOsArch() + " architecture");
     }
   }
 }

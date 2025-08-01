@@ -59,8 +59,8 @@ public class DbConvert implements Callable<Integer> {
   @Override
   public Integer call() throws Exception {
     if (Arch.isArm64()) {
-      String tips = String.format(
-          "This command is not supported on %s platform.", Arch.getOsArch());
+      String tips = String.format("This command is not supported on %s architecture.",
+          Arch.getOsArch());
       spec.commandLine().getErr().println(spec.commandLine().getColorScheme().errorText(tips));
       logger.error(tips);
       return 1;

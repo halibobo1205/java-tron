@@ -93,7 +93,8 @@ public class DBConvert implements Callable<Boolean> {
 
   public static void main(String[] args) {
     if (Arch.isArm64()) {
-      String tips = String.format("This tool is not supported on %s platform.", Arch.getOsArch());
+      String tips = String.format("This tool is not supported on %s architecture.",
+          Arch.getOsArch());
       System.err.println(tips);
       logger.error(tips);
       return;
