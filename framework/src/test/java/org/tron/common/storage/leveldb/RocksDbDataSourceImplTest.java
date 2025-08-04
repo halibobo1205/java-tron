@@ -315,8 +315,9 @@ public class RocksDbDataSourceImplTest {
     try {
       dataSource.initDB();
     } catch (Exception e) {
-      Assert.assertEquals(String.format("failed to check database: %s, engine do not match",
-              "test_engine"),
+      Assert.assertEquals(String.format(
+              "Cannot open LevelDB database '%s' with RocksDB engine."
+                  + " Set db.engine=LEVELDB or use RocksDB database. ", "test_engine"),
               e.getMessage());
     }
     Assert.assertNull(dataSource.getDatabase());
@@ -448,7 +449,9 @@ public class RocksDbDataSourceImplTest {
     levelDb.closeDB();
     RocksDbDataSourceImpl rocksDb = new RocksDbDataSourceImpl(output, name);
     expectedException.expectMessage(
-        String.format("failed to check database: %s, engine do not match", name));
+        String.format(
+            "Cannot open LevelDB database '%s' with RocksDB engine."
+                + " Set db.engine=LEVELDB or use RocksDB database. ", name));
     rocksDb.initDB();
   }
 

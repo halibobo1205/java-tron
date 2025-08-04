@@ -18,6 +18,7 @@ package org.tron.common.storage.leveldb;
 import static org.fusesource.leveldbjni.JniDBFactory.factory;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Strings;
 import com.google.common.collect.Sets;
 import com.google.common.primitives.Bytes;
 import java.io.File;
@@ -111,8 +112,9 @@ public class LevelDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
   @Override
   public void initDB() {
     if (!checkOrInitEngine()) {
-      throw new RuntimeException(
-          String.format("failed to check database: %s, engine do not match", dataBaseName));
+      throw new RuntimeException(String.format(
+          "Cannot open RocksDB database '%s' with LevelDB engine."
+              + " Set db.engine=ROCKSDB or use LevelDB database. ", dataBaseName));
     }
     resetDbLock.writeLock().lock();
     try {
@@ -153,7 +155,7 @@ public class LevelDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
 
     // for the first init engine
     String engine = PropUtil.readProperty(enginePath, KEY_ENGINE);
-    if (engine.isEmpty() && !PropUtil.writeProperty(enginePath, KEY_ENGINE, LEVELDB)) {
+    if (Strings.isNullOrEmpty(engine) && !PropUtil.writeProperty(enginePath, KEY_ENGINE, LEVELDB)) {
       return false;
     }
     engine = PropUtil.readProperty(enginePath, KEY_ENGINE);

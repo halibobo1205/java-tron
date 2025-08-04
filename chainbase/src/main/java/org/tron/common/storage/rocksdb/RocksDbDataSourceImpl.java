@@ -1,6 +1,7 @@
 package org.tron.common.storage.rocksdb;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Strings;
 import com.google.common.collect.Sets;
 import com.google.common.primitives.Bytes;
 import java.io.File;
@@ -205,7 +206,7 @@ public class RocksDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
 
     // for the first init engine
     String engine = PropUtil.readProperty(enginePath, KEY_ENGINE);
-    if (engine.isEmpty() && !PropUtil.writeProperty(enginePath, KEY_ENGINE, ROCKSDB)) {
+    if (Strings.isNullOrEmpty(engine) && !PropUtil.writeProperty(enginePath, KEY_ENGINE, ROCKSDB)) {
       return false;
     }
     engine = PropUtil.readProperty(enginePath, KEY_ENGINE);
@@ -215,8 +216,9 @@ public class RocksDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
 
   public void initDB() {
     if (!checkOrInitEngine()) {
-      throw new RuntimeException(
-          String.format("failed to check database: %s, engine do not match", dataBaseName));
+      throw new RuntimeException(String.format(
+          "Cannot open LevelDB database '%s' with RocksDB engine."
+              + " Set db.engine=LEVELDB or use RocksDB database. ", dataBaseName));
     }
     resetDbLock.writeLock().lock();
     try {
