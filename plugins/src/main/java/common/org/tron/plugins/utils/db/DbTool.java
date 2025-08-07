@@ -174,13 +174,13 @@ public class DbTool {
     }
   }
 
-  private static LevelDBImpl openLevelDb(Path db, String name) throws IOException {
+  public static LevelDBImpl openLevelDb(Path db, String name) throws IOException {
     LevelDBImpl leveldb = new LevelDBImpl(DBUtils.newLevelDb(db), name);
     tryInitEngineFile(db, LEVELDB);
     return leveldb;
   }
 
-  private static RocksDBImpl openRocksDb(Path db, String name) throws RocksDBException {
+  public static RocksDBImpl openRocksDb(Path db, String name) throws RocksDBException {
     RocksDBImpl rocksdb = new RocksDBImpl(DBUtils.newRocksDb(db), name);
     tryInitEngineFile(db, ROCKSDB);
     return rocksdb;
