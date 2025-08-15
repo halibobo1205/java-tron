@@ -421,11 +421,9 @@ public class LevelDbDataSourceImplTest {
     try {
       dataSource = new LevelDbDataSourceImpl(dir, "test_engine");
       dataSource.initDB();
-    } catch (Exception e) {
+    } catch (TronError e) {
       Assert.assertEquals(String.format(
-              "Cannot open RocksDB database '%s' with LevelDB engine."
-                  + " Set db.engine=ROCKSDB or use LevelDB database. ", "test_engine"),
-          e.getMessage());
+          "Cannot open ROCKSDB database '%s' with LEVELDB engine.", "test_engine"), e.getMessage());
     }
   }
 
@@ -442,8 +440,7 @@ public class LevelDbDataSourceImplTest {
     LevelDbDataSourceImpl levelDB =
         new LevelDbDataSourceImpl(StorageUtils.getOutputDirectoryByDbName(name), name);
     exception.expectMessage(String.format(
-        "Cannot open RocksDB database '%s' with LevelDB engine."
-            + " Set db.engine=ROCKSDB or use LevelDB database. ", name));
+        "Cannot open ROCKSDB database '%s' with LEVELDB engine.", name));
     levelDB.initDB();
   }
 
