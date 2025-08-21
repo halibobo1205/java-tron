@@ -18,10 +18,8 @@ package org.tron.common.storage.leveldb;
 import static org.fusesource.leveldbjni.JniDBFactory.factory;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Strings;
 import com.google.common.collect.Sets;
 import com.google.common.primitives.Bytes;
-import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -43,17 +41,14 @@ import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.iq80.leveldb.DB;
 import org.iq80.leveldb.DBIterator;
-import org.iq80.leveldb.Logger;
 import org.iq80.leveldb.Options;
 import org.iq80.leveldb.ReadOptions;
 import org.iq80.leveldb.WriteBatch;
 import org.iq80.leveldb.WriteOptions;
-import org.slf4j.LoggerFactory;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.storage.WriteOptionsWrapper;
 import org.tron.common.storage.metric.DbStat;
 import org.tron.common.utils.FileUtil;
-import org.tron.common.utils.PropUtil;
 import org.tron.common.utils.StorageUtils;
 import org.tron.core.db.common.DbSourceInter;
 import org.tron.core.db.common.iterator.StoreIterator;
@@ -73,30 +68,11 @@ public class LevelDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
   private Options options;
   private WriteOptions writeOptions;
   private ReadWriteLock resetDbLock = new ReentrantReadWriteLock();
-  private static final String LEVELDB = "LEVELDB";
-  private static final org.slf4j.Logger innerLogger = LoggerFactory.getLogger(LEVELDB);
-  private static final String KEY_ENGINE = "ENGINE";
-  private Logger leveldbLogger = new Logger() {
-    @Override
-    public void log(String message) {
-      innerLogger.info("{} {}", dataBaseName, message);
-    }
-  };
+
 
   /**
    * constructor.
    */
-  public LevelDbDataSourceImpl(String parentPath, String dataBaseName, Options options,
-      WriteOptions writeOptions) {
-    this.parentPath = Paths.get(
-        parentPath,
-        CommonParameter.getInstance().getStorage().getDbDirectory()
-    ).toString();
-    this.dataBaseName = dataBaseName;
-    this.options = options.logger(leveldbLogger);
-    this.writeOptions = writeOptions;
-    initDB();
-  }
 
   public LevelDbDataSourceImpl(String parentPath, String dataBaseName) {
     this.parentPath = Paths.get(
@@ -105,17 +81,13 @@ public class LevelDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
     ).toString();
 
     this.dataBaseName = dataBaseName;
-    options = new Options().logger(leveldbLogger);
-    writeOptions = new WriteOptions();
+    this.options = StorageUtils.getOptionsByDbName(dataBaseName);
+    this.writeOptions = new WriteOptions().sync(CommonParameter.getInstance()
+        .getStorage().isDbSync());
+    initDB();
   }
 
-  @Override
-  public void initDB() {
-    if (!checkOrInitEngine()) {
-      throw new RuntimeException(String.format(
-          "Cannot open RocksDB database '%s' with LevelDB engine."
-              + " Set db.engine=ROCKSDB or use LevelDB database. ", dataBaseName));
-    }
+  private void initDB() {
     resetDbLock.writeLock().lock();
     try {
       logger.debug("Init DB: {}.", dataBaseName);
@@ -141,28 +113,6 @@ public class LevelDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
     }
   }
 
-  private boolean checkOrInitEngine() {
-    String dir = getDbPath().toString();
-    String enginePath = dir + File.separator + "engine.properties";
-
-    if (FileUtil.createDirIfNotExists(dir)) {
-      if (!FileUtil.createFileIfNotExists(enginePath)) {
-        return false;
-      }
-    } else {
-      return false;
-    }
-
-    // for the first init engine
-    String engine = PropUtil.readProperty(enginePath, KEY_ENGINE);
-    if (Strings.isNullOrEmpty(engine) && !PropUtil.writeProperty(enginePath, KEY_ENGINE, LEVELDB)) {
-      return false;
-    }
-    engine = PropUtil.readProperty(enginePath, KEY_ENGINE);
-
-    return LEVELDB.equals(engine);
-  }
-
   private void openDatabase(Options dbOptions) throws IOException {
     final Path dbPath = getDbPath();
     if (dbPath == null || dbPath.getParent() == null) {
@@ -172,6 +122,8 @@ public class LevelDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
       Files.createDirectories(dbPath.getParent());
     }
     try {
+      DbSourceInter.checkOrInitEngine(getEngine(), dbPath.toString(),
+          TronError.ErrCode.LEVELDB_INIT);
       database = factory.open(dbPath.toFile(), dbOptions);
       if (!this.getDBName().startsWith("checkpoint")) {
         logger
@@ -473,6 +425,24 @@ public class LevelDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
     }
   }
 
+  /**
+   * Returns an iterator over the database.
+   *
+   * <p><b>CRITICAL:</b> The returned iterator holds native resources and <b>MUST</b> be closed
+   * after use to prevent memory leaks. It is strongly recommended to use a try-with-resources
+   * statement.
+   *
+   * <p>Example of correct usage:
+   * <pre>{@code
+   * try (DBIterator iterator = db.iterator()) {
+   *   while (iterator.hasNext()) {
+   *     // ... process entry
+   *   }
+   * }
+   * }</pre>
+   *
+   * @return a new database iterator that must be closed.
+   */
   @Override
   public org.tron.core.db.common.iterator.DBIterator iterator() {
     return new StoreIterator(getDBIterator());
@@ -485,7 +455,7 @@ public class LevelDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
   @Override
   public LevelDbDataSourceImpl newInstance() {
     return new LevelDbDataSourceImpl(StorageUtils.getOutputDirectoryByDbName(dataBaseName),
-        dataBaseName, options, writeOptions);
+        dataBaseName);
   }
 
   private DBIterator getDBIterator() {
