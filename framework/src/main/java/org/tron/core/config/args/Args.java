@@ -1077,12 +1077,13 @@ public class Args extends CommonParameter {
       initRocksDbBackupProperty(config);
       initRocksDbSettings(config);
     }
+    logger.info("rocksdb initialized");
 
     PARAMETER.actuatorSet =
         config.hasPath(Constant.ACTUATOR_WHITELIST)
             ? new HashSet<>(config.getStringList(Constant.ACTUATOR_WHITELIST))
             : Collections.emptySet();
-
+    logger.info("actuatorSet: {}", PARAMETER.actuatorSet);
     if (config.hasPath(Constant.NODE_METRICS_ENABLE)) {
       PARAMETER.nodeMetricsEnable = config.getBoolean(Constant.NODE_METRICS_ENABLE);
     }
@@ -1275,7 +1276,7 @@ public class Args extends CommonParameter {
     PARAMETER.allowTvmSelfdestructRestriction =
         config.hasPath(Constant.COMMITTEE_ALLOW_TVM_SELFDESTRUCT_RESTRICTION) ? config
             .getInt(Constant.COMMITTEE_ALLOW_TVM_SELFDESTRUCT_RESTRICTION) : 0;
-
+    logger.info("node parameters finished");
     logConfig();
   }
 
