@@ -1077,60 +1077,72 @@ public class Args extends CommonParameter {
       initRocksDbBackupProperty(config);
       initRocksDbSettings(config);
     }
-    logger.info("rocksdb initialized");
-
+    logger.info("args: 1");
     PARAMETER.actuatorSet =
         config.hasPath(Constant.ACTUATOR_WHITELIST)
             ? new HashSet<>(config.getStringList(Constant.ACTUATOR_WHITELIST))
             : Collections.emptySet();
-    logger.info("actuatorSet: {}", PARAMETER.actuatorSet);
+    logger.info("args: 2");
     if (config.hasPath(Constant.NODE_METRICS_ENABLE)) {
       PARAMETER.nodeMetricsEnable = config.getBoolean(Constant.NODE_METRICS_ENABLE);
     }
+    logger.info("args: 3");
 
     PARAMETER.metricsStorageEnable = config.hasPath(Constant.METRICS_STORAGE_ENABLE) && config
         .getBoolean(Constant.METRICS_STORAGE_ENABLE);
+    logger.info("args: 4");
     PARAMETER.influxDbIp = config.hasPath(Constant.METRICS_INFLUXDB_IP) ? config
         .getString(Constant.METRICS_INFLUXDB_IP) : Constant.LOCAL_HOST;
+    logger.info("args: 5");
     PARAMETER.influxDbPort = config.hasPath(Constant.METRICS_INFLUXDB_PORT) ? config
         .getInt(Constant.METRICS_INFLUXDB_PORT) : 8086;
+    logger.info("args: 6");
     PARAMETER.influxDbDatabase = config.hasPath(Constant.METRICS_INFLUXDB_DATABASE) ? config
         .getString(Constant.METRICS_INFLUXDB_DATABASE) : "metrics";
+    logger.info("args: 7");
     PARAMETER.metricsReportInterval = config.hasPath(Constant.METRICS_REPORT_INTERVAL) ? config
         .getInt(Constant.METRICS_REPORT_INTERVAL) : 10;
+    logger.info("args: 8");
 
     PARAMETER.metricsPrometheusEnable = config.hasPath(Constant.METRICS_PROMETHEUS_ENABLE) && config
         .getBoolean(Constant.METRICS_PROMETHEUS_ENABLE);
+    logger.info("args: 9");
     PARAMETER.metricsPrometheusPort = config.hasPath(Constant.METRICS_PROMETHEUS_PORT) ? config
         .getInt(Constant.METRICS_PROMETHEUS_PORT) : 9527;
+    logger.info("args: 10");
     PARAMETER.setOpenHistoryQueryWhenLiteFN(
         config.hasPath(Constant.NODE_OPEN_HISTORY_QUERY_WHEN_LITEFN)
             && config.getBoolean(Constant.NODE_OPEN_HISTORY_QUERY_WHEN_LITEFN));
+    logger.info("args: 11");
 
     PARAMETER.historyBalanceLookup = config.hasPath(Constant.HISTORY_BALANCE_LOOKUP) && config
         .getBoolean(Constant.HISTORY_BALANCE_LOOKUP);
+    logger.info("args: 12");
 
     if (config.hasPath(Constant.OPEN_PRINT_LOG)) {
       PARAMETER.openPrintLog = config.getBoolean(Constant.OPEN_PRINT_LOG);
     }
+    logger.info("args: 13");
 
     PARAMETER.openTransactionSort = config.hasPath(Constant.OPEN_TRANSACTION_SORT) && config
         .getBoolean(Constant.OPEN_TRANSACTION_SORT);
+    logger.info("args: 14");
 
     PARAMETER.allowAccountAssetOptimization = config
         .hasPath(Constant.ALLOW_ACCOUNT_ASSET_OPTIMIZATION) ? config
         .getInt(Constant.ALLOW_ACCOUNT_ASSET_OPTIMIZATION) : 0;
+    logger.info("args: 15");
 
     PARAMETER.allowAssetOptimization = config
         .hasPath(Constant.ALLOW_ASSET_OPTIMIZATION) ? config
         .getInt(Constant.ALLOW_ASSET_OPTIMIZATION) : 0;
-
+    logger.info("args: 16");
     PARAMETER.disabledApiList =
         config.hasPath(Constant.NODE_DISABLED_API_LIST)
             ? config.getStringList(Constant.NODE_DISABLED_API_LIST)
             .stream().map(String::toLowerCase).collect(Collectors.toList())
             : Collections.emptyList();
-
+    logger.info("args: 17");
     if (config.hasPath(Constant.NODE_SHUTDOWN_BLOCK_TIME)) {
       try {
         PARAMETER.shutdownBlockTime = new CronExpression(config.getString(
@@ -1139,19 +1151,19 @@ public class Args extends CommonParameter {
         throw new TronError(e, TronError.ErrCode.AUTO_STOP_PARAMS);
       }
     }
-
+    logger.info("args: 18");
     if (config.hasPath(Constant.NODE_SHUTDOWN_BLOCK_HEIGHT)) {
       PARAMETER.shutdownBlockHeight = config.getLong(Constant.NODE_SHUTDOWN_BLOCK_HEIGHT);
     }
-
+    logger.info("args: 19");
     if (config.hasPath(Constant.NODE_SHUTDOWN_BLOCK_COUNT)) {
       PARAMETER.shutdownBlockCount = config.getLong(Constant.NODE_SHUTDOWN_BLOCK_COUNT);
     }
-
+    logger.info("args: 20");
     if (config.hasPath(Constant.BLOCK_CACHE_TIMEOUT)) {
       PARAMETER.blockCacheTimeout = config.getLong(Constant.BLOCK_CACHE_TIMEOUT);
     }
-
+    logger.info("args: 21");
     if (config.hasPath(Constant.ALLOW_NEW_REWARD)) {
       PARAMETER.allowNewReward = config.getLong(Constant.ALLOW_NEW_REWARD);
       if (PARAMETER.allowNewReward > 1) {
@@ -1161,7 +1173,7 @@ public class Args extends CommonParameter {
         PARAMETER.allowNewReward = 0;
       }
     }
-
+    logger.info("args: 22");
     if (config.hasPath(Constant.MEMO_FEE)) {
       PARAMETER.memoFee = config.getLong(Constant.MEMO_FEE);
       if (PARAMETER.memoFee > 1_000_000_000) {
@@ -1171,13 +1183,13 @@ public class Args extends CommonParameter {
         PARAMETER.memoFee = 0;
       }
     }
-
+    logger.info("args: 23");
     if (config.hasPath(Constant.ALLOW_DELEGATE_OPTIMIZATION)) {
       PARAMETER.allowDelegateOptimization = config.getLong(Constant.ALLOW_DELEGATE_OPTIMIZATION);
       PARAMETER.allowDelegateOptimization = min(PARAMETER.allowDelegateOptimization, 1, true);
       PARAMETER.allowDelegateOptimization = max(PARAMETER.allowDelegateOptimization, 0, true);
     }
-
+    logger.info("args: 24");
     if (config.hasPath(Constant.COMMITTEE_UNFREEZE_DELAY_DAYS)) {
       PARAMETER.unfreezeDelayDays = config.getLong(Constant.COMMITTEE_UNFREEZE_DELAY_DAYS);
       if (PARAMETER.unfreezeDelayDays > 365) {
@@ -1187,20 +1199,20 @@ public class Args extends CommonParameter {
         PARAMETER.unfreezeDelayDays = 0;
       }
     }
-
+    logger.info("args: 25");
     if (config.hasPath(Constant.ALLOW_DYNAMIC_ENERGY)) {
       PARAMETER.allowDynamicEnergy = config.getLong(Constant.ALLOW_DYNAMIC_ENERGY);
       PARAMETER.allowDynamicEnergy = min(PARAMETER.allowDynamicEnergy, 1, true);
       PARAMETER.allowDynamicEnergy = max(PARAMETER.allowDynamicEnergy, 0, true);
     }
-
+    logger.info("args: 26");
     if (config.hasPath(Constant.DYNAMIC_ENERGY_THRESHOLD)) {
       PARAMETER.dynamicEnergyThreshold = config.getLong(Constant.DYNAMIC_ENERGY_THRESHOLD);
       PARAMETER.dynamicEnergyThreshold
           = min(PARAMETER.dynamicEnergyThreshold, 100_000_000_000_000_000L, true);
       PARAMETER.dynamicEnergyThreshold = max(PARAMETER.dynamicEnergyThreshold, 0, true);
     }
-
+    logger.info("args: 27");
     if (config.hasPath(Constant.DYNAMIC_ENERGY_INCREASE_FACTOR)) {
       PARAMETER.dynamicEnergyIncreaseFactor
           = config.getLong(Constant.DYNAMIC_ENERGY_INCREASE_FACTOR);
@@ -1208,7 +1220,7 @@ public class Args extends CommonParameter {
           min(PARAMETER.dynamicEnergyIncreaseFactor, DYNAMIC_ENERGY_INCREASE_FACTOR_RANGE, true);
       PARAMETER.dynamicEnergyIncreaseFactor = max(PARAMETER.dynamicEnergyIncreaseFactor, 0, true);
     }
-
+    logger.info("args: 28");
     if (config.hasPath(Constant.DYNAMIC_ENERGY_MAX_FACTOR)) {
       PARAMETER.dynamicEnergyMaxFactor
           = config.getLong(Constant.DYNAMIC_ENERGY_MAX_FACTOR);
@@ -1216,7 +1228,7 @@ public class Args extends CommonParameter {
           min(PARAMETER.dynamicEnergyMaxFactor, DYNAMIC_ENERGY_MAX_FACTOR_RANGE, true);
       PARAMETER.dynamicEnergyMaxFactor = max(PARAMETER.dynamicEnergyMaxFactor, 0, true);
     }
-
+    logger.info("args: 29");
     PARAMETER.dynamicConfigEnable = config.hasPath(Constant.DYNAMIC_CONFIG_ENABLE)
         && config.getBoolean(Constant.DYNAMIC_CONFIG_ENABLE);
     if (config.hasPath(Constant.DYNAMIC_CONFIG_CHECK_INTERVAL)) {
@@ -1228,19 +1240,19 @@ public class Args extends CommonParameter {
     } else {
       PARAMETER.dynamicConfigCheckInterval = 600;
     }
-
+    logger.info("args: 30");
     PARAMETER.allowTvmShangHai =
         config.hasPath(Constant.COMMITTEE_ALLOW_TVM_SHANGHAI) ? config
             .getInt(Constant.COMMITTEE_ALLOW_TVM_SHANGHAI) : 0;
-
+    logger.info("args: 31");
     PARAMETER.unsolidifiedBlockCheck =
       config.hasPath(Constant.UNSOLIDIFIED_BLOCK_CHECK)
       && config.getBoolean(Constant.UNSOLIDIFIED_BLOCK_CHECK);
-
+    logger.info("args: 32");
     PARAMETER.maxUnsolidifiedBlocks =
       config.hasPath(Constant.MAX_UNSOLIDIFIED_BLOCKS) ? config
         .getInt(Constant.MAX_UNSOLIDIFIED_BLOCKS) : 54;
-
+    logger.info("args: 33");
     long allowOldRewardOpt = config.hasPath(Constant.COMMITTEE_ALLOW_OLD_REWARD_OPT) ? config
         .getInt(Constant.COMMITTEE_ALLOW_OLD_REWARD_OPT) : 0;
     if (allowOldRewardOpt == 1 && PARAMETER.allowNewRewardAlgorithm != 1
@@ -1252,32 +1264,33 @@ public class Args extends CommonParameter {
           + " or committee.allowTvmVote = 1.");
     }
     PARAMETER.allowOldRewardOpt = allowOldRewardOpt;
-
+    logger.info("args: 34");
     PARAMETER.allowEnergyAdjustment =
             config.hasPath(Constant.COMMITTEE_ALLOW_ENERGY_ADJUSTMENT) ? config
                     .getInt(Constant.COMMITTEE_ALLOW_ENERGY_ADJUSTMENT) : 0;
-
+    logger.info("args: 35");
     PARAMETER.allowStrictMath =
         config.hasPath(Constant.COMMITTEE_ALLOW_STRICT_MATH) ? config
             .getInt(Constant.COMMITTEE_ALLOW_STRICT_MATH) : 0;
-
+    logger.info("args: 36");
     PARAMETER.consensusLogicOptimization =
         config.hasPath(Constant.COMMITTEE_CONSENSUS_LOGIC_OPTIMIZATION) ? config
             .getInt(Constant.COMMITTEE_CONSENSUS_LOGIC_OPTIMIZATION) : 0;
-
+    logger.info("args: 37");
     PARAMETER.allowTvmCancun =
         config.hasPath(Constant.COMMITTEE_ALLOW_TVM_CANCUN) ? config
             .getInt(Constant.COMMITTEE_ALLOW_TVM_CANCUN) : 0;
-
+    logger.info("args: 38");
     PARAMETER.allowTvmBlob =
         config.hasPath(Constant.COMMITTEE_ALLOW_TVM_BLOB) ? config
             .getInt(Constant.COMMITTEE_ALLOW_TVM_BLOB) : 0;
-
+    logger.info("args: 39");
     PARAMETER.allowTvmSelfdestructRestriction =
         config.hasPath(Constant.COMMITTEE_ALLOW_TVM_SELFDESTRUCT_RESTRICTION) ? config
             .getInt(Constant.COMMITTEE_ALLOW_TVM_SELFDESTRUCT_RESTRICTION) : 0;
-    logger.info("node parameters finished");
+    logger.info("args: 40");
     logConfig();
+    logger.info("args: 41");
   }
 
   private static long getProposalExpirationTime(final Config config) {
