@@ -109,8 +109,8 @@ test {
 
 jacocoTestReport {
     reports {
-        xml.enabled true
-        csv.enabled false
+        xml.required.set(true)
+        csv.required.set(true)
         html.destination file("${buildDir}/jacocoHtml")
     }
     getExecutionData().setFrom(fileTree('../framework/build/jacoco').include("**.exec"))
@@ -118,8 +118,8 @@ jacocoTestReport {
 
 def binaryRelease(taskName, jarName, mainClass) {
     return tasks.create("${taskName}", Jar) {
-        baseName = jarName
-        version = null
+        archiveBaseName.set(jarName)
+        archiveVersion.set('')
         from(sourceSets.main.output) {
             include "/**"
         }
