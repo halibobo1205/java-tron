@@ -16,8 +16,8 @@ dependencies {
 
 jacocoTestReport {
     reports {
-        xml.enabled = true
-        html.enabled = true
+        xml.required.set(true)
+        html.required.set(true)
     }
     getExecutionData().setFrom(fileTree('../framework/build/jacoco').include("**.exec"))
     afterEvaluate {
