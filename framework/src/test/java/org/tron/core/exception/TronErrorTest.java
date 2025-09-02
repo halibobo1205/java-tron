@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.After;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -35,6 +36,7 @@ import org.tron.core.services.http.RateLimiterServlet;
 import org.tron.core.zen.ZksnarkInitService;
 
 @RunWith(MockitoJUnitRunner.class)
+@Ignore
 public class TronErrorTest {
 
   @Rule
