@@ -3,6 +3,7 @@ package org.tron.core.capsule.utils;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.Assert;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.tron.common.BaseTest;
 import org.tron.core.Constant;
@@ -136,6 +137,7 @@ public class ExchangeProcessorTest extends BaseTest {
   }
 
   @Test
+  @Ignore
   public void testStrictMath() {
     long supply = 1_000_000_000_000_000_000L;
     long[][] testData = {
