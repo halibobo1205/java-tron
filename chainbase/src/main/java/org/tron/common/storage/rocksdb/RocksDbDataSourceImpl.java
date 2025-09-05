@@ -22,8 +22,6 @@ import java.util.stream.Collectors;
 import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.rocksdb.Checkpoint;
-import org.rocksdb.InfoLogLevel;
-import org.rocksdb.Logger;
 import org.rocksdb.Options;
 import org.rocksdb.ReadOptions;
 import org.rocksdb.RocksDB;
@@ -56,7 +54,6 @@ public class RocksDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
   private volatile boolean alive;
   private String parentPath;
   private ReadWriteLock resetDbLock = new ReentrantReadWriteLock();
-  private static final org.slf4j.Logger rocksDbLogger = LoggerFactory.getLogger(ROCKSDB);
 
   public RocksDbDataSourceImpl(String parentPath, String name, Options options) {
     this.dataBaseName = name;
@@ -192,12 +189,6 @@ public class RocksDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
       if (dataBaseName == null) {
         throw new IllegalArgumentException("No name set to the dbStore");
       }
-      options.setLogger(new Logger(options) {
-        @Override
-        protected void log(InfoLogLevel infoLogLevel, String logMsg) {
-          rocksDbLogger.info("{} {}", dataBaseName, logMsg);
-        }
-      });
 
       try {
         logger.debug("Opening database {}.", dataBaseName);
