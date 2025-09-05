@@ -453,12 +453,7 @@ public class RocksDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
   public List<String> getStats() throws Exception {
     resetDbLock.readLock().lock();
     try {
-      if (!isAlive()) {
-        return Collections.emptyList();
-      }
-      String stat = database.getProperty("rocksdb.levelstats");
-      String[] stats = stat.split("\n");
-      return Arrays.stream(stats).skip(2).collect(Collectors.toList());
+      return Collections.emptyList();
     } finally {
       resetDbLock.readLock().unlock();
     }
