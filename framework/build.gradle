@@ -136,11 +136,11 @@ test {
         exclude 'org/tron/core/ShieldedTRC20BuilderTest.class'
         exclude 'org/tron/common/runtime/vm/WithdrawRewardTest.class'
     }
-    maxHeapSize = "1024m"
+    maxHeapSize = "512m"
+    maxParallelForks = Math.max(1, Math.min(2, Runtime.runtime.availableProcessors()))
     doFirst {
         // Restart the JVM after every 100 tests to avoid memory leaks and ensure test isolation
         forkEvery = 100
-        jvmArgs "-XX:MetaspaceSize=128m","-XX:MaxMetaspaceSize=256m", "-XX:+UseG1GC"
     }
 }
 
@@ -175,7 +175,9 @@ def binaryRelease(taskName, jarName, mainClass) {
         exclude "META-INF/*.SF"
         exclude "META-INF/*.DSA"
         exclude "META-INF/*.RSA"
-
+        // for service SPI loader for dnsjava
+        // see https://issues.apache.org/jira/browse/HADOOP-19288
+        exclude "META-INF/services/java.net.spi.InetAddressResolverProvider"
         manifest {
             attributes "Main-Class": "${mainClass}"
         }
