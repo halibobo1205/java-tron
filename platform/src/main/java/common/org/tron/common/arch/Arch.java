@@ -1,6 +1,7 @@
 package org.tron.common.arch;
 
 import lombok.extern.slf4j.Slf4j;
+import org.tron.core.exception.TronError;
 
 @Slf4j(topic = "arch")
 public final class Arch {
@@ -72,9 +73,9 @@ public final class Arch {
   public static void throwIfUnsupportedJavaVersion() {
     if (isX86() && !isJava8()) {
       logger.info(withAll());
-      throw new UnsupportedOperationException(String.format(
+      throw new TronError(new UnsupportedOperationException(String.format(
           "Java %s is required for %s architecture. Detected version %s",
-          "1.8 ", getOsArch(), javaSpecificationVersion()));
+          "1.8 ", getOsArch(), javaSpecificationVersion())), TronError.ErrCode.JDK_VERSION);
     }
   }
 

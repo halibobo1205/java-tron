@@ -391,7 +391,15 @@ public class Args extends CommonParameter {
     }
 
     Config config = Configuration.getByFileName(PARAMETER.shellConfFileName, confFileName);
-    setParam(config);
+    parseConfig(config);
+  }
+
+  public static void parseConfig(final Config config) {
+    try {
+      setParam(config);
+    } catch (Exception e) {
+      throw new TronError(e, TronError.ErrCode.PARAMETER_INIT);
+    }
   }
 
   /**

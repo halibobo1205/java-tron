@@ -15,3 +15,17 @@ dependencies {
     api group: 'commons-io', name: 'commons-io', version: '2.18.0'
     api 'io.github.tronprotocol:zksnark-java-sdk:1.0.0' exclude(group: 'commons-io', module: 'commons-io')
 }
+
+jacocoTestReport {
+    reports {
+        xml.required.set(true)
+        html.required.set(true)
+        html.outputLocation.set(file("${buildDir}/jacocoHtml"))
+    }
+    getExecutionData().setFrom(fileTree("${project.rootDir}/framework/build/jacoco").include("**.exec"))
+    afterEvaluate {
+        classDirectories.from = classDirectories.files.collect {
+            fileTree(dir: it,)
+        }
+    }
+}

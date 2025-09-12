@@ -153,12 +153,6 @@ public class ArgsTest {
   }
 
   @Test
-  public void testOldRewardOpt() {
-    thrown.expect(IllegalArgumentException.class);
-    Args.setParam(new String[] {"-c", "args-test.conf"}, Constant.TESTNET_CONF);
-  }
-
-  @Test
   public void testInitService() {
     Map<String,String> storage = new HashMap<>();
     // avoid the exception for the missing storage

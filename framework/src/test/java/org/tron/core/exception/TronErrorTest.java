@@ -123,4 +123,59 @@ public class TronErrorTest {
     TronError thrown = assertThrows(TronError.class, () -> Args.setParam(config));
     assertEquals(TronError.ErrCode.AUTO_STOP_PARAMS, thrown.getErrCode());
   }
+
+  @Test
+  public void oldRewardOptTest() {
+    TronError thrown = assertThrows(TronError.class, ()
+        -> Args.setParam(new String[] {"-c", "args-test.conf"}, Constant.TESTNET_CONF));
+    assertEquals(TronError.ErrCode.PARAMETER_INIT, thrown.getErrCode());
+  }
+
+  @Test
+  public void proposalExpirationTimeTest() {
+    Map<String,String> params = new HashMap<>();
+    params.put(Constant.COMMITTEE_PROPOSAL_EXPIRE_TIME, "0");
+    TronError thrown = assertThrows(TronError.class, () -> Args.parseConfig(
+        ConfigFactory.defaultOverrides().withFallback(
+        ConfigFactory.parseMap(params))));
+    assertEquals(TronError.ErrCode.PARAMETER_INIT, thrown.getErrCode());
+    params.clear();
+    params.put(Constant.BLOCK_PROPOSAL_EXPIRE_TIME, "0");
+    thrown = assertThrows(TronError.class, () -> Args.parseConfig(
+        ConfigFactory.defaultOverrides().withFallback(
+            ConfigFactory.parseMap(params))));
+    assertEquals(TronError.ErrCode.PARAMETER_INIT, thrown.getErrCode());
+    params.clear();
+    params.put(Constant.BLOCK_PROPOSAL_EXPIRE_TIME, "31536003000");
+    thrown = assertThrows(TronError.class, () -> Args.parseConfig(
+        ConfigFactory.defaultOverrides().withFallback(
+            ConfigFactory.parseMap(params))));
+    assertEquals(TronError.ErrCode.PARAMETER_INIT, thrown.getErrCode());
+  }
+
+  @Test
+  public void dnsPublishParametersTest() {
+    Map<String,String> params = new HashMap<>();
+    params.put(Constant.NODE_DNS_PUBLISH, "true");
+    TronError thrown = assertThrows(TronError.class, () -> Args.parseConfig(
+        ConfigFactory.defaultOverrides().withFallback(
+            ConfigFactory.parseMap(params))));
+    assertEquals(TronError.ErrCode.PARAMETER_INIT, thrown.getErrCode());
+    params.put(Constant.NODE_DNS_DOMAIN, "domain");
+    thrown = assertThrows(TronError.class, () -> Args.parseConfig(
+        ConfigFactory.defaultOverrides().withFallback(
+            ConfigFactory.parseMap(params))));
+    assertEquals(TronError.ErrCode.PARAMETER_INIT, thrown.getErrCode());
+    params.put(Constant.NODE_DNS_PRIVATE, "private");
+    thrown = assertThrows(TronError.class, () -> Args.parseConfig(
+        ConfigFactory.defaultOverrides().withFallback(
+            ConfigFactory.parseMap(params))));
+    assertEquals(TronError.ErrCode.PARAMETER_INIT, thrown.getErrCode());
+    params.put(Constant.NODE_DNS_SERVER_TYPE, "type");
+    thrown = assertThrows(TronError.class, () -> Args.parseConfig(
+        ConfigFactory.defaultOverrides().withFallback(
+            ConfigFactory.parseMap(params))));
+    assertEquals(TronError.ErrCode.PARAMETER_INIT, thrown.getErrCode());
+
+  }
 }
