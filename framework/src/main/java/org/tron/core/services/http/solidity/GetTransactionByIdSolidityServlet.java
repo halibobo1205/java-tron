@@ -32,7 +32,7 @@ public class GetTransactionByIdSolidityServlet extends RateLimiterServlet {
     } catch (Exception e) {
       logger.debug("Exception: {}", e.getMessage());
       try {
-        response.getWriter().println(e.getMessage());
+        Util.printError(e, response);
       } catch (IOException ioe) {
         logger.debug("IOException: {}", ioe.getMessage());
       }
@@ -48,8 +48,7 @@ public class GetTransactionByIdSolidityServlet extends RateLimiterServlet {
     } catch (Exception e) {
       logger.debug("Exception: {}", e.getMessage());
       try {
-        String message = e.getMessage();
-        response.getWriter().println(message);
+        Util.printError(e, response);
       } catch (IOException ioe) {
         logger.debug("IOException: {}", ioe.getMessage());
       }

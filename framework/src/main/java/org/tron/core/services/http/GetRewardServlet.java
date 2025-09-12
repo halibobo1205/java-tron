@@ -27,8 +27,7 @@ public class GetRewardServlet extends RateLimiterServlet {
       response.getWriter().println("{\"reward\": " + value + "}");
     } catch (DecoderException | IllegalArgumentException e) {
       try {
-        String message = e.getMessage();
-        response.getWriter().println("{\"Error\": " + "\"INVALID address, " + message + "\"}");
+        Util.printError("{\"Error\": " + "\"INVALID address, " +  e.getMessage() + "\"}", response);
       } catch (IOException ioe) {
         logger.debug("IOException: {}", ioe.getMessage());
       }

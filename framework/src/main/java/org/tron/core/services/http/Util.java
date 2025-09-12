@@ -483,6 +483,14 @@ public class Util {
     }
   }
 
+  public static void printError(Exception e, HttpServletResponse response) throws IOException {
+    response.getWriter().println(e.getMessage());
+  }
+
+  public static void printError(String message, HttpServletResponse response) throws IOException {
+    response.getWriter().println(message);
+  }
+
   public static String convertOutput(Account account) {
     if (account.getAssetIssuedID().isEmpty()) {
       return JsonFormat.printToString(account, false);
