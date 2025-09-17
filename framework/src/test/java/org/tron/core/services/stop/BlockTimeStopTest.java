@@ -27,6 +27,7 @@ public class BlockTimeStopTest extends ConditionallyStopTest {
 
 
   protected void initParameter(CommonParameter parameter) {
+    logger.info("stop at {}", cronExpression.getCronExpression());
     parameter.setShutdownBlockTime(cronExpression);
   }
 

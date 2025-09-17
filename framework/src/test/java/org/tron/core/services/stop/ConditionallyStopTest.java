@@ -2,14 +2,12 @@ package org.tron.core.services.stop;
 
 import com.google.common.collect.Maps;
 import com.google.protobuf.ByteString;
-import java.io.File;
 import java.io.IOException;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
@@ -25,8 +23,6 @@ import org.tron.common.application.TronApplicationContext;
 import org.tron.common.crypto.ECKey;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.ByteArray;
-import org.tron.common.utils.FileUtil;
-import org.tron.common.utils.LocalWitnesses;
 import org.tron.common.utils.PublicMethod;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.common.utils.Utils;
@@ -63,8 +59,10 @@ public abstract class ConditionallyStopTest extends BlockGenerate {
   private TronNetDelegate tronNetDelegate;
   private TronApplicationContext context;
 
+  static final String timeStr = "2025-09-14 11:59:21.043";
+  static DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
+  static LocalDateTime localDateTime = LocalDateTime.parse(timeStr, formatter);
 
-  static LocalDateTime localDateTime = LocalDateTime.now();
   private long time = ZonedDateTime.of(localDateTime,
       ZoneId.systemDefault()).toInstant().toEpochMilli();
 
@@ -128,7 +126,7 @@ public abstract class ConditionallyStopTest extends BlockGenerate {
     tronNetDelegate.processBlock(block, false);
   }
 
-  @Test
+  @Test(timeout = 60000)
   public void testStop() throws Exception {
     final ECKey ecKey = ECKey.fromPrivate(privateKey);
     Assert.assertNotNull(ecKey);
