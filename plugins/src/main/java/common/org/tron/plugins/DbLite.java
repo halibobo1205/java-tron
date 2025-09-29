@@ -55,6 +55,9 @@ public class DbLite implements Callable<Integer> {
   private static final String TRANS_DB_NAME = "trans";
   private static final String TRANSACTION_RET_DB_NAME = "transactionRetStore";
   private static final String TRANSACTION_HISTORY_DB_NAME = "transactionHistoryStore";
+  private static final String BALANCE_TRACE_NAME = "balance-trace";
+  private static final String ACCOUNT_TRACE_NAME = "account-trace";
+  private static final String SECTION_BLOOM = "section-bloom";
   private static final String PROPERTIES_DB_NAME = "properties";
   private static final String TRANS_CACHE_DB_NAME = "trans-cache";
 
@@ -63,7 +66,10 @@ public class DbLite implements Callable<Integer> {
       BLOCK_INDEX_DB_NAME,
       TRANS_DB_NAME,
       TRANSACTION_RET_DB_NAME,
-      TRANSACTION_HISTORY_DB_NAME);
+      TRANSACTION_HISTORY_DB_NAME,
+      BALANCE_TRACE_NAME,
+      ACCOUNT_TRACE_NAME,
+      SECTION_BLOOM);
 
   enum Operate { split, merge }
 
