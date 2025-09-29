@@ -1,7 +1,4 @@
 <configuration>
-
-  <!-- FILE appender is disabled -->
-
   <appender class="ch.qos.logback.core.ConsoleAppender" name="STDOUT">
     <encoder>
       <pattern>%d{HH:mm:ss.SSS} %p [%c{1}] %m%n</pattern>
@@ -11,32 +8,45 @@
     </filter>
   </appender>
 
-  <appender class="ch.qos.logback.core.rolling.RollingFileAppender"
-    name="FILE">
+  <appender class="ch.qos.logback.core.rolling.RollingFileAppender" name="FILE">
     <file>./logs/tron-test.log</file>
     <bufferSize>8192</bufferSize>
     <immediateFlush>true</immediateFlush>
-    <rollingPolicy
-      class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
-      <!-- rollover daily -->
-      <fileNamePattern>./logs/tron-test-%d{yyyy-MM-dd}.%i.log.zip
-      </fileNamePattern>
-      <!-- each file should be at most 100MB, keep 60 days worth of history, but at most 20GB -->
+    <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+      <fileNamePattern>./logs/tron-test-%d{yyyy-MM-dd}.%i.log.zip</fileNamePattern>
       <maxFileSize>100MB</maxFileSize>
-      <maxHistory>60</maxHistory>
-      <totalSizeCap>20GB</totalSizeCap>
+      <maxHistory>1</maxHistory>
+      <totalSizeCap>60GB</totalSizeCap>
     </rollingPolicy>
     <encoder>
       <pattern>%d{HH:mm:ss.SSS} %p [%c{1}] %m%n</pattern>
     </encoder>
   </appender>
 
+  <appender class="ch.qos.logback.core.rolling.RollingFileAppender" name="GRPC_FILE">
+    <file>./logs/grpc.log</file>
+    <bufferSize>8192</bufferSize>
+    <immediateFlush>true</immediateFlush>
+    <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+      <fileNamePattern>./logs/grpc-%d{yyyy-MM-dd}.%i.log.zip</fileNamePattern>
+      <maxFileSize>100MB</maxFileSize>
+      <maxHistory>7</maxHistory>
+      <totalSizeCap>10GB</totalSizeCap>
+    </rollingPolicy>
+    <encoder>
+      <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %p [%t] [%c] %m%n</pattern>
+    </encoder>
+  </appender>
+
+  <logger name="io.grpc" level="DEBUG" additivity="false">
+    <appender-ref ref="GRPC_FILE"/>
+  </logger>
+  <logger name="io.grpc.internal" level="DEBUG" additivity="false">
+    <appender-ref ref="GRPC_FILE"/>
+  </logger>
+
   <root level="DEBUG">
     <appender-ref ref="STDOUT"/>
     <appender-ref ref="FILE"/>
   </root>
-
-  <logger level="DEBUG" name="Test"/>
-  <logger level="DEBUG" name="Manager"/>
-
 </configuration>
