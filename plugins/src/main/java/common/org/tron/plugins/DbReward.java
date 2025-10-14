@@ -124,8 +124,6 @@ public class DbReward implements Callable<Integer> {
     return reward;
   }
 
-  p
-
   private long computeReward(long cycle, List<Protocol.Vote> votes, boolean isNew) {
     long reward = 0;
     for (Protocol.Vote vote : votes) {
