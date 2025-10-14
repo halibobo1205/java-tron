@@ -39,6 +39,7 @@ dependencies {
     implementation group: 'me.tongfei', name: 'progressbar', version: '0.9.3'
     implementation group: 'org.bouncycastle', name: 'bcprov-jdk18on', version: '1.79'
     testRuntimeOnly group: 'org.fusesource.hawtjni', name: 'hawtjni-runtime', version: '1.18'
+    implementation 'io.github.tronprotocol:leveldb:1.18.2'
     implementation project(":platform")
     implementation project(":protocol")
 }
