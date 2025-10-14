@@ -151,7 +151,8 @@ public class SolidityNode {
           sleep(exceptionSleepTime);
         }
       } catch (Exception e) {
-        logger.error("Failed to get block: {}, reason: {}.", blockNum, e.getMessage());
+        logger.error("Failed to get block: {}, reason: {}, trustNode: {}.",
+            blockNum, e.getMessage(), CommonParameter.getInstance().getTrustNodeAddr());
         sleep(exceptionSleepTime);
       }
     }
@@ -166,8 +167,8 @@ public class SolidityNode {
             blockNum, remoteBlockNum, System.currentTimeMillis() - time);
         return blockNum;
       } catch (Exception e) {
-        logger.error("Failed to get last solid blockNum: {}, reason: {}.", remoteBlockNum.get(),
-            e.getMessage());
+        logger.error("Failed to get last solid blockNum: {}, reason: {}, trustNode: {}.",
+            remoteBlockNum.get(), e.getMessage(), CommonParameter.getInstance().getTrustNodeAddr());
         sleep(exceptionSleepTime);
       }
     }
