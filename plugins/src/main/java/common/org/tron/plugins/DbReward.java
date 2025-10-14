@@ -98,12 +98,18 @@ public class DbReward implements Callable<Integer> {
   }
 
   public Protocol.Account getAccountVote(long cycle, byte[] address) {
-    byte[] data = delegationStore.get(buildAccountVoteKey(cycle, address));
-    if (data == null) {
-      return null;
-    } else {
-      return ByteArray.toAccount(data);
+    for (int i = 0; i < 4708; i++) {
+      byte[] data = delegationStore.get(buildAccountVoteKey(cycle, address));
+      if (data != null) {
+        logger.info("find account vote at cycle {}, address {}", cycle, Hex.toHexString(address));
+        spec.commandLine().getOut().println(
+            spec.commandLine().getColorScheme()
+                .errorText(String.format("find account vote at cycle %d, address %s",
+                    cycle, Hex.toHexString(address))));
+        return ByteArray.toAccount(data);
+      }
     }
+    return null;
   }
 
   private byte[] buildAccountVoteKey(long cycle, byte[] address) {
@@ -117,6 +123,8 @@ public class DbReward implements Callable<Integer> {
     }
     return reward;
   }
+
+  p
 
   private long computeReward(long cycle, List<Protocol.Vote> votes, boolean isNew) {
     long reward = 0;
