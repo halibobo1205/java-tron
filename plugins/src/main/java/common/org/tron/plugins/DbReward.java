@@ -60,13 +60,19 @@ public class DbReward implements Callable<Integer> {
 
   private int query() {
     Protocol.Account account = getAccountVote(ByteArray.fromHexString(address));
-    long reward = getOldReward(account.getVotesList(), true);
+    long reward = getOldReward(account.getVotesList(), 0);
     logger.info("address: {}, reward: {}", address, reward);
     spec.commandLine().getOut().println(
         spec.commandLine().getColorScheme()
             .errorText(String.format("address: %s, reward: %d", address, reward)));
 
-    reward = getOldReward(account.getVotesList(), false);
+    reward = getOldReward(account.getVotesList(), 1);
+    logger.info("address: {}, reward: {}", address, reward);
+    spec.commandLine().getOut().println(
+        spec.commandLine().getColorScheme()
+            .errorText(String.format("address: %s, reward: %d", address, reward)));
+
+    reward = getOldReward(account.getVotesList(), 2);
     logger.info("address: {}, reward: {}", address, reward);
     spec.commandLine().getOut().println(
         spec.commandLine().getColorScheme()
@@ -137,11 +143,7 @@ public class DbReward implements Callable<Integer> {
     return builder.build();
   }
 
-  private byte[] buildAccountVoteKey(long cycle, byte[] address) {
-    return (cycle + "-" + Hex.toHexString(address) + "-account-vote").getBytes();
-  }
-
-  private long getOldReward(List<Protocol.Vote> votes, boolean isNew) {
+  private long getOldReward(List<Protocol.Vote> votes, int isNew) {
     long reward = 0;
     for (long cycle = startCycle; cycle < endCycle; cycle++) {
       reward += computeReward(cycle, votes, isNew);
@@ -149,7 +151,7 @@ public class DbReward implements Callable<Integer> {
     return reward;
   }
 
-  private long computeReward(long cycle, List<Protocol.Vote> votes, boolean isNew) {
+  private long computeReward(long cycle, List<Protocol.Vote> votes, int isNew) {
     long reward = 0;
     for (Protocol.Vote vote : votes) {
       byte[] srAddress = vote.getVoteAddress().toByteArray();
@@ -163,10 +165,14 @@ public class DbReward implements Callable<Integer> {
       }
       long userVote = vote.getVoteCount();
       double voteRate = (double) userVote / totalVote;
-      if (isNew) {
+      if (isNew == 0) {
         reward += (long) (voteRate * totalReward);
-      } else {
+      } else if (isNew == 1) {
         reward += voteRate * totalReward;
+      } else if (isNew == 2) {
+        double tmp = reward;
+        tmp += voteRate * totalReward;
+        reward = (long) tmp;
       }
 
     }
