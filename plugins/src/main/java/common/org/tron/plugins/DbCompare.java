@@ -121,6 +121,7 @@ public class DbCompare implements Callable<Integer> {
             logger.info("{}\t{}\t{}",
                  ByteArray.toHexString(baseKey),
                  ByteArray.toHexString(baseValue), ByteArray.toHexString(dstValue));
+            return false;
           }
           if (!Arrays.equals(baseKey, dstKey)) {
             byte[] dstValueTmp = base.get(dstKey);
@@ -132,6 +133,7 @@ public class DbCompare implements Callable<Integer> {
               logger.info("{}\t{}\t{}",
                   ByteArray.toHexString(baseKey),
                   ByteArray.toHexString(baseValue), ByteArray.toHexString(baseValueTmp));
+              return false;
             }
             if (!compareValue(dstKey, dstValueTmp, dstValue)) {
               spec.commandLine().getOut().format("%s\t%s\t%s.",
@@ -140,6 +142,7 @@ public class DbCompare implements Callable<Integer> {
               logger.info("{}\t{}\t{}",
                   ByteArray.toHexString(dstKey),
                   ByteArray.toHexString(dstValueTmp), ByteArray.toHexString(dstValue));
+              return false;
             }
 
           }
