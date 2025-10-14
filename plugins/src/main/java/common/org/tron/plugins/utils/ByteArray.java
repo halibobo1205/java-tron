@@ -6,6 +6,7 @@ import java.math.BigInteger;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.bouncycastle.util.encoders.Hex;
+import org.tron.protos.Protocol;
 
 public class ByteArray {
 
@@ -112,5 +113,13 @@ public class ByteArray {
     byte[] result = new byte[end - start];
     System.arraycopy(input, start, result, 0, end - start);
     return result;
+  }
+
+  public static Protocol.Account toAccount(byte[] base) {
+    try {
+      return Protocol.Account.parseFrom(base);
+    } catch (Exception e) {
+      throw new RuntimeException(e);
+    }
   }
 }
