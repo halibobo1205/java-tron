@@ -36,6 +36,9 @@ public class DbCompare implements Callable<Integer> {
   @CommandLine.Option(names = {"-h", "--help"}, help = true, description = "display a help message")
   private boolean help;
 
+  @CommandLine.Option(names = {"--continues"})
+  private boolean continues;
+
   private static final String ACCOUNT_VOTE_SUFFIX = "-account-vote";
 
   private static final String FORK_PREFIX = "FORK_VERSION_";
@@ -68,7 +71,7 @@ public class DbCompare implements Callable<Integer> {
       return 404;
     }
 
-    Comparison service = new DbComparison(base.toPath(), compare.toPath());
+    Comparison service = new DbComparison(base.toPath(), compare.toPath(), continues);
     return service.doCompare() ? 0 : 1;
 
   }
@@ -82,11 +85,13 @@ public class DbCompare implements Callable<Integer> {
     private final Path basePath;
     private final Path dstPath;
     private final String name;
+    private final boolean continues;
 
-    public DbComparison(Path srcDir, Path dstDir) {
+    public DbComparison(Path srcDir, Path dstDir, boolean continues) {
       this.basePath = srcDir.getParent();
       this.dstPath = dstDir.getParent();
       this.name =  srcDir.getFileName().toString();
+      this.continues = continues;
     }
 
     @Override
@@ -121,7 +126,9 @@ public class DbCompare implements Callable<Integer> {
             logger.info("{}\t{}\t{}",
                  ByteArray.toHexString(baseKey),
                  ByteArray.toHexString(baseValue), ByteArray.toHexString(dstValue));
-            return false;
+            if (!continues) {
+              return false;
+            }
           }
           if (!Arrays.equals(baseKey, dstKey)) {
             byte[] dstValueTmp = base.get(dstKey);
@@ -133,7 +140,9 @@ public class DbCompare implements Callable<Integer> {
               logger.info("{}\t{}\t{}",
                   ByteArray.toHexString(baseKey),
                   ByteArray.toHexString(baseValue), ByteArray.toHexString(baseValueTmp));
-              return false;
+              if (!continues) {
+                return false;
+              }
             }
             if (!compareValue(dstKey, dstValueTmp, dstValue)) {
               spec.commandLine().getOut().format("%s\t%s\t%s.",
@@ -142,9 +151,10 @@ public class DbCompare implements Callable<Integer> {
               logger.info("{}\t{}\t{}",
                   ByteArray.toHexString(dstKey),
                   ByteArray.toHexString(dstValueTmp), ByteArray.toHexString(dstValue));
-              return false;
+              if (!continues) {
+                return false;
+              }
             }
-
           }
         }
         for (; baseIterator.hasNext(); baseIterator.next()) {
