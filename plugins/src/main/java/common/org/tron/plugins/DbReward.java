@@ -1,13 +1,11 @@
 package org.tron.plugins;
 
+import com.google.protobuf.ByteString;
 import java.nio.file.Path;
 import java.util.AbstractMap;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.Callable;
-
-import com.google.protobuf.ByteString;
 import lombok.extern.slf4j.Slf4j;
 import org.bouncycastle.util.encoders.Hex;
 import org.tron.plugins.utils.ByteArray;
@@ -29,13 +27,13 @@ public class DbReward implements Callable<Integer> {
   @CommandLine.Parameters(index = "0", description = " database path")
   private Path db;
   @CommandLine.Option(names = {"-k", "--key"}, description = "address in hex")
-  private String address;
+  private String address = "4102703c53fa6ddc4d1150b83fd3872e2997161856";
 
   @CommandLine.Option(names = {"-s", "--start"})
-  private long startCycle;
+  private long startCycle = 2740;
 
   @CommandLine.Option(names = {"-e", "--end"})
-  private long endCycle;
+  private long endCycle = 2741;
 
   @CommandLine.Option(names = {"-h", "--help"}, help = true, description = "display a help message")
   private boolean help;
@@ -60,19 +58,12 @@ public class DbReward implements Callable<Integer> {
 
   private int query() {
     Protocol.Account account = getAccountVote(ByteArray.fromHexString(address));
-    long reward = getOldReward(account.getVotesList(), 0);
+    long reward = getOldReward(account.getVotesList());
     logger.info("address: {}, reward: {}", address, reward);
     spec.commandLine().getOut().println(
         spec.commandLine().getColorScheme()
             .errorText(String.format("address: %s, reward: %d", address, reward)));
 
-    reward = getOldReward(account.getVotesList(), 1);
-    logger.info("address: {}, reward: {}", address, reward);
-    spec.commandLine().getOut().println(
-        spec.commandLine().getColorScheme()
-            .errorText(String.format("address: %s, reward: %d", address, reward)));
-
-    reward = getOldReward(account.getVotesList(), 2);
     logger.info("address: {}, reward: {}", address, reward);
     spec.commandLine().getOut().println(
         spec.commandLine().getColorScheme()
@@ -143,15 +134,15 @@ public class DbReward implements Callable<Integer> {
     return builder.build();
   }
 
-  private long getOldReward(List<Protocol.Vote> votes, int isNew) {
+  private long getOldReward(List<Protocol.Vote> votes) {
     long reward = 0;
     for (long cycle = startCycle; cycle < endCycle; cycle++) {
-      reward += computeReward(cycle, votes, isNew);
+      reward += computeReward(cycle, votes);
     }
     return reward;
   }
 
-  private long computeReward(long cycle, List<Protocol.Vote> votes, int isNew) {
+  private long computeReward(long cycle, List<Protocol.Vote> votes) {
     long reward = 0;
     for (Protocol.Vote vote : votes) {
       byte[] srAddress = vote.getVoteAddress().toByteArray();
@@ -165,16 +156,24 @@ public class DbReward implements Callable<Integer> {
       }
       long userVote = vote.getVoteCount();
       double voteRate = (double) userVote / totalVote;
-      if (isNew == 0) {
-        reward += (long) (voteRate * totalReward);
-      } else if (isNew == 1) {
-        reward += voteRate * totalReward;
-      } else if (isNew == 2) {
-        double tmp = reward;
-        tmp += voteRate * totalReward;
-        reward = (long) tmp;
-      }
+      long tmp1 = reward;
+      long tmp2 = reward;
+      tmp1 += (long) (voteRate * totalReward);
+      tmp2 += voteRate * totalReward;
 
+      if (tmp1 != tmp2) {
+        logger.info("cycle: {}, srAddress: {}, totalReward: {}, totalVote: {}, userVote: {}, "
+                + "voteRate: {}, reward1: {}, reward2: {}",
+            cycle, Hex.toHexString(srAddress), totalReward, totalVote, userVote,
+            voteRate, tmp1, tmp2);
+        spec.commandLine().getOut().println(
+            spec.commandLine().getColorScheme()
+                .errorText(String.format("cycle: %d, srAddress: %s, totalReward: %d, totalVote: %d, "
+                        + "userVote: %d, voteRate: %f, reward1: %d, reward2: %d",
+                    cycle, Hex.toHexString(srAddress), totalReward, totalVote, userVote,
+                    voteRate, tmp1, tmp2)));
+      }
+      reward = tmp2;
     }
     return reward;
   }
