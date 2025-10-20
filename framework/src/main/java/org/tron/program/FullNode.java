@@ -1,5 +1,6 @@
 package org.tron.program;
 
+import java.util.concurrent.atomic.AtomicLong;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.support.DefaultListableBeanFactory;
 import org.tron.common.application.Application;
@@ -12,6 +13,7 @@ import org.tron.common.prometheus.Metrics;
 import org.tron.core.Constant;
 import org.tron.core.config.DefaultConfig;
 import org.tron.core.config.args.Args;
+import org.tron.core.store.AccountStore;
 
 @Slf4j(topic = "app")
 public class FullNode {
@@ -52,7 +54,17 @@ public class FullNode {
     context.refresh();
     Application appT = ApplicationFactory.create(context);
     context.registerShutdownHook();
-    appT.startup();
+    //appT.startup();
+    AccountStore store = context.getBean(AccountStore.class);
+    AtomicLong cnt = new AtomicLong(0);
+    logger.info("start import asset account");
+    store.iterator().forEachRemaining(entry -> {
+      entry.getValue().importAllAsset();
+      if (cnt.incrementAndGet() % 1000000 == 0) {
+        logger.info("import asset account count: {}", cnt.get());
+      }
+    });
+    logger.info("import asset account total count: {}", cnt.get());
     appT.blockUntilShutdown();
   }
 }
