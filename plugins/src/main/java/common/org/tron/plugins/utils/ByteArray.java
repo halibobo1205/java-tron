@@ -122,4 +122,12 @@ public class ByteArray {
       throw new RuntimeException(e);
     }
   }
+
+  public static Protocol.Witness toWitness(byte[] base) {
+    try {
+      return Protocol.Witness.parseFrom(base);
+    } catch (Exception e) {
+      throw new RuntimeException(e);
+    }
+  }
 }

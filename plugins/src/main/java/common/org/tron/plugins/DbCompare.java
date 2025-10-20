@@ -40,6 +40,10 @@ public class DbCompare implements Callable<Integer> {
   private boolean continues;
 
   private static final String ACCOUNT_VOTE_SUFFIX = "-account-vote";
+  private static final String LASTWITHDRAW_PREFIX = "lastWithdraw-";
+  private static final String REMARK_SUFFIX = "-remark";
+  private static final String REWARD_VOTE_SUFFIX = "-reward-vote";
+  private static final String BLOCK_SUFFIX = "-block";
 
   private static final String FORK_PREFIX = "FORK_VERSION_";
   private static final String DONE_SUFFIX = "_DONE";
@@ -50,7 +54,10 @@ public class DbCompare implements Callable<Integer> {
       "LATEST_SOLIDIFIED_BLOCK_NUM", "BLOCK_NET_USAGE",
       "VERSION_NUMBER",
       "SHIELDED_TRANSACTION_FEE",
-      "BLOCK_FILLED_SLOTS_INDEX", "BLOCK_FILLED_SLOTS_NUMBER", "BLOCK_FILLED_SLOTS");
+      "BLOCK_FILLED_SLOTS_INDEX", "BLOCK_FILLED_SLOTS_NUMBER", "BLOCK_FILLED_SLOTS",
+      "CURRENT_CYCLE_TIMESTAMP");
+
+  private static final byte[] CURRENT_SHUFFLED_WITNESSES = "current_shuffled_witnesses".getBytes();
 
   @Override
   public Integer call() throws Exception {
@@ -190,11 +197,9 @@ public class DbCompare implements Callable<Integer> {
     }
 
     private boolean compareValue(byte[] key, byte[] base, byte[] exp) {
-      if ("account".equals(name)
-          || ("delegation".equals(name) && new String(key).endsWith(ACCOUNT_VOTE_SUFFIX))) {
+      if ("account".equals(name)) {
         Protocol.Account baseAccount = ByteArray.toAccount(base);
         Protocol.Account expAccount = ByteArray.toAccount(exp);
-        // remove assetOptimized // TODO why?
         if (baseAccount.getAssetOptimized() || expAccount.getAssetOptimized()) {
           baseAccount = baseAccount.toBuilder().clearAsset().clearAssetV2()
               .setAssetOptimized(true).build();
@@ -209,7 +214,30 @@ public class DbCompare implements Callable<Integer> {
           return true;
         }
         return Arrays.equals(base, exp);
-      }  else {
+      } else if ("delegation".equals(name)) {
+        String keyStr = new String(key);
+        if (keyStr.endsWith(REWARD_VOTE_SUFFIX) || keyStr.endsWith(BLOCK_SUFFIX)
+            || keyStr.startsWith(LASTWITHDRAW_PREFIX) || keyStr.endsWith(REMARK_SUFFIX)) {
+          return true;
+        }
+        if (keyStr.endsWith(ACCOUNT_VOTE_SUFFIX)) {
+          Protocol.Account baseAccount = ByteArray.toAccount(base);
+          Protocol.Account expAccount = ByteArray.toAccount(exp);
+          return baseAccount.getVotesList().equals(expAccount.getVotesList());
+        }
+        return Arrays.equals(base, exp);
+      } else if ("witness".equals(name)) {
+        Protocol.Witness baseSR = ByteArray.toWitness(base)
+            .toBuilder().clearTotalMissed()
+            .build();
+        Protocol.Witness expSR = ByteArray.toWitness(exp);
+        return baseSR.equals(expSR);
+      }  else if ("witness_schedule".equals(name)) {
+        if (Arrays.equals(key, CURRENT_SHUFFLED_WITNESSES)) {
+          return true;
+        }
+        return Arrays.equals(base, exp);
+      } else {
         return Arrays.equals(base, exp);
       }
     }

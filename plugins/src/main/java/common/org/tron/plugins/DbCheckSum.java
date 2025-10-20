@@ -78,6 +78,10 @@ public class DbCheckSum implements Callable<Integer> {
   private static final String FORK_PREFIX = "FORK_VERSION_";
   private static final String DONE_SUFFIX = "_DONE";
   private static final String ACCOUNT_VOTE_SUFFIX = "-account-vote";
+  private static final String LASTWITHDRAW_PREFIX = "lastWithdraw-";
+  private static final String REMARK_SUFFIX = "-remark";
+  private static final String REWARD_VOTE_SUFFIX = "-reward-vote";
+  private static final String BLOCK_SUFFIX = "-block";
   private static final Set<String> IGNORED_PROPERTIES = Sets.newHashSet(
       "VOTE_REWARD_RATE", "SINGLE_REPEAT", "NON_EXISTENT_ACCOUNT_TRANSFER_MIN",
       "ALLOW_TVM_ASSET_ISSUE", "ALLOW_TVM_STAKE",
@@ -85,8 +89,8 @@ public class DbCheckSum implements Callable<Integer> {
       "LATEST_SOLIDIFIED_BLOCK_NUM", "BLOCK_NET_USAGE",
       "VERSION_NUMBER",
       "SHIELDED_TRANSACTION_FEE",
-      "BLOCK_FILLED_SLOTS_INDEX", "BLOCK_FILLED_SLOTS_NUMBER", "BLOCK_FILLED_SLOTS");
-
+      "BLOCK_FILLED_SLOTS_INDEX", "BLOCK_FILLED_SLOTS_NUMBER", "BLOCK_FILLED_SLOTS",
+      "CURRENT_CYCLE_TIMESTAMP");
   @Override
   public Integer call() throws Exception {
     if (help) {
@@ -208,6 +212,10 @@ public class DbCheckSum implements Callable<Integer> {
         }
         case "delegation": {
           String keyStr = new String(entry.getKey());
+          if (keyStr.endsWith(REWARD_VOTE_SUFFIX) || keyStr.endsWith(BLOCK_SUFFIX)
+              || keyStr.startsWith(LASTWITHDRAW_PREFIX) || keyStr.endsWith(REMARK_SUFFIX)) {
+            return null;
+          }
           if (keyStr.endsWith(ACCOUNT_VOTE_SUFFIX)) {
             return new AbstractMap.SimpleEntry<>(entry.getKey(),
                 Protocol.Account.newBuilder().addAllVotes(
