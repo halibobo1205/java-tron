@@ -13,16 +13,18 @@ import org.iq80.leveldb.DB;
 import org.rocksdb.BlockBasedTableConfig;
 import org.rocksdb.BloomFilter;
 import org.rocksdb.ComparatorOptions;
+import org.rocksdb.LRUCache;
 import org.rocksdb.Options;
 import org.rocksdb.RocksDB;
 import org.rocksdb.RocksDBException;
-import org.tron.common.arch.Arch;
 import org.tron.common.utils.MarketOrderPriceComparatorForLevelDB;
 import org.tron.common.utils.MarketOrderPriceComparatorForRocksDB;
 import org.tron.protos.Protocol;
 
 public class DBUtils {
 
+
+  private static final LRUCache cache = new LRUCache(1 * 1024 * 1024 * 1024L);
 
   public enum Operator {
     CREATE((byte) 0),
@@ -92,10 +94,11 @@ public class DBUtils {
     options.setCreateIfMissing(true);
     options.setIncreaseParallelism(1);
     options.setNumLevels(7);
+    options.setMaxBytesForLevelMultiplier(10);
     options.setMaxOpenFiles(5000);
-    options.setTargetFileSizeBase(64 * 1024 * 1024);
+    options.setTargetFileSizeBase(256 * 1024 * 1024);
     options.setTargetFileSizeMultiplier(1);
-    options.setMaxBytesForLevelBase(512 * 1024 * 1024);
+    options.setMaxBytesForLevelBase(256 * 1024 * 1024);
     options.setMaxBackgroundCompactions(StrictMath.max(
         1, Runtime.getRuntime().availableProcessors()));
     options.setLevel0FileNumCompactionTrigger(4);
@@ -103,7 +106,7 @@ public class DBUtils {
     final BlockBasedTableConfig tableCfg;
     options.setTableFormatConfig(tableCfg = new BlockBasedTableConfig());
     tableCfg.setBlockSize(64 * 1024);
-    tableCfg.setBlockCacheSize(32 * 1024 * 1024);
+    tableCfg.setBlockCache(cache);
     tableCfg.setCacheIndexAndFilterBlocks(true);
     tableCfg.setPinL0FilterAndIndexBlocksInCache(true);
     tableCfg.setFilter(new BloomFilter(10, false));
