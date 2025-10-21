@@ -2,15 +2,18 @@ package org.tron.plugins;
 
 
 import com.google.common.primitives.Bytes;
+import com.google.common.primitives.Longs;
 import com.google.protobuf.InvalidProtocolBufferException;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicLong;
 import lombok.extern.slf4j.Slf4j;
 import me.tongfei.progressbar.ProgressBar;
+import org.tron.plugins.utils.ByteArray;
 import org.tron.plugins.utils.db.DBInterface;
 import org.tron.plugins.utils.db.DBIterator;
 import org.tron.plugins.utils.db.DbTool;
@@ -61,18 +64,29 @@ public class DbScanAccount implements Callable<Integer> {
 
     accountAsset = DbTool.getDB(db, "account-asset");
     account = DbTool.getDB(db, "account");
-    ProgressBar.wrap(account.iterator(), "scan").forEachRemaining(this::scan);
+    DBIterator iterator = account.iterator();
+    iterator.seekToFirst();
+    ProgressBar.wrap(iterator, "scan").forEachRemaining(this::scan);
     spec.commandLine().getOut().println("scan account total: " + total.get());
     return 0;
   }
 
 
 
-  private void getAllAssets(Protocol.Account account) {
+  private Map<String, Long> getAllAssets(Protocol.Account account) {
+    Map<String, Long> assets = new TreeMap<>();
     if (ignoreAsset || !account.getAssetOptimized()) {
-      return;
+      return assets;
     }
-    prefixQuery(account.getAddress().toByteArray());
+    int addressSize = account.getAddress().toByteArray().length;
+    if (account.getAssetOptimized()) {
+      Map<byte[], byte[]> map = prefixQuery(account.getAddress().toByteArray());
+      map.forEach((k, v) -> assets.put(ByteArray.toStr(
+          ByteArray.subArray(k, addressSize, k.length)), Longs.fromByteArray(v)));
+    }
+    assets.putAll(account.getAssetV2Map());
+    assets.entrySet().removeIf(entry -> entry.getValue() <= 0);
+    return assets;
   }
 
   public Map<byte[], byte[]> prefixQuery(byte[] key) {
@@ -94,7 +108,8 @@ public class DbScanAccount implements Callable<Integer> {
   private void scan(Map.Entry<byte[], byte[]> entry) {
     try {
       Protocol.Account account = Protocol.Account.parseFrom(entry.getValue());
-      getAllAssets(account);
+      account.toBuilder().clearAsset().clearAssetV2().clearAssetOptimized()
+          .putAllAssetV2(getAllAssets(account));
       if (total.incrementAndGet() % 1000000 == 0) {
         logger.info("scan account total: {}", total.get());
         spec.commandLine().getOut().println("scan account total: " + total.get());
