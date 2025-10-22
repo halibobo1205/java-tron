@@ -308,7 +308,9 @@ public class RocksDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
 
   @Override
   public void updateByBatch(Map<byte[], byte[]> rows) {
-    this.updateByBatch(rows, new WriteOptions());
+    try (WriteOptions writeOptions = new WriteOptions()) {
+      this.updateByBatch(rows, writeOptions);
+    }
   }
 
   private void updateByBatch(Map<byte[], byte[]> rows, WriteOptions options) {

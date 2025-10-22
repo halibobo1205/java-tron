@@ -88,6 +88,23 @@ public class DBUtils {
     return dbOptions;
   }
 
+  /**
+   * Returns an iterator over the database.
+   *
+   * <p><b>CRITICAL:</b> The returned Options holds native resources and <b>MUST</b> be closed
+   * after use to prevent memory leaks. It is strongly recommended to use a try-with-resources
+   * statement.
+   *
+   * <p>Example of correct usage:
+   * <pre>{@code
+   * try (Options option = newDefaultRocksDbOptions(true)) {
+   *
+   *   }
+   * }
+   * }</pre>
+   *
+   * @return a new rocksdb database Options that must be closed.
+   */
   private static Options newDefaultRocksDbOptions(boolean forBulkLoad) {
     Options options = new Options();
     options.setCreateIfMissing(true);
