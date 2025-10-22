@@ -1,5 +1,6 @@
 package org.tron.plugins;
 
+import org.tron.plugins.utils.DbCheckSum;
 import picocli.CommandLine;
 
 @CommandLine.Command(name = "db",
@@ -12,7 +13,8 @@ import picocli.CommandLine;
         DbConvert.class,
         DbLite.class,
         DbCopy.class,
-        DbRoot.class
+        DbRoot.class,
+        DbCheckSum.class,
     },
     commandListHeading = "%nCommands:%n%nThe most commonly used db commands are:%n"
 )
