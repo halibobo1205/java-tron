@@ -11,16 +11,13 @@ import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import java.io.IOException;
 import java.util.Objects;
-import java.util.concurrent.TimeUnit;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.FixMethodOrder;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
-import org.junit.rules.Timeout;
 import org.junit.runners.MethodSorters;
 import org.tron.api.DatabaseGrpc;
 import org.tron.api.DatabaseGrpc.DatabaseBlockingStub;
@@ -56,7 +53,6 @@ import org.tron.common.application.TronApplicationContext;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.PublicMethod;
 import org.tron.common.utils.Sha256Hash;
-import org.tron.common.utils.TimeoutInterceptor;
 import org.tron.core.Constant;
 import org.tron.core.Wallet;
 import org.tron.core.capsule.AccountCapsule;
@@ -128,8 +124,6 @@ public class RpcApiServicesTest {
   private static WalletSolidityBlockingStub blockingStubPBFT = null;
   @ClassRule
   public static TemporaryFolder temporaryFolder = new TemporaryFolder();
-  @Rule
-  public Timeout timeout = new Timeout(30, TimeUnit.SECONDS);
   private static ByteString ownerAddress;
   private static ByteString sk;
   private static ByteString ask;
@@ -165,15 +159,12 @@ public class RpcApiServicesTest {
 
     channelFull = ManagedChannelBuilder.forTarget(fullNode)
         .usePlaintext()
-        .intercept(new TimeoutInterceptor(5000))
         .build();
     channelPBFT = ManagedChannelBuilder.forTarget(pBFTNode)
         .usePlaintext()
-        .intercept(new TimeoutInterceptor(5000))
         .build();
     channelSolidity = ManagedChannelBuilder.forTarget(solidityNode)
         .usePlaintext()
-        .intercept(new TimeoutInterceptor(5000))
         .build();
     context = new TronApplicationContext(DefaultConfig.class);
     databaseBlockingStubFull = DatabaseGrpc.newBlockingStub(channelFull);

@@ -431,7 +431,7 @@ public class SnapshotManager implements RevokingDatabase {
         hmap.put(e.getKey(), null);
       }
       if (hmap.size() != 0) {
-        checkTmpStore.getDbSource().updateByBatch(hmap);
+        checkTmpStore.updateByBatch(hmap);
       }
     } catch (Exception e) {
       throw new TronDBException(e);
