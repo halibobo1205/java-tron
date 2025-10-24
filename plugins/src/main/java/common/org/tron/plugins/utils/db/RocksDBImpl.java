@@ -3,6 +3,7 @@ package org.tron.plugins.utils.db;
 import com.google.common.collect.Streams;
 import java.io.IOException;
 import lombok.Getter;
+import org.rocksdb.ReadOptions;
 import org.rocksdb.RocksDBException;
 
 public class RocksDBImpl implements DBInterface {
@@ -47,7 +48,9 @@ public class RocksDBImpl implements DBInterface {
 
   @Override
   public DBIterator iterator() {
-    return new RockDBIterator(rocksDB);
+    try (ReadOptions readOptions = new ReadOptions().setFillCache(false)) {
+      return new RockDBIterator(rocksDB.newIterator(readOptions));
+    }
   }
 
   @Override
