@@ -39,7 +39,7 @@ public class DbConvert implements Callable<Integer> {
     RocksDB.loadLibrary();
   }
 
-  private static final int BATCH  = 256;
+  private static final int BATCH  = 1;
 
   @CommandLine.Spec
   CommandLine.Model.CommandSpec spec;
@@ -56,13 +56,6 @@ public class DbConvert implements Callable<Integer> {
 
   @Override
   public Integer call() throws Exception {
-    if (Arch.isArm64()) {
-      String tips = String.format("This command is not supported on %s architecture.",
-          Arch.getOsArch());
-      spec.commandLine().getErr().println(spec.commandLine().getColorScheme().errorText(tips));
-      logger.error(tips);
-      return 0;
-    }
     if (help) {
       spec.commandLine().usage(System.out);
       return 0;
@@ -203,7 +196,7 @@ public class DbConvert implements Callable<Integer> {
 
     private void batchInsert(RocksDB rocks, List<byte[]> keys, List<byte[]> values)
         throws Exception {
-      try (org.rocksdb.WriteBatch batch = new org.rocksdb.WriteBatch()) {
+      try (org.rocksdb.WriteBatch batch = new org.rocksdb.WriteBatch()) { // TODO FIX write
         for (int i = 0; i < keys.size(); i++) {
           byte[] k = keys.get(i);
           byte[] v = values.get(i);

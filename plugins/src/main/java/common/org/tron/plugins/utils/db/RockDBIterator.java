@@ -77,6 +77,6 @@ public class RockDBIterator implements DBIterator {
   @Override
   public void close() throws IOException {
     iterator.close();
-    readOptions.close();
+    // readOptions.close(); // TODO FIX read
   }
 }
