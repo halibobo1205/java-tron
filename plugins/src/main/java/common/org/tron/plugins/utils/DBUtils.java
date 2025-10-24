@@ -88,6 +88,21 @@ public class DBUtils {
     return dbOptions;
   }
 
+  /**
+   * Creates a new RocksDB Options.
+   *
+   * <p><b>CRITICAL:</b> Must be closed after use to prevent native memory leaks.
+   * Use try-with-resources.
+   *
+   * <pre>{@code
+   * try (Options options = newDefaultRocksDbOptions(false)) {
+   *     // do something
+   * }
+   * }</pre>
+   *
+   * @param forBulkLoad if true, optimizes for bulk loading
+   * @return a new Options instance that must be closed
+   */
   private static Options newDefaultRocksDbOptions(boolean forBulkLoad) {
     Options options = new Options();
     options.setCreateIfMissing(true);
