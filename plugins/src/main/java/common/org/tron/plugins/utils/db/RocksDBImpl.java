@@ -48,9 +48,7 @@ public class RocksDBImpl implements DBInterface {
 
   @Override
   public DBIterator iterator() {
-    try (ReadOptions readOptions = new ReadOptions().setFillCache(false)) {
-      return new RockDBIterator(rocksDB.newIterator(readOptions));
-    }
+    return new RockDBIterator(rocksDB.newIterator(new ReadOptions().setFillCache(false)));
   }
 
   @Override
