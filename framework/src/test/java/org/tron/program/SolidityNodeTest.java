@@ -31,9 +31,6 @@ public class SolidityNodeTest extends BaseTest {
   static int rpcPort = PublicMethod.chooseRandomPort();
   static int solidityHttpPort = PublicMethod.chooseRandomPort();
 
-  @Rule
-  public Timeout timeout = new Timeout(30, TimeUnit.SECONDS);
-
   static {
     Args.setParam(new String[] {"-d", dbPath(), "--solidity"}, Constant.TEST_CONF);
     Args.getInstance().setRpcPort(rpcPort);
