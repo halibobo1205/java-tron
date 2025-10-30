@@ -7,6 +7,8 @@ import io.grpc.internal.PickFirstLoadBalancerProvider;
 import org.tron.api.DatabaseGrpc;
 import org.tron.api.GrpcAPI.EmptyMessage;
 import org.tron.api.GrpcAPI.NumberMessage;
+import org.tron.common.utils.DebugInterceptor;
+import org.tron.common.utils.TimeoutInterceptor;
 import org.tron.protos.Protocol.Block;
 import org.tron.protos.Protocol.DynamicProperties;
 
@@ -24,6 +26,7 @@ public class DatabaseGrpcClient {
   public DatabaseGrpcClient(String host, int port) {
     channel = ManagedChannelBuilder.forAddress(host, port)
         .usePlaintext()
+        .intercept(new TimeoutInterceptor(5000), new DebugInterceptor())
         .build();
     databaseBlockingStub = DatabaseGrpc.newBlockingStub(channel);
   }
@@ -31,6 +34,7 @@ public class DatabaseGrpcClient {
   public DatabaseGrpcClient(String host) {
     channel = ManagedChannelBuilder.forTarget(host)
         .usePlaintext()
+        .intercept(new TimeoutInterceptor(5000), new DebugInterceptor())
         .build();
     databaseBlockingStub = DatabaseGrpc.newBlockingStub(channel);
   }

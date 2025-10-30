@@ -8,9 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.rocksdb.BlockBasedTableConfig;
 import org.rocksdb.BloomFilter;
 import org.rocksdb.ComparatorOptions;
-import org.rocksdb.InfoLogLevel;
 import org.rocksdb.LRUCache;
-import org.rocksdb.Logger;
 import org.rocksdb.Options;
 import org.rocksdb.RocksDB;
 import org.rocksdb.Statistics;
@@ -182,13 +180,6 @@ public class RocksDbSettings {
     RocksDbSettings settings = getSettings();
 
     Options options = new Options();
-
-    options.setLogger(new Logger(options) {
-      @Override
-      protected void log(InfoLogLevel infoLogLevel, String logMsg) {
-        rocksDbLogger.info("{} {}", dbName, logMsg);
-      }
-    });
     // most of these options are suggested by https://github.com/facebook/rocksdb/wiki/Set-Up-Options
 
     // general options

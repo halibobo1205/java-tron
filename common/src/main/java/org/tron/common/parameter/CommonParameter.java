@@ -4,10 +4,15 @@ import com.beust.jcommander.Parameter;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
+import java.util.Enumeration;
 import java.util.List;
 import java.util.Set;
+import java.util.logging.Level;
+import java.util.logging.LogManager;
+import java.util.logging.Logger;
 import lombok.Getter;
 import lombok.Setter;
+import org.slf4j.bridge.SLF4JBridgeHandler;
 import org.tron.common.args.GenesisBlock;
 import org.tron.common.config.DbBackupConfig;
 import org.tron.common.cron.CronExpression;
@@ -749,6 +754,31 @@ public class CommonParameter {
   @Getter
   @Setter
   public long allowTvmBlob;
+
+  static {
+    LogManager.getLogManager().reset();
+    SLF4JBridgeHandler.removeHandlersForRootLogger();
+    SLF4JBridgeHandler.install();
+    Logger.getLogger("").setLevel(Level.ALL); // Root logger.
+    LogManager logManager = LogManager.getLogManager();
+
+    setLoggerLevel("io.grpc");
+    setLoggerLevel("io.netty");
+
+    Enumeration<String> names = logManager.getLoggerNames();
+    while (names.hasMoreElements()) {
+      String name = names.nextElement();
+      if (name.startsWith("io.grpc") || name.startsWith("io.netty")) {
+        setLoggerLevel(name);
+      }
+    }
+  }
+
+  private static void setLoggerLevel(String name) {
+    Logger logger = Logger.getLogger(name);
+    logger.setLevel(Level.FINEST);
+    logger.setUseParentHandlers(true);
+  }
 
   private static double calcMaxTimeRatio() {
     //return max(2.0, min(5.0, 5 * 4.0 / max(Runtime.getRuntime().availableProcessors(), 1)));

@@ -12,14 +12,18 @@ import io.grpc.ManagedChannelBuilder;
 import java.io.IOException;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
+import lombok.extern.slf4j.Slf4j;
+import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.FixMethodOrder;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import org.junit.rules.TestName;
 import org.junit.rules.Timeout;
 import org.junit.runners.MethodSorters;
 import org.tron.api.DatabaseGrpc;
@@ -54,6 +58,7 @@ import org.tron.common.application.Application;
 import org.tron.common.application.ApplicationFactory;
 import org.tron.common.application.TronApplicationContext;
 import org.tron.common.utils.ByteArray;
+import org.tron.common.utils.DebugInterceptor;
 import org.tron.common.utils.PublicMethod;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.common.utils.TimeoutInterceptor;
@@ -113,6 +118,7 @@ import org.tron.protos.contract.WitnessContract.WitnessCreateContract;
 import org.tron.protos.contract.WitnessContract.WitnessUpdateContract;
 
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
+@Slf4j(topic = "grpcTest")
 public class RpcApiServicesTest {
 
   private static Application appTest;
@@ -128,8 +134,7 @@ public class RpcApiServicesTest {
   private static WalletSolidityBlockingStub blockingStubPBFT = null;
   @ClassRule
   public static TemporaryFolder temporaryFolder = new TemporaryFolder();
-  @Rule
-  public Timeout timeout = new Timeout(30, TimeUnit.SECONDS);
+  @Rule public TestName name = new TestName();
   private static ByteString ownerAddress;
   private static ByteString sk;
   private static ByteString ask;
@@ -165,15 +170,15 @@ public class RpcApiServicesTest {
 
     channelFull = ManagedChannelBuilder.forTarget(fullNode)
         .usePlaintext()
-        .intercept(new TimeoutInterceptor(5000))
+        .intercept(new TimeoutInterceptor(5000), new DebugInterceptor())
         .build();
     channelPBFT = ManagedChannelBuilder.forTarget(pBFTNode)
         .usePlaintext()
-        .intercept(new TimeoutInterceptor(5000))
+        .intercept(new TimeoutInterceptor(5000), new DebugInterceptor())
         .build();
     channelSolidity = ManagedChannelBuilder.forTarget(solidityNode)
         .usePlaintext()
-        .intercept(new TimeoutInterceptor(5000))
+        .intercept(new TimeoutInterceptor(5000), new DebugInterceptor())
         .build();
     context = new TronApplicationContext(DefaultConfig.class);
     databaseBlockingStubFull = DatabaseGrpc.newBlockingStub(channelFull);
@@ -208,6 +213,16 @@ public class RpcApiServicesTest {
     }
     context.close();
     Args.clearParam();
+  }
+
+  @Before
+  public void start() {
+    logger.debug("========== Starting test: {} ==========", name.getMethodName());
+  }
+
+  @After
+  public void end() throws InterruptedException {
+    logger.debug("========== Ending test: {} ==========", name.getMethodName());
   }
 
   @Test

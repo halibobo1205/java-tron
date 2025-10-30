@@ -6,14 +6,17 @@ import io.grpc.StatusRuntimeException;
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
+import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
 import org.junit.rules.TemporaryFolder;
+import org.junit.rules.TestName;
 import org.junit.rules.Timeout;
 import org.tron.api.GrpcAPI;
 import org.tron.api.WalletGrpc;
@@ -21,6 +24,7 @@ import org.tron.api.WalletSolidityGrpc;
 import org.tron.common.application.Application;
 import org.tron.common.application.ApplicationFactory;
 import org.tron.common.application.TronApplicationContext;
+import org.tron.common.utils.DebugInterceptor;
 import org.tron.common.utils.PublicMethod;
 import org.tron.common.utils.TimeoutInterceptor;
 import org.tron.core.ChainBaseManager;
@@ -28,7 +32,7 @@ import org.tron.core.Constant;
 import org.tron.core.config.DefaultConfig;
 import org.tron.core.config.args.Args;
 
-@Slf4j
+@Slf4j(topic = "grpcTest")
 public class LiteFnQueryGrpcInterceptorTest {
 
   private static TronApplicationContext context;
@@ -47,9 +51,7 @@ public class LiteFnQueryGrpcInterceptorTest {
 
   @ClassRule
   public static final TemporaryFolder temporaryFolder = new TemporaryFolder();
-
-  @Rule
-  public Timeout timeout = new Timeout(30, TimeUnit.SECONDS);
+  @Rule public TestName name = new TestName();
 
   /**
    * init logic.
@@ -72,15 +74,15 @@ public class LiteFnQueryGrpcInterceptorTest {
         Args.getInstance().getRpcOnPBFTPort());
     channelFull = ManagedChannelBuilder.forTarget(fullnode)
         .usePlaintext()
-        .intercept(new TimeoutInterceptor(5000))
+        .intercept(new TimeoutInterceptor(5000), new DebugInterceptor())
         .build();
     channelSolidity = ManagedChannelBuilder.forTarget(solidityNode)
         .usePlaintext()
-        .intercept(new TimeoutInterceptor(5000))
+        .intercept(new TimeoutInterceptor(5000), new DebugInterceptor())
         .build();
     channelpBFT = ManagedChannelBuilder.forTarget(pBFTNode)
         .usePlaintext()
-        .intercept(new TimeoutInterceptor(5000))
+        .intercept(new TimeoutInterceptor(5000), new DebugInterceptor())
         .build();
     context = new TronApplicationContext(DefaultConfig.class);
     blockingStubFull = WalletGrpc.newBlockingStub(channelFull);
@@ -89,6 +91,16 @@ public class LiteFnQueryGrpcInterceptorTest {
     chainBaseManager = context.getBean(ChainBaseManager.class);
     Application appTest = ApplicationFactory.create(context);
     appTest.startup();
+  }
+
+  @Before
+  public void start() {
+    logger.debug("========== Starting test: {} ==========", name.getMethodName());
+  }
+
+  @After
+  public void end() throws InterruptedException {
+    logger.debug("========== Ending test: {} ==========", name.getMethodName());
   }
 
   /**

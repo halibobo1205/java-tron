@@ -104,28 +104,204 @@ run {
     }
 }
 
+def jdkVersion = JavaVersion.current().majorVersion.toInteger()
+def debugAddress = jdkVersion >= 9 ? "*:5050" : "5050"
+
+tasks.register('solidityNodeGroupTests', Test) {
+    retry {
+        maxRetries = 5
+        maxFailures = 20
+    }
+    outputs.upToDateWhen { false }
+    filter {
+        includeTestsMatching "org.tron.core.services.filter.LiteFnQueryGrpcInterceptorTest"
+        includeTestsMatching "org.tron.core.services.filter.LiteFnQueryHttpFilterTest"
+        includeTestsMatching "org.tron.core.services.filter.RpcApiAccessInterceptorTest"
+        includeTestsMatching "org.tron.core.services.http.BroadcastServletTest"
+        includeTestsMatching "org.tron.core.services.http.ClearABIServletTest"
+        includeTestsMatching "org.tron.core.services.http.CreateAccountServletTest"
+        includeTestsMatching "org.tron.core.services.http.CreateAssetIssueServletTest"
+        includeTestsMatching "org.tron.core.services.http.CreateSpendAuthSigServletTest"
+        includeTestsMatching "org.tron.core.services.http.CreateWitnessServletTest"
+        includeTestsMatching "org.tron.core.services.http.GetAccountByIdServletTest"
+        includeTestsMatching "org.tron.core.services.http.GetAssetIssueListServletTest"
+        includeTestsMatching "org.tron.core.services.http.GetBandwidthPricesServletTest"
+        includeTestsMatching "org.tron.core.services.http.GetBlockByIdServletTest"
+        includeTestsMatching "org.tron.core.services.http.GetBlockByNumServletTest"
+        includeTestsMatching "org.tron.core.services.http.GetBrokerageServletTest"
+        includeTestsMatching "org.tron.core.services.http.GetEnergyPricesServletTest"
+        includeTestsMatching "org.tron.core.services.http.GetMemoFeePricesServletTest"
+        includeTestsMatching "org.tron.core.services.http.GetNowBlockServletTest"
+        includeTestsMatching "org.tron.core.services.http.GetRewardServletTest"
+        includeTestsMatching "org.tron.core.services.http.GetTransactionInfoByBlockNumServletTest"
+        includeTestsMatching "org.tron.core.services.http.GetTransactionInfoByIdServletTest"
+        includeTestsMatching "org.tron.core.services.http.GetTransactionListFromPendingServletTest"
+        includeTestsMatching "org.tron.core.services.http.HttpServletTest"
+        includeTestsMatching "org.tron.core.services.http.JsonFormatTest"
+        includeTestsMatching "org.tron.core.services.http.ListNodesServletTest"
+        includeTestsMatching "org.tron.core.services.http.ListProposalsServletTest"
+        includeTestsMatching "org.tron.core.services.http.TriggerSmartContractServletTest"
+        includeTestsMatching "org.tron.core.services.http.UpdateAccountServletTest"
+        includeTestsMatching "org.tron.core.services.http.UtilMockTest"
+        includeTestsMatching "org.tron.core.services.http.UtilTest"
+        includeTestsMatching "org.tron.core.services.http.solidity.GetTransactionByIdSolidityServletTest"
+        includeTestsMatching "org.tron.core.services.interfaceOnPBFT.http.GetBandwidthPricesOnPBFTServletTest"
+        includeTestsMatching "org.tron.core.services.interfaceOnPBFT.http.GetEnergyPricesOnPBFTServletTest"
+        includeTestsMatching "org.tron.core.services.interfaceOnSolidity.http.GetBandwidthPricesOnSolidityServletTest"
+        includeTestsMatching "org.tron.core.services.interfaceOnSolidity.http.GetEnergyPricesOnSolidityServletTest"
+        includeTestsMatching "org.tron.core.services.jsonrpc.BlockResultTest"
+        includeTestsMatching "org.tron.core.services.jsonrpc.BuildArgumentsTest"
+        includeTestsMatching "org.tron.core.services.jsonrpc.CallArgumentsTest"
+        includeTestsMatching "org.tron.core.services.jsonrpc.JsonRpcErrorResolverTest"
+        includeTestsMatching "org.tron.core.services.jsonrpc.TransactionReceiptTest"
+        includeTestsMatching "org.tron.core.services.jsonrpc.TransactionResultTest"
+        includeTestsMatching "org.tron.core.services.ratelimiter.GlobalRateLimiterTest"
+        includeTestsMatching "org.tron.core.services.ratelimiter.RuntimeDataTest"
+        includeTestsMatching "org.tron.core.services.ratelimiter.adaptor.AdaptorTest"
+        includeTestsMatching "org.tron.core.services.stop.BlockHeightStopTest"
+        includeTestsMatching "org.tron.core.services.stop.BlockSyncCountStopTest"
+        includeTestsMatching "org.tron.core.services.stop.BlockTimeStopTest"
+        includeTestsMatching "org.tron.core.tire.TrieTest"
+        includeTestsMatching "org.tron.core.witness.ProposalControllerTest"
+        includeTestsMatching "org.tron.core.witness.WitnessControllerTest"
+        includeTestsMatching "org.tron.core.zksnark.LibrustzcashTest"
+        includeTestsMatching "org.tron.core.zksnark.MerkleContainerTest"
+        includeTestsMatching "org.tron.core.zksnark.MerkleTreeTest"
+        includeTestsMatching "org.tron.core.zksnark.NoteEncDecryTest"
+        includeTestsMatching "org.tron.core.zksnark.SaplingNoteTest"
+        includeTestsMatching "org.tron.core.zksnark.SendCoinShieldTest"
+        includeTestsMatching "org.tron.core.zksnark.ShieldedReceiveTest"
+        includeTestsMatching "org.tron.keystore.CredentialsTest"
+        includeTestsMatching "org.tron.keystore.WalletFileTest"
+        includeTestsMatching "org.tron.keystroe.CredentialsTest"
+        includeTestsMatching "org.tron.program.AccountVoteWitnessTest"
+        includeTestsMatching "org.tron.program.SolidityNodeTest"
+    }
+
+    exclude { element ->
+        element.file.name.toLowerCase().contains('leveldb')
+    }
+    filter {
+        excludeTestsMatching '*.*leveldb*'
+        excludeTestsMatching '*.*Leveldb*'
+        excludeTestsMatching '*.*LevelDB*'
+        excludeTestsMatching '*.*LevelDb*'
+    }
+
+    testLogging {
+        events "passed", "skipped", "failed"
+        exceptionFormat "full"
+        showStandardStreams = false
+    }
+
+    jacoco {
+        destinationFile = file("$buildDir/jacoco/jacocoTest.exec")
+        classDumpDir = file("$buildDir/jacoco/classpathdumps")
+    }
+
+    maxHeapSize = "1024m"
+    doFirst {
+        // Restart the JVM after every 100 tests to avoid memory leaks and ensure test isolation
+        forkEvery = 100
+    }
+}
+
+def tagTest = hasProperty('tagTest') ? Integer.parseInt(String.valueOf(getProperty('tagTest'))) : 7
+
+
+
+tasks.register('rpcApiServicesGroupTests', Test) {
+    retry {
+        maxRetries = 5
+        maxFailures = 20
+    }
+    outputs.upToDateWhen { false }
+    filter {
+        includeTestsMatching "org.tron.core.net.MessageTest"
+        includeTestsMatching "org.tron.core.net.NodeTest"
+        includeTestsMatching "org.tron.core.net.P2pEventHandlerImplTest"
+        includeTestsMatching "org.tron.core.net.P2pRateLimiterTest"
+        includeTestsMatching "org.tron.core.net.TronNetDelegateTest"
+        includeTestsMatching "org.tron.core.net.messagehandler.BlockMsgHandlerTest"
+        includeTestsMatching "org.tron.core.net.messagehandler.ChainInventoryMsgHandlerTest"
+        includeTestsMatching "org.tron.core.net.messagehandler.FetchInvDataMsgHandlerTest"
+        includeTestsMatching "org.tron.core.net.messagehandler.InventoryMsgHandlerTest"
+        includeTestsMatching "org.tron.core.net.messagehandler.MessageHandlerTest"
+        includeTestsMatching "org.tron.core.net.messagehandler.PbftDataSyncHandlerTest"
+        includeTestsMatching "org.tron.core.net.messagehandler.PbftMsgHandlerTest"
+        includeTestsMatching "org.tron.core.net.messagehandler.SyncBlockChainMsgHandlerTest"
+        includeTestsMatching "org.tron.core.net.messagehandler.TransactionsMsgHandlerTest"
+        includeTestsMatching "org.tron.core.net.peer.PeerConnectionTest"
+        includeTestsMatching "org.tron.core.net.peer.PeerManagerTest"
+        includeTestsMatching "org.tron.core.net.peer.PeerStatusCheckMockTest"
+        includeTestsMatching "org.tron.core.net.peer.PeerStatusCheckTest"
+        includeTestsMatching "org.tron.core.net.service.nodepersist.DBNodeTest"
+        includeTestsMatching "org.tron.core.net.services.AdvServiceTest"
+        includeTestsMatching "org.tron.core.net.services.EffectiveCheckServiceTest"
+        includeTestsMatching "org.tron.core.net.services.HandShakeServiceTest"
+        includeTestsMatching "org.tron.core.net.services.RelayServiceTest"
+        includeTestsMatching "org.tron.core.net.services.ResilienceServiceTest"
+        includeTestsMatching "org.tron.core.net.services.SyncServiceTest"
+        includeTestsMatching "org.tron.core.net.services.TronStatsManagerTest"
+        includeTestsMatching "org.tron.core.pbft.PbftApiTest"
+        includeTestsMatching "org.tron.core.pbft.PbftTest"
+        includeTestsMatching "org.tron.core.services.RpcApiServicesTest"
+
+    }
+
+    exclude { element ->
+        element.file.name.toLowerCase().contains('leveldb')
+    }
+    filter {
+        excludeTestsMatching '*.*leveldb*'
+        excludeTestsMatching '*.*Leveldb*'
+        excludeTestsMatching '*.*LevelDB*'
+        excludeTestsMatching '*.*LevelDb*'
+    }
+
+
+    testLogging {
+        events "passed", "skipped", "failed"
+        exceptionFormat "full"
+        showStandardStreams = false
+    }
+
+    jacoco {
+        destinationFile = file("$buildDir/jacoco/jacocoTest.exec")
+        classDumpDir = file("$buildDir/jacoco/classpathdumps")
+    }
+
+    maxHeapSize = "1024m"
+    doFirst {
+        // Restart the JVM after every 100 tests to avoid memory leaks and ensure test isolation
+        forkEvery = 100
+    }
+}
+
 test {
     retry {
         maxRetries = 5
         maxFailures = 20
     }
+    outputs.upToDateWhen { false }
     testLogging {
         exceptionFormat = 'full'
+      //  showStandardStreams = true
     }
     jacoco {
         destinationFile = file("$buildDir/jacoco/jacocoTest.exec")
         classDumpDir = file("$buildDir/jacoco/classpathdumps")
     }
     if (rootProject.archInfo.isArm64) {
-        exclude { element ->
-            element.file.name.toLowerCase().contains('leveldb')
-        }
-        filter {
-            excludeTestsMatching '*.*leveldb*'
-            excludeTestsMatching '*.*Leveldb*'
-            excludeTestsMatching '*.*LevelDB*'
-            excludeTestsMatching '*.*LevelDb*'
-        }
+    exclude { element ->
+        element.file.name.toLowerCase().contains('leveldb')
+    }
+    filter {
+        excludeTestsMatching '*.*leveldb*'
+        excludeTestsMatching '*.*Leveldb*'
+        excludeTestsMatching '*.*LevelDB*'
+        excludeTestsMatching '*.*LevelDb*'
+    }
     }
     if (isWindows()) {
         exclude '**/ShieldedTransferActuatorTest.class'
@@ -140,7 +316,7 @@ test {
     doFirst {
         // Restart the JVM after every 100 tests to avoid memory leaks and ensure test isolation
         forkEvery = 100
-        jvmArgs "-XX:MetaspaceSize=128m","-XX:MaxMetaspaceSize=256m", "-XX:+UseG1GC"
+       jvmArgs "-XX:MetaspaceSize=128m","-XX:MaxMetaspaceSize=256m", "-XX:+UseG1GC"
     }
 }
 

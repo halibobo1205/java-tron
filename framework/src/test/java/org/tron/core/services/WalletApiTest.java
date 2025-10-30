@@ -4,19 +4,23 @@ import io.grpc.ManagedChannelBuilder;
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
+import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import org.junit.rules.TestName;
 import org.junit.rules.Timeout;
 import org.tron.api.GrpcAPI.EmptyMessage;
 import org.tron.api.WalletGrpc;
 import org.tron.common.application.Application;
 import org.tron.common.application.ApplicationFactory;
 import org.tron.common.application.TronApplicationContext;
+import org.tron.common.utils.DebugInterceptor;
 import org.tron.common.utils.PublicMethod;
 import org.tron.common.utils.TimeoutInterceptor;
 import org.tron.core.Constant;
@@ -24,14 +28,12 @@ import org.tron.core.config.DefaultConfig;
 import org.tron.core.config.args.Args;
 
 
-@Slf4j
+@Slf4j(topic = "grpcTest")
 public class WalletApiTest {
 
   @ClassRule
   public static TemporaryFolder temporaryFolder = new TemporaryFolder();
-
-  @Rule
-  public Timeout timeout = new Timeout(30, TimeUnit.SECONDS);
+  @Rule public TestName name = new TestName();
 
   private static TronApplicationContext context;
   private static Application appT;
@@ -48,13 +50,23 @@ public class WalletApiTest {
     appT.startup();
   }
 
+  @Before
+  public void start() {
+    logger.debug("========== Starting test: {} ==========", name.getMethodName());
+  }
+
+  @After
+  public void end() throws InterruptedException {
+    logger.debug("========== Ending test: {} ==========", name.getMethodName());
+  }
+
   @Test
   public void listNodesTest() {
     String fullNode = String.format("%s:%d", "127.0.0.1",
         Args.getInstance().getRpcPort());
     io.grpc.ManagedChannel channel = ManagedChannelBuilder.forTarget(fullNode)
         .usePlaintext()
-        .intercept(new TimeoutInterceptor(5000))
+        .intercept(new TimeoutInterceptor(5000), new DebugInterceptor())
         .build();
     try {
       WalletGrpc.WalletBlockingStub walletStub = WalletGrpc.newBlockingStub(channel);
