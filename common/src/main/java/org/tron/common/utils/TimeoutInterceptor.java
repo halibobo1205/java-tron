@@ -6,8 +6,10 @@ import io.grpc.ClientCall;
 import io.grpc.ClientInterceptor;
 import io.grpc.MethodDescriptor;
 import java.util.concurrent.TimeUnit;
+import lombok.extern.slf4j.Slf4j;
 
 
+@Slf4j(topic = "grpcClient")
 public class TimeoutInterceptor implements ClientInterceptor {
 
   private final long timeout;
@@ -24,7 +26,8 @@ public class TimeoutInterceptor implements ClientInterceptor {
       MethodDescriptor<ReqT, RespT> method,
       CallOptions callOptions,
       Channel next) {
-    return next.newCall(method,
-        callOptions.withDeadlineAfter(timeout, TimeUnit.MILLISECONDS));
+    CallOptions options = callOptions.withDeadlineAfter(timeout, TimeUnit.MILLISECONDS);
+    logger.debug("Set options {} for method {}", options, method.getFullMethodName());
+    return next.newCall(method, options);
   }
 }

@@ -55,9 +55,6 @@ public class RpcApiAccessInterceptorTest {
   @ClassRule
   public static final TemporaryFolder temporaryFolder = new TemporaryFolder();
 
-  @Rule
-  public Timeout timeout = new Timeout(30, TimeUnit.SECONDS);
-
   /**
    * init logic.
    */

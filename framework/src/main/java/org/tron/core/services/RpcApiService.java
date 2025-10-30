@@ -158,7 +158,7 @@ import org.tron.protos.contract.WitnessContract.WitnessCreateContract;
 import org.tron.protos.contract.WitnessContract.WitnessUpdateContract;
 
 @Component
-@Slf4j(topic = "API")
+@Slf4j(topic = "grpcServer")
 public class RpcApiService extends RpcService {
 
   public static final String CONTRACT_VALIDATE_EXCEPTION = "ContractValidateException: {}";
@@ -213,6 +213,7 @@ public class RpcApiService extends RpcService {
 
   private void callContract(TriggerSmartContract request,
       StreamObserver<TransactionExtention> responseObserver, boolean isConstant) {
+    logger.debug("callContract received request: isConstant={}", isConstant);
     TransactionExtention.Builder trxExtBuilder = TransactionExtention.newBuilder();
     Return.Builder retBuilder = Return.newBuilder();
     try {
@@ -246,6 +247,7 @@ public class RpcApiService extends RpcService {
     } finally {
       responseObserver.onNext(trxExtBuilder.build());
       responseObserver.onCompleted();
+      logger.debug("callContract completed");
     }
   }
 
@@ -300,6 +302,7 @@ public class RpcApiService extends RpcService {
     @Override
     public void getBlockReference(org.tron.api.GrpcAPI.EmptyMessage request,
         io.grpc.stub.StreamObserver<org.tron.api.GrpcAPI.BlockReference> responseObserver) {
+      logger.debug("DatabaseApi.getBlockReference received request");
       long headBlockNum = dbManager.getDynamicPropertiesStore()
           .getLatestBlockHeaderNumber();
       byte[] blockHeaderHash = dbManager.getDynamicPropertiesStore()
@@ -310,10 +313,12 @@ public class RpcApiService extends RpcService {
           .build();
       responseObserver.onNext(ref);
       responseObserver.onCompleted();
+      logger.debug("DatabaseApi.getBlockReference completed");
     }
 
     @Override
     public void getNowBlock(EmptyMessage request, StreamObserver<Block> responseObserver) {
+      logger.debug("DatabaseApi.getNowBlock received request");
       Block block = null;
       try {
         block = chainBaseManager.getHead().getInstance();
@@ -322,10 +327,12 @@ public class RpcApiService extends RpcService {
       }
       responseObserver.onNext(block);
       responseObserver.onCompleted();
+      logger.debug("DatabaseApi.getNowBlock completed");
     }
 
     @Override
     public void getBlockByNum(NumberMessage request, StreamObserver<Block> responseObserver) {
+      logger.debug("DatabaseApi.getBlockByNum received request: num={}", request.getNum());
       Block block = null;
       try {
         block = chainBaseManager.getBlockByNum(request.getNum()).getInstance();
@@ -334,17 +341,20 @@ public class RpcApiService extends RpcService {
       }
       responseObserver.onNext(block);
       responseObserver.onCompleted();
+      logger.debug("DatabaseApi.getBlockByNum completed");
     }
 
     @Override
     public void getDynamicProperties(EmptyMessage request,
         StreamObserver<DynamicProperties> responseObserver) {
+      logger.debug("DatabaseApi.getDynamicProperties received request");
       DynamicProperties.Builder builder = DynamicProperties.newBuilder();
       builder.setLastSolidityBlockNum(
           dbManager.getDynamicPropertiesStore().getLatestSolidifiedBlockNum());
       DynamicProperties dynamicProperties = builder.build();
       responseObserver.onNext(dynamicProperties);
       responseObserver.onCompleted();
+      logger.debug("DatabaseApi.getDynamicProperties completed");
     }
   }
 
@@ -355,6 +365,8 @@ public class RpcApiService extends RpcService {
 
     @Override
     public void getAccount(Account request, StreamObserver<Account> responseObserver) {
+      logger.debug("WalletSolidityApi.getAccount received request: address={}",
+          StringUtil.createReadableString(request.getAddress().toByteArray()));
       ByteString addressBs = request.getAddress();
       if (addressBs != null) {
         Account reply = wallet.getAccount(request);
@@ -363,10 +375,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(null);
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.getAccount completed");
     }
 
     @Override
     public void getAccountById(Account request, StreamObserver<Account> responseObserver) {
+      logger.debug("WalletSolidityApi.getAccountById received request: accountId={}",
+          request.getAccountId().toStringUtf8());
       ByteString id = request.getAccountId();
       if (id != null) {
         Account reply = wallet.getAccountById(request);
@@ -375,17 +390,23 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(null);
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.getAccountById completed");
     }
 
     @Override
     public void listWitnesses(EmptyMessage request, StreamObserver<WitnessList> responseObserver) {
+      logger.debug("WalletSolidityApi.listWitnesses received request");
       responseObserver.onNext(wallet.getWitnessList());
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.listWitnesses completed");
     }
 
     @Override
     public void getPaginatedNowWitnessList(PaginatedMessage request,
         StreamObserver<WitnessList> responseObserver) {
+      logger.debug(
+          "WalletSolidityApi.getPaginatedNowWitnessList received request: offset={}, limit={}",
+          request.getOffset(), request.getLimit());
       try {
         responseObserver.onNext(
             wallet.getPaginatedNowWitnessList(request.getOffset(), request.getLimit()));
@@ -393,25 +414,33 @@ public class RpcApiService extends RpcService {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.getPaginatedNowWitnessList completed");
     }
 
     @Override
     public void getAssetIssueList(EmptyMessage request,
         StreamObserver<AssetIssueList> responseObserver) {
+      logger.debug("WalletSolidityApi.getAssetIssueList received request");
       responseObserver.onNext(wallet.getAssetIssueList());
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.getAssetIssueList completed");
     }
 
     @Override
     public void getPaginatedAssetIssueList(PaginatedMessage request,
         StreamObserver<AssetIssueList> responseObserver) {
+      logger.debug(
+          "WalletSolidityApi.getPaginatedAssetIssueList received request: offset={}, limit={}",
+          request.getOffset(), request.getLimit());
       responseObserver.onNext(wallet.getAssetIssueList(request.getOffset(), request.getLimit()));
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.getPaginatedAssetIssueList completed");
     }
 
     @Override
     public void getAssetIssueByName(BytesMessage request,
         StreamObserver<AssetIssueContract> responseObserver) {
+      logger.debug("WalletSolidityApi.getAssetIssueByName received request");
       ByteString assetName = request.getValue();
       if (assetName != null) {
         try {
@@ -424,11 +453,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(null);
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.getAssetIssueByName completed");
     }
 
     @Override
     public void getAssetIssueListByName(BytesMessage request,
         StreamObserver<AssetIssueList> responseObserver) {
+      logger.debug("WalletSolidityApi.getAssetIssueListByName received request");
       ByteString assetName = request.getValue();
 
       if (assetName != null) {
@@ -437,11 +468,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(null);
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.getAssetIssueListByName completed");
     }
 
     @Override
     public void getAssetIssueById(BytesMessage request,
         StreamObserver<AssetIssueContract> responseObserver) {
+      logger.debug("WalletSolidityApi.getAssetIssueById received request");
       ByteString assetId = request.getValue();
 
       if (assetId != null) {
@@ -450,23 +483,29 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(null);
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.getAssetIssueById completed");
     }
 
     @Override
     public void getNowBlock(EmptyMessage request, StreamObserver<Block> responseObserver) {
+      logger.debug("WalletSolidityApi.getNowBlock received request");
       responseObserver.onNext(wallet.getNowBlock());
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.getNowBlock completed");
     }
 
     @Override
     public void getNowBlock2(EmptyMessage request,
         StreamObserver<BlockExtention> responseObserver) {
+      logger.debug("WalletSolidityApi.getNowBlock2 received request");
       responseObserver.onNext(block2Extention(wallet.getNowBlock()));
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.getNowBlock2 completed");
     }
 
     @Override
     public void getBlockByNum(NumberMessage request, StreamObserver<Block> responseObserver) {
+      logger.debug("WalletSolidityApi.getBlockByNum received request: num={}", request.getNum());
       long num = request.getNum();
       if (num >= 0) {
         Block reply = wallet.getBlockByNum(num);
@@ -475,11 +514,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(null);
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.getBlockByNum completed");
     }
 
     @Override
     public void getBlockByNum2(NumberMessage request,
         StreamObserver<BlockExtention> responseObserver) {
+      logger.debug("WalletSolidityApi.getBlockByNum2 received request: num={}", request.getNum());
       long num = request.getNum();
       if (num >= 0) {
         Block reply = wallet.getBlockByNum(num);
@@ -488,20 +529,31 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(null);
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.getBlockByNum2 completed");
     }
 
 
     @Override
     public void getDelegatedResource(DelegatedResourceMessage request,
         StreamObserver<DelegatedResourceList> responseObserver) {
+      logger.debug(
+          "WalletSolidityApi.getDelegatedResource received request: fromAddress={}, toAddress={}",
+          StringUtil.createReadableString(request.getFromAddress().toByteArray()),
+          StringUtil.createReadableString(request.getToAddress().toByteArray()));
       responseObserver
           .onNext(wallet.getDelegatedResource(request.getFromAddress(), request.getToAddress()));
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.getDelegatedResource completed");
+
     }
 
     @Override
     public void getDelegatedResourceV2(DelegatedResourceMessage request,
         StreamObserver<DelegatedResourceList> responseObserver) {
+      logger.debug(
+              "WalletSolidityApi.getDelegatedResourceV2 received request: fromAddress={}, toAddress={}",
+              StringUtil.createReadableString(request.getFromAddress().toByteArray()),
+              StringUtil.createReadableString(request.getToAddress().toByteArray()));
       try {
         responseObserver.onNext(wallet.getDelegatedResourceV2(
                 request.getFromAddress(), request.getToAddress())
@@ -510,23 +562,27 @@ public class RpcApiService extends RpcService {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.getDelegatedResourceV2 completed");
     }
 
     @Override
     public void getDelegatedResourceAccountIndex(BytesMessage request,
         StreamObserver<org.tron.protos.Protocol.DelegatedResourceAccountIndex> responseObserver) {
+      logger.debug("WalletSolidityApi.getDelegatedResourceAccountIndex received request");
       try {
         responseObserver
           .onNext(wallet.getDelegatedResourceAccountIndex(request.getValue()));
       } catch (Exception e) {
-        responseObserver.onError(getRunTimeException(e));
+        responseObserver.onError(getRunTimeException(e)); //TODO Fix ME
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.getDelegatedResourceAccountIndex completed");
     }
 
     @Override
     public void getDelegatedResourceAccountIndexV2(BytesMessage request,
         StreamObserver<org.tron.protos.Protocol.DelegatedResourceAccountIndex> responseObserver) {
+      logger.debug("WalletSolidityApi.getDelegatedResourceAccountIndexV2 received request");
       try {
         responseObserver
                 .onNext(wallet.getDelegatedResourceAccountIndexV2(request.getValue()));
@@ -534,11 +590,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.getDelegatedResourceAccountIndexV2 completed");
     }
 
     @Override
     public void getCanDelegatedMaxSize(GrpcAPI.CanDelegatedMaxSizeRequestMessage request,
         StreamObserver<GrpcAPI.CanDelegatedMaxSizeResponseMessage> responseObserver) {
+      logger.debug("WalletSolidityApi.getCanDelegatedMaxSize received request");
       try {
         responseObserver.onNext(wallet.getCanDelegatedMaxSize(
                         request.getOwnerAddress(),request.getType()));
@@ -546,11 +604,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.getCanDelegatedMaxSize completed");
     }
 
     @Override
     public void getAvailableUnfreezeCount(GrpcAPI.GetAvailableUnfreezeCountRequestMessage request,
         StreamObserver<GrpcAPI.GetAvailableUnfreezeCountResponseMessage> responseObserver) {
+      logger.debug("WalletSolidityApi.getAvailableUnfreezeCount received request");
       try {
         responseObserver.onNext(wallet.getAvailableUnfreezeCount(
                 request.getOwnerAddress()));
@@ -558,11 +618,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.getAvailableUnfreezeCount completed");
     }
 
     @Override
     public void getCanWithdrawUnfreezeAmount(CanWithdrawUnfreezeAmountRequestMessage request,
         StreamObserver<GrpcAPI.CanWithdrawUnfreezeAmountResponseMessage> responseObserver) {
+      logger.debug("WalletSolidityApi.getCanWithdrawUnfreezeAmount received request");
       try {
         responseObserver
                 .onNext(wallet.getCanWithdrawUnfreezeAmount(
@@ -572,11 +634,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.getCanWithdrawUnfreezeAmount completed");
     }
 
     @Override
     public void getExchangeById(BytesMessage request,
         StreamObserver<Exchange> responseObserver) {
+      logger.debug("WalletSolidityApi.getExchangeById received request");
       ByteString exchangeId = request.getValue();
 
       if (Objects.nonNull(exchangeId)) {
@@ -585,13 +649,16 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(null);
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.getExchangeById completed");
     }
 
     @Override
     public void listExchanges(EmptyMessage request,
         StreamObserver<ExchangeList> responseObserver) {
+      logger.debug("WalletSolidityApi.listExchanges received request");
       responseObserver.onNext(wallet.getExchangeList());
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.listExchanges completed");
     }
 
     @Override
@@ -603,6 +670,7 @@ public class RpcApiService extends RpcService {
     @Override
     public void getTransactionById(BytesMessage request,
         StreamObserver<Transaction> responseObserver) {
+      logger.debug("WalletSolidityApi.getTransactionById received request");
       ByteString id = request.getValue();
       if (null != id) {
         Transaction reply = wallet.getTransactionById(id);
@@ -612,11 +680,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(null);
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.getTransactionById completed");
     }
 
     @Override
     public void getTransactionInfoById(BytesMessage request,
         StreamObserver<TransactionInfo> responseObserver) {
+      logger.debug("WalletSolidityApi.getTransactionInfoById received request");
       ByteString id = request.getValue();
       if (null != id) {
         TransactionInfo reply = wallet.getTransactionInfoById(id);
@@ -626,6 +696,7 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(null);
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.getTransactionInfoById completed");
     }
 
     @Override
@@ -648,7 +719,7 @@ public class RpcApiService extends RpcService {
     @Override
     public void getMerkleTreeVoucherInfo(OutputPointInfo request,
         StreamObserver<IncrementalMerkleVoucherInfo> responseObserver) {
-
+      logger.debug("WalletSolidityApi.getMerkleTreeVoucherInfo received request");
       try {
         IncrementalMerkleVoucherInfo witnessInfo = wallet
             .getMerkleTreeVoucherInfo(request);
@@ -657,11 +728,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onError(getRunTimeException(ex));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.getMerkleTreeVoucherInfo completed");
     }
 
     @Override
     public void scanNoteByIvk(GrpcAPI.IvkDecryptParameters request,
         StreamObserver<GrpcAPI.DecryptNotes> responseObserver) {
+      logger.debug("WalletSolidityApi.scanNoteByIvk received request");
       long startNum = request.getStartBlockIndex();
       long endNum = request.getEndBlockIndex();
 
@@ -673,11 +746,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.scanNoteByIvk completed");
     }
 
     @Override
     public void scanAndMarkNoteByIvk(GrpcAPI.IvkDecryptAndMarkParameters request,
         StreamObserver<GrpcAPI.DecryptNotesMarked> responseObserver) {
+      logger.debug("WalletSolidityApi.scanAndMarkNoteByIvk received request");
       long startNum = request.getStartBlockIndex();
       long endNum = request.getEndBlockIndex();
 
@@ -692,11 +767,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.scanAndMarkNoteByIvk completed");
     }
 
     @Override
     public void scanNoteByOvk(GrpcAPI.OvkDecryptParameters request,
         StreamObserver<GrpcAPI.DecryptNotes> responseObserver) {
+      logger.debug("WalletSolidityApi.scanNoteByOvk received request");
       long startNum = request.getStartBlockIndex();
       long endNum = request.getEndBlockIndex();
       try {
@@ -707,21 +784,25 @@ public class RpcApiService extends RpcService {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.scanNoteByOvk completed");
     }
 
     @Override
     public void isSpend(NoteParameters request, StreamObserver<SpendResult> responseObserver) {
+      logger.debug("WalletSolidityApi.isSpend received request");
       try {
         responseObserver.onNext(wallet.isSpend(request));
       } catch (Exception e) {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.isSpend completed");
     }
 
     @Override
     public void scanShieldedTRC20NotesByIvk(IvkDecryptTRC20Parameters request,
         StreamObserver<DecryptNotesTRC20> responseObserver) {
+      logger.debug("WalletSolidityApi.scanShieldedTRC20NotesByIvk received request");
       long startNum = request.getStartBlockIndex();
       long endNum = request.getEndBlockIndex();
       byte[] contractAddress = request.getShieldedTRC20ContractAddress().toByteArray();
@@ -739,11 +820,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.scanShieldedTRC20NotesByIvk completed");
     }
 
     @Override
     public void scanShieldedTRC20NotesByOvk(OvkDecryptTRC20Parameters request,
         StreamObserver<DecryptNotesTRC20> responseObserver) {
+      logger.debug("WalletSolidityApi.scanShieldedTRC20NotesByOvk received request");
       long startNum = request.getStartBlockIndex();
       long endNum = request.getEndBlockIndex();
       byte[] contractAddress = request.getShieldedTRC20ContractAddress().toByteArray();
@@ -757,22 +840,26 @@ public class RpcApiService extends RpcService {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.scanShieldedTRC20NotesByOvk completed");
     }
 
     @Override
     public void isShieldedTRC20ContractNoteSpent(NfTRC20Parameters request,
         StreamObserver<GrpcAPI.NullifierResult> responseObserver) {
+      logger.debug("WalletSolidityApi.isShieldedTRC20ContractNoteSpent received request");
       try {
         responseObserver.onNext(wallet.isShieldedTRC20ContractNoteSpent(request));
       } catch (Exception e) {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.isShieldedTRC20ContractNoteSpent completed");
     }
 
     @Override
     public void getMarketOrderByAccount(BytesMessage request,
         StreamObserver<MarketOrderList> responseObserver) {
+      logger.debug("WalletSolidityApi.getMarketOrderByAccount received request");
       try {
         ByteString address = request.getValue();
 
@@ -783,11 +870,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.getMarketOrderByAccount completed");
     }
 
     @Override
     public void getMarketOrderById(BytesMessage request,
         StreamObserver<MarketOrder> responseObserver) {
+      logger.debug("WalletSolidityApi.getMarketOrderById received request");
       try {
         ByteString address = request.getValue();
 
@@ -798,11 +887,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.getMarketOrderById completed");
     }
 
     @Override
     public void getMarketPriceByPair(MarketOrderPair request,
         StreamObserver<MarketPriceList> responseObserver) {
+      logger.debug("WalletSolidityApi.getMarketPriceByPair received request");
       try {
         MarketPriceList marketPriceList = wallet
             .getMarketPriceByPair(request.getSellTokenId().toByteArray(),
@@ -812,11 +903,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.getMarketPriceByPair completed");
     }
 
     @Override
     public void getMarketOrderListByPair(org.tron.protos.Protocol.MarketOrderPair request,
         StreamObserver<MarketOrderList> responseObserver) {
+      logger.debug("WalletSolidityApi.getMarketOrderListByPair received request");
       try {
         MarketOrderList orderPairList = wallet
             .getMarketOrderListByPair(request.getSellTokenId().toByteArray(),
@@ -826,11 +919,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.getMarketOrderListByPair completed");
     }
 
     @Override
     public void getMarketPairList(EmptyMessage request,
         StreamObserver<MarketOrderPairList> responseObserver) {
+      logger.debug("WalletSolidityApi.getMarketPairList received request");
       try {
         MarketOrderPairList pairList = wallet.getMarketPairList();
         responseObserver.onNext(pairList);
@@ -838,6 +933,7 @@ public class RpcApiService extends RpcService {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.getMarketPairList completed");
     }
 
     @Override
@@ -850,6 +946,7 @@ public class RpcApiService extends RpcService {
     @Override
     public void estimateEnergy(TriggerSmartContract request,
         StreamObserver<EstimateEnergyMessage> responseObserver) {
+      logger.debug("WalletSolidityApi.estimateEnergy received request");
       TransactionExtention.Builder trxExtBuilder = TransactionExtention.newBuilder();
       Return.Builder retBuilder = Return.newBuilder();
       EstimateEnergyMessage.Builder estimateBuilder
@@ -876,12 +973,15 @@ public class RpcApiService extends RpcService {
         estimateBuilder.setResult(retBuilder);
         responseObserver.onNext(estimateBuilder.build());
         responseObserver.onCompleted();
+        logger.debug("WalletSolidityApi.estimateEnergy completed");
       }
     }
 
     @Override
     public void getTransactionInfoByBlockNum(NumberMessage request,
         StreamObserver<TransactionInfoList> responseObserver) {
+      logger.debug("WalletSolidityApi.getTransactionInfoByBlockNum received request: num={}",
+          request.getNum());
       try {
         responseObserver.onNext(wallet.getTransactionInfoByBlockNum(request.getNum()));
       } catch (Exception e) {
@@ -889,6 +989,7 @@ public class RpcApiService extends RpcService {
       }
 
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.getTransactionInfoByBlockNum completed");
     }
 
     @Override
@@ -900,23 +1001,27 @@ public class RpcApiService extends RpcService {
     @Override
     public void getBandwidthPrices(EmptyMessage request,
         StreamObserver<PricesResponseMessage> responseObserver) {
+      logger.debug("WalletSolidityApi.getBandwidthPrices received request");
       try {
         responseObserver.onNext(wallet.getBandwidthPrices());
       } catch (Exception e) {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.getBandwidthPrices completed");
     }
 
     @Override
     public void getEnergyPrices(EmptyMessage request,
         StreamObserver<PricesResponseMessage> responseObserver) {
+      logger.debug("WalletSolidityApi.getEnergyPrices received request");
       try {
         responseObserver.onNext(wallet.getEnergyPrices());
       } catch (Exception e) {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletSolidityApi.getEnergyPrices completed");
     }
   }
 
@@ -955,6 +1060,8 @@ public class RpcApiService extends RpcService {
 
     @Override
     public void getAccount(Account req, StreamObserver<Account> responseObserver) {
+      logger.debug("WalletApi.getAccount received request: address={}",
+          StringUtil.createReadableString(req.getAddress().toByteArray()));
       ByteString addressBs = req.getAddress();
       if (addressBs != null) {
         Account reply = wallet.getAccount(req);
@@ -963,10 +1070,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(null);
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getAccount completed");
     }
 
     @Override
     public void getAccountById(Account req, StreamObserver<Account> responseObserver) {
+      logger.debug("WalletApi.getAccountById received request: accountId={}",
+          req.getAccountId().toStringUtf8());
       ByteString accountId = req.getAccountId();
       if (accountId != null) {
         Account reply = wallet.getAccountById(req);
@@ -975,6 +1085,7 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(null);
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getAccountById completed");
     }
 
     /**
@@ -982,6 +1093,7 @@ public class RpcApiService extends RpcService {
      */
     public void getAccountBalance(AccountBalanceRequest request,
         StreamObserver<AccountBalanceResponse> responseObserver) {
+      logger.debug("WalletApi.getAccountBalance received request");
       try {
         AccountBalanceResponse accountBalanceResponse = wallet.getAccountBalance(request);
         responseObserver.onNext(accountBalanceResponse);
@@ -989,6 +1101,7 @@ public class RpcApiService extends RpcService {
       } catch (Exception e) {
         responseObserver.onError(e);
       }
+      logger.debug("WalletApi.getAccountBalance completed");
     }
 
     /**
@@ -996,6 +1109,7 @@ public class RpcApiService extends RpcService {
      */
     public void getBlockBalanceTrace(BlockBalanceTrace.BlockIdentifier request,
         StreamObserver<BlockBalanceTrace> responseObserver) {
+      logger.debug("WalletApi.getBlockBalanceTrace received request");
       try {
         BlockBalanceTrace blockBalanceTrace = wallet.getBlockBalance(request);
         responseObserver.onNext(blockBalanceTrace);
@@ -1003,11 +1117,13 @@ public class RpcApiService extends RpcService {
       } catch (Exception e) {
         responseObserver.onError(e);
       }
+      logger.debug("WalletApi.getBlockBalanceTrace completed");
     }
 
     @Override
     public void createTransaction(TransferContract request,
         StreamObserver<Transaction> responseObserver) {
+      logger.debug("WalletApi.createTransaction received request");
       try {
         responseObserver
             .onNext(
@@ -1018,6 +1134,7 @@ public class RpcApiService extends RpcService {
         logger.debug(CONTRACT_VALIDATE_EXCEPTION, e.getMessage());
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.createTransaction response completed");
     }
 
     @Override
@@ -1028,6 +1145,8 @@ public class RpcApiService extends RpcService {
 
     private void createTransactionExtention(Message request, ContractType contractType,
         StreamObserver<TransactionExtention> responseObserver) {
+      logger.debug("WalletApi.createTransactionExtention received request for contract type: {}",
+          contractType);
       TransactionExtention.Builder trxExtBuilder = TransactionExtention.newBuilder();
       Return.Builder retBuilder = Return.newBuilder();
       try {
@@ -1048,35 +1167,44 @@ public class RpcApiService extends RpcService {
       trxExtBuilder.setResult(retBuilder);
       responseObserver.onNext(trxExtBuilder.build());
       responseObserver.onCompleted();
+      logger.debug("WalletApi.createTransactionExtention completed for contract type: {}",
+          contractType);
     }
 
     @Override
     public void getTransactionSignWeight(Transaction req,
         StreamObserver<TransactionSignWeight> responseObserver) {
+      logger.debug("WalletApi.getTransactionSignWeight received request");
       TransactionSignWeight tsw = transactionUtil.getTransactionSignWeight(req);
       responseObserver.onNext(tsw);
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getTransactionSignWeight response completed");
     }
 
     @Override
     public void getTransactionApprovedList(Transaction req,
         StreamObserver<TransactionApprovedList> responseObserver) {
+      logger.debug("WalletApi.getTransactionApprovedList received request");
       TransactionApprovedList tal = wallet.getTransactionApprovedList(req);
       responseObserver.onNext(tal);
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getTransactionApprovedList response completed");
     }
 
     @Override
     public void broadcastTransaction(Transaction req,
         StreamObserver<GrpcAPI.Return> responseObserver) {
+      logger.debug("WalletApi.broadcastTransaction received request");
       GrpcAPI.Return result = wallet.broadcastTransaction(req);
       responseObserver.onNext(result);
       responseObserver.onCompleted();
+      logger.debug("WalletApi.broadcastTransaction response completed");
     }
 
     @Override
     public void createAssetIssue(AssetIssueContract request,
         StreamObserver<Transaction> responseObserver) {
+      logger.debug("WalletApi.createAssetIssue received request");
       try {
         responseObserver.onNext(
             createTransactionCapsule(request, ContractType.AssetIssueContract).getInstance());
@@ -1085,6 +1213,7 @@ public class RpcApiService extends RpcService {
         logger.debug(CONTRACT_VALIDATE_EXCEPTION, e.getMessage());
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.createAssetIssue response completed");
     }
 
     @Override
@@ -1096,6 +1225,7 @@ public class RpcApiService extends RpcService {
     @Override
     public void unfreezeAsset(UnfreezeAssetContract request,
         StreamObserver<Transaction> responseObserver) {
+      logger.debug("WalletApi.unfreezeAsset received request");
       try {
         responseObserver.onNext(
             createTransactionCapsule(request, ContractType.UnfreezeAssetContract).getInstance());
@@ -1104,6 +1234,7 @@ public class RpcApiService extends RpcService {
         logger.debug(CONTRACT_VALIDATE_EXCEPTION, e.getMessage());
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.unfreezeAsset response completed");
     }
 
     @Override
@@ -1148,6 +1279,7 @@ public class RpcApiService extends RpcService {
     @Override
     public void voteWitnessAccount(VoteWitnessContract request,
         StreamObserver<Transaction> responseObserver) {
+      logger.debug("WalletApi.voteWitnessAccount received request");
       try {
         responseObserver.onNext(
             createTransactionCapsule(request, ContractType.VoteWitnessContract).getInstance());
@@ -1157,6 +1289,7 @@ public class RpcApiService extends RpcService {
         logger.debug(CONTRACT_VALIDATE_EXCEPTION, e.getMessage());
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.voteWitnessAccount response completed");
     }
 
     @Override
@@ -1189,6 +1322,7 @@ public class RpcApiService extends RpcService {
     @Override
     public void createWitness(WitnessCreateContract request,
         StreamObserver<Transaction> responseObserver) {
+      logger.debug("WalletApi.createWitness received request");
       try {
         responseObserver.onNext(
             createTransactionCapsule(request, ContractType.WitnessCreateContract).getInstance());
@@ -1198,6 +1332,7 @@ public class RpcApiService extends RpcService {
         logger.debug(CONTRACT_VALIDATE_EXCEPTION, e.getMessage());
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.createWitness response completed");
     }
 
     @Override
@@ -1209,6 +1344,7 @@ public class RpcApiService extends RpcService {
     @Override
     public void createAccount(AccountCreateContract request,
         StreamObserver<Transaction> responseObserver) {
+      logger.debug("WalletApi.createAccount received request");
       try {
         responseObserver.onNext(
             createTransactionCapsule(request, ContractType.AccountCreateContract).getInstance());
@@ -1218,6 +1354,7 @@ public class RpcApiService extends RpcService {
         logger.debug(CONTRACT_VALIDATE_EXCEPTION, e.getMessage());
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.createAccount response completed");
     }
 
     @Override
@@ -1229,6 +1366,7 @@ public class RpcApiService extends RpcService {
     @Override
     public void updateWitness(WitnessUpdateContract request,
         StreamObserver<Transaction> responseObserver) {
+      logger.debug("WalletApi.updateWitness received request");
       try {
         responseObserver.onNext(
             createTransactionCapsule(request, ContractType.WitnessUpdateContract).getInstance());
@@ -1238,6 +1376,7 @@ public class RpcApiService extends RpcService {
         logger.debug(CONTRACT_VALIDATE_EXCEPTION, e.getMessage());
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.updateWitness response completed");
     }
 
     @Override
@@ -1249,6 +1388,7 @@ public class RpcApiService extends RpcService {
     @Override
     public void updateAccount(AccountUpdateContract request,
         StreamObserver<Transaction> responseObserver) {
+      logger.debug("WalletApi.updateAccount received request");
       try {
         responseObserver.onNext(
             createTransactionCapsule(request, ContractType.AccountUpdateContract).getInstance());
@@ -1258,11 +1398,13 @@ public class RpcApiService extends RpcService {
         logger.debug(CONTRACT_VALIDATE_EXCEPTION, e.getMessage());
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.updateAccount response completed");
     }
 
     @Override
     public void setAccountId(SetAccountIdContract request,
         StreamObserver<Transaction> responseObserver) {
+      logger.debug("WalletApi.setAccountId received request");
       try {
         responseObserver.onNext(
             createTransactionCapsule(request, ContractType.SetAccountIdContract).getInstance());
@@ -1272,6 +1414,7 @@ public class RpcApiService extends RpcService {
         logger.debug(CONTRACT_VALIDATE_EXCEPTION, e.getMessage());
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.setAccountId response completed");
     }
 
     @Override
@@ -1283,6 +1426,7 @@ public class RpcApiService extends RpcService {
     @Override
     public void updateAsset(UpdateAssetContract request,
         StreamObserver<Transaction> responseObserver) {
+      logger.debug("WalletApi.updateAsset received request");
       try {
         responseObserver.onNext(
             createTransactionCapsule(request,
@@ -1293,6 +1437,7 @@ public class RpcApiService extends RpcService {
         logger.debug("ContractValidateException", e.getMessage());
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.updateAsset response completed");
     }
 
     @Override
@@ -1304,6 +1449,7 @@ public class RpcApiService extends RpcService {
     @Override
     public void freezeBalance(FreezeBalanceContract request,
         StreamObserver<Transaction> responseObserver) {
+      logger.debug("WalletApi.freezeBalance received request");
       try {
         responseObserver.onNext(
             createTransactionCapsule(request, ContractType.FreezeBalanceContract).getInstance());
@@ -1313,6 +1459,7 @@ public class RpcApiService extends RpcService {
         logger.debug(CONTRACT_VALIDATE_EXCEPTION, e.getMessage());
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.freezeBalance response completed");
     }
 
     @Override
@@ -1330,6 +1477,7 @@ public class RpcApiService extends RpcService {
     @Override
     public void unfreezeBalance(UnfreezeBalanceContract request,
         StreamObserver<Transaction> responseObserver) {
+      logger.debug("WalletApi.unfreezeBalance received request");
       try {
         responseObserver.onNext(
             createTransactionCapsule(request, ContractType.UnfreezeBalanceContract)
@@ -1340,6 +1488,7 @@ public class RpcApiService extends RpcService {
         logger.debug(CONTRACT_VALIDATE_EXCEPTION, e.getMessage());
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.unfreezeBalance response completed");
     }
 
     @Override
@@ -1357,6 +1506,7 @@ public class RpcApiService extends RpcService {
     @Override
     public void withdrawBalance(WithdrawBalanceContract request,
         StreamObserver<Transaction> responseObserver) {
+      logger.debug("WalletApi.withdrawBalance received request");
       try {
         responseObserver.onNext(
             createTransactionCapsule(request, ContractType.WithdrawBalanceContract)
@@ -1367,6 +1517,7 @@ public class RpcApiService extends RpcService {
         logger.debug(CONTRACT_VALIDATE_EXCEPTION, e.getMessage());
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.withdrawBalance response completed");
     }
 
     @Override
@@ -1450,30 +1601,42 @@ public class RpcApiService extends RpcService {
 
     @Override
     public void getNowBlock(EmptyMessage request, StreamObserver<Block> responseObserver) {
+      logger.debug("WalletApi.getNowBlock received request");
       responseObserver.onNext(wallet.getNowBlock());
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getNowBlock response completed");
     }
 
     @Override
     public void getNowBlock2(EmptyMessage request,
         StreamObserver<BlockExtention> responseObserver) {
+      logger.debug("WalletApi.getNowBlock2 received request");
       Block block = wallet.getNowBlock();
       responseObserver.onNext(block2Extention(block));
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getNowBlock2 response completed");
     }
 
     @Override
     public void getBlockByNum(NumberMessage request, StreamObserver<Block> responseObserver) {
+      logger.debug("WalletApi.getBlockByNum received request for block num: {}",
+          request.getNum());
       responseObserver.onNext(wallet.getBlockByNum(request.getNum()));
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getBlockByNum response completed for block num: {}",
+          request.getNum());
     }
 
     @Override
     public void getBlockByNum2(NumberMessage request,
         StreamObserver<BlockExtention> responseObserver) {
+      logger.debug("WalletApi.getBlockByNum2 received request for block num: {}",
+          request.getNum());
       Block block = wallet.getBlockByNum(request.getNum());
       responseObserver.onNext(block2Extention(block));
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getBlockByNum2 response completed for block num: {}",
+          request.getNum());
     }
 
     @Override
@@ -1484,13 +1647,16 @@ public class RpcApiService extends RpcService {
 
     @Override
     public void listNodes(EmptyMessage request, StreamObserver<NodeList> responseObserver) {
+      logger.debug("WalletApi.listNodes received request");
       responseObserver.onNext(wallet.listNodes());
       responseObserver.onCompleted();
+      logger.debug("WalletApi.listNodes response completed");
     }
 
     @Override
     public void transferAsset(TransferAssetContract request,
         StreamObserver<Transaction> responseObserver) {
+      logger.debug("WalletApi.transferAsset received request");
       try {
         responseObserver
             .onNext(createTransactionCapsule(request, ContractType.TransferAssetContract)
@@ -1501,6 +1667,7 @@ public class RpcApiService extends RpcService {
         logger.debug(CONTRACT_VALIDATE_EXCEPTION, e.getMessage());
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.transferAsset response completed");
     }
 
     @Override
@@ -1512,6 +1679,7 @@ public class RpcApiService extends RpcService {
     @Override
     public void participateAssetIssue(ParticipateAssetIssueContract request,
         StreamObserver<Transaction> responseObserver) {
+      logger.debug("WalletApi.participateAssetIssue received request");
       try {
         responseObserver
             .onNext(createTransactionCapsule(request, ContractType.ParticipateAssetIssueContract)
@@ -1522,6 +1690,7 @@ public class RpcApiService extends RpcService {
         logger.debug(CONTRACT_VALIDATE_EXCEPTION, e.getMessage());
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.participateAssetIssue response completed");
     }
 
     @Override
@@ -1534,6 +1703,7 @@ public class RpcApiService extends RpcService {
     @Override
     public void getAssetIssueByAccount(Account request,
         StreamObserver<AssetIssueList> responseObserver) {
+      logger.debug("WalletApi.getAssetIssueByAccount received request");
       ByteString fromBs = request.getAddress();
 
       if (fromBs != null) {
@@ -1542,11 +1712,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(null);
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getAssetIssueByAccount response completed");
     }
 
     @Override
     public void getAccountNet(Account request,
         StreamObserver<AccountNetMessage> responseObserver) {
+      logger.debug("WalletApi.getAccountNet received request");
       ByteString fromBs = request.getAddress();
 
       if (fromBs != null) {
@@ -1555,11 +1727,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(null);
       }
       responseObserver.onCompleted();
+      logger.debug("gWalletApi.etAccountNet response completed");
     }
 
     @Override
     public void getAccountResource(Account request,
         StreamObserver<AccountResourceMessage> responseObserver) {
+      logger.debug("WalletApi.getAccountResource received request");
       ByteString fromBs = request.getAddress();
 
       if (fromBs != null) {
@@ -1568,11 +1742,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(null);
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getAccountResource response completed");
     }
 
     @Override
     public void getAssetIssueByName(BytesMessage request,
         StreamObserver<AssetIssueContract> responseObserver) {
+      logger.debug("WalletApi.getAssetIssueByName received request");
       ByteString assetName = request.getValue();
       if (assetName != null) {
         try {
@@ -1585,11 +1761,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(null);
       }
       responseObserver.onCompleted();
+      logger.debug("gWalletApi.etAssetIssueByName response completed");
     }
 
     @Override
     public void getAssetIssueListByName(BytesMessage request,
         StreamObserver<AssetIssueList> responseObserver) {
+      logger.debug("WalletApi.getAssetIssueListByName received request");
       ByteString assetName = request.getValue();
 
       if (assetName != null) {
@@ -1598,11 +1776,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(null);
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getAssetIssueListByName response completed");
     }
 
     @Override
     public void getAssetIssueById(BytesMessage request,
         StreamObserver<AssetIssueContract> responseObserver) {
+      logger.debug("WalletApi.getAssetIssueById received request");
       ByteString assetId = request.getValue();
 
       if (assetId != null) {
@@ -1611,10 +1791,12 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(null);
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getAssetIssueById response completed");
     }
 
     @Override
     public void getBlockById(BytesMessage request, StreamObserver<Block> responseObserver) {
+      logger.debug("WalletApi.getBlockById received request");
       ByteString blockId = request.getValue();
 
       if (Objects.nonNull(blockId)) {
@@ -1623,11 +1805,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(null);
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getBlockById response completed");
     }
 
     @Override
     public void getProposalById(BytesMessage request,
         StreamObserver<Proposal> responseObserver) {
+      logger.debug("WalletApi.getProposalById received request");
       ByteString proposalId = request.getValue();
 
       if (Objects.nonNull(proposalId)) {
@@ -1636,11 +1820,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(null);
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getProposalById response completed");
     }
 
     @Override
     public void getExchangeById(BytesMessage request,
         StreamObserver<Exchange> responseObserver) {
+      logger.debug("WalletApi.getExchangeById received request");
       ByteString exchangeId = request.getValue();
 
       if (Objects.nonNull(exchangeId)) {
@@ -1649,11 +1835,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(null);
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getExchangeById response completed");
     }
 
     @Override
     public void getBlockByLimitNext(BlockLimit request,
         StreamObserver<BlockList> responseObserver) {
+      logger.debug("WalletApi.getBlockByLimitNext received request");
       long startNum = request.getStartNum();
       long endNum = request.getEndNum();
 
@@ -1663,11 +1851,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(null);
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getBlockByLimitNext response completed");
     }
 
     @Override
     public void getBlockByLimitNext2(BlockLimit request,
         StreamObserver<BlockListExtention> responseObserver) {
+      logger.debug("WalletApi.getBlockByLimitNext2 received request");
       long startNum = request.getStartNum();
       long endNum = request.getEndNum();
 
@@ -1678,11 +1868,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(null);
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getBlockByLimitNext2 response completed");
     }
 
     @Override
     public void getBlockByLatestNum(NumberMessage request,
         StreamObserver<BlockList> responseObserver) {
+      logger.debug("WalletApi.getBlockByLatestNum received request");
       long getNum = request.getNum();
 
       if (getNum > 0 && getNum < BLOCK_LIMIT_NUM) {
@@ -1691,11 +1883,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(null);
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getBlockByLatestNum response completed");
     }
 
     @Override
     public void getBlockByLatestNum2(NumberMessage request,
         StreamObserver<BlockListExtention> responseObserver) {
+      logger.debug("WalletApi.getBlockByLatestNum2 received request");
       long getNum = request.getNum();
 
       if (getNum > 0 && getNum < BLOCK_LIMIT_NUM) {
@@ -1704,11 +1898,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(null);
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getBlockByLatestNum2 response completed");
     }
 
     @Override
     public void getTransactionById(BytesMessage request,
         StreamObserver<Transaction> responseObserver) {
+      logger.debug("WalletApi.getTransactionById received request");
       ByteString transactionId = request.getValue();
 
       if (Objects.nonNull(transactionId)) {
@@ -1717,6 +1913,7 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(null);
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getTransactionById response completed");
     }
 
     @Override
@@ -1725,24 +1922,31 @@ public class RpcApiService extends RpcService {
       createTransactionExtention(request, ContractType.CreateSmartContract, responseObserver);
     }
 
+    @Override
     public void totalTransaction(EmptyMessage request,
         StreamObserver<NumberMessage> responseObserver) {
+      logger.debug("WalletApi.totalTransaction received request");
       responseObserver.onNext(wallet.totalTransaction());
       responseObserver.onCompleted();
+      logger.debug("WalletApi.totalTransaction response completed");
     }
 
     @Override
     public void getNextMaintenanceTime(EmptyMessage request,
         StreamObserver<NumberMessage> responseObserver) {
+      logger.debug("WalletApi.getNextMaintenanceTime received request");
       responseObserver.onNext(wallet.getNextMaintenanceTime());
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getNextMaintenanceTime response completed");
     }
 
     @Override
     public void getAssetIssueList(EmptyMessage request,
         StreamObserver<AssetIssueList> responseObserver) {
+      logger.debug("WalletApi.getAssetIssueList received request");
       responseObserver.onNext(wallet.getAssetIssueList());
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getAssetIssueList response completed");
     }
 
     @Override
@@ -1755,6 +1959,7 @@ public class RpcApiService extends RpcService {
     @Override
     public void estimateEnergy(TriggerSmartContract request,
         StreamObserver<EstimateEnergyMessage> responseObserver) {
+      logger.debug("WalletApi.estimateEnergy received request");
       TransactionExtention.Builder trxExtBuilder = TransactionExtention.newBuilder();
       Return.Builder retBuilder = Return.newBuilder();
       EstimateEnergyMessage.Builder estimateBuilder
@@ -1781,6 +1986,7 @@ public class RpcApiService extends RpcService {
         estimateBuilder.setResult(retBuilder);
         responseObserver.onNext(estimateBuilder.build());
         responseObserver.onCompleted();
+        logger.debug("WalletApi.estimateEnergy response completed");
       }
     }
 
@@ -1793,6 +1999,7 @@ public class RpcApiService extends RpcService {
 
     private void callContract(TriggerSmartContract request,
         StreamObserver<TransactionExtention> responseObserver, boolean isConstant) {
+      logger.debug("WalletApi.callContract received request, isConstant: {}", isConstant);
       TransactionExtention.Builder trxExtBuilder = TransactionExtention.newBuilder();
       Return.Builder retBuilder = Return.newBuilder();
       try {
@@ -1827,40 +2034,50 @@ public class RpcApiService extends RpcService {
       } finally {
         responseObserver.onNext(trxExtBuilder.build());
         responseObserver.onCompleted();
+        logger.debug("WalletApi.callContract response completed, isConstant: {}", isConstant);
       }
     }
 
     public void getPaginatedAssetIssueList(PaginatedMessage request,
         StreamObserver<AssetIssueList> responseObserver) {
+      logger.debug("WalletApi.getPaginatedAssetIssueList request received");
       responseObserver.onNext(wallet.getAssetIssueList(request.getOffset(), request.getLimit()));
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getPaginatedAssetIssueList response completed");
     }
 
     @Override
     public void getContract(BytesMessage request,
         StreamObserver<SmartContract> responseObserver) {
+      logger.debug("WalletApi.getContract request received");
       SmartContract contract = wallet.getContract(request);
       responseObserver.onNext(contract);
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getContract response completed");
     }
 
     @Override
     public void getContractInfo(BytesMessage request,
         StreamObserver<SmartContractDataWrapper> responseObserver) {
+      logger.debug("WalletApi.getContractInfo request received");
       SmartContractDataWrapper contract = wallet.getContractInfo(request);
       responseObserver.onNext(contract);
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getContractInfo response completed");
     }
 
     public void listWitnesses(EmptyMessage request,
         StreamObserver<WitnessList> responseObserver) {
+      logger.debug("WalletApi.listWitnesses request received");
       responseObserver.onNext(wallet.getWitnessList());
       responseObserver.onCompleted();
+      logger.debug("WalletApi.listWitnesses response completed");
     }
 
     @Override
     public void getPaginatedNowWitnessList(PaginatedMessage request,
         StreamObserver<WitnessList> responseObserver) {
+      logger.debug("WalletApi.getPaginatedNowWitnessList request received");
       try {
         responseObserver.onNext(
             wallet.getPaginatedNowWitnessList(request.getOffset(), request.getLimit()));
@@ -1868,27 +2085,33 @@ public class RpcApiService extends RpcService {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getPaginatedNowWitnessList response completed");
     }
 
     @Override
     public void listProposals(EmptyMessage request,
         StreamObserver<ProposalList> responseObserver) {
+      logger.debug("WalletApi.listProposals request received");
       responseObserver.onNext(wallet.getProposalList());
       responseObserver.onCompleted();
+      logger.debug("WalletApi.listProposals response completed");
     }
 
 
     @Override
     public void getDelegatedResource(DelegatedResourceMessage request,
         StreamObserver<DelegatedResourceList> responseObserver) {
+      logger.debug("WalletApi.getDelegatedResource request received");
       responseObserver
           .onNext(wallet.getDelegatedResource(request.getFromAddress(), request.getToAddress()));
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getDelegatedResource response completed");
     }
 
     @Override
     public void getDelegatedResourceV2(DelegatedResourceMessage request,
         StreamObserver<DelegatedResourceList> responseObserver) {
+      logger.debug("WalletApi.getDelegatedResourceV2 request received");
       try {
         responseObserver.onNext(wallet.getDelegatedResourceV2(
                 request.getFromAddress(), request.getToAddress())
@@ -1897,11 +2120,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getDelegatedResourceV2 response completed");
     }
 
     @Override
     public void getDelegatedResourceAccountIndex(BytesMessage request,
         StreamObserver<org.tron.protos.Protocol.DelegatedResourceAccountIndex> responseObserver) {
+      logger.debug("WalletApi.getDelegatedResourceAccountIndex request received");
       try {
         responseObserver
           .onNext(wallet.getDelegatedResourceAccountIndex(request.getValue()));
@@ -1909,11 +2134,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getDelegatedResourceAccountIndex response completed");
     }
 
     @Override
     public void getDelegatedResourceAccountIndexV2(BytesMessage request,
         StreamObserver<org.tron.protos.Protocol.DelegatedResourceAccountIndex> responseObserver) {
+      logger.debug("WalletApi.getDelegatedResourceAccountIndexV2 request received");
       try {
         responseObserver
                 .onNext(wallet.getDelegatedResourceAccountIndexV2(request.getValue()));
@@ -1921,11 +2148,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getDelegatedResourceAccountIndexV2 response completed");
     }
 
     @Override
     public void getCanDelegatedMaxSize(GrpcAPI.CanDelegatedMaxSizeRequestMessage request,
         StreamObserver<GrpcAPI.CanDelegatedMaxSizeResponseMessage> responseObserver) {
+      logger.debug("WalletApi.getCanDelegatedMaxSize request received");
       try {
         responseObserver.onNext(wallet.getCanDelegatedMaxSize(
                         request.getOwnerAddress(), request.getType()));
@@ -1934,11 +2163,13 @@ public class RpcApiService extends RpcService {
       }
 
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getCanDelegatedMaxSize response completed");
     }
 
     @Override
     public void getAvailableUnfreezeCount(GrpcAPI.GetAvailableUnfreezeCountRequestMessage request,
          StreamObserver<GrpcAPI.GetAvailableUnfreezeCountResponseMessage> responseObserver) {
+      logger.debug("WalletApi.getAvailableUnfreezeCount request received");
       try {
         responseObserver.onNext(wallet.getAvailableUnfreezeCount(
                 request.getOwnerAddress()));
@@ -1947,11 +2178,13 @@ public class RpcApiService extends RpcService {
       }
 
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getAvailableUnfreezeCount response completed");
     }
 
     @Override
     public void getCanWithdrawUnfreezeAmount(CanWithdrawUnfreezeAmountRequestMessage request,
         StreamObserver<GrpcAPI.CanWithdrawUnfreezeAmountResponseMessage> responseObserver) {
+      logger.debug("WalletApi.getCanWithdrawUnfreezeAmount request received");
       try {
         responseObserver
                 .onNext(wallet.getCanWithdrawUnfreezeAmount(
@@ -1961,76 +2194,92 @@ public class RpcApiService extends RpcService {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getCanWithdrawUnfreezeAmount response completed");
     }
 
     @Override
     public void getBandwidthPrices(EmptyMessage request,
         StreamObserver<PricesResponseMessage> responseObserver) {
+      logger.debug("WalletApi.getBandwidthPrices request received");
       try {
         responseObserver.onNext(wallet.getBandwidthPrices());
       } catch (Exception e) {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getBandwidthPrices response completed");
     }
 
     @Override
     public void getEnergyPrices(EmptyMessage request,
         StreamObserver<PricesResponseMessage> responseObserver) {
+      logger.debug("WalletApi.getEnergyPrices request received");
       try {
         responseObserver.onNext(wallet.getEnergyPrices());
       } catch (Exception e) {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getEnergyPrices response completed");
     }
 
     @Override
     public void getMemoFee(EmptyMessage request,
         StreamObserver<PricesResponseMessage> responseObserver) {
+      logger.debug("WalletApi.getMemoFee request received");
       try {
         responseObserver.onNext(wallet.getMemoFeePrices());
       } catch (Exception e) {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getMemoFee response completed");
     }
 
     @Override
     public void getPaginatedProposalList(PaginatedMessage request,
         StreamObserver<ProposalList> responseObserver) {
+      logger.debug("WalletApi.getPaginatedProposalList request received");
       responseObserver
           .onNext(wallet.getPaginatedProposalList(request.getOffset(), request.getLimit()));
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getPaginatedProposalList response completed");
 
     }
 
     @Override
     public void getPaginatedExchangeList(PaginatedMessage request,
         StreamObserver<ExchangeList> responseObserver) {
+      logger.debug("WalletApi.getPaginatedExchangeList request received");
       responseObserver
           .onNext(wallet.getPaginatedExchangeList(request.getOffset(), request.getLimit()));
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getPaginatedExchangeList response completed");
 
     }
 
     @Override
     public void listExchanges(EmptyMessage request,
         StreamObserver<ExchangeList> responseObserver) {
+      logger.debug("WalletApi.listExchanges request received");
       responseObserver.onNext(wallet.getExchangeList());
       responseObserver.onCompleted();
+      logger.debug("WalletApi.listExchanges response completed");
     }
 
     @Override
     public void getChainParameters(EmptyMessage request,
         StreamObserver<Protocol.ChainParameters> responseObserver) {
+      logger.debug("WalletApi.getChainParameters request received");
       responseObserver.onNext(wallet.getChainParameters());
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getChainParameters response completed");
     }
 
     @Override
     public void getTransactionInfoById(BytesMessage request,
         StreamObserver<TransactionInfo> responseObserver) {
+      logger.debug("WalletApi.getTransactionInfoById request received");
       ByteString id = request.getValue();
       if (null != id) {
         TransactionInfo reply = wallet.getTransactionInfoById(id);
@@ -2040,16 +2289,19 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(null);
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getTransactionInfoById response completed");
     }
 
     @Override
     public void getNodeInfo(EmptyMessage request, StreamObserver<NodeInfo> responseObserver) {
+      logger.debug("WalletApi.getNodeInfo request received");
       try {
         responseObserver.onNext(nodeInfoService.getNodeInfo().transferToProtoEntity());
       } catch (Exception e) {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getNodeInfo response completed");
     }
 
     @Override
@@ -2062,23 +2314,25 @@ public class RpcApiService extends RpcService {
     @Override
     public void getMerkleTreeVoucherInfo(OutputPointInfo request,
         StreamObserver<IncrementalMerkleVoucherInfo> responseObserver) {
-
+      logger.debug("WalletApi.getMerkleTreeVoucherInfo request received");
       try {
         IncrementalMerkleVoucherInfo witnessInfo = wallet
             .getMerkleTreeVoucherInfo(request);
         responseObserver.onNext(witnessInfo);
       } catch (Exception ex) {
         responseObserver.onError(getRunTimeException(ex));
+        logger.debug("WalletApi.getMerkleTreeVoucherInfo response completed");
         return;
       }
 
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getMerkleTreeVoucherInfo response completed");
     }
 
     @Override
     public void createShieldedTransaction(PrivateParameters request,
         StreamObserver<TransactionExtention> responseObserver) {
-
+      logger.debug("WalletApi.createShieldedTransaction request received");
       TransactionExtention.Builder trxExtBuilder = TransactionExtention.newBuilder();
       Return.Builder retBuilder = Return.newBuilder();
 
@@ -2101,13 +2355,14 @@ public class RpcApiService extends RpcService {
       trxExtBuilder.setResult(retBuilder);
       responseObserver.onNext(trxExtBuilder.build());
       responseObserver.onCompleted();
+      logger.debug("WalletApi.createShieldedTransaction response completed");
 
     }
 
     @Override
     public void createShieldedTransactionWithoutSpendAuthSig(PrivateParametersWithoutAsk request,
         StreamObserver<TransactionExtention> responseObserver) {
-
+      logger.debug("WalletApi.createShieldedTransactionWithoutSpendAuthSig request received");
       TransactionExtention.Builder trxExtBuilder = TransactionExtention.newBuilder();
       Return.Builder retBuilder = Return.newBuilder();
 
@@ -2131,49 +2386,59 @@ public class RpcApiService extends RpcService {
       trxExtBuilder.setResult(retBuilder);
       responseObserver.onNext(trxExtBuilder.build());
       responseObserver.onCompleted();
+      logger.debug("WalletApi.createShieldedTransactionWithoutSpendAuthSig response completed");
 
     }
 
     @Override
     public void getNewShieldedAddress(EmptyMessage request,
         StreamObserver<ShieldedAddressInfo> responseObserver) {
-
+      logger.debug("WalletApi.getNewShieldedAddress request received");
       try {
         responseObserver.onNext(wallet.getNewShieldedAddress());
       } catch (Exception e) {
         responseObserver.onError(getRunTimeException(e));
+        logger.debug("WalletApi.getNewShieldedAddress response completed");
         return;
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getNewShieldedAddress response completed");
     }
 
     @Override
     public void getSpendingKey(EmptyMessage request,
         StreamObserver<BytesMessage> responseObserver) {
+      logger.debug("WalletApi.getSpendingKey request received");
       try {
         responseObserver.onNext(wallet.getSpendingKey());
       } catch (Exception e) {
         responseObserver.onError(getRunTimeException(e));
+        logger.debug("WalletApi.getSpendingKey response completed");
         return;
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getSpendingKey response completed");
     }
 
     @Override
     public void getRcm(EmptyMessage request,
         StreamObserver<BytesMessage> responseObserver) {
+      logger.debug("WalletApi.getRcm request received");
       try {
         responseObserver.onNext(wallet.getRcm());
       } catch (Exception e) {
         responseObserver.onError(getRunTimeException(e));
+        logger.debug("WalletApi.getRcm response completed");
         return;
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getRcm response completed");
     }
 
     @Override
     public void getExpandedSpendingKey(BytesMessage request,
         StreamObserver<ExpandedSpendingKeyMessage> responseObserver) {
+      logger.debug("WalletApi.getExpandedSpendingKey request received");
       ByteString spendingKey = request.getValue();
 
       try {
@@ -2181,43 +2446,52 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(response);
       } catch (BadItemException | ZksnarkException e) {
         responseObserver.onError(getRunTimeException(e));
+        logger.debug("WalletApi.getExpandedSpendingKey response completed");
         return;
       }
 
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getExpandedSpendingKey response completed");
     }
 
     @Override
     public void getAkFromAsk(BytesMessage request, StreamObserver<BytesMessage> responseObserver) {
+      logger.debug("WalletApi.getAkFromAsk request received");
       ByteString ak = request.getValue();
 
       try {
         responseObserver.onNext(wallet.getAkFromAsk(ak));
       } catch (BadItemException | ZksnarkException e) {
         responseObserver.onError(getRunTimeException(e));
+        logger.debug("WalletApi.getAkFromAsk response completed");
         return;
       }
 
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getAkFromAsk response completed");
     }
 
     @Override
     public void getNkFromNsk(BytesMessage request, StreamObserver<BytesMessage> responseObserver) {
+      logger.debug("WalletApi.getNkFromNsk request received");
       ByteString nk = request.getValue();
 
       try {
         responseObserver.onNext(wallet.getNkFromNsk(nk));
       } catch (BadItemException | ZksnarkException e) {
         responseObserver.onError(getRunTimeException(e));
+        logger.debug("WalletApi.getNkFromNsk response completed");
         return;
       }
 
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getNkFromNsk response completed");
     }
 
     @Override
     public void getIncomingViewingKey(ViewingKeyMessage request,
         StreamObserver<IncomingViewingKeyMessage> responseObserver) {
+      logger.debug("WalletApi.getIncomingViewingKey request received");
       ByteString ak = request.getAk();
       ByteString nk = request.getNk();
 
@@ -2225,29 +2499,35 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(wallet.getIncomingViewingKey(ak.toByteArray(), nk.toByteArray()));
       } catch (ZksnarkException e) {
         responseObserver.onError(getRunTimeException(e));
+        logger.debug("WalletApi.getIncomingViewingKey response completed");
         return;
       }
 
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getIncomingViewingKey response completed");
     }
 
     @Override
     public void getDiversifier(EmptyMessage request,
         StreamObserver<DiversifierMessage> responseObserver) {
+      logger.debug("WalletApi.getDiversifier request received");
       try {
         DiversifierMessage d = wallet.getDiversifier();
         responseObserver.onNext(d);
       } catch (ZksnarkException e) {
         responseObserver.onError(getRunTimeException(e));
+        logger.debug("WalletApi.getDiversifier response completed");
         return;
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getDiversifier response completed");
     }
 
 
     @Override
     public void getZenPaymentAddress(IncomingViewingKeyDiversifierMessage request,
         StreamObserver<PaymentAddressMessage> responseObserver) {
+      logger.debug("WalletApi.getZenPaymentAddress request received");
       IncomingViewingKeyMessage ivk = request.getIvk();
       DiversifierMessage d = request.getD();
 
@@ -2259,15 +2539,18 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(saplingPaymentAddressMessage);
       } catch (BadItemException | ZksnarkException e) {
         responseObserver.onError(getRunTimeException(e));
+        logger.debug("WalletApi.getZenPaymentAddress response completed");
         return;
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getZenPaymentAddress response completed");
 
     }
 
     @Override
     public void scanNoteByIvk(GrpcAPI.IvkDecryptParameters request,
         StreamObserver<GrpcAPI.DecryptNotes> responseObserver) {
+      logger.debug("WalletApi.scanNoteByIvk request received");
       long startNum = request.getStartBlockIndex();
       long endNum = request.getEndBlockIndex();
 
@@ -2277,15 +2560,18 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(decryptNotes);
       } catch (BadItemException | ZksnarkException e) {
         responseObserver.onError(getRunTimeException(e));
+        logger.debug("WalletApi.scanNoteByIvk response completed");
         return;
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.scanNoteByIvk response completed");
 
     }
 
     @Override
     public void scanAndMarkNoteByIvk(GrpcAPI.IvkDecryptAndMarkParameters request,
         StreamObserver<GrpcAPI.DecryptNotesMarked> responseObserver) {
+      logger.debug("WalletApi.scanAndMarkNoteByIvk request received");
       long startNum = request.getStartBlockIndex();
       long endNum = request.getEndBlockIndex();
 
@@ -2298,14 +2584,17 @@ public class RpcApiService extends RpcService {
       } catch (BadItemException | ZksnarkException | InvalidProtocolBufferException
           | ItemNotFoundException e) {
         responseObserver.onError(getRunTimeException(e));
+        logger.debug("WalletApi.scanAndMarkNoteByIvk response completed");
         return;
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.scanAndMarkNoteByIvk response completed");
     }
 
     @Override
     public void scanNoteByOvk(GrpcAPI.OvkDecryptParameters request,
         StreamObserver<GrpcAPI.DecryptNotes> responseObserver) {
+      logger.debug("WalletApi.scanNoteByOvk request received");
       long startNum = request.getStartBlockIndex();
       long endNum = request.getEndBlockIndex();
 
@@ -2315,66 +2604,81 @@ public class RpcApiService extends RpcService {
         responseObserver.onNext(decryptNotes);
       } catch (BadItemException | ZksnarkException e) {
         responseObserver.onError(getRunTimeException(e));
+        logger.debug("WalletApi.scanNoteByOvk response completed");
         return;
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.scanNoteByOvk response completed");
     }
 
     @Override
     public void isSpend(NoteParameters request, StreamObserver<SpendResult> responseObserver) {
+      logger.debug("WalletApi.isSpend request received");
       try {
         responseObserver.onNext(wallet.isSpend(request));
       } catch (Exception e) {
         responseObserver.onError(getRunTimeException(e));
+        logger.debug("WalletApi.isSpend response completed");
         return;
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.isSpend response completed");
     }
 
     @Override
     public void createShieldNullifier(GrpcAPI.NfParameters request,
         StreamObserver<GrpcAPI.BytesMessage> responseObserver) {
+      logger.debug("WalletApi.createShieldNullifier request received");
       try {
         BytesMessage nf = wallet
             .createShieldNullifier(request);
         responseObserver.onNext(nf);
       } catch (ZksnarkException e) {
         responseObserver.onError(getRunTimeException(e));
+        logger.debug("WalletApi.createShieldNullifier response completed");
         return;
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.createShieldNullifier response completed");
     }
 
     @Override
     public void createSpendAuthSig(SpendAuthSigParameters request,
         StreamObserver<GrpcAPI.BytesMessage> responseObserver) {
+      logger.debug("WalletApi.createSpendAuthSig request received");
       try {
         BytesMessage spendAuthSig = wallet.createSpendAuthSig(request);
         responseObserver.onNext(spendAuthSig);
       } catch (Exception e) {
         responseObserver.onError(getRunTimeException(e));
+        logger.debug("WalletApi.createSpendAuthSig response completed");
         return;
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.createSpendAuthSig response completed");
     }
 
     @Override
     public void getShieldTransactionHash(Transaction request,
         StreamObserver<GrpcAPI.BytesMessage> responseObserver) {
+      logger.debug("WalletApi.getShieldTransactionHash request received");
       try {
         BytesMessage transactionHash = wallet.getShieldTransactionHash(request);
         responseObserver.onNext(transactionHash);
       } catch (Exception e) {
         responseObserver.onError(getRunTimeException(e));
+        logger.debug("WalletApi.getShieldTransactionHash response completed");
         return;
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getShieldTransactionHash response completed");
     }
 
     @Override
     public void createShieldedContractParameters(
         PrivateShieldedTRC20Parameters request,
         StreamObserver<org.tron.api.GrpcAPI.ShieldedTRC20Parameters> responseObserver) {
+      logger.debug("WalletApi.createShieldedContractParameters request received");
       try {
         ShieldedTRC20Parameters shieldedTRC20Parameters = wallet
             .createShieldedContractParameters(request);
@@ -2382,19 +2686,23 @@ public class RpcApiService extends RpcService {
       } catch (ZksnarkException | ContractValidateException | ContractExeException e) {
         responseObserver.onError(getRunTimeException(e));
         logger.info("createShieldedContractParameters: {}", e.getMessage());
+        logger.debug("WalletApi.createShieldedContractParameters response completed");
         return;
       } catch (Exception e) {
         responseObserver.onError(getRunTimeException(e));
         logger.error("createShieldedContractParameters: ", e);
+        logger.debug("WalletApi.createShieldedContractParameters response completed");
         return;
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.createShieldedContractParameters response completed");
     }
 
     @Override
     public void createShieldedContractParametersWithoutAsk(
         PrivateShieldedTRC20ParametersWithoutAsk request,
         StreamObserver<org.tron.api.GrpcAPI.ShieldedTRC20Parameters> responseObserver) {
+      logger.debug("WalletApi.createShieldedContractParametersWithoutAsk request received");
       try {
         ShieldedTRC20Parameters shieldedTRC20Parameters = wallet
             .createShieldedContractParametersWithoutAsk(request);
@@ -2403,15 +2711,18 @@ public class RpcApiService extends RpcService {
         responseObserver.onError(getRunTimeException(e));
         logger
             .info("createShieldedContractParametersWithoutAsk exception caught: " + e.getMessage());
+        logger.debug("WalletApi.createShieldedContractParametersWithoutAsk response completed");
         return;
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.createShieldedContractParametersWithoutAsk response completed");
     }
 
     @Override
     public void scanShieldedTRC20NotesByIvk(
         IvkDecryptTRC20Parameters request,
         StreamObserver<org.tron.api.GrpcAPI.DecryptNotesTRC20> responseObserver) {
+      logger.debug("WalletApi.scanShieldedTRC20NotesByIvk request received");
       long startNum = request.getStartBlockIndex();
       long endNum = request.getEndBlockIndex();
       try {
@@ -2425,19 +2736,23 @@ public class RpcApiService extends RpcService {
       } catch (BadItemException | ZksnarkException e) {
         responseObserver.onError(getRunTimeException(e));
         logger.info("scanShieldedTRC20NotesByIvk: {}", e.getMessage());
+        logger.debug("WalletApi.scanShieldedTRC20NotesByIvk response completed");
         return;
       } catch (Exception e) {
         responseObserver.onError(getRunTimeException(e));
         logger.error("scanShieldedTRC20NotesByIvk:", e);
+        logger.debug("WalletApi.scanShieldedTRC20NotesByIvk response completed");
         return;
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.scanShieldedTRC20NotesByIvk response completed");
     }
 
     @Override
     public void scanShieldedTRC20NotesByOvk(
         OvkDecryptTRC20Parameters request,
         StreamObserver<org.tron.api.GrpcAPI.DecryptNotesTRC20> responseObserver) {
+      logger.debug("WalletApi.scanShieldedTRC20NotesByOvk request received");
       long startNum = request.getStartBlockIndex();
       long endNum = request.getEndBlockIndex();
       try {
@@ -2449,36 +2764,44 @@ public class RpcApiService extends RpcService {
       } catch (Exception e) {
         responseObserver.onError(getRunTimeException(e));
         logger.info("scanShieldedTRC20NotesByOvk exception caught: " + e.getMessage());
+        logger.debug("WalletApi.scanShieldedTRC20NotesByOvk response completed");
         return;
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.scanShieldedTRC20NotesByOvk response completed");
     }
 
     @Override
     public void isShieldedTRC20ContractNoteSpent(NfTRC20Parameters request,
         StreamObserver<GrpcAPI.NullifierResult> responseObserver) {
+      logger.debug("WalletApi.isShieldedTRC20ContractNoteSpent request received");
       try {
         GrpcAPI.NullifierResult nf = wallet
             .isShieldedTRC20ContractNoteSpent(request);
         responseObserver.onNext(nf);
       } catch (Exception e) {
         responseObserver.onError(getRunTimeException(e));
+        logger.debug("WalletApi.isShieldedTRC20ContractNoteSpent response completed");
         return;
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.isShieldedTRC20ContractNoteSpent response completed");
     }
 
     @Override
     public void getTriggerInputForShieldedTRC20Contract(
         ShieldedTRC20TriggerContractParameters request,
         StreamObserver<org.tron.api.GrpcAPI.BytesMessage> responseObserver) {
+      logger.debug("WalletApi.getTriggerInputForShieldedTRC20Contract request received");
       try {
         responseObserver.onNext(wallet.getTriggerInputForShieldedTRC20Contract(request));
       } catch (Exception e) {
         responseObserver.onError(e);
+        logger.debug("WalletApi.getTriggerInputForShieldedTRC20Contract response completed");
         return;
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getTriggerInputForShieldedTRC20Contract response completed");
     }
 
     @Override
@@ -2516,6 +2839,7 @@ public class RpcApiService extends RpcService {
     @Override
     public void getTransactionInfoByBlockNum(NumberMessage request,
         StreamObserver<TransactionInfoList> responseObserver) {
+      logger.debug("WalletApi.getTransactionInfoByBlockNum request received");
       try {
         responseObserver.onNext(wallet.getTransactionInfoByBlockNum(request.getNum()));
       } catch (Exception e) {
@@ -2523,6 +2847,7 @@ public class RpcApiService extends RpcService {
       }
 
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getTransactionInfoByBlockNum response completed");
     }
 
     @Override
@@ -2541,6 +2866,7 @@ public class RpcApiService extends RpcService {
     @Override
     public void getMarketOrderByAccount(BytesMessage request,
         StreamObserver<MarketOrderList> responseObserver) {
+      logger.debug("WalletApi.getMarketOrderByAccount request received");
       try {
         ByteString address = request.getValue();
 
@@ -2551,11 +2877,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getMarketOrderByAccount response completed");
     }
 
     @Override
     public void getMarketOrderById(BytesMessage request,
         StreamObserver<MarketOrder> responseObserver) {
+      logger.debug("WalletApi.getMarketOrderById request received");
       try {
         ByteString address = request.getValue();
 
@@ -2566,11 +2894,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getMarketOrderById response completed");
     }
 
     @Override
     public void getMarketPriceByPair(MarketOrderPair request,
         StreamObserver<MarketPriceList> responseObserver) {
+      logger.debug("WalletApi.getMarketPriceByPair request received");
       try {
         MarketPriceList marketPriceList = wallet
             .getMarketPriceByPair(request.getSellTokenId().toByteArray(),
@@ -2580,11 +2910,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getMarketPriceByPair response completed");
     }
 
     @Override
     public void getMarketOrderListByPair(org.tron.protos.Protocol.MarketOrderPair request,
         StreamObserver<MarketOrderList> responseObserver) {
+      logger.debug("WalletApi.getMarketOrderListByPair request received");
       try {
         MarketOrderList orderPairList = wallet
             .getMarketOrderListByPair(request.getSellTokenId().toByteArray(),
@@ -2594,11 +2926,13 @@ public class RpcApiService extends RpcService {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getMarketOrderListByPair response completed");
     }
 
     @Override
     public void getMarketPairList(EmptyMessage request,
         StreamObserver<MarketOrderPairList> responseObserver) {
+      logger.debug("WalletApi.getMarketPairList request received");
       try {
         MarketOrderPairList pairList = wallet.getMarketPairList();
         responseObserver.onNext(pairList);
@@ -2606,6 +2940,7 @@ public class RpcApiService extends RpcService {
         responseObserver.onError(getRunTimeException(e));
       }
       responseObserver.onCompleted();
+      logger.debug("WalletApi.getMarketPairList response completed");
     }
 
     @Override
@@ -2639,13 +2974,16 @@ public class RpcApiService extends RpcService {
     @Override
     public void getStatsInfo(EmptyMessage request,
         StreamObserver<Protocol.MetricsInfo> responseObserver) {
+      logger.debug("MonitorApi.getStatsInfo request received");
       responseObserver.onNext(metricsApiService.getMetricProtoInfo());
       responseObserver.onCompleted();
+      logger.debug("MonitorApi.getStatsInfo response completed");
     }
   }
 
   public void getRewardInfoCommon(BytesMessage request,
       StreamObserver<NumberMessage> responseObserver) {
+    logger.debug("getRewardInfo request received");
     try {
       long value = dbManager.getMortgageService().queryReward(request.getValue().toByteArray());
       NumberMessage.Builder builder = NumberMessage.newBuilder();
@@ -2655,10 +2993,12 @@ public class RpcApiService extends RpcService {
       responseObserver.onError(e);
     }
     responseObserver.onCompleted();
+    logger.debug("getRewardInfo response completed");
   }
 
   public void getBurnTrxCommon(EmptyMessage request,
       StreamObserver<NumberMessage> responseObserver) {
+    logger.debug("getBurnTrx request received");
     try {
       long value = dbManager.getDynamicPropertiesStore().getBurnTrxAmount();
       NumberMessage.Builder builder = NumberMessage.newBuilder();
@@ -2668,10 +3008,12 @@ public class RpcApiService extends RpcService {
       responseObserver.onError(e);
     }
     responseObserver.onCompleted();
+    logger.debug("getBurnTrx response completed");
   }
 
   public void getBrokerageInfoCommon(BytesMessage request,
       StreamObserver<NumberMessage> responseObserver) {
+    logger.debug("getBrokerageInfo request received");
     try {
       long cycle = dbManager.getDynamicPropertiesStore().getCurrentCycleNumber();
       long value = dbManager.getDelegationStore()
@@ -2683,10 +3025,12 @@ public class RpcApiService extends RpcService {
       responseObserver.onError(e);
     }
     responseObserver.onCompleted();
+    logger.debug("getBrokerageInfo response completed");
   }
 
   public void getTransactionCountByBlockNumCommon(NumberMessage request,
       StreamObserver<NumberMessage> responseObserver) {
+    logger.debug("getTransactionCountByBlockNum request received: {}", request.getNum());
     NumberMessage.Builder builder = NumberMessage.newBuilder();
     try {
       Block block = chainBaseManager.getBlockByNum(request.getNum()).getInstance();
@@ -2697,10 +3041,12 @@ public class RpcApiService extends RpcService {
     }
     responseObserver.onNext(builder.build());
     responseObserver.onCompleted();
+    logger.debug("getTransactionCountByBlockNum response completed");
   }
 
   public void getTransactionFromPendingCommon(BytesMessage request,
       StreamObserver<Transaction> responseObserver) {
+    logger.debug("getTransactionFromPending request received");
     try {
       String txId = ByteArray.toHexString(request.getValue().toByteArray());
       TransactionCapsule transactionCapsule = dbManager.getTxFromPending(txId);
@@ -2709,10 +3055,12 @@ public class RpcApiService extends RpcService {
       responseObserver.onError(e);
     }
     responseObserver.onCompleted();
+    logger.debug("getTransactionFromPending response completed");
   }
 
   public void getTransactionListFromPendingCommon(EmptyMessage request,
       StreamObserver<TransactionIdList> responseObserver) {
+    logger.debug("getTransactionListFromPending request received");
     try {
       TransactionIdList.Builder builder = TransactionIdList.newBuilder();
       builder.addAllTxId(dbManager.getTxListFromPending());
@@ -2721,10 +3069,12 @@ public class RpcApiService extends RpcService {
       responseObserver.onError(e);
     }
     responseObserver.onCompleted();
+    logger.debug("getTransactionListFromPending response completed");
   }
 
   public void getPendingSizeCommon(EmptyMessage request,
       StreamObserver<NumberMessage> responseObserver) {
+    logger.info("getPendingSize request received");
     try {
       NumberMessage.Builder builder = NumberMessage.newBuilder();
       builder.setNum(dbManager.getPendingSize());
@@ -2733,10 +3083,12 @@ public class RpcApiService extends RpcService {
       responseObserver.onError(e);
     }
     responseObserver.onCompleted();
+    logger.info("getPendingSize response completed");
   }
 
   public void getBlockCommon(GrpcAPI.BlockReq request,
       StreamObserver<BlockExtention> responseObserver) {
+    logger.info("getBlock request received");
     try {
       responseObserver.onNext(block2Extention(wallet.getBlock(request)));
     } catch (Exception e) {
@@ -2748,6 +3100,7 @@ public class RpcApiService extends RpcService {
       }
     }
     responseObserver.onCompleted();
+    logger.info("getBlock response completed");
   }
 
 }

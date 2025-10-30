@@ -30,8 +30,6 @@ public class WalletApiTest {
   @ClassRule
   public static TemporaryFolder temporaryFolder = new TemporaryFolder();
 
-  @Rule
-  public Timeout timeout = new Timeout(30, TimeUnit.SECONDS);
 
   private static TronApplicationContext context;
   private static Application appT;

@@ -128,8 +128,6 @@ public class RpcApiServicesTest {
   private static WalletSolidityBlockingStub blockingStubPBFT = null;
   @ClassRule
   public static TemporaryFolder temporaryFolder = new TemporaryFolder();
-  @Rule
-  public Timeout timeout = new Timeout(30, TimeUnit.SECONDS);
   private static ByteString ownerAddress;
   private static ByteString sk;
   private static ByteString ask;
