@@ -16,12 +16,15 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
+import org.junit.After;
 import org.junit.AfterClass;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import org.junit.rules.TestName;
 import org.junit.rules.Timeout;
 import org.tron.api.GrpcAPI.BlockExtention;
 import org.tron.api.GrpcAPI.BlockReq;
@@ -42,7 +45,7 @@ import org.tron.core.config.args.Args;
 import org.tron.core.services.RpcApiService;
 import org.tron.protos.Protocol.Transaction;
 
-@Slf4j
+@Slf4j(topic = "RpcApiAccessInterceptorTest")
 public class RpcApiAccessInterceptorTest {
 
   private static TronApplicationContext context;
@@ -54,7 +57,7 @@ public class RpcApiAccessInterceptorTest {
   private static WalletSolidityGrpc.WalletSolidityBlockingStub blockingStubPBFT = null;
   @ClassRule
   public static final TemporaryFolder temporaryFolder = new TemporaryFolder();
-
+  @Rule public TestName name = new TestName();
   /**
    * init logic.
    */
@@ -96,6 +99,16 @@ public class RpcApiAccessInterceptorTest {
 
     Application appTest = ApplicationFactory.create(context);
     appTest.startup();
+  }
+
+  @Before
+  public void start() {
+    logger.debug("========== Starting test: {} ==========", name.getMethodName());
+  }
+
+  @After
+  public void end() throws InterruptedException {
+    logger.debug("========== Ending test: {} ==========", name.getMethodName());
   }
 
   /**

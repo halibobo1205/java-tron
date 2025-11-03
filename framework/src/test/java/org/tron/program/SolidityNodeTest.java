@@ -6,9 +6,12 @@ import static org.junit.Assert.assertThrows;
 import java.util.concurrent.TimeUnit;
 import javax.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
+import org.junit.After;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TestName;
 import org.junit.rules.Timeout;
 import org.tron.common.BaseTest;
 import org.tron.common.client.DatabaseGrpcClient;
@@ -21,7 +24,7 @@ import org.tron.core.services.http.solidity.SolidityNodeHttpApiService;
 import org.tron.protos.Protocol.Block;
 import org.tron.protos.Protocol.DynamicProperties;
 
-@Slf4j
+@Slf4j(topic = "SolidityNodeTest")
 public class SolidityNodeTest extends BaseTest {
 
   @Resource
@@ -30,6 +33,19 @@ public class SolidityNodeTest extends BaseTest {
   SolidityNodeHttpApiService solidityNodeHttpApiService;
   static int rpcPort = PublicMethod.chooseRandomPort();
   static int solidityHttpPort = PublicMethod.chooseRandomPort();
+
+  @Rule public TestName name = new TestName();
+
+
+  @Before
+  public void start() {
+    logger.debug("========== Starting test: {} ==========", name.getMethodName());
+  }
+
+  @After
+  public void end() throws InterruptedException {
+    logger.debug("========== Ending test: {} ==========", name.getMethodName());
+  }
 
   static {
     Args.setParam(new String[] {"-d", dbPath(), "--solidity"}, Constant.TEST_CONF);
