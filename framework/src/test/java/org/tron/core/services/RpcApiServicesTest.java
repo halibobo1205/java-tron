@@ -150,7 +150,7 @@ public class RpcApiServicesTest {
     Assert.assertEquals(5, getInstance().getRpcMaxRstStream());
     Assert.assertEquals(10, getInstance().getRpcSecondsPerWindow());
     String OWNER_ADDRESS = Wallet.getAddressPreFixString()
-        + "548794500882809695a8a687866e76d4271a1abc";
+        + "0000000000000000000000000000000000000000";
     getInstance().setRpcEnable(true);
     getInstance().setRpcPort(PublicMethod.chooseRandomPort());
     getInstance().setRpcSolidityEnable(true);
