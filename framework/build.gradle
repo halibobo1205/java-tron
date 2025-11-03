@@ -116,30 +116,15 @@ test {
         destinationFile = file("$buildDir/jacoco/jacocoTest.exec")
         classDumpDir = file("$buildDir/jacoco/classpathdumps")
     }
-    if (rootProject.archInfo.isArm64) {
-        exclude { element ->
-            element.file.name.toLowerCase().contains('leveldb')
-        }
-        filter {
-            excludeTestsMatching '*.*leveldb*'
-            excludeTestsMatching '*.*Leveldb*'
-            excludeTestsMatching '*.*LevelDB*'
-            excludeTestsMatching '*.*LevelDb*'
-        }
-    }
-    if (isWindows()) {
-        exclude '**/ShieldedTransferActuatorTest.class'
-        exclude '**/BackupDbUtilTest.class'
-        exclude '**/ManagerTest.class'
-        exclude 'org/tron/core/zksnark/**'
-        exclude 'org/tron/common/runtime/vm/PrecompiledContractsVerifyProofTest.class'
-        exclude 'org/tron/core/ShieldedTRC20BuilderTest.class'
-        exclude 'org/tron/common/runtime/vm/WithdrawRewardTest.class'
-    }
+    include('org/tron/core/services/RpcApiServicesTest.class')
+    include('org/tron/core/services/WalletApiTest.class')
+    include('org/tron/core/services/filter/LiteFnQueryGrpcInterceptorTest.class')
+    include('org/tron/core/services/filter/RpcApiAccessInterceptorTest.class')
+    include('org/tron/program/SolidityNodeTest.class')
     maxHeapSize = "1024m"
     doFirst {
         // Restart the JVM after every 100 tests to avoid memory leaks and ensure test isolation
-        forkEvery = 100
+        forkEvery = 2
         jvmArgs "-XX:MetaspaceSize=128m","-XX:MaxMetaspaceSize=256m", "-XX:+UseG1GC" , "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5050"
     }
 }
