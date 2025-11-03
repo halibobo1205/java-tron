@@ -104,11 +104,13 @@ public class RpcApiAccessInterceptorTest {
   @Before
   public void start() {
     logger.debug("========== Starting test: {} ==========", name.getMethodName());
+    System.out.println("========== Starting test: " + name.getMethodName() + " ==========");
   }
 
   @After
   public void end() throws InterruptedException {
     logger.debug("========== Ending test: {} ==========", name.getMethodName());
+    System.out.println("========== Ending test: " + name.getMethodName() + " ==========");
   }
 
   /**
