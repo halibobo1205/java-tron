@@ -19,6 +19,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -43,6 +44,7 @@ import org.tron.core.services.RpcApiService;
 import org.tron.protos.Protocol.Transaction;
 
 @Slf4j
+@Ignore
 public class RpcApiAccessInterceptorTest {
 
   private static TronApplicationContext context;

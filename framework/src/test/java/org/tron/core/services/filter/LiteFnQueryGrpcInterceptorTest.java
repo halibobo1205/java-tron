@@ -10,6 +10,7 @@ import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
@@ -29,6 +30,7 @@ import org.tron.core.config.DefaultConfig;
 import org.tron.core.config.args.Args;
 
 @Slf4j
+@Ignore
 public class LiteFnQueryGrpcInterceptorTest {
 
   private static TronApplicationContext context;

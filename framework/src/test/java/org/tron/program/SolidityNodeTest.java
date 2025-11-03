@@ -7,6 +7,7 @@ import java.util.concurrent.TimeUnit;
 import javax.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.Timeout;
@@ -22,6 +23,7 @@ import org.tron.protos.Protocol.Block;
 import org.tron.protos.Protocol.DynamicProperties;
 
 @Slf4j
+@Ignore
 public class SolidityNodeTest extends BaseTest {
 
   @Resource

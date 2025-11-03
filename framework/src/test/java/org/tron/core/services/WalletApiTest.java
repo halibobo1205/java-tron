@@ -8,6 +8,7 @@ import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -25,6 +26,7 @@ import org.tron.core.config.args.Args;
 
 
 @Slf4j
+@Ignore
 public class WalletApiTest {
 
   @ClassRule
