@@ -6,14 +6,17 @@ import io.grpc.StatusRuntimeException;
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
+import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
 import org.junit.rules.TemporaryFolder;
+import org.junit.rules.TestName;
 import org.junit.rules.Timeout;
 import org.tron.api.GrpcAPI;
 import org.tron.api.WalletGrpc;
@@ -28,7 +31,7 @@ import org.tron.core.Constant;
 import org.tron.core.config.DefaultConfig;
 import org.tron.core.config.args.Args;
 
-@Slf4j
+@Slf4j(topic = "LiteFnQueryGrpcInterceptorTest")
 public class LiteFnQueryGrpcInterceptorTest {
 
   private static TronApplicationContext context;
@@ -47,6 +50,7 @@ public class LiteFnQueryGrpcInterceptorTest {
 
   @ClassRule
   public static final TemporaryFolder temporaryFolder = new TemporaryFolder();
+  @Rule public TestName name = new TestName();
 
   /**
    * init logic.
@@ -86,6 +90,16 @@ public class LiteFnQueryGrpcInterceptorTest {
     chainBaseManager = context.getBean(ChainBaseManager.class);
     Application appTest = ApplicationFactory.create(context);
     appTest.startup();
+  }
+
+  @Before
+  public void start() {
+    logger.debug("========== Starting test: {} ==========", name.getMethodName());
+  }
+
+  @After
+  public void end() throws InterruptedException {
+    logger.debug("========== Ending test: {} ==========", name.getMethodName());
   }
 
   /**
