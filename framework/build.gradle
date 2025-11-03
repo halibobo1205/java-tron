@@ -118,6 +118,7 @@ test {
     }
     testLogging {
         exceptionFormat = 'full'
+        showStandardStreams = true
     }
     jacoco {
         destinationFile = file("$buildDir/jacoco/jacocoTest.exec")
@@ -134,8 +135,9 @@ test {
     }
     maxHeapSize = "1024m"
     doFirst {
-        forkEvery = 100
-        jvmArgs "-XX:MetaspaceSize=128m","-XX:MaxMetaspaceSize=256m", "-XX:+UseG1GC"
+        // Restart the JVM after every 100 tests to avoid memory leaks and ensure test isolation
+        // forkEvery = 100
+        jvmArgs "-XX:MetaspaceSize=128m","-XX:MaxMetaspaceSize=256m", "-XX:+UseG1GC" , "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=5050"
     }
 }
 

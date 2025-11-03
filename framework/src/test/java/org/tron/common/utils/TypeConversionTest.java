@@ -27,10 +27,29 @@ import static org.tron.common.utils.TypeConversion.increment;
 import static org.tron.common.utils.TypeConversion.longToBytes;
 
 import lombok.extern.slf4j.Slf4j;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TestName;
 
-@Slf4j
+@Slf4j(topic = "TypeConversionTest")
 public class TypeConversionTest {
+
+  @Rule
+  public TestName name = new TestName();
+
+  @Before
+  public void start() {
+    logger.debug("========== Starting test: {} ==========", name.getMethodName());
+    System.out.println("========== Starting test: " + name.getMethodName() + " ==========");
+  }
+
+  @After
+  public void end() throws InterruptedException {
+    logger.debug("========== Ending test: {} ==========", name.getMethodName());
+    System.out.println("========== Ending test: " + name.getMethodName() + " ==========");
+  }
 
   @Test
   public void testLongToBytes() {

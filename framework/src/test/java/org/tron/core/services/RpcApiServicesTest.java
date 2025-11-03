@@ -11,12 +11,17 @@ import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import java.io.IOException;
 import java.util.Objects;
+import lombok.extern.slf4j.Slf4j;
+import org.junit.After;
 import org.junit.AfterClass;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.FixMethodOrder;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import org.junit.rules.TestName;
 import org.junit.runners.MethodSorters;
 import org.tron.api.DatabaseGrpc;
 import org.tron.api.DatabaseGrpc.DatabaseBlockingStub;
@@ -110,6 +115,7 @@ import org.tron.protos.contract.WitnessContract.WitnessCreateContract;
 import org.tron.protos.contract.WitnessContract.WitnessUpdateContract;
 
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
+@Slf4j(topic = "RpcApiServicesTest")
 public class RpcApiServicesTest {
   private static TronApplicationContext context;
   private static DatabaseBlockingStub databaseBlockingStubFull = null;
@@ -120,6 +126,8 @@ public class RpcApiServicesTest {
   private static WalletSolidityBlockingStub blockingStubPBFT = null;
   @ClassRule
   public static TemporaryFolder temporaryFolder = new TemporaryFolder();
+  @Rule
+  public TestName name = new TestName();
   private static ByteString ownerAddress;
   private static ByteString sk;
   private static ByteString ask;
@@ -184,6 +192,18 @@ public class RpcApiServicesTest {
   public static void destroy() {
     context.close();
     Args.clearParam();
+  }
+
+  @Before
+  public void start() {
+    logger.debug("========== Starting test: {} ==========", name.getMethodName());
+    System.out.println("========== Starting test: " + name.getMethodName() + " ==========");
+  }
+
+  @After
+  public void end() throws InterruptedException {
+    logger.debug("========== Ending test: {} ==========", name.getMethodName());
+    System.out.println("========== Ending test: " + name.getMethodName() + " ==========");
   }
 
   @Test

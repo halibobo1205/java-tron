@@ -15,11 +15,15 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import lombok.extern.slf4j.Slf4j;
+import org.junit.After;
 import org.junit.AfterClass;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import org.junit.rules.TestName;
 import org.tron.api.GrpcAPI.BlockExtention;
 import org.tron.api.GrpcAPI.BlockReq;
 import org.tron.api.GrpcAPI.BytesMessage;
@@ -40,7 +44,7 @@ import org.tron.core.services.interfaceOnPBFT.RpcApiServiceOnPBFT;
 import org.tron.core.services.interfaceOnSolidity.RpcApiServiceOnSolidity;
 import org.tron.protos.Protocol.Transaction;
 
-@Slf4j
+@Slf4j(topic = "RpcApiAccessInterceptorTest")
 public class RpcApiAccessInterceptorTest {
 
   private static TronApplicationContext context;
@@ -49,7 +53,8 @@ public class RpcApiAccessInterceptorTest {
   private static WalletSolidityGrpc.WalletSolidityBlockingStub blockingStubPBFT = null;
   @ClassRule
   public static final TemporaryFolder temporaryFolder = new TemporaryFolder();
-
+  @Rule
+  public TestName name = new TestName();
   /**
    * init logic.
    */
@@ -88,6 +93,18 @@ public class RpcApiAccessInterceptorTest {
 
     Application appTest = ApplicationFactory.create(context);
     appTest.startup();
+  }
+
+  @Before
+  public void start() {
+    logger.debug("========== Starting test: {} ==========", name.getMethodName());
+    System.out.println("========== Starting test: " + name.getMethodName() + " ==========");
+  }
+
+  @After
+  public void end() throws InterruptedException {
+    logger.debug("========== Ending test: {} ==========", name.getMethodName());
+    System.out.println("========== Ending test: " + name.getMethodName() + " ==========");
   }
 
   /**

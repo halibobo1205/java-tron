@@ -2,8 +2,12 @@ package org.tron.program;
 
 import javax.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
+import org.junit.After;
 import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TestName;
 import org.tron.common.BaseTest;
 import org.tron.common.client.DatabaseGrpcClient;
 import org.tron.core.Constant;
@@ -13,13 +17,29 @@ import org.tron.core.services.http.solidity.SolidityNodeHttpApiService;
 import org.tron.protos.Protocol.Block;
 import org.tron.protos.Protocol.DynamicProperties;
 
-@Slf4j
+@Slf4j(topic = "SolidityNodeTest")
 public class SolidityNodeTest extends BaseTest {
 
   @Resource
   RpcApiService rpcApiService;
   @Resource
   SolidityNodeHttpApiService solidityNodeHttpApiService;
+
+  @Rule
+  public TestName name = new TestName();
+
+
+  @Before
+  public void start() {
+    logger.debug("========== Starting test: {} ==========", name.getMethodName());
+    System.out.println("========== Starting test: " + name.getMethodName() + " ==========");
+  }
+
+  @After
+  public void end() throws InterruptedException {
+    logger.debug("========== Ending test: {} ==========", name.getMethodName());
+    System.out.println("========== Ending test: " + name.getMethodName() + " ==========");
+  }
 
   static {
     Args.setParam(new String[]{"-d", dbPath()}, Constant.TEST_CONF);
