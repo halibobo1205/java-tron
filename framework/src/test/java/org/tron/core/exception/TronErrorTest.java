@@ -41,6 +41,7 @@ import org.tron.core.config.args.Args;
 import org.tron.core.services.http.GetBlockServlet;
 import org.tron.core.services.http.RateLimiterServlet;
 import org.tron.core.zen.ZksnarkInitService;
+import org.slf4j.LoggerFactory;
 
 
 @RunWith(MockitoJUnitRunner.class)

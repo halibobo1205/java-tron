@@ -21,6 +21,7 @@ public class LogService {
       lc.reset();
       configurator.doConfigure(file);
     } catch (Exception e) {
+      StatusPrinter.printInCaseOfErrorsOrWarnings(lc);
       throw new TronError(e, TronError.ErrCode.LOG_LOAD);
     } finally {
       StatusPrinter.printInCaseOfErrorsOrWarnings(lc);
