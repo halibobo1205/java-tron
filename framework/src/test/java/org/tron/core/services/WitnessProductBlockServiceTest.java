@@ -5,13 +5,34 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import lombok.extern.slf4j.Slf4j;
+import org.junit.After;
 import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TestName;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.capsule.BlockCapsule;
 
+@Slf4j(topic = "WitnessProductBlockServiceTest")
 public class WitnessProductBlockServiceTest {
+
+  @Rule
+  public TestName name = new TestName();
+
+  @Before
+  public void start() {
+    logger.debug("========== Starting test: {} ==========", name.getMethodName());
+    System.out.println("========== Starting test: " + name.getMethodName() + " ==========");
+  }
+
+  @After
+  public void end() throws InterruptedException {
+    logger.debug("========== Ending test: {} ==========", name.getMethodName());
+    System.out.println("========== Ending test: " + name.getMethodName() + " ==========");
+  }
 
   @Test
   public void GetSetCheatWitnessInfoTest() {

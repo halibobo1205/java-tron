@@ -10,10 +10,13 @@ import static org.tron.core.utils.ProposalUtil.ProposalType.WITNESS_127_PAY_PER_
 import java.util.HashSet;
 import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TestName;
 import org.tron.common.BaseTest;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.core.Constant;
@@ -23,10 +26,11 @@ import org.tron.core.consensus.ProposalService;
 import org.tron.core.utils.ProposalUtil.ProposalType;
 import org.tron.protos.Protocol.Proposal;
 
-@Slf4j
+@Slf4j(topic = "ProposalServiceTest")
 public class ProposalServiceTest extends BaseTest {
 
   private static boolean init;
+  @Rule public TestName name = new TestName();
 
   @BeforeClass
   public static void init() {
@@ -35,12 +39,20 @@ public class ProposalServiceTest extends BaseTest {
   }
 
   @Before
-  public void before() {
+  public void start() {
+    logger.debug("========== Starting test: {} ==========", name.getMethodName());
+    System.out.println("========== Starting test: " + name.getMethodName() + " ==========");
     if (init) {
       return;
     }
     dbManager.getDynamicPropertiesStore().saveLatestBlockHeaderNumber(5);
     init = true;
+  }
+
+  @After
+  public void end() throws InterruptedException {
+    logger.debug("========== Ending test: {} ==========", name.getMethodName());
+    System.out.println("========== Ending test: " + name.getMethodName() + " ==========");
   }
 
   @Test
