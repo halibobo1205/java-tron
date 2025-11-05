@@ -30,7 +30,7 @@ public class DebugInterceptor implements ClientInterceptor {
 
           @Override
           public void onClose(Status status, Metadata trailers) {
-            logger.debug("onClose: {}", status);
+            logger.debug("onClose: {}, {}", status, trailers);
             super.onClose(status, trailers);
           }
 
