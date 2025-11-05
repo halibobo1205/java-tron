@@ -111,7 +111,7 @@ test {
     }
     testLogging {
         exceptionFormat = 'full'
-        showStandardStreams = true
+      //  showStandardStreams = true
     }
     jacoco {
         destinationFile = file("$buildDir/jacoco/jacocoTest.exec")
