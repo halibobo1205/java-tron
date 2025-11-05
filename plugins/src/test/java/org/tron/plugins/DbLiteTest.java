@@ -17,6 +17,7 @@ import org.tron.common.application.ApplicationFactory;
 import org.tron.common.application.TronApplicationContext;
 import org.tron.common.config.DbBackupConfig;
 import org.tron.common.crypto.ECKey;
+import org.tron.common.utils.DebugInterceptor;
 import org.tron.common.utils.FileUtil;
 import org.tron.common.utils.PublicMethod;
 import org.tron.common.utils.TimeoutInterceptor;
@@ -52,7 +53,7 @@ public class DbLiteTest {
         Args.getInstance().getRpcPort());
     channelFull = ManagedChannelBuilder.forTarget(fullNode)
         .usePlaintext()
-        .intercept(new TimeoutInterceptor(5000))
+        .intercept(new TimeoutInterceptor(5000), new DebugInterceptor())
         .build();
     blockingStubFull = WalletGrpc.newBlockingStub(channelFull);
   }
