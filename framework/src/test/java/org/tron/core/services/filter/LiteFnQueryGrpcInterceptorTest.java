@@ -24,6 +24,7 @@ import org.tron.api.WalletSolidityGrpc;
 import org.tron.common.application.Application;
 import org.tron.common.application.ApplicationFactory;
 import org.tron.common.application.TronApplicationContext;
+import org.tron.common.utils.DebugInterceptor;
 import org.tron.common.utils.PublicMethod;
 import org.tron.common.utils.TimeoutInterceptor;
 import org.tron.core.ChainBaseManager;
@@ -73,15 +74,15 @@ public class LiteFnQueryGrpcInterceptorTest {
         Args.getInstance().getRpcOnPBFTPort());
     channelFull = ManagedChannelBuilder.forTarget(fullnode)
         .usePlaintext()
-        .intercept(new TimeoutInterceptor(5000))
+        .intercept(new TimeoutInterceptor(5000), new DebugInterceptor())
         .build();
     channelSolidity = ManagedChannelBuilder.forTarget(solidityNode)
         .usePlaintext()
-        .intercept(new TimeoutInterceptor(5000))
+        .intercept(new TimeoutInterceptor(5000), new DebugInterceptor())
         .build();
     channelpBFT = ManagedChannelBuilder.forTarget(pBFTNode)
         .usePlaintext()
-        .intercept(new TimeoutInterceptor(5000))
+        .intercept(new TimeoutInterceptor(5000), new DebugInterceptor())
         .build();
     context = new TronApplicationContext(DefaultConfig.class);
     blockingStubFull = WalletGrpc.newBlockingStub(channelFull);
