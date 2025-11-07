@@ -50,4 +50,16 @@
     <appender-ref ref="NET_FILE"/>
   </logger>
 
+  <logger name="grpcClient" level="DEBUG" additivity="false">
+    <appender-ref ref="NET_FILE"/>
+  </logger>
+
+  <logger name="grpcServer" level="DEBUG" additivity="false">
+    <appender-ref ref="NET_FILE"/>
+  </logger>
+
+  <logger name="grpcTest" level="DEBUG" additivity="false">
+    <appender-ref ref="NET_FILE"/>
+  </logger>
+
 </configuration>
