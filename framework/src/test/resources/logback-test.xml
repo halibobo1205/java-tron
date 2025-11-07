@@ -4,10 +4,10 @@
 
   <appender class="ch.qos.logback.core.ConsoleAppender" name="STDOUT">
     <encoder>
-      <pattern>%d{HH:mm:ss.SSS} %p [%c{1}] %m%n</pattern>
+      <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%t] [%c{1}]\(%F:%L\) %m%n</pattern>
     </encoder>
     <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
-      <level>INFO</level>
+      <level>ERROR</level>
     </filter>
   </appender>
 
@@ -25,7 +25,15 @@
       <totalSizeCap>20GB</totalSizeCap>
     </rollingPolicy>
     <encoder>
-      <pattern>%d{HH:mm:ss.SSS} %p [%c{1}] %m%n</pattern>
+      <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%t] [%c{1}]\(%F:%L\) %m%n</pattern>
+    </encoder>
+  </appender>
+
+  <appender class="ch.qos.logback.core.FileAppender" name="NET_FILE">
+    <file>./logs/net.log</file>
+    <append>true</append>
+    <encoder>
+      <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%t] [%c{1}]\(%F:%L\) %m%n</pattern>
     </encoder>
   </appender>
 
@@ -34,7 +42,12 @@
     <appender-ref ref="FILE"/>
   </root>
 
-  <logger level="DEBUG" name="Test"/>
-  <logger level="DEBUG" name="Manager"/>
+  <logger name="io.netty" level="DEBUG" additivity="false">
+    <appender-ref ref="NET_FILE"/>
+  </logger>
+
+  <logger name="io.grpc.netty" level="DEBUG" additivity="false">
+    <appender-ref ref="NET_FILE"/>
+  </logger>
 
 </configuration>
