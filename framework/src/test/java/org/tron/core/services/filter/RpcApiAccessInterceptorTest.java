@@ -46,7 +46,7 @@ import org.tron.core.config.args.Args;
 import org.tron.core.services.RpcApiService;
 import org.tron.protos.Protocol.Transaction;
 
-@Slf4j(topic = "RpcApiAccessInterceptorTest")
+@Slf4j(topic = "grpcTest")
 public class RpcApiAccessInterceptorTest {
 
   private static TronApplicationContext context;

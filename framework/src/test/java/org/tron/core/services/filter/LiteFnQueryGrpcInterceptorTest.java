@@ -32,7 +32,7 @@ import org.tron.core.Constant;
 import org.tron.core.config.DefaultConfig;
 import org.tron.core.config.args.Args;
 
-@Slf4j(topic = "LiteFnQueryGrpcInterceptorTest")
+@Slf4j(topic = "grpcTest")
 public class LiteFnQueryGrpcInterceptorTest {
 
   private static TronApplicationContext context;

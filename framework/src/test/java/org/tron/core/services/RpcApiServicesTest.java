@@ -118,7 +118,7 @@ import org.tron.protos.contract.WitnessContract.WitnessCreateContract;
 import org.tron.protos.contract.WitnessContract.WitnessUpdateContract;
 
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
-@Slf4j(topic = "RpcApiServicesTest")
+@Slf4j(topic = "grpcTest")
 public class RpcApiServicesTest {
 
   private static Application appTest;

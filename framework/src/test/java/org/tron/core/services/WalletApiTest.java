@@ -28,7 +28,7 @@ import org.tron.core.config.DefaultConfig;
 import org.tron.core.config.args.Args;
 
 
-@Slf4j(topic = "WalletApiTest")
+@Slf4j(topic = "grpcTest")
 public class WalletApiTest {
 
   @ClassRule

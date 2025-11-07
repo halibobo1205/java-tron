@@ -24,7 +24,7 @@ import org.tron.core.services.http.solidity.SolidityNodeHttpApiService;
 import org.tron.protos.Protocol.Block;
 import org.tron.protos.Protocol.DynamicProperties;
 
-@Slf4j(topic = "SolidityNodeTest")
+@Slf4j(topic = "grpcTest")
 public class SolidityNodeTest extends BaseTest {
 
   @Resource
