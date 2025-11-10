@@ -4,6 +4,7 @@ import com.beust.jcommander.Parameter;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
+import java.util.Enumeration;
 import java.util.List;
 import java.util.Set;
 import java.util.logging.Level;
@@ -759,6 +760,24 @@ public class CommonParameter {
     SLF4JBridgeHandler.removeHandlersForRootLogger();
     SLF4JBridgeHandler.install();
     Logger.getLogger("").setLevel(Level.ALL); // Root logger.
+    LogManager logManager = LogManager.getLogManager();
+
+    setLoggerLevel("io.grpc");
+    setLoggerLevel("io.netty");
+
+    Enumeration<String> names = logManager.getLoggerNames();
+    while (names.hasMoreElements()) {
+      String name = names.nextElement();
+      if (name.startsWith("io.grpc") || name.startsWith("io.netty")) {
+        setLoggerLevel(name);
+      }
+    }
+  }
+
+  private static void setLoggerLevel(String name) {
+    Logger logger = Logger.getLogger(name);
+    logger.setLevel(Level.FINEST);
+    logger.setUseParentHandlers(true);
   }
 
   private static double calcMaxTimeRatio() {
