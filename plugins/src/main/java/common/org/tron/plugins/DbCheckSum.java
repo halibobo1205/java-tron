@@ -1,4 +1,4 @@
-package org.tron.plugins.utils;
+package org.tron.plugins;
 
 
 import com.google.common.collect.Sets;
@@ -72,7 +72,7 @@ public class DbCheckSum implements Callable<Integer> {
       "votes", "witness", "witness_schedule"
   );
 
-  DBInterface accountAsset;
+  DBIterator assetIterator;
 
   private static final byte[] CURRENT_SHUFFLED_WITNESSES = "current_shuffled_witnesses".getBytes();
   private static final String FORK_PREFIX = "FORK_VERSION_";
@@ -115,7 +115,7 @@ public class DbCheckSum implements Callable<Integer> {
 
     if (dbs.contains("account")) {
       dbs.remove("account-asset");
-      accountAsset = DbTool.getDB(db, "account-asset");
+      assetIterator = DbTool.getDB(db, "account-asset").iterator();
     }
     List<Ret> task = ProgressBar.wrap(dbs.stream(), "root task").parallel()
         .map(this::calcMerkleRoot).collect(Collectors.toList());
@@ -129,6 +129,9 @@ public class DbCheckSum implements Callable<Integer> {
           .errorText("There are some errors, please check toolkit.log for detail."));
     }
     spec.commandLine().getOut().println("root task done.");
+    if (assetIterator != null) {
+      assetIterator.close();
+    }
     return code;
   }
 
@@ -170,19 +173,15 @@ public class DbCheckSum implements Callable<Integer> {
   }
 
   public Map<byte[], byte[]> prefixQuery(byte[] key) {
-    try (DBIterator iterator = accountAsset.iterator()) {
-      Map<byte[], byte[]> result = new HashMap<>();
-      for (iterator.seek(key); iterator.valid(); iterator.next()) {
-        if (Bytes.indexOf(iterator.getKey(), key) == 0) {
-          result.put(iterator.getKey(), iterator.getValue());
-        } else {
-          return result;
-        }
+    Map<byte[], byte[]> result = new HashMap<>();
+    for (assetIterator.seek(key); assetIterator.valid(); assetIterator.next()) {
+      if (Bytes.indexOf(assetIterator.getKey(), key) == 0) {
+        result.put(assetIterator.getKey(), assetIterator.getValue());
+      } else {
+        return result;
       }
-      return result;
-    } catch (IOException e) {
-      throw new RuntimeException(e);
     }
+    return result;
   }
 
   private Map.Entry<byte[], byte[]> map(Map.Entry<byte[], byte[]> entry, String name) {

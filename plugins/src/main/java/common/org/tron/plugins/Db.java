@@ -1,6 +1,5 @@
 package org.tron.plugins;
 
-import org.tron.plugins.utils.DbCheckSum;
 import picocli.CommandLine;
 
 @CommandLine.Command(name = "db",
