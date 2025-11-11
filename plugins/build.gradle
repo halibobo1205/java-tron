@@ -95,16 +95,15 @@ test {
         classDumpDir = file("$buildDir/jacoco/classpathdumps")
     }
 
-    if (rootProject.archInfo.isArm64) {
-        exclude 'org/tron/plugins/leveldb/**'
-        filter {
-            excludeTestsMatching '*.*leveldb*'
-            excludeTestsMatching '*.*Leveldb*'
-            excludeTestsMatching '*.*LevelDB*'
-            excludeTestsMatching '*.*LevelDb*'
-            excludeTestsMatching '*.*Archive*'
-        }
+    exclude 'org/tron/plugins/leveldb/**'
+    filter {
+        excludeTestsMatching '*.*leveldb*'
+        excludeTestsMatching '*.*Leveldb*'
+        excludeTestsMatching '*.*LevelDB*'
+        excludeTestsMatching '*.*LevelDb*'
+        excludeTestsMatching '*.*Archive*'
     }
+
 }
 
 jacocoTestReport {
