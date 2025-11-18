@@ -44,6 +44,7 @@ dependencies {
     implementation 'org.eclipse.jetty:jetty-server:9.4.57.v20241219'
     implementation 'org.eclipse.jetty:jetty-servlet:9.4.57.v20241219'
     implementation 'com.alibaba:fastjson:1.2.83'
+    implementation group: 'io.perfmark', name: 'perfmark-api', version: '0.27.0'
     // end http
 
     // https://mvnrepository.com/artifact/com.github.briandilley.jsonrpc4j/jsonrpc4j
