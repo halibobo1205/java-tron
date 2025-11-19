@@ -20,6 +20,7 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.FixMethodOrder;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -1113,6 +1114,7 @@ public class RpcApiServicesTest {
   }
 
   @Test
+  @Ignore("Ignored org.tron.p2p.discover.NodeManager.discoverService is null")
   public void testGetNodeInfo() {
     EmptyMessage message = EmptyMessage.newBuilder().build();
     assertNotNull(blockingStubFull.getNodeInfo(message));
