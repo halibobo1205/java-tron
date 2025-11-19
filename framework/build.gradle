@@ -207,14 +207,11 @@ tasks.register('solidityNodeGroupTests', Test) {
     }
 }
 
-def dbTest = hasProperty('dbTest') ? true : false
-def eventTest = hasProperty('eventTest') ? true : false
-def exceptionTest = hasProperty('exceptionTest') ? true : false
-def jsonrpcTest = hasProperty('jsonrpcTest') ? true : false
-def metricsTest = hasProperty('metricsTest') ? true : false
 def netTest = hasProperty('netTest') ? true : false
-def pbftTest = hasProperty('pbftTest') ? true : false
+def messageTest = hasProperty('messageTest') ? true : false
+def peerTest = hasProperty('peerTest') ? true : false
 def servicesTest = hasProperty('servicesTest') ? true : false
+def pbftTest = hasProperty('pbftTest') ? true : false
 
 
 tasks.register('rpcApiServicesGroupTests', Test) {
@@ -224,81 +221,6 @@ tasks.register('rpcApiServicesGroupTests', Test) {
     }
     outputs.upToDateWhen { false }
     filter {
-        if (dbTest) {
-            includeTestsMatching "org.tron.core.db.DBIteratorTest"
-            includeTestsMatching "org.tron.core.db.DelegatedResourceAccountIndexStoreTest"
-            includeTestsMatching "org.tron.core.db.DelegatedResourceStoreTest"
-            includeTestsMatching "org.tron.core.db.DelegationStoreTest"
-            includeTestsMatching "org.tron.core.db.EnergyPriceHistoryLoaderTest"
-            includeTestsMatching "org.tron.core.db.ExchangeStoreTest"
-            includeTestsMatching "org.tron.core.db.ExchangeV2StoreTest"
-            includeTestsMatching "org.tron.core.db.IncrementalMerkleTreeStoreTest"
-            includeTestsMatching "org.tron.core.db.KhaosDatabaseTest"
-            includeTestsMatching "org.tron.core.db.ManagerMockTest"
-            includeTestsMatching "org.tron.core.db.ManagerTest"
-            includeTestsMatching "org.tron.core.db.MarketAccountStoreTest"
-            includeTestsMatching "org.tron.core.db.MarketOrderStoreTest"
-            includeTestsMatching "org.tron.core.db.MarketPairPriceToOrderStoreTest"
-            includeTestsMatching "org.tron.core.db.MarketPairToPriceStoreTest"
-            includeTestsMatching "org.tron.core.db.NullifierStoreTest"
-            includeTestsMatching "org.tron.core.db.ProposalStoreTest"
-            includeTestsMatching "org.tron.core.db.RecentBlockStoreTest"
-            includeTestsMatching "org.tron.core.db.RecentTransactionStoreTest"
-            includeTestsMatching "org.tron.core.db.SerializedTest"
-            includeTestsMatching "org.tron.core.db.TransactionExpireTest"
-            includeTestsMatching "org.tron.core.db.TransactionHistoryTest"
-            includeTestsMatching "org.tron.core.db.TransactionRetStoreTest"
-            includeTestsMatching "org.tron.core.db.TransactionStoreTest"
-            includeTestsMatching "org.tron.core.db.TransactionTraceTest"
-            includeTestsMatching "org.tron.core.db.TreeBlockIndexStoreTest"
-            includeTestsMatching "org.tron.core.db.TronDatabaseTest"
-            includeTestsMatching "org.tron.core.db.TxCacheDBInitTest"
-            includeTestsMatching "org.tron.core.db.TxCacheDBTest"
-            includeTestsMatching "org.tron.core.db.VotesStoreTest"
-            includeTestsMatching "org.tron.core.db.WitnessScheduleStoreTest"
-            includeTestsMatching "org.tron.core.db.WitnessStoreTest"
-            includeTestsMatching "org.tron.core.db.ZKProofStoreTest"
-            includeTestsMatching "org.tron.core.db.api.AssetUpdateHelperTest"
-            includeTestsMatching "org.tron.core.db.api.pojo.PojoTest"
-            includeTestsMatching "org.tron.core.db.backup.BackupDbUtilTest"
-            includeTestsMatching "org.tron.core.db2.ChainbaseTest"
-            includeTestsMatching "org.tron.core.db2.CheckpointV2Test"
-            includeTestsMatching "org.tron.core.db2.RevokingDbWithCacheNewValueTest"
-            includeTestsMatching "org.tron.core.db2.SnapshotImplTest"
-            includeTestsMatching "org.tron.core.db2.SnapshotManagerTest"
-            includeTestsMatching "org.tron.core.db2.SnapshotRootTest"
-        }
-        if (eventTest) {
-            includeTestsMatching "org.tron.core.event.BlockEventCacheTest"
-            includeTestsMatching "org.tron.core.event.BlockEventGetTest"
-            includeTestsMatching "org.tron.core.event.BlockEventLoadTest"
-            includeTestsMatching "org.tron.core.event.EventPluginLoaderTest"
-            includeTestsMatching "org.tron.core.event.EventServiceTest"
-            includeTestsMatching "org.tron.core.event.HistoryEventServiceTest"
-            includeTestsMatching "org.tron.core.event.RealtimeEventServiceTest"
-            includeTestsMatching "org.tron.core.event.SolidEventServiceTest"
-        }
-        if (exceptionTest) {
-            includeTestsMatching "org.tron.core.exception.TronErrorTest"
-        }
-
-        if(jsonrpcTest) {
-            includeTestsMatching "org.tron.core.jsonrpc.ApiUtilTest"
-            includeTestsMatching "org.tron.core.jsonrpc.BloomTest"
-            includeTestsMatching "org.tron.core.jsonrpc.BuildTransactionTest"
-            includeTestsMatching "org.tron.core.jsonrpc.ConcurrentHashMapTest"
-            includeTestsMatching "org.tron.core.jsonrpc.JsonRpcTest"
-            includeTestsMatching "org.tron.core.jsonrpc.JsonrpcServiceTest"
-            includeTestsMatching "org.tron.core.jsonrpc.LogBlockQueryTest"
-            includeTestsMatching "org.tron.core.jsonrpc.LogMatchExactlyTest"
-            includeTestsMatching "org.tron.core.jsonrpc.SectionBloomStoreTest"
-            includeTestsMatching "org.tron.core.jsonrpc.WalletCursorTest"
-        }
-        if (metricsTest) {
-            includeTestsMatching "org.tron.core.metrics.MetricsApiServiceTest"
-            includeTestsMatching "org.tron.core.metrics.MetricsUtilTest"
-            includeTestsMatching "org.tron.core.metrics.prometheus.PrometheusApiServiceTest"
-        }
 
         if (netTest) {
             includeTestsMatching "org.tron.core.net.MessageTest"
@@ -306,6 +228,8 @@ tasks.register('rpcApiServicesGroupTests', Test) {
             includeTestsMatching "org.tron.core.net.P2pEventHandlerImplTest"
             includeTestsMatching "org.tron.core.net.P2pRateLimiterTest"
             includeTestsMatching "org.tron.core.net.TronNetDelegateTest"
+        }
+        if (messageTest) {
             includeTestsMatching "org.tron.core.net.messagehandler.BlockMsgHandlerTest"
             includeTestsMatching "org.tron.core.net.messagehandler.ChainInventoryMsgHandlerTest"
             includeTestsMatching "org.tron.core.net.messagehandler.FetchInvDataMsgHandlerTest"
@@ -315,10 +239,14 @@ tasks.register('rpcApiServicesGroupTests', Test) {
             includeTestsMatching "org.tron.core.net.messagehandler.PbftMsgHandlerTest"
             includeTestsMatching "org.tron.core.net.messagehandler.SyncBlockChainMsgHandlerTest"
             includeTestsMatching "org.tron.core.net.messagehandler.TransactionsMsgHandlerTest"
+        }
+        if (peerTest) {
             includeTestsMatching "org.tron.core.net.peer.PeerConnectionTest"
             includeTestsMatching "org.tron.core.net.peer.PeerManagerTest"
             includeTestsMatching "org.tron.core.net.peer.PeerStatusCheckMockTest"
             includeTestsMatching "org.tron.core.net.peer.PeerStatusCheckTest"
+        }
+        if (servicesTest) {
             includeTestsMatching "org.tron.core.net.service.nodepersist.DBNodeTest"
             includeTestsMatching "org.tron.core.net.services.AdvServiceTest"
             includeTestsMatching "org.tron.core.net.services.EffectiveCheckServiceTest"
@@ -331,12 +259,6 @@ tasks.register('rpcApiServicesGroupTests', Test) {
         if(pbftTest) {
             includeTestsMatching "org.tron.core.pbft.PbftApiTest"
             includeTestsMatching "org.tron.core.pbft.PbftTest"
-        }
-        if(servicesTest) {
-            includeTestsMatching "org.tron.core.services.ComputeRewardTest"
-            includeTestsMatching "org.tron.core.services.DelegationServiceTest"
-            includeTestsMatching "org.tron.core.services.NodeInfoServiceTest"
-            includeTestsMatching "org.tron.core.services.ProposalServiceTest"
         }
 
         includeTestsMatching "org.tron.core.services.RpcApiServicesTest"
