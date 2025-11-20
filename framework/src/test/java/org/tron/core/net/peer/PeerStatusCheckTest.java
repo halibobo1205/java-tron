@@ -9,7 +9,6 @@ import java.net.InetSocketAddress;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -49,7 +48,6 @@ public class PeerStatusCheckTest {
   }
 
   @Test
-  @Ignore("L56:AssertionError: expected:<0> but was:<2>")
   public void testCheck() {
     int maxConnection = 30;
     Assert.assertEquals(maxConnection, Args.getInstance().getMaxConnections());

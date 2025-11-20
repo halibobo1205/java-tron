@@ -9,7 +9,6 @@ import java.util.Collections;
 import java.util.List;
 
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.mockito.Mockito;
 import org.springframework.context.ApplicationContext;
@@ -20,7 +19,6 @@ public class PeerManagerTest {
   List<InetSocketAddress> relayNodes = new ArrayList<>();
 
   @Test
-  @Ignore("PeerConnection.setChannel(L174):IllegalArgumentException: rate must be positive")
   public void testAdd() throws Exception {
     Field field = PeerManager.class.getDeclaredField("peers");
     field.setAccessible(true);
@@ -46,7 +44,6 @@ public class PeerManagerTest {
   }
 
   @Test
-  @Ignore("PeerConnection.setChannel(L174):IllegalArgumentException: rate must be positive")
   public void testRemove() throws Exception {
     Field field = PeerManager.class.getDeclaredField("peers");
     field.setAccessible(true);
@@ -73,7 +70,6 @@ public class PeerManagerTest {
   }
 
   @Test
-  @Ignore("PeerConnection.setChannel(L174):IllegalArgumentException: rate must be positive")
   public void testGetPeerConnection() throws Exception {
     Field field = PeerManager.class.getDeclaredField("peers");
     field.setAccessible(true);
@@ -97,7 +93,6 @@ public class PeerManagerTest {
   }
 
   @Test
-  @Ignore("PeerConnection.setChannel(L174):IllegalArgumentException: rate must be positive")
   public void testGetPeers() throws Exception {
     Field field = PeerManager.class.getDeclaredField("peers");
     field.setAccessible(true);
