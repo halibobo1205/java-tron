@@ -221,11 +221,11 @@ tasks.register('rpcApiServicesGroupTests', Test) {
     }
     outputs.upToDateWhen { false }
     filter {
-
+        includeTestsMatching "org.tron.core.net.P2pEventHandlerImplTest"
         if (netTest) {
             includeTestsMatching "org.tron.core.net.MessageTest"
             includeTestsMatching "org.tron.core.net.NodeTest"
-            includeTestsMatching "org.tron.core.net.P2pEventHandlerImplTest"
+
             includeTestsMatching "org.tron.core.net.P2pRateLimiterTest"
             includeTestsMatching "org.tron.core.net.TronNetDelegateTest"
         }
@@ -246,10 +246,11 @@ tasks.register('rpcApiServicesGroupTests', Test) {
             includeTestsMatching "org.tron.core.net.peer.PeerStatusCheckMockTest"
             includeTestsMatching "org.tron.core.net.peer.PeerStatusCheckTest"
         }
+        includeTestsMatching "org.tron.core.net.services.EffectiveCheckServiceTest"
         if (servicesTest) {
             includeTestsMatching "org.tron.core.net.service.nodepersist.DBNodeTest"
             includeTestsMatching "org.tron.core.net.services.AdvServiceTest"
-            includeTestsMatching "org.tron.core.net.services.EffectiveCheckServiceTest"
+
             includeTestsMatching "org.tron.core.net.services.HandShakeServiceTest"
             includeTestsMatching "org.tron.core.net.services.RelayServiceTest"
             includeTestsMatching "org.tron.core.net.services.ResilienceServiceTest"
