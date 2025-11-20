@@ -207,11 +207,8 @@ tasks.register('solidityNodeGroupTests', Test) {
     }
 }
 
-def netTest = hasProperty('netTest') ? true : false
-def messageTest = hasProperty('messageTest') ? true : false
-def peerTest = hasProperty('peerTest') ? true : false
-def servicesTest = hasProperty('servicesTest') ? true : false
-def pbftTest = hasProperty('pbftTest') ? true : false
+def tagTest = hasProperty('tagTest') ? Integer.parseInt(String.valueOf(getProperty('tagTest'))) : 100
+
 
 
 tasks.register('rpcApiServicesGroupTests', Test) {
@@ -221,43 +218,48 @@ tasks.register('rpcApiServicesGroupTests', Test) {
     }
     outputs.upToDateWhen { false }
     filter {
-        includeTestsMatching "org.tron.core.net.P2pEventHandlerImplTest"
-        if (netTest) {
+
+        if (tagTest >= 1) {
             includeTestsMatching "org.tron.core.net.MessageTest"
             includeTestsMatching "org.tron.core.net.NodeTest"
-
+            includeTestsMatching "org.tron.core.net.P2pEventHandlerImplTest"
             includeTestsMatching "org.tron.core.net.P2pRateLimiterTest"
             includeTestsMatching "org.tron.core.net.TronNetDelegateTest"
         }
-        if (messageTest) {
+        if (tagTest >= 2) {
             includeTestsMatching "org.tron.core.net.messagehandler.BlockMsgHandlerTest"
             includeTestsMatching "org.tron.core.net.messagehandler.ChainInventoryMsgHandlerTest"
             includeTestsMatching "org.tron.core.net.messagehandler.FetchInvDataMsgHandlerTest"
             includeTestsMatching "org.tron.core.net.messagehandler.InventoryMsgHandlerTest"
             includeTestsMatching "org.tron.core.net.messagehandler.MessageHandlerTest"
+        }
+        if (tagTest >= 3) {
             includeTestsMatching "org.tron.core.net.messagehandler.PbftDataSyncHandlerTest"
             includeTestsMatching "org.tron.core.net.messagehandler.PbftMsgHandlerTest"
             includeTestsMatching "org.tron.core.net.messagehandler.SyncBlockChainMsgHandlerTest"
             includeTestsMatching "org.tron.core.net.messagehandler.TransactionsMsgHandlerTest"
-        }
-        if (peerTest) {
             includeTestsMatching "org.tron.core.net.peer.PeerConnectionTest"
             includeTestsMatching "org.tron.core.net.peer.PeerManagerTest"
+
+        }
+        if (tagTest >= 4) {
             includeTestsMatching "org.tron.core.net.peer.PeerStatusCheckMockTest"
             includeTestsMatching "org.tron.core.net.peer.PeerStatusCheckTest"
-        }
-        includeTestsMatching "org.tron.core.net.services.EffectiveCheckServiceTest"
-        if (servicesTest) {
             includeTestsMatching "org.tron.core.net.service.nodepersist.DBNodeTest"
             includeTestsMatching "org.tron.core.net.services.AdvServiceTest"
+        }
 
+        includeTestsMatching "org.tron.core.net.services.EffectiveCheckServiceTest"
+
+        if (tagTest >= 4) {
             includeTestsMatching "org.tron.core.net.services.HandShakeServiceTest"
+        }
+
+        if (tagTest >= 5) {
             includeTestsMatching "org.tron.core.net.services.RelayServiceTest"
             includeTestsMatching "org.tron.core.net.services.ResilienceServiceTest"
             includeTestsMatching "org.tron.core.net.services.SyncServiceTest"
             includeTestsMatching "org.tron.core.net.services.TronStatsManagerTest"
-        }
-        if(pbftTest) {
             includeTestsMatching "org.tron.core.pbft.PbftApiTest"
             includeTestsMatching "org.tron.core.pbft.PbftTest"
         }
