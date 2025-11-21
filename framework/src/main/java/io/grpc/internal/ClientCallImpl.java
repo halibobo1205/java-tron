@@ -62,16 +62,15 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 import javax.annotation.Nullable;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Implementation of {@link ClientCall}.
  */
+@Slf4j
 final class ClientCallImpl<ReqT, RespT> extends ClientCall<ReqT, RespT> {
 
-  private static final Logger log = Logger.getLogger(ClientCallImpl.class.getName());
   private static final byte[] FULL_STREAM_DECOMPRESSION_ENCODINGS
       = "gzip".getBytes(Charset.forName("US-ASCII"));
   private static final double NANO_TO_SECS = 1.0 * TimeUnit.SECONDS.toNanos(1);
@@ -458,7 +457,7 @@ final class ClientCallImpl<ReqT, RespT> extends ClientCall<ReqT, RespT> {
   private void cancelInternal(@Nullable String message, @Nullable Throwable cause) {
     if (message == null && cause == null) {
       cause = new CancellationException("Cancelled without a message or cause");
-      log.log(Level.WARNING, "Cancelling without a message or cause is suboptimal", cause);
+      logger.warn("Cancelling without a message or cause is suboptimal", cause);
     }
     if (cancelCalled) {
       return;
@@ -564,7 +563,7 @@ final class ClientCallImpl<ReqT, RespT> extends ClientCall<ReqT, RespT> {
     try {
       observer.onClose(status, trailers);
     } catch (RuntimeException ex) {
-      log.log(Level.WARNING, "Exception thrown by onClose() in ClientCall", ex);
+      logger.warn("Exception thrown by onClose() in ClientCall", ex);
     }
   }
 

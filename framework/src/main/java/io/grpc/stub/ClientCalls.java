@@ -35,6 +35,8 @@ import io.grpc.MethodDescriptor;
 import io.grpc.Status;
 import io.grpc.StatusException;
 import io.grpc.StatusRuntimeException;
+import lombok.extern.slf4j.Slf4j;
+
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -59,9 +61,9 @@ import javax.annotation.Nullable;
  * between utilities in this class and the potential signatures in a generated stub class so
  * that the runtime can vary behavior without requiring regeneration of the stub.
  */
+@Slf4j
 public final class ClientCalls {
 
-  private static final Logger logger = Logger.getLogger(ClientCalls.class.getName());
 
   @VisibleForTesting
   static boolean rejectRunnableOnExecutor =
@@ -382,7 +384,7 @@ public final class ClientCalls {
     try {
       call.cancel(null, t);
     } catch (RuntimeException | Error e) {
-      logger.log(Level.SEVERE, "RuntimeException encountered while closing call", e);
+      logger.error("RuntimeException encountered while closing call", e);
     }
     if (t instanceof RuntimeException) {
       throw (RuntimeException) t;

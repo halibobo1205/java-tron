@@ -87,16 +87,15 @@ import java.nio.channels.ClosedChannelException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.Executor;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 import javax.annotation.Nullable;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Client-side Netty handler for GRPC processing. All event handlers are executed entirely within
  * the context of the Netty Channel thread.
  */
+@Slf4j
 class NettyClientHandler extends AbstractNettyHandler {
-  private static final Logger logger = Logger.getLogger(NettyClientHandler.class.getName());
   static boolean enablePerRpcAuthorityCheck =
       GrpcUtil.getFlag("GRPC_ENABLE_PER_RPC_AUTHORITY_CHECK", false);
 
@@ -319,8 +318,7 @@ class NettyClientHandler extends AbstractNettyHandler {
         goingAway(errorCode, debugDataBytes);
         if (errorCode == Http2Error.ENHANCE_YOUR_CALM.code()) {
           String data = new String(debugDataBytes, UTF_8);
-          logger.log(
-              Level.WARNING, "Received GOAWAY with ENHANCE_YOUR_CALM. Debug data: {0}", data);
+          logger.warn("Received GOAWAY with ENHANCE_YOUR_CALM. Debug data: {}", data);
           if ("too_many_pings".equals(data)) {
             tooManyPingsRunnable.run();
           }
@@ -475,7 +473,7 @@ class NettyClientHandler extends AbstractNettyHandler {
 
   @Override
   public void close(ChannelHandlerContext ctx, ChannelPromise promise) throws Exception {
-    logger.fine("Network channel being closed by the application.");
+    logger.debug("Network channel being closed by the application.");
     if (ctx.channel().isActive()) { // Ignore notification that the socket was closed
       lifecycleManager.notifyShutdown(
           Status.UNAVAILABLE.withDescription("Transport closed for unknown reason"));
@@ -489,7 +487,7 @@ class NettyClientHandler extends AbstractNettyHandler {
   @Override
   public void channelInactive(ChannelHandlerContext ctx) throws Exception {
     try {
-      logger.fine("Network channel is closed");
+      logger.debug("Network channel is closed");
       Status status = Status.UNAVAILABLE.withDescription("Network closed for unknown reason");
       lifecycleManager.notifyShutdown(status);
       final Status streamStatus;
@@ -559,7 +557,7 @@ class NettyClientHandler extends AbstractNettyHandler {
   @Override
   protected void onConnectionError(ChannelHandlerContext ctx,  boolean outbound, Throwable cause,
                                    Http2Exception http2Ex) {
-    logger.log(Level.FINE, "Caught a connection error", cause);
+    logger.debug("Caught a connection error", cause);
     lifecycleManager.notifyShutdown(Utils.statusFromThrowable(cause));
     // Parent class will shut down the Channel
     super.onConnectionError(ctx, outbound, cause, http2Ex);
@@ -573,7 +571,7 @@ class NettyClientHandler extends AbstractNettyHandler {
     if (stream != null) {
       stream.transportReportStatus(Utils.statusFromThrowable(cause), false, new Metadata());
     } else {
-      logger.log(Level.FINE, "Stream error for unknown stream " + http2Ex.streamId(), cause);
+      logger.debug("Stream error for unknown stream " + http2Ex.streamId(), cause);
     }
 
     // Delegate to the base class to send a RST_STREAM.
@@ -635,7 +633,7 @@ class NettyClientHandler extends AbstractNettyHandler {
             .verifyAuthority(authorityHeader.toString());
         peerVerificationResults.put(authorityHeader.toString(), authorityVerificationStatus);
         if (!authorityVerificationStatus.isOk() && !enablePerRpcAuthorityCheck) {
-          logger.log(Level.WARNING, String.format("%s.%s",
+          logger.warn(String.format("%s.%s",
                   authorityVerificationStatus.getDescription(),
                   enablePerRpcAuthorityCheck
                       ? "" : " This will be an error in the future."),
@@ -665,7 +663,7 @@ class NettyClientHandler extends AbstractNettyHandler {
 
       // Initiate a graceful shutdown if we haven't already.
       if (!connection().goAwaySent()) {
-        logger.fine("Stream IDs have been exhausted for this connection. "
+        logger.debug("Stream IDs have been exhausted for this connection. "
             + "Initiating graceful shutdown of the connection.");
         lifecycleManager.notifyShutdown(e.getStatus());
         close(ctx(), ctx().newPromise());
@@ -1017,7 +1015,7 @@ class NettyClientHandler extends AbstractNettyHandler {
   private int incrementAndGetNextStreamId() throws StatusException {
     int nextStreamId = connection().local().incrementAndGetNextStreamId();
     if (nextStreamId < 0) {
-      logger.fine("Stream IDs have been exhausted for this connection. "
+      logger.debug("Stream IDs have been exhausted for this connection. "
           + "Initiating graceful shutdown of the connection.");
       throw EXHAUSTED_STREAMS_STATUS.asException();
     }
@@ -1075,19 +1073,19 @@ class NettyClientHandler extends AbstractNettyHandler {
       Http2Ping p = ping;
       if (ackPayload == flowControlPing().payload()) {
         flowControlPing().updateWindow();
-        logger.log(Level.FINE, "Window: {0}",
+        logger.debug("Window: {}",
             decoder().flowController().initialWindowSize(connection().connectionStream()));
       } else if (p != null) {
         if (p.payload() == ackPayload) {
           p.complete();
           ping = null;
         } else {
-          logger.log(Level.WARNING,
-              "Received unexpected ping ack. Expecting {0}, got {1}",
-              new Object[] {p.payload(), ackPayload});
+          logger.warn(
+              "Received unexpected ping ack. Expecting {}, got {}",
+              p.payload(), ackPayload);
         }
       } else {
-        logger.warning("Received unexpected ping ack. No ping outstanding");
+        logger.warn("Received unexpected ping ack. No ping outstanding");
       }
       if (keepAliveManager != null) {
         keepAliveManager.onDataReceived();
