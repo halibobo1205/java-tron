@@ -219,43 +219,34 @@ tasks.register('rpcApiServicesGroupTests', Test) {
     }
     outputs.upToDateWhen { false }
     filter {
-        if (tagTest ==7) {
-            includeTestsMatching "org.tron.core.net.MessageTest"
-            includeTestsMatching "org.tron.core.net.NodeTest"
-            includeTestsMatching "org.tron.core.net.P2pEventHandlerImplTest"
-            includeTestsMatching "org.tron.core.net.P2pRateLimiterTest"
-            includeTestsMatching "org.tron.core.net.TronNetDelegateTest"
-            includeTestsMatching "org.tron.core.net.messagehandler.BlockMsgHandlerTest"
-            includeTestsMatching "org.tron.core.net.messagehandler.ChainInventoryMsgHandlerTest"
-            includeTestsMatching "org.tron.core.net.messagehandler.FetchInvDataMsgHandlerTest"
-            includeTestsMatching "org.tron.core.net.messagehandler.InventoryMsgHandlerTest"
-            includeTestsMatching "org.tron.core.net.messagehandler.MessageHandlerTest"
-            includeTestsMatching "org.tron.core.net.messagehandler.PbftDataSyncHandlerTest"
-            includeTestsMatching "org.tron.core.net.messagehandler.PbftMsgHandlerTest"
-            includeTestsMatching "org.tron.core.net.messagehandler.SyncBlockChainMsgHandlerTest"
-            includeTestsMatching "org.tron.core.net.messagehandler.TransactionsMsgHandlerTest"
-            includeTestsMatching "org.tron.core.net.peer.PeerConnectionTest"
-            includeTestsMatching "org.tron.core.net.peer.PeerManagerTest"
-            includeTestsMatching "org.tron.core.net.peer.PeerStatusCheckMockTest"
-            includeTestsMatching "org.tron.core.net.peer.PeerStatusCheckTest"
-            includeTestsMatching "org.tron.core.net.service.nodepersist.DBNodeTest"
-            includeTestsMatching "org.tron.core.net.services.AdvServiceTest"
-            includeTestsMatching "org.tron.core.net.services.EffectiveCheckServiceTest"
-            includeTestsMatching "org.tron.core.net.services.HandShakeServiceTest"
-        }
-
-        def maskTests = [
-                (1): ["org.tron.core.net.services.RelayServiceTest", "org.tron.core.net.services.ResilienceServiceTest"],
-                (2): ["org.tron.core.net.services.SyncServiceTest", "org.tron.core.net.services.TronStatsManagerTest"],
-                (4): ["org.tron.core.pbft.PbftApiTest", "org.tron.core.pbft.PbftTest"]
-        ]
-
-        maskTests.each { mask, tests ->
-            if (tagTest & mask) {
-                tests.each { includeTestsMatching it }
-            }
-        }
-
+        includeTestsMatching "org.tron.core.net.MessageTest"
+        includeTestsMatching "org.tron.core.net.NodeTest"
+        includeTestsMatching "org.tron.core.net.P2pEventHandlerImplTest"
+        includeTestsMatching "org.tron.core.net.P2pRateLimiterTest"
+        includeTestsMatching "org.tron.core.net.TronNetDelegateTest"
+        includeTestsMatching "org.tron.core.net.messagehandler.BlockMsgHandlerTest"
+        includeTestsMatching "org.tron.core.net.messagehandler.ChainInventoryMsgHandlerTest"
+        includeTestsMatching "org.tron.core.net.messagehandler.FetchInvDataMsgHandlerTest"
+        includeTestsMatching "org.tron.core.net.messagehandler.InventoryMsgHandlerTest"
+        includeTestsMatching "org.tron.core.net.messagehandler.MessageHandlerTest"
+        includeTestsMatching "org.tron.core.net.messagehandler.PbftDataSyncHandlerTest"
+        includeTestsMatching "org.tron.core.net.messagehandler.PbftMsgHandlerTest"
+        includeTestsMatching "org.tron.core.net.messagehandler.SyncBlockChainMsgHandlerTest"
+        includeTestsMatching "org.tron.core.net.messagehandler.TransactionsMsgHandlerTest"
+        includeTestsMatching "org.tron.core.net.peer.PeerConnectionTest"
+        includeTestsMatching "org.tron.core.net.peer.PeerManagerTest"
+        includeTestsMatching "org.tron.core.net.peer.PeerStatusCheckMockTest"
+        includeTestsMatching "org.tron.core.net.peer.PeerStatusCheckTest"
+        includeTestsMatching "org.tron.core.net.service.nodepersist.DBNodeTest"
+        includeTestsMatching "org.tron.core.net.services.AdvServiceTest"
+        includeTestsMatching "org.tron.core.net.services.EffectiveCheckServiceTest"
+        includeTestsMatching "org.tron.core.net.services.HandShakeServiceTest"
+        includeTestsMatching "org.tron.core.net.services.RelayServiceTest"
+        includeTestsMatching "org.tron.core.net.services.ResilienceServiceTest"
+        includeTestsMatching "org.tron.core.net.services.SyncServiceTest"
+        includeTestsMatching "org.tron.core.net.services.TronStatsManagerTest"
+        includeTestsMatching "org.tron.core.pbft.PbftApiTest"
+        includeTestsMatching "org.tron.core.pbft.PbftTest"
         includeTestsMatching "org.tron.core.services.RpcApiServicesTest"
 
     }
