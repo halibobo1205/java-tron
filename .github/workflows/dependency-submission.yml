@@ -1,0 +1,29 @@
+name: Dependency Submission
+
+on:
+  push:
+    branches: [ 'develop', 'master', 'release_**', 'feat/state_root_sync' ]
+  pull_request:
+    branches: [ 'develop', "release_**" , 'feat/state_root_sync' ]
+
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  dependency-submission:
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: 17
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: Generate and submit dependency graph
+        uses: gradle/actions/dependency-submission@v4

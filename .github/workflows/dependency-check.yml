@@ -1,0 +1,60 @@
+name: "Dependency Check"
+
+on:
+  push:
+    branches: [ 'develop', 'master', 'release_**', 'feat/state_root_sync' ]
+  pull_request:
+    branches: [ 'develop', "release_**" , 'feat/state_root_sync' ]
+  schedule:
+    - cron: '25 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  dependency-check:
+    name: Dependency Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Cache ODC data
+        uses: actions/cache@v3
+        with:
+          path: ~/.dependency-check/data
+          key: ${{ runner.os }}-odc-data-${{ hashFiles('**/build.gradle') }}
+          restore-keys: |
+            ${{ runner.os }}-odc-data-
+
+      - name: Set up JDK 8
+        uses: actions/setup-java@v3
+        with:
+          java-version: '8'
+          distribution: 'temurin'
+
+      - name: Gradlew build
+        run:  ./gradlew --no-daemon -S -Dorg.gradle.dependency.verification=off -Dorg.gradle.warning.mode=none build -x test
+
+      - name: Dependency Check
+        uses: dependency-check/Dependency-Check_Action@1.1.0
+        env:
+          # actions/setup-java@v1 changes JAVA_HOME, so it needs to be reset to match the depcheck image
+          JAVA_HOME: /opt/jdk
+        with:
+          project: 'java-tron'
+          path: '.'
+          format: 'HTML'
+          out: 'reports'
+          args: >
+            --failOnCVSS 7
+            --enableRetired
+      - name: Generate timestamp
+        run: echo "BUILD_TIMESTAMP=$(date -u +"%Y%m%d-%H%M%S")" >> $GITHUB_ENV
+      - name: Get Repository Name
+        run: echo "REPO_NAME=$(echo '${{ github.repository }}' | cut -d'/' -f2)" >> $GITHUB_ENV
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-check-${{ env.REPO_NAME }}-${{ env.BUILD_TIMESTAMP }}
+          path: ${{github.workspace}}/reports

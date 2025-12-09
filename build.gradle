@@ -44,6 +44,7 @@ println "Building for architecture: ${archInfo.name}, Java version: ${archInfo.j
 
 
 subprojects {
+    apply plugin: "java"
     apply plugin: "jacoco"
     apply plugin: "maven-publish"
 
