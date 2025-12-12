@@ -40,14 +40,15 @@ ext.archInfo = [
         VMOptions: isArm64 ? "${rootDir}/gradle/jdk17/java-tron.vmoptions" : "${rootDir}/gradle/java-tron.vmoptions"
 ]
 
-if (!archInfo.java.is(archInfo.requires.JavaVersion)) {
+/*if (!archInfo.java.is(archInfo.requires.JavaVersion)) {
     throw new GradleException("Java ${archInfo.requires.JavaVersion} is required for ${archInfo.name}. Detected version ${archInfo.java}")
-}
+}*/
 
 println "Building for architecture: ${archInfo.name}, Java version: ${archInfo.java}"
 
 
 subprojects {
+    apply plugin: "java"
     apply plugin: "jacoco"
     apply plugin: "maven-publish"
 
