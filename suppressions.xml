@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.4.xsd">
+    <suppress>
+        <notes><![CDATA[file name: java-tron-1.0.0.zip: grpc-netty-1.75.0.jar]]></notes>
+        <sha1>6edfe492eef2a4e41e247f984d7e1f062fe2f47d</sha1>
+        <cve>CVE-2019-20444</cve>
+    </suppress>
+    <suppress>
+        <notes><![CDATA[file name: plugins-1.0.0.zip: leveldbjni-all-1.18.2.jar]]></notes>
+        <packageUrl regex="true">^pkg:maven/io\.github\.tronprotocol/leveldbjni-all@.*$</packageUrl>
+        <cve>CVE-2018-10906</cve>
+    </suppress>
+</suppressions>

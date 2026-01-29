@@ -48,6 +48,7 @@ jobs:
           args: >
             --failOnCVSS 7
             --enableRetired
+            --suppression suppressions.xml
       - name: Generate timestamp
         run: echo "BUILD_TIMESTAMP=$(date -u +"%Y%m%d-%H%M%S")" >> $GITHUB_ENV
       - name: Get Repository Name
