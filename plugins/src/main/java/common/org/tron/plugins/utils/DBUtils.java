@@ -14,7 +14,6 @@ import org.rocksdb.BlockBasedTableConfig;
 import org.rocksdb.BloomFilter;
 import org.rocksdb.ComparatorOptions;
 import org.rocksdb.Options;
-import org.tron.common.arch.Arch;
 import org.tron.common.utils.MarketOrderPriceComparatorForLevelDB;
 import org.tron.common.utils.MarketOrderPriceComparatorForRocksDB;
 import org.tron.protos.Protocol;
@@ -64,7 +63,6 @@ public class DBUtils {
   public static final String ROCKSDB = "ROCKSDB";
 
   public static DB newLevelDb(Path db) throws IOException {
-    Arch.throwIfUnsupportedArm64Exception(LEVELDB);
     File file = db.toFile();
     org.iq80.leveldb.Options dbOptions = newDefaultLevelDbOptions();
     if (MARKET_PAIR_PRICE_TO_ORDER.equalsIgnoreCase(file.getName())) {

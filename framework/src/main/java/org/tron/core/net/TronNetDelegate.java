@@ -8,6 +8,7 @@ import com.google.common.cache.CacheBuilder;
 import io.prometheus.client.Histogram;
 import java.util.Collection;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 import javax.annotation.PostConstruct;
@@ -19,7 +20,9 @@ import org.bouncycastle.util.encoders.Hex;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.tron.common.backup.socket.BackupServer;
+import org.tron.common.context.GlobalContext;
 import org.tron.common.overlay.message.Message;
+import org.tron.common.parameter.CommonParameter;
 import org.tron.common.prometheus.MetricKeys;
 import org.tron.common.prometheus.MetricLabels;
 import org.tron.common.prometheus.Metrics;
@@ -304,6 +307,23 @@ public class TronNetDelegate {
           throw new P2pException(TypeEnum.BAD_BLOCK, e);
         }
       }
+    }
+  }
+
+  public void pushVerifiedBlock(BlockCapsule block) throws P2pException {
+    block.generatedByMyself = true;
+    Sha256Hash stateRoot = block.getStateRoot();
+    if (!CommonParameter.getInstance().isNoCheckRootHash()
+        && !Objects.equals(Sha256Hash.ZERO_HASH, stateRoot)) {
+      GlobalContext.putBlockHash(block.getNum(), stateRoot);
+    }
+    // clear stateRoot for block
+    block.clearStateRoot();
+    try {
+      GlobalContext.setHeader(block.getNum());
+      processBlock(block, true);
+    } finally {
+      GlobalContext.removeHeader();
     }
   }
 

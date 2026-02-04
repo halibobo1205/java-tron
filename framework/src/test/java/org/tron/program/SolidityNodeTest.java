@@ -14,6 +14,7 @@ import org.tron.common.BaseTest;
 import org.tron.common.TestConstants;
 import org.tron.common.client.DatabaseGrpcClient;
 import org.tron.common.utils.PublicMethod;
+import org.tron.core.Constant;
 import org.tron.core.config.args.Args;
 import org.tron.core.exception.TronError;
 import org.tron.core.services.RpcApiService;
@@ -38,6 +39,8 @@ public class SolidityNodeTest extends BaseTest {
     Args.setParam(new String[] {"-d", dbPath(), "--solidity"}, TestConstants.TEST_CONF);
     Args.getInstance().setRpcPort(rpcPort);
     Args.getInstance().setSolidityHttpPort(solidityHttpPort);
+    Args.getInstance().setTrustNodeAddr(String.format("%s:%d", Constant.LOCAL_HOST,
+        Args.getInstance().getRpcPort()));
   }
 
   @Test

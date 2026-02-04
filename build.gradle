@@ -40,10 +40,6 @@ ext.archInfo = [
         VMOptions: isArm64 ? "${rootDir}/gradle/jdk17/java-tron.vmoptions" : "${rootDir}/gradle/java-tron.vmoptions"
 ]
 
-if (!archInfo.java.is(archInfo.requires.JavaVersion)) {
-    throw new GradleException("Java ${archInfo.requires.JavaVersion} is required for ${archInfo.name}. Detected version ${archInfo.java}")
-}
-
 println "Building for architecture: ${archInfo.name}, Java version: ${archInfo.java}"
 
 
@@ -108,14 +104,15 @@ subprojects {
         testImplementation "org.mockito:mockito-inline:4.11.0"
     }
 
-    task sourcesJar(type: Jar, dependsOn: classes) {
-        classifier = "sources"
+    tasks.register('sourcesJar', Jar) {
+        dependsOn classes
+        archiveClassifier.set('sources')
         from sourceSets.main.allSource
         duplicatesStrategy = DuplicatesStrategy.INCLUDE // allow duplicates
     }
 
 
-    tasks.withType(AbstractArchiveTask) {
+    tasks.withType(AbstractArchiveTask).configureEach {
         preserveFileTimestamps = false
         reproducibleFileOrder = true
         duplicatesStrategy = DuplicatesStrategy.INCLUDE // allow duplicates
@@ -149,7 +146,7 @@ subprojects {
     }
 }
 
-task copyToParent(type: Copy) {
+tasks.register('copyToParent', Copy) {
     into "$buildDir/libs"
     subprojects {
         from tasks.withType(Jar)
