@@ -22,7 +22,7 @@ configurations {
 
 }
 
-configurations.getByName('checkstyleConfig') {
+configurations.named('checkstyleConfig') {
     transitive = false
 }
 
@@ -30,7 +30,7 @@ static def isWindows() {
     return org.gradle.internal.os.OperatingSystem.current().isWindows()
 }
 
-task version(type: Exec) {
+tasks.register('version', Exec) {
     commandLine 'bash', '-c', '../ver.sh'
 }
 
@@ -76,7 +76,7 @@ checkstyleMain {
     source = 'src/main/java'
 }
 
-task lint(type: Checkstyle) {
+tasks.register('lint', Checkstyle) {
     // Cleaning the old log because of the creation of the new ones (not sure if totaly needed)
     delete fileTree(dir: "${project.rootDir}/app/build/reports")
     source 'src'
@@ -136,27 +136,27 @@ test {
         exclude 'org/tron/core/ShieldedTRC20BuilderTest.class'
         exclude 'org/tron/common/runtime/vm/WithdrawRewardTest.class'
     }
-    maxHeapSize = "1024m"
+    maxHeapSize = "512m"
+    maxParallelForks = Math.max(1, Math.min(2, Runtime.runtime.availableProcessors()))
     doFirst {
         // Restart the JVM after every 100 tests to avoid memory leaks and ensure test isolation
         forkEvery = 100
-        jvmArgs "-XX:MetaspaceSize=128m","-XX:MaxMetaspaceSize=256m", "-XX:+UseG1GC"
     }
 }
 
 jacocoTestReport {
     reports {
-        xml.enabled true
-        csv.enabled false
+        xml.required.set(true)
+        csv.required.set(false)
         html.destination file("${buildDir}/jacocoHtml")
     }
     getExecutionData().setFrom(fileTree('../framework/build/jacoco').include("**.exec"))
 }
 
 def binaryRelease(taskName, jarName, mainClass) {
-    return tasks.create("${taskName}", Jar) {
-        baseName = jarName
-        version = null
+    return tasks.register("${taskName}", Jar) {
+        archiveBaseName.set(jarName)
+        archiveVersion.set('')
         from(sourceSets.main.output) {
             include "/**"
         }
@@ -175,7 +175,9 @@ def binaryRelease(taskName, jarName, mainClass) {
         exclude "META-INF/*.SF"
         exclude "META-INF/*.DSA"
         exclude "META-INF/*.RSA"
-
+        // for service SPI loader for dnsjava
+        // see https://issues.apache.org/jira/browse/HADOOP-19288
+        exclude "META-INF/services/java.net.spi.InetAddressResolverProvider"
         manifest {
             attributes "Main-Class": "${mainClass}"
         }
@@ -231,7 +233,7 @@ if (releaseBinary == 'true') {
     }
 }
 
-task copyToParent(type: Copy) {
+tasks.register('copyToParent', Copy) {
     into "../build/distributions"
     from "$buildDir/distributions"
     include "*.zip"

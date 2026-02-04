@@ -4,9 +4,6 @@ plugins {
 
 version '1.0.0'
 
-sourceCompatibility = 1.8
-
-
 dependencies {
     api group: 'com.fasterxml.jackson.core', name: 'jackson-databind', version: '2.18.3' // https://github.com/FasterXML/jackson-databind/issues/3627
     api "com.cedarsoftware:java-util:3.2.0"
@@ -45,8 +42,8 @@ dependencies {
 
 jacocoTestReport {
     reports {
-        xml.enabled = true
-        html.enabled = true
+        xml.required.set(true)
+        html.required.set(true)
     }
     getExecutionData().setFrom(fileTree('../framework/build/jacoco').include("**.exec"))
     afterEvaluate {

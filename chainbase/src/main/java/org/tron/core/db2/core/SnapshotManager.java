@@ -25,6 +25,7 @@ import javax.annotation.PostConstruct;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.tron.common.error.TronDBException;
 import org.tron.common.es.ExecutorServiceManager;
@@ -49,7 +50,7 @@ public class SnapshotManager implements RevokingDatabase {
 
   public static final int DEFAULT_MIN_FLUSH_COUNT = 1;
   private static final int DEFAULT_STACK_MAX_SIZE = 256;
-  private static final long ONE_MINUTE_MILLS = 60*1000L;
+  private static final long ONE_MINUTE_MILLS = 60 * 1000L;
   private static final String CHECKPOINT_V2_DIR = "checkpoint";
   @Getter
   private List<Chainbase> dbs = new ArrayList<>();
@@ -78,6 +79,9 @@ public class SnapshotManager implements RevokingDatabase {
   @Setter
   @Getter
   private CheckTmpStore checkTmpStore;
+
+  @Autowired
+  private ObjectFactory<CheckPointV2Store> checkPointV2Store;
 
   @Setter
   private volatile int maxFlushCount = DEFAULT_MIN_FLUSH_COUNT;
@@ -385,8 +389,7 @@ public class SnapshotManager implements RevokingDatabase {
         }
       }
       if (isV2Open()) {
-        String dbName = String.valueOf(System.currentTimeMillis());
-        checkPointStore = getCheckpointDB(dbName);
+        checkPointStore = checkPointV2Store.getObject();
       } else {
         checkPointStore = checkTmpStore;
       }
@@ -405,7 +408,7 @@ public class SnapshotManager implements RevokingDatabase {
   }
 
   private TronDatabase<byte[]> getCheckpointDB(String dbName) {
-    return new CheckPointV2Store(CHECKPOINT_V2_DIR+"/"+dbName);
+    return new CheckPointV2Store(CHECKPOINT_V2_DIR, dbName);
   }
 
   public List<String> getCheckpointList() {
@@ -431,7 +434,7 @@ public class SnapshotManager implements RevokingDatabase {
       for (Map.Entry<byte[], byte[]> e : checkTmpStore.getDbSource()) {
         hmap.put(e.getKey(), null);
       }
-      if (hmap.size() != 0) {
+      if (!hmap.isEmpty()) {
         checkTmpStore.getDbSource().updateByBatch(hmap);
       }
     } catch (Exception e) {
@@ -450,10 +453,10 @@ public class SnapshotManager implements RevokingDatabase {
     if (cpList.size() < 3) {
       return;
     }
-    long latestTimestamp = Long.parseLong(cpList.get(cpList.size()-1));
-    for (String cp: cpList.subList(0, cpList.size()-3)) {
+    long latestTimestamp = Long.parseLong(cpList.get(cpList.size() - 1));
+    for (String cp: cpList.subList(0, cpList.size() - 3)) {
       long timestamp = Long.parseLong(cp);
-      if (latestTimestamp - timestamp <= ONE_MINUTE_MILLS*2) {
+      if (latestTimestamp - timestamp <= ONE_MINUTE_MILLS * 2) {
         break;
       }
       String checkpointPath = Paths.get(StorageUtils.getOutputDirectoryByDbName(CHECKPOINT_V2_DIR),

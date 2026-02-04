@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -139,7 +140,7 @@ public class ManagerTest extends BlockGenerate {
     chainManager = dbManager.getChainBaseManager();
 
     localWitnesses = new LocalWitnesses();
-    localWitnesses.setPrivateKeys(Arrays.asList(privateKey));
+    localWitnesses.setPrivateKeys(Collections.singletonList(privateKey));
     localWitnesses.initWitnessAccountAddress(null, true);
     Args.setLocalWitnesses(localWitnesses);
 
@@ -333,7 +334,6 @@ public class ManagerTest extends BlockGenerate {
       Assert.assertTrue(e instanceof TaposException);
     }
     try {
-      dbManager.pushVerifiedBlock(chainManager.getHead());
       dbManager.getBlockChainHashesOnFork(chainManager.getHeadBlockId());
     } catch (Exception e) {
       Assert.assertTrue(e instanceof TaposException);
@@ -848,16 +848,16 @@ public class ManagerTest extends BlockGenerate {
     list.add(t1.getInstance());
     BlockCapsule capsule = new BlockCapsule(0, ByteString.EMPTY, 0, list);
     List<TransactionCapsule> txs = dbManager.getVerifyTxs(capsule);
-    Assert.assertEquals(txs.size(), 1);
+    Assert.assertEquals(1, txs.size());
 
     dbManager.getPendingTransactions().add(t1);
     txs = dbManager.getVerifyTxs(capsule);
-    Assert.assertEquals(txs.size(), 0);
+    Assert.assertEquals(0, txs.size());
 
     list.add(t2.getInstance());
     capsule = new BlockCapsule(0, ByteString.EMPTY, 0, list);
     txs = dbManager.getVerifyTxs(capsule);
-    Assert.assertEquals(txs.size(), 1);
+    Assert.assertEquals(1, txs.size());
 
     dbManager.getPendingTransactions().add(t3);
     txs = dbManager.getVerifyTxs(capsule);
@@ -868,7 +868,7 @@ public class ManagerTest extends BlockGenerate {
     dbManager.getPendingTransactions().add(t1);
     dbManager.getPendingTransactions().add(t2);
     txs = dbManager.getVerifyTxs(capsule);
-    Assert.assertEquals(txs.size(), 0);
+    Assert.assertEquals(0, txs.size());
 
     dbManager.getPendingTransactions().clear();
     Transaction t1Bak = t1.getInstance().toBuilder()
@@ -876,7 +876,7 @@ public class ManagerTest extends BlockGenerate {
     dbManager.getPendingTransactions().add(new TransactionCapsule(t1Bak));
     txs = dbManager.getVerifyTxs(capsule);
     Assert.assertEquals(t1.getTransactionId(), new TransactionCapsule(t1Bak).getTransactionId());
-    Assert.assertEquals(txs.size(), 2);
+    Assert.assertEquals(2, txs.size());
 
     dbManager.getPendingTransactions().clear();
     list.clear();
@@ -890,7 +890,7 @@ public class ManagerTest extends BlockGenerate {
         new TransactionCapsule(t2Bak).getTransactionId());
     dbManager.getPendingTransactions().add(new TransactionCapsule(t2Bak));
     txs = dbManager.getVerifyTxs(capsule);
-    Assert.assertEquals(txs.size(), 1);
+    Assert.assertEquals(1, txs.size());
   }
 
   @Test
@@ -1018,7 +1018,7 @@ public class ManagerTest extends BlockGenerate {
     Args.setParam(new String[]{}, Constant.TEST_CONF);
     long size = chainManager.getBlockStore().size();
     System.out.print("block store size:" + size + "\n");
-    String key = PublicMethod.getRandomPrivateKey();;
+    String key = PublicMethod.getRandomPrivateKey();
     byte[] privateKey = ByteArray.fromHexString(key);
     final ECKey ecKey = ECKey.fromPrivate(privateKey);
     byte[] address = ecKey.getAddress();

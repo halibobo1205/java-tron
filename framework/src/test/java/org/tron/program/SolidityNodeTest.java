@@ -38,6 +38,8 @@ public class SolidityNodeTest extends BaseTest {
     Args.setParam(new String[] {"-d", dbPath(), "--solidity"}, Constant.TEST_CONF);
     Args.getInstance().setRpcPort(rpcPort);
     Args.getInstance().setSolidityHttpPort(solidityHttpPort);
+    Args.getInstance().setTrustNodeAddr(String.format("%s:%d", Constant.LOCAL_HOST,
+        Args.getInstance().getRpcPort()));
   }
 
   @Test

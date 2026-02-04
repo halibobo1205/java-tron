@@ -55,6 +55,7 @@ import org.tron.common.args.Account;
 import org.tron.common.args.GenesisBlock;
 import org.tron.common.args.Witness;
 import org.tron.common.config.DbBackupConfig;
+import org.tron.common.context.GlobalContext;
 import org.tron.common.cron.CronExpression;
 import org.tron.common.logsfilter.EventPluginConfig;
 import org.tron.common.logsfilter.FilterQuery;
@@ -256,6 +257,7 @@ public class Args extends CommonParameter {
     PARAMETER.allowTvmBlob = 0;
     PARAMETER.rpcMaxRstStream = 0;
     PARAMETER.rpcSecondsPerWindow = 0;
+    GlobalContext.removeHeader();
   }
 
   /**
