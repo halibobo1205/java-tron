@@ -83,7 +83,7 @@ subprojects {
         implementation group: 'ch.qos.logback', name: 'logback-classic', version: '1.2.13'
         implementation "com.google.code.findbugs:jsr305:3.0.0"
         implementation group: 'org.springframework', name: 'spring-context', version: "${springVersion}"
-        implementation "org.apache.commons:commons-lang3:3.4"
+        implementation "org.apache.commons:commons-lang3:3.18.0"
         implementation group: 'org.apache.commons', name: 'commons-math', version: '2.2'
         implementation "org.apache.commons:commons-collections4:4.1"
         implementation group: 'joda-time', name: 'joda-time', version: '2.3'
