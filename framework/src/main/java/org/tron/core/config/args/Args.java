@@ -257,6 +257,7 @@ public class Args extends CommonParameter {
     PARAMETER.allowTvmBlob = 0;
     PARAMETER.rpcMaxRstStream = 0;
     PARAMETER.rpcSecondsPerWindow = 0;
+    PARAMETER.allowTvmOsaka = 0;
   }
 
   /**
@@ -1292,6 +1293,10 @@ public class Args extends CommonParameter {
     PARAMETER.allowTvmBlob =
         config.hasPath(ConfigKey.COMMITTEE_ALLOW_TVM_BLOB) ? config
             .getInt(ConfigKey.COMMITTEE_ALLOW_TVM_BLOB) : 0;
+
+    PARAMETER.allowTvmOsaka =
+        config.hasPath(Constant.COMMITTEE_ALLOW_TVM_OSAKA) ? config
+            .getInt(Constant.COMMITTEE_ALLOW_TVM_OSAKA) : 0;
 
     logConfig();
   }
