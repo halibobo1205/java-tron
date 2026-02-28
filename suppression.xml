@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
+
+    <suppress>
+        <notes><![CDATA[grpc-netty CVEs: these are false positives or already mitigated in grpc-netty >= 1.60.0.
+        CVE-2019-20444, CVE-2019-20445, CVE-2015-2156, CVE-2019-16869: Netty HTTP/2 header smuggling/request smuggling - not applicable to gRPC transport usage.
+        CVE-2025-55163: reported against Netty, not grpc-netty itself.
+        CVE-2021-37136, CVE-2021-37137: Netty decompression OOM - gRPC does not use Netty's HTTP chunk decompressor.
+        CVE-2022-41881: Netty HAProxyMessage OOM - not used by gRPC.
+        CVE-2023-44487: HTTP/2 Rapid Reset - mitigated in grpc-java >= 1.58.0.]]></notes>
+        <packageUrl regex="true">^pkg:maven/io\.grpc/grpc\-netty@.*$</packageUrl>
+        <cve>CVE-2019-20444</cve>
+        <cve>CVE-2019-20445</cve>
+        <cve>CVE-2025-55163</cve>
+        <cve>CVE-2015-2156</cve>
+        <cve>CVE-2019-16869</cve>
+        <cve>CVE-2021-37136</cve>
+        <cve>CVE-2021-37137</cve>
+        <cve>CVE-2022-41881</cve>
+        <cve>CVE-2023-44487</cve>
+    </suppress>
+
+</suppressions>
