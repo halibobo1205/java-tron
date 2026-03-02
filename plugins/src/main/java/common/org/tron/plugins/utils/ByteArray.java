@@ -35,7 +35,7 @@ public class ByteArray {
    * get long data from bytes data.
    */
   public static long toLong(byte[] b) {
-    return ArrayUtils.isEmpty(b) ? 0 : new BigInteger(1, b).longValue();
+    return ArrayUtils.isEmpty(b) ? 0 : new BigInteger(1, b).longValueExact();
   }
 
   public static byte[] fromInt(int val) {
@@ -46,7 +46,7 @@ public class ByteArray {
    * get int data from bytes data.
    */
   public static int toInt(byte[] b) {
-    return ArrayUtils.isEmpty(b) ? 0 : new BigInteger(1, b).intValue();
+    return ArrayUtils.isEmpty(b) ? 0 : new BigInteger(1, b).intValueExact();
   }
 
   public static int compareUnsigned(byte[] a, byte[] b) {

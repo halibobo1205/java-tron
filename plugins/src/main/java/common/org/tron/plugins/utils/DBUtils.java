@@ -134,7 +134,7 @@ public class DBUtils {
   public static String simpleDecode(byte[] bytes) {
     byte[] lengthBytes = Arrays.copyOf(bytes, 4);
     int length = Ints.fromByteArray(lengthBytes);
-    byte[] value = Arrays.copyOfRange(bytes, 4, 4 + length);
+    byte[] value = Arrays.copyOfRange(bytes, 4, StrictMath.addExact(4, length));
     return new String(value);
   }
 

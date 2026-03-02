@@ -3190,13 +3190,11 @@ public class Wallet {
     if (StringUtils.isNoneEmpty(result.getRuntimeError())) {
       ret.setStatus(0, code.FAILED);
       retBuilder
-          .setMessage(ByteString.copyFromUtf8(result.getRuntimeError()))
-          .build();
+          .setMessage(ByteString.copyFromUtf8(result.getRuntimeError()));
     }
     if (result.isRevert()) {
       ret.setStatus(0, code.FAILED);
-      retBuilder.setMessage(ByteString.copyFromUtf8("REVERT opcode executed"))
-          .build();
+      retBuilder.setMessage(ByteString.copyFromUtf8("REVERT opcode executed"));
     }
     trxCap.setResult(ret);
     return trxCap.getInstance();

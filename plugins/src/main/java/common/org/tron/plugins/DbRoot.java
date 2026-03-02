@@ -71,7 +71,7 @@ public class DbRoot implements Callable<Integer> {
       List<Ret> task = ProgressBar.wrap(dbs.stream(), "root task").parallel()
           .map(this::calcMerkleRoot).collect(Collectors.toList());
       task.forEach(this::printInfo);
-      int code = (int) task.stream().filter(r -> r.code == 1).count();
+      int code = StrictMath.toIntExact(task.stream().filter(r -> r.code == 1).count());
       if (code > 0) {
         spec.commandLine().getErr().println(spec.commandLine().getColorScheme()
             .errorText("There are some errors, please check toolkit.log for detail."));

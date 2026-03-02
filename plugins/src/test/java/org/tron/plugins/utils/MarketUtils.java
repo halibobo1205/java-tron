@@ -1,9 +1,11 @@
 package org.tron.plugins.utils;
 
+import org.tron.common.utils.MarketComparator;
+
+@SuppressWarnings("UnsafeArithmeticChecker")
 public class MarketUtils {
 
-  public static final int TOKEN_ID_LENGTH = ByteArray
-      .fromString(Long.toString(Long.MAX_VALUE)).length; // 19
+  public static final int TOKEN_ID_LENGTH = MarketComparator.TOKEN_ID_LENGTH;
 
 
 

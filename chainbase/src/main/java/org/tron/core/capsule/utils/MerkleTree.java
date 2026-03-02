@@ -11,6 +11,7 @@ import org.tron.common.utils.Sha256Hash;
 
 @Getter
 @NotThreadSafe
+@SuppressWarnings("UnsafeArithmeticChecker")
 public class MerkleTree {
 
   private static volatile MerkleTree instance;

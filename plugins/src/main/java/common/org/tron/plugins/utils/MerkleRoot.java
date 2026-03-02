@@ -5,6 +5,7 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import lombok.Getter;
 
+@SuppressWarnings("UnsafeArithmeticChecker")
 public class MerkleRoot {
 
   private MerkleRoot() {

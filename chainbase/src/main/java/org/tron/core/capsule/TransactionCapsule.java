@@ -756,8 +756,8 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
       getInstance().getRawData().getContractList().forEach(contract -> {
         toStringBuff.append("[" + i + "] ").append("type: ").append(contract.getType())
             .append("\n");
-        toStringBuff.append("from address=").append(getOwner(contract)).append("\n");
-        toStringBuff.append("to address=").append(getToAddress(contract)).append("\n");
+        toStringBuff.append("from address=").append(encode58Check(getOwner(contract))).append("\n");
+        toStringBuff.append("to address=").append(encode58Check(getToAddress(contract))).append("\n");
         if (contract.getType().equals(ContractType.TransferContract)) {
           TransferContract transferContract;
           try {

@@ -5,7 +5,7 @@ import java.math.BigInteger;
 public class MarketComparator {
 
   public static final int TOKEN_ID_LENGTH = Long.toString(Long.MAX_VALUE).getBytes().length; // 19
-
+  private static final int LONG_BYTE_NUM = 8;
 
   public static int comparePriceKey(byte[] o1, byte[] o2) {
     //compare pair
@@ -27,17 +27,15 @@ public class MarketComparator {
     byte[] getSellTokenQuantity2 = new byte[8];
     byte[] getBuyTokenQuantity2 = new byte[8];
 
-    int longByteNum = 8;
-
     System.arraycopy(o1, TOKEN_ID_LENGTH + TOKEN_ID_LENGTH,
-        getSellTokenQuantity1, 0, longByteNum);
-    System.arraycopy(o1, TOKEN_ID_LENGTH + TOKEN_ID_LENGTH + longByteNum,
-        getBuyTokenQuantity1, 0, longByteNum);
+        getSellTokenQuantity1, 0, LONG_BYTE_NUM);
+    System.arraycopy(o1, TOKEN_ID_LENGTH + TOKEN_ID_LENGTH + LONG_BYTE_NUM,
+        getBuyTokenQuantity1, 0, LONG_BYTE_NUM);
 
     System.arraycopy(o2, TOKEN_ID_LENGTH + TOKEN_ID_LENGTH,
-        getSellTokenQuantity2, 0, longByteNum);
-    System.arraycopy(o2, TOKEN_ID_LENGTH + TOKEN_ID_LENGTH + longByteNum,
-        getBuyTokenQuantity2, 0, longByteNum);
+        getSellTokenQuantity2, 0, LONG_BYTE_NUM);
+    System.arraycopy(o2, TOKEN_ID_LENGTH + TOKEN_ID_LENGTH + LONG_BYTE_NUM,
+        getBuyTokenQuantity2, 0, LONG_BYTE_NUM);
 
     long sellTokenQuantity1 = toLong(getSellTokenQuantity1);
     long buyTokenQuantity1 = toLong(getBuyTokenQuantity1);
@@ -119,6 +117,6 @@ public class MarketComparator {
   }
 
   public static long toLong(byte[] b) {
-    return (b == null || b.length == 0) ? 0 : new BigInteger(1, b).longValue();
+    return (b == null || b.length == 0) ? 0 : new BigInteger(1, b).longValueExact();
   }
 }

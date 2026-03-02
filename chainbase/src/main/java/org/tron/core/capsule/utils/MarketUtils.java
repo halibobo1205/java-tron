@@ -41,8 +41,7 @@ import org.tron.protos.Protocol.MarketPrice;
 
 public class MarketUtils {
 
-  public static final int TOKEN_ID_LENGTH = ByteArray
-      .fromString(Long.toString(Long.MAX_VALUE)).length; // 19
+  public static final int TOKEN_ID_LENGTH = MarketComparator.TOKEN_ID_LENGTH;
 
   public static byte[] calculateOrderId(ByteString address, byte[] sellTokenId,
       byte[] buyTokenId, long count) {

@@ -23,6 +23,7 @@ import picocli.CommandLine;
     exitCodeList = {
         "0:Successful",
         "n:Internal error: exception occurred,please check toolkit.log"})
+@SuppressWarnings("UnsafeArithmeticChecker")
 public class DbCopy implements Callable<Integer> {
 
 

@@ -39,6 +39,7 @@ import picocli.CommandLine;
     exitCodeList = {
         "0:Successful",
         "1:Internal error: exception occurred,please check toolkit.log"})
+@SuppressWarnings("UnsafeArithmeticChecker")
 public class DbLite implements Callable<Integer> {
 
   private static final long START_TIME = System.currentTimeMillis() / 1000;
@@ -149,6 +150,7 @@ public class DbLite implements Callable<Integer> {
    *                  same with {storage.db.directory} in conf file.
    * @param snapshotDir the path that stores the snapshot dataset
    */
+  @SuppressWarnings("UnsafeArithmeticChecker")
   public void generateSnapshot(String sourceDir, String snapshotDir) {
     logger.info("Start create snapshot.");
     spec.commandLine().getOut().println("Start create snapshot.");
@@ -170,7 +172,7 @@ public class DbLite implements Callable<Integer> {
           .stackTraceText(e));
       return;
     }
-    long during = (System.currentTimeMillis() - start) / 1000;
+    long during = StrictMath.floorDiv((System.currentTimeMillis() - start), 1000L);
     logger.info("Create snapshot finished, take {} s.", during);
     spec.commandLine().getOut().format("Create snapshot finished, take %d s.", during).println();
   }
@@ -204,7 +206,7 @@ public class DbLite implements Callable<Integer> {
           .stackTraceText(e));
       return;
     }
-    long during = (System.currentTimeMillis() - start) / 1000;
+    long during = StrictMath.floorDiv((System.currentTimeMillis() - start), 1000L);
     logger.info("Create history finished, take {} s.", during);
     spec.commandLine().getOut().format("Create history finished, take %d s.", during).println();
   }
@@ -248,7 +250,7 @@ public class DbLite implements Callable<Integer> {
           .stackTraceText(e));
       return;
     }
-    long during = (System.currentTimeMillis() - start) / 1000;
+    long during = StrictMath.floorDiv((System.currentTimeMillis() - start), 1000L);
     logger.info("Merge history finished, take {} s.", during);
     spec.commandLine().getOut().format("Merge history finished, take %d s.", during).println();
   }

@@ -20,6 +20,7 @@ import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.Properties;
+import java.util.stream.Stream;
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
@@ -140,9 +141,8 @@ public class FileUtils {
     // create subdirs, as using parallel() to run, so should create dirs first.
     subDirs.forEach(dir -> {
       if (isExists(Paths.get(src.toString(), dir).toString())) {
-        try {
-          Files.walk(Paths.get(src.toString(), dir), FileVisitOption.FOLLOW_LINKS)
-              .forEach(source -> copy(source, dest.resolve(src.relativize(source))));
+        try (Stream<Path> stream = Files.walk(Paths.get(src.toString(), dir), FileVisitOption.FOLLOW_LINKS)) {
+          stream.forEach(source -> copy(source, dest.resolve(src.relativize(source))));
         } catch (IOException e) {
           logger.error("copy database failed, src: {}, dest: {}, error: {}",
               Paths.get(src.toString(), dir), Paths.get(dest.toString(), dir), e.getMessage());
@@ -156,8 +156,9 @@ public class FileUtils {
     if (isExists(Paths.get(src.toString(), dir).toString())) {
       try {
         if (createDirIfNotExists(Paths.get(dest.toString(), dir).toString())) {
-          Files.walk(Paths.get(src.toString(), dir), FileVisitOption.FOLLOW_LINKS)
-              .forEach(source -> copy(source, dest.resolve(src.relativize(source))));
+          try (Stream<Path> stream = Files.walk(Paths.get(src.toString(), dir), FileVisitOption.FOLLOW_LINKS)) {
+            stream.forEach(source -> copy(source, dest.resolve(src.relativize(source))));
+          }
         } else {
           throw new IOException(String.format("dest %s create fail ",
               Paths.get(dest.toString(), dir)));

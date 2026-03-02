@@ -15,7 +15,7 @@ public class ReceiveDescriptionCapsule implements ProtoCapsule<ReceiveDescriptio
   }
 
   public ReceiveDescriptionCapsule(final ReceiveDescription outputDescription) {
-    this.receiveDescription = receiveDescription;
+    this.receiveDescription = outputDescription;
   }
 
   public ReceiveDescriptionCapsule(final byte[] data) {

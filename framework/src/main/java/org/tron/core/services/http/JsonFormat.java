@@ -872,7 +872,7 @@ public class JsonFormat {
           break;
         default:
           // Check for other control characters
-          if (c >= 0x0000 && c <= 0x001F) {
+          if (c <= 0x001F) {
             appendEscapedUnicode(builder, c);
           } else if (Character.isHighSurrogate(c)) {
             // Encode the surrogate pair using 2 six-character sequence (\\uXXXX\\uXXXX)

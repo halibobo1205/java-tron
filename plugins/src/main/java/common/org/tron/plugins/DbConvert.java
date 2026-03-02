@@ -1,6 +1,7 @@
 package org.tron.plugins;
 
 import java.io.File;
+import java.math.BigInteger;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -55,6 +56,7 @@ public class DbConvert implements Callable<Integer> {
 
 
   @Override
+  @SuppressWarnings("UnsafeArithmeticChecker")
   public Integer call() throws Exception {
     if (Arch.isArm64()) {
       String tips = String.format("This command is not supported on %s architecture.",
@@ -133,12 +135,12 @@ public class DbConvert implements Callable<Integer> {
     private final Path srcDbPath;
     private final Path dstDbPath;
 
-    private long srcDbKeyCount = 0L;
-    private long dstDbKeyCount = 0L;
-    private long srcDbKeySum = 0L;
-    private long dstDbKeySum = 0L;
-    private long srcDbValueSum = 0L;
-    private long dstDbValueSum = 0L;
+    private BigInteger srcDbKeyCount = BigInteger.ZERO;
+    private BigInteger dstDbKeyCount = BigInteger.ZERO;
+    private BigInteger srcDbKeySum = BigInteger.ZERO;
+    private BigInteger dstDbKeySum = BigInteger.ZERO;
+    private BigInteger srcDbValueSum = BigInteger.ZERO;
+    private BigInteger dstDbValueSum = BigInteger.ZERO;
 
     public DbConverter(String srcDir, String dstDir, String name) {
       this.srcDir = srcDir;
@@ -149,6 +151,7 @@ public class DbConvert implements Callable<Integer> {
     }
 
     @Override
+    @SuppressWarnings("UnsafeArithmeticChecker")
     public boolean doConvert() throws Exception {
 
       if (checkDone(this.dstDbPath.toString())) {
@@ -270,7 +273,7 @@ public class DbConvert implements Callable<Integer> {
           Map.Entry<byte[], byte[]> entry = levelIterator.next();
           byte[] key = entry.getKey();
           byte[] value = entry.getValue();
-          srcDbKeyCount++;
+          srcDbKeyCount = srcDbKeyCount.add(BigInteger.ONE);
           srcDbKeySum = byteArrayToIntWithOne(srcDbKeySum, key);
           srcDbValueSum = byteArrayToIntWithOne(srcDbValueSum, value);
           keys.add(key);
@@ -312,7 +315,7 @@ public class DbConvert implements Callable<Integer> {
         for (rocksIterator.seekToFirst(); rocksIterator.isValid(); rocksIterator.next()) {
           byte[] key = rocksIterator.key();
           byte[] value = rocksIterator.value();
-          dstDbKeyCount++;
+          dstDbKeyCount = dstDbKeyCount.add(BigInteger.ONE);
           dstDbKeySum = byteArrayToIntWithOne(dstDbKeySum, key);
           dstDbValueSum = byteArrayToIntWithOne(dstDbValueSum, value);
         }
@@ -320,8 +323,9 @@ public class DbConvert implements Callable<Integer> {
                 + "srcDbKeyCount {}, srcDbKeySum {}, srcDbValueSum {}",
             dbName, dstDbKeyCount, dstDbKeySum, dstDbValueSum,
             srcDbKeyCount, srcDbKeySum, srcDbValueSum);
-        return dstDbKeyCount == srcDbKeyCount && dstDbKeySum == srcDbKeySum
-            && dstDbValueSum == srcDbValueSum;
+        return Objects.equals(dstDbKeyCount, srcDbKeyCount)
+            && Objects.equals(dstDbKeySum, srcDbKeySum)
+            && Objects.equals(dstDbValueSum, srcDbValueSum);
       }
     }
   }
@@ -339,9 +343,9 @@ public class DbConvert implements Callable<Integer> {
     return FileUtils.isExists(enginePath);
   }
 
-  private static long byteArrayToIntWithOne(long sum, byte[] b) {
+  private static BigInteger byteArrayToIntWithOne(BigInteger sum, byte[] b) {
     for (byte oneByte : b) {
-      sum += oneByte;
+      sum = sum.add(BigInteger.valueOf(oneByte & 0xFF));
     }
     return sum;
   }
