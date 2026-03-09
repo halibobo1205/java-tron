@@ -2,7 +2,9 @@ package org.tron.core.actuator;
 
 import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
+import javax.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -17,6 +19,8 @@ import org.tron.core.capsule.TransactionResultCapsule;
 import org.tron.core.config.args.Args;
 import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractValidateException;
+import org.tron.core.state.WorldStateCallBack;
+import org.tron.core.state.WorldStateQueryInstance;
 import org.tron.protos.Protocol.Account;
 import org.tron.protos.Protocol.Account.Frozen;
 import org.tron.protos.Protocol.AccountType;
@@ -34,6 +38,9 @@ public class UnfreezeAssetActuatorTest extends BaseTest {
   private static final long initBalance = 10_000_000_000L;
   private static final long frozenBalance = 1_000_000_000L;
   private static final String assetName = "testCoin";
+  private static final String assetID = "123456";
+  @Resource
+  private WorldStateCallBack worldStateCallBack;
 
   static {
     Args.setParam(new String[]{"--output-directory", dbPath()}, Constant.TEST_CONF);
@@ -47,10 +54,16 @@ public class UnfreezeAssetActuatorTest extends BaseTest {
    */
   @Before
   public void createAccountCapsule() {
+    worldStateCallBack.setExecute(true);
   }
 
   @Before
   public void createAsset() {
+  }
+
+  @After
+  public void reset() {
+    worldStateCallBack.setExecute(false);
   }
 
   private Any getContract(String ownerAddress) {
@@ -242,7 +255,13 @@ public class UnfreezeAssetActuatorTest extends BaseTest {
       //V2
       Assert.assertEquals(owner.getAssetV2MapForTest().get(String.valueOf(tokenId)).longValue(),
           frozenBalance);
+      WorldStateQueryInstance queryInstance = getQueryInstance();
+      Assert.assertEquals(frozenBalance,
+              queryInstance.getAccount(owner.createDbKey()).getAssetV2MapForTest()
+                      .get(String.valueOf(tokenId)).longValue());
       Assert.assertEquals(owner.getFrozenSupplyCount(), 1);
+      Assert.assertEquals(1,
+              queryInstance.getAccount(owner.createDbKey()).getFrozenSupplyCount());
     } catch (ContractValidateException e) {
       Assert.assertFalse(e instanceof ContractValidateException);
     } catch (ContractExeException e) {
@@ -397,5 +416,14 @@ public class UnfreezeAssetActuatorTest extends BaseTest {
 
     actuatorTest.setNullDBManagerMsg("No account store or dynamic store!");
     actuatorTest.nullDBManger();
+  }
+
+  private WorldStateQueryInstance getQueryInstance() {
+    Assert.assertNotNull(worldStateCallBack.getTrie());
+    worldStateCallBack.clear();
+    worldStateCallBack.getTrie().commit();
+    worldStateCallBack.getTrie().flush();
+    return new WorldStateQueryInstance(worldStateCallBack.getTrie().getRootHashByte32(),
+            chainBaseManager);
   }
 }

@@ -32,10 +32,14 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import lombok.Getter;
+import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.tuweni.bytes.Bytes32;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.capsule.utils.AssetUtil;
+import org.tron.core.state.utils.AssetStateUtil;
 import org.tron.core.store.AssetIssueStore;
 import org.tron.core.store.DynamicPropertiesStore;
 import org.tron.protos.Protocol.Account;
@@ -57,6 +61,10 @@ public class AccountCapsule implements ProtoCapsule<Account>, Comparable<Account
 
   private Account account;
   private boolean flag = false;
+
+  @Getter
+  @Setter
+  private Bytes32 root = Bytes32.ZERO;
 
   /**
    * get account from bytes data.
@@ -836,7 +844,7 @@ public class AccountCapsule implements ProtoCapsule<Account>, Comparable<Account
   }
 
   public boolean addAssetV2(byte[] key, long value) {
-    if (AssetUtil.hasAssetV2(this.account, key)) {
+    if (hasAssetV2(key)) {
       return false;
     }
 
@@ -1337,12 +1345,12 @@ public class AccountCapsule implements ProtoCapsule<Account>, Comparable<Account
   }
 
   public void importAsset(byte[] key) {
-    this.account = AssetUtil.importAsset(this.account, key);
+    this.account = importAssetV2(key);
   }
 
   public void importAllAsset() {
     if (!flag) {
-      this.account = AssetUtil.importAllAsset(this.account);
+      this.account = importAllAssetV2();
       flag = true;
     }
   }
@@ -1475,6 +1483,27 @@ public class AccountCapsule implements ProtoCapsule<Account>, Comparable<Account
     } else {
       setLatestConsumeTimeForEnergy(time);
     }
+  }
+
+  private boolean hasAssetV2(byte[] key) {
+    if (Bytes32.ZERO.equals(this.root)) {
+      return AssetUtil.hasAssetV2(this.account, key);
+    }
+    return AssetStateUtil.hasAssetV2(this.account, key, this.root);
+  }
+
+  private Account importAssetV2(byte[] key) {
+    if (Bytes32.ZERO.equals(this.root)) {
+      return AssetUtil.importAsset(this.account, key);
+    }
+    return AssetStateUtil.importAssetV2(this.account, key , this.root);
+  }
+
+  private Account importAllAssetV2() {
+    if (Bytes32.ZERO.equals(root)) {
+      return AssetUtil.importAllAsset(this.account);
+    }
+    return AssetStateUtil.importAllAsset(this.account, this.root);
   }
 
 }

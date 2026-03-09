@@ -559,6 +559,8 @@ public class Args extends CommonParameter {
     PARAMETER.storage.setCacheStrategies(config);
     PARAMETER.storage.setDbRoots(config);
 
+    PARAMETER.storage.setStateConfig(config);
+
     PARAMETER.seedNode = new SeedNode();
     PARAMETER.seedNode.setAddressList(loadSeeds(config));
 

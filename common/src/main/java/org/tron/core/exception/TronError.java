@@ -49,7 +49,8 @@ public class TronError extends Error {
     RATE_LIMITER_INIT(1),
     SOLID_NODE_INIT(0),
     PARAMETER_INIT(1),
-    JDK_VERSION(1);
+    JDK_VERSION(1),
+    ARCHIVE_NODE_INIT(1);
 
     private final int code;
 

@@ -141,6 +141,8 @@ import org.tron.core.metrics.MetricsUtil;
 import org.tron.core.service.MortgageService;
 import org.tron.core.service.RewardViCalService;
 import org.tron.core.services.event.exception.EventException;
+import org.tron.core.state.WorldStateCallBack;
+import org.tron.core.state.WorldStateGenesis;
 import org.tron.core.store.AccountAssetStore;
 import org.tron.core.store.AccountIdIndexStore;
 import org.tron.core.store.AccountIndexStore;
@@ -228,6 +230,8 @@ public class Manager {
   @Autowired
   private AccountStateCallBack accountStateCallBack;
   @Autowired
+  private WorldStateCallBack worldStateCallBack;
+  @Autowired
   private TrieService trieService;
   private Set<String> ownerAddressSet = new HashSet<>();
   @Getter
@@ -238,6 +242,8 @@ public class Manager {
   @Autowired
   @Getter
   private ChainBaseManager chainBaseManager;
+  @Autowired
+  private WorldStateGenesis worldStateGenesis;
   // transactions cache
   private BlockingQueue<TransactionCapsule> pendingTransactions;
   @Getter
@@ -480,6 +486,7 @@ public class Manager {
         .initStore(chainBaseManager.getWitnessStore(), chainBaseManager.getDelegationStore(),
             chainBaseManager.getDynamicPropertiesStore(), chainBaseManager.getAccountStore());
     accountStateCallBack.setChainBaseManager(chainBaseManager);
+    worldStateCallBack.setChainBaseManager(chainBaseManager);
     trieService.setChainBaseManager(chainBaseManager);
     revokingStore.disable();
     revokingStore.check();
@@ -501,6 +508,9 @@ public class Manager {
     chainBaseManager.setMerkleContainer(getMerkleContainer());
     chainBaseManager.setMortgageService(mortgageService);
     this.initGenesis();
+    worldStateCallBack.setExecute(false);
+    // worldState init, before khaosDb init
+    worldStateGenesis.init(chainBaseManager);
     try {
       this.khaosDb.start(chainBaseManager.getBlockById(
           getDynamicPropertiesStore().getLatestBlockHeaderHash()));
@@ -606,11 +616,6 @@ public class Manager {
       } else {
         logger.info("Create genesis block.");
         Args.getInstance().setChainId(genesisBlock.getBlockId().toString());
-
-        chainBaseManager.getBlockStore().put(genesisBlock.getBlockId().getBytes(), genesisBlock);
-        chainBaseManager.getBlockIndexStore().put(genesisBlock.getBlockId());
-
-        logger.info(SAVE_BLOCK, genesisBlock);
         // init Dynamic Properties Store
         chainBaseManager.getDynamicPropertiesStore().saveLatestBlockHeaderNumber(0);
         chainBaseManager.getDynamicPropertiesStore().saveLatestBlockHeaderHash(
@@ -622,6 +627,13 @@ public class Manager {
         this.khaosDb.start(genesisBlock);
         this.updateRecentBlock(genesisBlock);
         initAccountHistoryBalance();
+        // init genesis state
+        worldStateCallBack.initGenesis(genesisBlock);
+
+        chainBaseManager.getBlockStore().put(genesisBlock.getBlockId().getBytes(), genesisBlock);
+        chainBaseManager.getBlockIndexStore().put(genesisBlock.getBlockId());
+
+        logger.info(SAVE_BLOCK, genesisBlock);
       }
     }
   }
@@ -1065,15 +1077,20 @@ public class Manager {
       TooBigTransactionException, DupTransactionException, TaposException,
       ValidateScheduleException, ReceiptCheckErrException, VMIllegalException,
       TooBigTransactionResultException, ZksnarkException, BadBlockException, EventBloomException {
-    processBlock(block, txs);
-    chainBaseManager.getBlockStore().put(block.getBlockId().getBytes(), block);
-    chainBaseManager.getBlockIndexStore().put(block.getBlockId());
-    if (block.getTransactions().size() != 0) {
-      chainBaseManager.getTransactionRetStore()
-          .put(ByteArray.fromLong(block.getNum()), block.getResult());
+    try {
+      worldStateCallBack.preExecute(block);
+      processBlock(block, txs);
+      updateFork(block);
+      worldStateCallBack.executePushFinish();
+      chainBaseManager.getBlockStore().put(block.getBlockId().getBytes(), block);
+      chainBaseManager.getBlockIndexStore().put(block.getBlockId());
+      if (block.getTransactions().size() != 0) {
+        chainBaseManager.getTransactionRetStore()
+                .put(ByteArray.fromLong(block.getNum()), block.getResult());
+      }
+    } finally {
+      worldStateCallBack.exceptionFinish();
     }
-
-    updateFork(block);
     if (System.currentTimeMillis() - block.getTimeStamp() >= 60_000) {
       revokingStore.setMaxFlushCount(maxFlushCount);
       if (Args.getInstance().getShutdownBlockTime() != null
@@ -1458,6 +1475,7 @@ public class Manager {
     chainBaseManager.setLatestSaveBlockTime(System.currentTimeMillis());
     Metrics.gaugeSet(MetricKeys.Gauge.HEADER_HEIGHT, block.getNum());
     Metrics.gaugeSet(MetricKeys.Gauge.HEADER_TIME, block.getTimeStamp());
+    Metrics.gaugeSet(MetricKeys.Gauge.BLOCK_TRANS_SIZE, block.getTransactions().size());
   }
 
   /**
@@ -1517,10 +1535,11 @@ public class Manager {
       trxCap.setInBlock(true);
     }
 
-    validateTapos(trxCap);
-    validateCommon(trxCap);
-
-    validateDup(trxCap);
+    if (Objects.isNull(blockCap) || !blockCap.generatedByMyself) {
+      validateTapos(trxCap);
+      validateCommon(trxCap);
+      validateDup(trxCap);
+    }
 
     if (!trxCap.validateSignature(chainBaseManager.getAccountStore(),
         chainBaseManager.getDynamicPropertiesStore())) {
@@ -1867,9 +1886,11 @@ public class Manager {
         if (block.generatedByMyself) {
           transactionCapsule.setVerified(true);
         }
+        worldStateCallBack.preExeTrans();
         accountStateCallBack.preExeTrans();
         TransactionInfo result = processTransaction(transactionCapsule, block);
         accountStateCallBack.exeTransFinish();
+        worldStateCallBack.exeTransFinish();
         if (Objects.nonNull(result)) {
           results.add(result);
         }

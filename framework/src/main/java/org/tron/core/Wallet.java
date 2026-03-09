@@ -67,6 +67,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.Pair;
+import org.apache.tuweni.bytes.Bytes32;
 import org.bouncycastle.util.encoders.DecoderException;
 import org.bouncycastle.util.encoders.Hex;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -119,6 +120,7 @@ import org.tron.common.crypto.SignInterface;
 import org.tron.common.crypto.SignUtils;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.runtime.ProgramResult;
+import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.runtime.vm.LogInfo;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.ByteUtil;
@@ -197,9 +199,15 @@ import org.tron.core.exception.jsonrpc.JsonRpcInvalidParamsException;
 import org.tron.core.net.TronNetDelegate;
 import org.tron.core.net.TronNetService;
 import org.tron.core.net.message.adv.TransactionMessage;
+import org.tron.core.state.WorldStateQueryInstance;
+import org.tron.core.state.store.AccountStateStore;
+import org.tron.core.state.store.AssetIssueV2StateStore;
+import org.tron.core.state.store.DynamicPropertiesStateStore;
+import org.tron.core.state.store.StorageRowStateStore;
 import org.tron.core.store.AccountIdIndexStore;
 import org.tron.core.store.AccountStore;
 import org.tron.core.store.AccountTraceStore;
+import org.tron.core.store.AssetIssueV2Store;
 import org.tron.core.store.BalanceTraceStore;
 import org.tron.core.store.ContractStore;
 import org.tron.core.store.DynamicPropertiesStore;
@@ -211,6 +219,7 @@ import org.tron.core.store.VotesStore;
 import org.tron.core.store.WitnessStore;
 import org.tron.core.utils.TransactionUtil;
 import org.tron.core.vm.program.Program;
+import org.tron.core.vm.program.Storage;
 import org.tron.core.zen.ShieldedTRC20ParametersBuilder;
 import org.tron.core.zen.ShieldedTRC20ParametersBuilder.ShieldedTRC20ParametersType;
 import org.tron.core.zen.ZenTransactionBuilder;
@@ -360,6 +369,159 @@ public class Wallet {
     return accountCapsule.getInstance();
   }
 
+
+  public Account getAccount(byte[] address, long blockNumber) {
+    Bytes32 rootHash = getRootHashByNumber(blockNumber);
+    WorldStateQueryInstance worldStateQueryInstance = initWorldStateQueryInstance(rootHash);
+    AccountCapsule accountCapsule = worldStateQueryInstance.getAccount(address);
+    if (accountCapsule == null) {
+      return null;
+    }
+    return accountCapsule.getInstance();
+  }
+
+  public List<Account> getAccounts(List<byte[]> addressList) {
+    AccountStore accountStore = chainBaseManager.getAccountStore();
+    BandwidthProcessor processor = new BandwidthProcessor(chainBaseManager);
+    EnergyProcessor energyProcessor = new EnergyProcessor(
+        chainBaseManager.getDynamicPropertiesStore(),
+        chainBaseManager.getAccountStore());
+    return addressList.stream().map(address -> {
+      AccountCapsule accountCapsule = accountStore.get(address);
+      if (accountCapsule == null) {
+        return Account.getDefaultInstance();
+      }
+      return enrichAccount(accountCapsule, processor, energyProcessor).getInstance();
+    }).collect(Collectors.toList());
+  }
+
+  public List<Account> getAccounts(List<byte[]> addressList, long blockNumber) {
+    Bytes32 rootHash = getRootHashByNumber(blockNumber);
+    WorldStateQueryInstance worldStateQueryInstance = initWorldStateQueryInstance(rootHash);
+    DynamicPropertiesStore propertiesStore =
+        new DynamicPropertiesStateStore(worldStateQueryInstance);
+    AccountStore accountStore = new AccountStateStore(worldStateQueryInstance);
+    AssetIssueV2Store assetIssueV2Store = new AssetIssueV2StateStore(worldStateQueryInstance);
+    final BandwidthProcessor processor = new BandwidthProcessor(propertiesStore, accountStore,
+        assetIssueV2Store, assetIssueV2Store);
+    final EnergyProcessor energyProcessor = new EnergyProcessor(propertiesStore, accountStore);
+    return addressList.stream().map(address -> {
+      AccountCapsule accountCapsule = worldStateQueryInstance.getAccount(address);
+      if (accountCapsule == null) {
+        return Account.getDefaultInstance();
+      }
+      return enrichAccount(accountCapsule, processor, energyProcessor).getInstance();
+    }).collect(Collectors.toList());
+  }
+
+  private AccountCapsule enrichAccount(AccountCapsule accountCapsule,
+                             BandwidthProcessor processor, EnergyProcessor energyProcessor) {
+    accountCapsule.importAllAsset();
+    processor.updateUsage(accountCapsule);
+    energyProcessor.updateUsage(accountCapsule);
+
+    long genesisTimeStamp = chainBaseManager.getGenesisBlock().getTimeStamp();
+    accountCapsule.setLatestConsumeTime(genesisTimeStamp
+        + BLOCK_PRODUCED_INTERVAL * accountCapsule.getLatestConsumeTime());
+    accountCapsule.setLatestConsumeFreeTime(genesisTimeStamp
+        + BLOCK_PRODUCED_INTERVAL * accountCapsule.getLatestConsumeFreeTime());
+    accountCapsule.setLatestConsumeTimeForEnergy(genesisTimeStamp
+        + BLOCK_PRODUCED_INTERVAL * accountCapsule.getLatestConsumeTimeForEnergy());
+    sortFrozenV2List(accountCapsule);
+    return accountCapsule;
+  }
+
+  public List<AccountResourceMessage> getAccountResources(List<byte[]> addressList) {
+    AccountStore accountStore = chainBaseManager.getAccountStore();
+    DynamicPropertiesStore propertiesStore = chainBaseManager.getDynamicPropertiesStore();
+    BandwidthProcessor processor = new BandwidthProcessor(chainBaseManager);
+    EnergyProcessor energyProcessor = new EnergyProcessor(propertiesStore, accountStore);
+    return queryAccountResources(addressList, processor, energyProcessor, propertiesStore,
+        accountStore);
+  }
+
+  public List<AccountResourceMessage> getAccountResources(List<byte[]> addressList,
+                                                          long blockNumber) {
+    Bytes32 rootHash = getRootHashByNumber(blockNumber);
+    WorldStateQueryInstance instance = initWorldStateQueryInstance(rootHash);
+    AccountStore accountStore = new AccountStateStore(instance);
+    DynamicPropertiesStore propertiesStore = new DynamicPropertiesStateStore(instance);
+    AssetIssueV2Store assetIssueV2Store = new AssetIssueV2StateStore(instance);
+    BandwidthProcessor processor = new BandwidthProcessor(propertiesStore, accountStore,
+        assetIssueV2Store, assetIssueV2Store);
+    EnergyProcessor energyProcessor = new EnergyProcessor(propertiesStore, accountStore);
+    return queryAccountResources(addressList, processor, energyProcessor, propertiesStore,
+        accountStore);
+  }
+
+  private List<AccountResourceMessage> queryAccountResources(List<byte[]> addressList,
+                                                             BandwidthProcessor processor,
+                                                             EnergyProcessor energyProcessor,
+                                                             DynamicPropertiesStore propertiesStore,
+                                                             AccountStore accountStore) {
+    return addressList.stream().map(address -> {
+      AccountCapsule accountCapsule = accountStore.get(address);
+      return buildAccountResource(accountCapsule, processor, energyProcessor, propertiesStore);
+    }).collect(Collectors.toList());
+  }
+
+  private AccountResourceMessage buildAccountResource(AccountCapsule accountCapsule,
+                                                      BandwidthProcessor processor,
+                                                      EnergyProcessor energyProcessor,
+                                                      DynamicPropertiesStore propertiesStore) {
+    if (accountCapsule == null) {
+      return AccountResourceMessage.getDefaultInstance();
+    }
+    processor.updateUsage(accountCapsule);
+    energyProcessor.updateUsage(accountCapsule);
+    long netLimit = processor.calculateGlobalNetLimit(accountCapsule);
+    long freeNetLimit = propertiesStore.getFreeNetLimit();
+    long totalNetLimit = propertiesStore.getTotalNetLimit();
+    long totalNetWeight = propertiesStore.getTotalNetWeight();
+    long totalTronPowerWeight = propertiesStore.getTotalTronPowerWeight();
+    long energyLimit = energyProcessor.calculateGlobalEnergyLimit(accountCapsule);
+    long totalEnergyLimit = propertiesStore.getTotalEnergyCurrentLimit();
+    long totalEnergyWeight = propertiesStore.getTotalEnergyWeight();
+    long storageLimit = accountCapsule.getAccountResource().getStorageLimit();
+    long storageUsage = accountCapsule.getAccountResource().getStorageUsage();
+    long allTronPowerUsage = accountCapsule.getTronPowerUsage();
+    long allTronPower = accountCapsule.getAllTronPower() / TRX_PRECISION;
+
+    Map<String, Long> assetNetLimitMap = new HashMap<>();
+    Map<String, Long> allFreeAssetNetUsage = setAssetV2NetLimit(assetNetLimitMap, accountCapsule);
+    AccountResourceMessage.Builder builder = AccountResourceMessage.newBuilder();
+    builder.setFreeNetUsed(accountCapsule.getFreeNetUsage())
+        .setFreeNetLimit(freeNetLimit)
+        .setNetUsed(accountCapsule.getNetUsage())
+        .setNetLimit(netLimit)
+        .setTotalNetLimit(totalNetLimit)
+        .setTotalNetWeight(totalNetWeight)
+        .setTotalTronPowerWeight(totalTronPowerWeight)
+        .setEnergyLimit(energyLimit)
+        .setEnergyUsed(accountCapsule.getAccountResource().getEnergyUsage())
+        .setTronPowerUsed(allTronPowerUsage)
+        .setTronPowerLimit(allTronPower)
+        .setTotalEnergyLimit(totalEnergyLimit)
+        .setTotalEnergyWeight(totalEnergyWeight)
+        .setStorageLimit(storageLimit)
+        .setStorageUsed(storageUsage)
+        .putAllAssetNetUsed(allFreeAssetNetUsage)
+        .putAllAssetNetLimit(assetNetLimitMap);
+    return builder.build();
+  }
+
+  private Map<String, Long> setAssetV2NetLimit(Map<String, Long> assetNetLimitMap,
+                                             AccountCapsule accountCapsule) {
+    Map<String, Long> allFreeAssetNetUsage = accountCapsule.getAllFreeAssetNetUsageV2();
+    allFreeAssetNetUsage.keySet().forEach(asset -> {
+      byte[] key = ByteArray.fromString(asset);
+      assetNetLimitMap.put(
+          asset, chainBaseManager.getAssetIssueV2Store().get(key).getFreeAssetNetLimit());
+    });
+    return allFreeAssetNetUsage;
+  }
+
+
   private void sortFrozenV2List(AccountCapsule accountCapsule) {
     List<FreezeV2> oldFreezeV2List = accountCapsule.getFrozenV2List();
     accountCapsule.clearFrozenV2();
@@ -378,6 +540,21 @@ public class Wallet {
         accountCapsule.updateFrozenV2List(i, optional.get());
       }
     }
+  }
+
+  public Account getAccountToken10(byte[] address, long tokenId, long blockNumber) {
+    Bytes32 rootHash = getRootHashByNumber(blockNumber);
+    WorldStateQueryInstance worldStateQueryInstance = initWorldStateQueryInstance(rootHash);
+    AccountCapsule accountCapsule = worldStateQueryInstance.getAccount(address);
+    if (accountCapsule == null) {
+      return null;
+    }
+    if (tokenId == -1) {
+      accountCapsule.importAllAsset();
+    } else {
+      accountCapsule.importAsset(String.valueOf(tokenId).getBytes());
+    }
+    return accountCapsule.getInstance();
   }
 
   public Account getAccountById(Account account) {
@@ -2986,7 +3163,7 @@ public class Wallet {
         triggerSmartContract.getData().toByteArray());
 
     if (isConstant(abi, selector)) {
-      return callConstantContract(trxCap, builder, retBuilder, false);
+      return callConstantContract(trxCap, builder, retBuilder, false, -1);
     } else {
       return trxCap.getInstance();
     }
@@ -3105,18 +3282,19 @@ public class Wallet {
     txExtBuilder.clear();
     txRetBuilder.clear();
     transaction = triggerConstantContract(
-        triggerSmartContract, txCap, txExtBuilder, txRetBuilder, true);
+        triggerSmartContract, txCap, txExtBuilder, txRetBuilder, true, -1);
     return transaction;
   }
 
   public Transaction triggerConstantContract(TriggerSmartContract triggerSmartContract,
       TransactionCapsule trxCap, Builder builder, Return.Builder retBuilder)
       throws ContractValidateException, ContractExeException, HeaderNotFound, VMIllegalException {
-    return triggerConstantContract(triggerSmartContract, trxCap, builder, retBuilder, false);
+    return triggerConstantContract(triggerSmartContract, trxCap, builder, retBuilder, false, -1);
   }
 
   public Transaction triggerConstantContract(TriggerSmartContract triggerSmartContract,
-      TransactionCapsule trxCap, Builder builder, Return.Builder retBuilder, boolean isEstimating)
+      TransactionCapsule trxCap, Builder builder, Return.Builder retBuilder, boolean isEstimating,
+       long blockNum)
       throws ContractValidateException, ContractExeException, HeaderNotFound, VMIllegalException {
 
     if (triggerSmartContract.getContractAddress().isEmpty()) { // deploy contract
@@ -3136,17 +3314,25 @@ public class Wallet {
       trxCap = createTransactionCapsule(deployBuilder.build(), ContractType.CreateSmartContract);
       trxCap.setFeeLimit(feeLimit);
     } else { // call contract
-      ContractStore contractStore = chainBaseManager.getContractStore();
+      ContractCapsule contractCapsule;
       byte[] contractAddress = triggerSmartContract.getContractAddress().toByteArray();
-      if (contractStore.get(contractAddress) == null) {
+      if (blockNum == -1) {
+        ContractStore contractStore = chainBaseManager.getContractStore();
+        contractCapsule = contractStore.get(contractAddress);
+      } else {
+        Bytes32 rootHash = getRootHashByNumber(blockNum);
+        WorldStateQueryInstance worldStateQueryInstance = initWorldStateQueryInstance(rootHash);
+        contractCapsule = worldStateQueryInstance.getContract(contractAddress);
+      }
+      if (contractCapsule == null) {
         throw new ContractValidateException("Smart contract is not exist.");
       }
     }
-    return callConstantContract(trxCap, builder, retBuilder, isEstimating);
+    return callConstantContract(trxCap, builder, retBuilder, isEstimating, blockNum);
   }
 
   public Transaction callConstantContract(TransactionCapsule trxCap,
-      Builder builder, Return.Builder retBuilder, boolean isEstimating)
+      Builder builder, Return.Builder retBuilder, boolean isEstimating, long blockNum)
       throws ContractValidateException, ContractExeException, HeaderNotFound, VMIllegalException {
 
     if (!Args.getInstance().isSupportConstant()) {
@@ -3154,12 +3340,21 @@ public class Wallet {
     }
 
     Block headBlock;
-    List<BlockCapsule> blockCapsuleList = chainBaseManager.getBlockStore()
-        .getBlockByLatestNum(1);
-    if (CollectionUtils.isEmpty(blockCapsuleList)) {
-      throw new HeaderNotFound("latest block not found");
+    if (blockNum == -1) {
+      List<BlockCapsule> blockCapsuleList = chainBaseManager.getBlockStore()
+              .getBlockByLatestNum(1);
+      if (CollectionUtils.isEmpty(blockCapsuleList)) {
+        throw new HeaderNotFound("latest block not found");
+      } else {
+        headBlock = blockCapsuleList.get(0).getInstance();
+      }
     } else {
-      headBlock = blockCapsuleList.get(0).getInstance();
+      try {
+        headBlock = chainBaseManager.getBlockByNum(blockNum).getInstance();
+      } catch (ItemNotFoundException | BadItemException e) {
+        logger.error("Block not found, number: {}, err: {}", blockNum, e.getMessage());
+        throw new HeaderNotFound(String.format("Block not found, number: %d", blockNum));
+      }
     }
 
     BlockCapsule headBlockCapsule = new BlockCapsule(headBlock);
@@ -4589,6 +4784,57 @@ public class Wallet {
       logger.error("GetMemoFeePrices failed", e);
     }
     return null;
+  }
+
+  public byte[] getCode(byte[] address, long blockNumber) {
+    Bytes32 rootHash = getRootHashByNumber(blockNumber);
+    WorldStateQueryInstance worldStateQueryInstance = initWorldStateQueryInstance(rootHash);
+    CodeCapsule codeCapsule = worldStateQueryInstance.getCode(address);
+    if (codeCapsule == null) {
+      return null;
+    }
+    return codeCapsule.getInstance();
+  }
+
+  public byte[] getStorageAt(byte[] address, String storageIdx, long blockNumber) {
+    Bytes32 rootHash = getRootHashByNumber(blockNumber);
+    WorldStateQueryInstance worldStateQueryInstance = initWorldStateQueryInstance(rootHash);
+    ContractCapsule contractCapsule = worldStateQueryInstance.getContract(address);
+    if (contractCapsule == null) {
+      return null;
+    }
+
+    try (StorageRowStateStore store = new StorageRowStateStore(worldStateQueryInstance)) {
+      Storage storage = new Storage(address, store);
+      storage.setContractVersion(contractCapsule.getInstance().getVersion());
+      storage.generateAddrHash(contractCapsule.getTrxHash());
+      DataWord value = storage.getValue(new DataWord(ByteArray.fromHexString(storageIdx)));
+      return value == null ? new byte[32] : value.getData();
+    }
+  }
+
+  private Bytes32 getRootHashByNumber(long blockNumber) {
+    if (!CommonParameter.getInstance().getStorage().isAllowStateRoot()) {
+      throw new IllegalArgumentException("Unsupported query, this is not a archive node");
+    }
+    long stateStartHeight = chainBaseManager.getWorldStateGenesis().getStateGenesisHeight();
+    if (blockNumber < stateStartHeight) {
+      throw new IllegalArgumentException(
+          "block number is lower than state genesis height, genesis height: " + stateStartHeight);
+    }
+    if (blockNumber > chainBaseManager.getDynamicPropertiesStore().getLatestBlockHeaderNumber()) {
+      throw new IllegalArgumentException("block number is larger than current header");
+    }
+
+    try {
+      return chainBaseManager.getBlockByNum(blockNumber).getArchiveRoot();
+    } catch (ItemNotFoundException | BadItemException e) {
+      throw new IllegalArgumentException("block not found, block number: " + blockNumber);
+    }
+  }
+
+  private WorldStateQueryInstance initWorldStateQueryInstance(Bytes32 rootHash) {
+    return ChainBaseManager.fetch(rootHash);
   }
 }
 

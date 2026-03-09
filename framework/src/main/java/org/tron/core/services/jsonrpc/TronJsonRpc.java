@@ -25,6 +25,8 @@ import org.tron.core.exception.jsonrpc.JsonRpcInvalidParamsException;
 import org.tron.core.exception.jsonrpc.JsonRpcInvalidRequestException;
 import org.tron.core.exception.jsonrpc.JsonRpcMethodNotFoundException;
 import org.tron.core.exception.jsonrpc.JsonRpcTooManyResultException;
+import org.tron.core.services.jsonrpc.types.AccountResourceResult;
+import org.tron.core.services.jsonrpc.types.AccountResult;
 import org.tron.core.services.jsonrpc.types.BlockResult;
 import org.tron.core.services.jsonrpc.types.BuildArguments;
 import org.tron.core.services.jsonrpc.types.CallArguments;
@@ -198,6 +200,20 @@ public interface TronJsonRpc {
 
   @JsonRpcMethod("eth_accounts")
   String[] getAccounts();
+
+  @JsonRpcMethod("tron_getAccount")
+  @JsonRpcErrors({
+      @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
+  })
+  AccountResult getAccount(String address, String blockNumOrTag)
+      throws JsonRpcInvalidParamsException;
+
+  @JsonRpcMethod("tron_getAccountResource")
+  @JsonRpcErrors({
+      @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
+  })
+  AccountResourceResult getAccountResource(String address, String blockNumOrTag)
+      throws JsonRpcInvalidParamsException;
 
   @JsonRpcMethod("buildTransaction")
   @JsonRpcErrors({

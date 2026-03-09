@@ -28,7 +28,6 @@ import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.utils.StorageUtils;
 import org.tron.common.utils.StringUtil;
 import org.tron.common.utils.WalletUtil;
-import org.tron.core.ChainBaseManager;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.ContractCapsule;
@@ -37,6 +36,7 @@ import org.tron.core.db.EnergyProcessor;
 import org.tron.core.db.TransactionContext;
 import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractValidateException;
+import org.tron.core.exception.HeaderNotFound;
 import org.tron.core.utils.TransactionUtil;
 import org.tron.core.vm.EnergyCost;
 import org.tron.core.vm.LogInfoTriggerParser;
@@ -56,6 +56,7 @@ import org.tron.core.vm.program.invoke.ProgramInvoke;
 import org.tron.core.vm.program.invoke.ProgramInvokeFactory;
 import org.tron.core.vm.repository.Repository;
 import org.tron.core.vm.repository.RepositoryImpl;
+import org.tron.core.vm.repository.RepositoryStateImpl;
 import org.tron.core.vm.utils.MUtil;
 import org.tron.protos.Protocol;
 import org.tron.protos.Protocol.Block;
@@ -97,6 +98,9 @@ public class VMActuator implements Actuator2 {
 
   private LogInfoTriggerParser logInfoTriggerParser;
 
+  private static final boolean isAllowStateRoot = CommonParameter.getInstance().getStorage()
+          .isAllowStateRoot();
+
   public VMActuator(boolean isConstantCall) {
     this.isConstantCall = isConstantCall;
     this.maxEnergyLimit = CommonParameter.getInstance().maxEnergyLimitForConstant;
@@ -113,21 +117,38 @@ public class VMActuator implements Actuator2 {
 
   @Override
   public void validate(Object object) throws ContractValidateException {
-
     TransactionContext context = (TransactionContext) object;
     if (Objects.isNull(context)) {
       throw new RuntimeException("TransactionContext is null");
     }
 
-    // Load Config
-    ConfigLoader.load(context.getStoreFactory());
     // Warm up registry class
     OperationRegistry.init();
     trx = context.getTrxCap().getInstance();
+
+    // check whether is state query
+    boolean stateQuery = isAllowStateRoot && isConstantCall;
+    stateQuery = stateQuery && context.getBlockCap() != null;
+    try {
+      stateQuery = stateQuery && context.getBlockCap().getNum() < context.getStoreFactory()
+          .getChainBaseManager().getHead().getNum();
+    } catch (HeaderNotFound e) {
+      throw new ContractValidateException(e.getMessage());
+    }
+
+    //Prepare Repository
+    if (stateQuery) {
+      rootRepository = RepositoryStateImpl.createRoot(context.getBlockCap().getArchiveRoot());
+    } else {
+      rootRepository = RepositoryImpl.createRoot(context.getStoreFactory());
+    }
+    // Load Config
+    ConfigLoader.load(rootRepository);
+
     // If tx`s fee limit is set, use it to calc max energy limit for constant call
     if (isConstantCall && trx.getRawData().getFeeLimit() > 0) {
       maxEnergyLimit = min(maxEnergyLimit, trx.getRawData().getFeeLimit()
-          / context.getStoreFactory().getChainBaseManager()
+          / rootRepository
           .getDynamicPropertiesStore().getEnergyFee(), VMConfig.disableJavaLangMath());
     }
     blockCap = context.getBlockCap();
@@ -137,9 +158,6 @@ public class VMActuator implements Actuator2 {
     }
     //Route Type
     ContractType contractType = this.trx.getRawData().getContract(0).getType();
-    //Prepare Repository
-    rootRepository = RepositoryImpl.createRoot(context.getStoreFactory());
-
     enableEventListener = context.isEventPluginLoaded();
 
     //set executorType type
@@ -307,7 +325,6 @@ public class VMActuator implements Actuator2 {
       String txHash = Hex.toHexString(rootInternalTx.getHash());
       VMUtils.saveProgramTraceFile(txHash, traceContent);
     }
-
   }
 
   private void create()
@@ -575,8 +592,7 @@ public class VMActuator implements Actuator2 {
       long now = rootRepository.getHeadSlot();
       EnergyProcessor energyProcessor =
           new EnergyProcessor(
-              rootRepository.getDynamicPropertiesStore(),
-              ChainBaseManager.getInstance().getAccountStore());
+              rootRepository.getDynamicPropertiesStore(), rootRepository.getAccountStore());
       energyProcessor.updateUsage(account);
       account.setLatestConsumeTimeForEnergy(now);
       receipt.setCallerEnergyUsage(account.getEnergyUsage());
@@ -743,8 +759,7 @@ public class VMActuator implements Actuator2 {
       long now = rootRepository.getHeadSlot();
       EnergyProcessor energyProcessor =
           new EnergyProcessor(
-              rootRepository.getDynamicPropertiesStore(),
-              ChainBaseManager.getInstance().getAccountStore());
+              rootRepository.getDynamicPropertiesStore(), rootRepository.getAccountStore());
       energyProcessor.updateUsage(creator);
       creator.setLatestConsumeTimeForEnergy(now);
       receipt.setOriginEnergyUsage(creator.getEnergyUsage());

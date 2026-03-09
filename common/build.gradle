@@ -39,6 +39,7 @@ dependencies {
         exclude group: 'org.bouncycastle', module: 'bcprov-jdk18on'
         exclude group: 'org.bouncycastle', module: 'bcutil-jdk18on'
     }
+    api project(":state-trie-jdk8")
     api project(":protocol")
     api project(":platform")
 }

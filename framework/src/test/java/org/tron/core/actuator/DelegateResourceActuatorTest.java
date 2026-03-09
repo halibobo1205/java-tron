@@ -15,7 +15,9 @@ import static org.tron.protos.contract.Common.ResourceCode.TRON_POWER;
 
 import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
+import javax.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -31,6 +33,9 @@ import org.tron.core.capsule.TransactionResultCapsule;
 import org.tron.core.config.args.Args;
 import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractValidateException;
+import org.tron.core.state.WorldStateCallBack;
+import org.tron.core.state.WorldStateQueryInstance;
+import org.tron.core.state.store.DynamicPropertiesStateStore;
 import org.tron.core.store.DynamicPropertiesStore;
 import org.tron.protos.Protocol;
 import org.tron.protos.Protocol.AccountType;
@@ -47,6 +52,8 @@ public class DelegateResourceActuatorTest extends BaseTest {
   private static final String OWNER_ADDRESS_INVALID = "aaaa";
   private static final String OWNER_ACCOUNT_INVALID;
   private static final long initBalance = 1000_000_000_000L;
+  @Resource
+  private WorldStateCallBack worldStateCallBack;
 
   static {
     Args.setParam(new String[]{"--output-directory", dbPath()}, Constant.TEST_CONF);
@@ -61,6 +68,7 @@ public class DelegateResourceActuatorTest extends BaseTest {
    */
   @Before
   public void createAccountCapsule() {
+    worldStateCallBack.setExecute(true);
     dbManager.getDynamicPropertiesStore().saveTotalNetWeight(0L);
     dbManager.getDynamicPropertiesStore().saveUnfreezeDelayDays(1L);
     dbManager.getDynamicPropertiesStore().saveAllowNewResourceModel(1L);
@@ -91,6 +99,11 @@ public class DelegateResourceActuatorTest extends BaseTest {
     dbManager.getDelegatedResourceStore().delete(DelegatedResourceCapsule.createDbKeyV2(
         owner, receiver, true));
     dbManager.getDelegatedResourceAccountIndexStore().unDelegateV2(owner, receiver);
+  }
+
+  @After
+  public void reset() {
+    worldStateCallBack.setExecute(false);
   }
 
   public void freezeBandwidthForOwner() {
@@ -332,10 +345,17 @@ public class DelegateResourceActuatorTest extends BaseTest {
       AccountCapsule ownerCapsule =
           dbManager.getAccountStore().get(owner);
 
-      assertEquals(delegateBalance, ownerCapsule.getDelegatedFrozenV2BalanceForBandwidth());
-      assertEquals(initBalance - delegateBalance,
+      Assert.assertEquals(delegateBalance, ownerCapsule.getDelegatedFrozenV2BalanceForBandwidth());
+      Assert.assertEquals(initBalance - delegateBalance,
           ownerCapsule.getFrozenV2BalanceForBandwidth());
-      assertEquals(initBalance, ownerCapsule.getTronPower());
+      Assert.assertEquals(initBalance, ownerCapsule.getTronPower());
+
+      WorldStateQueryInstance queryInstance = getQueryInstance();
+      ownerCapsule = queryInstance.getAccount(owner);
+      Assert.assertEquals(delegateBalance, ownerCapsule.getDelegatedFrozenV2BalanceForBandwidth());
+      Assert.assertEquals(initBalance - delegateBalance,
+              ownerCapsule.getFrozenV2BalanceForBandwidth());
+      Assert.assertEquals(initBalance, ownerCapsule.getTronPower());
 
       AccountCapsule receiverCapsule =
           dbManager.getAccountStore().get(receiver);
@@ -344,14 +364,30 @@ public class DelegateResourceActuatorTest extends BaseTest {
       assertEquals(0L, receiverCapsule.getAcquiredDelegatedFrozenV2BalanceForEnergy());
       assertEquals(0L, receiverCapsule.getTronPower());
 
+      receiverCapsule = queryInstance.getAccount(receiver);
+      Assert.assertEquals(delegateBalance,
+              receiverCapsule.getAcquiredDelegatedFrozenV2BalanceForBandwidth());
+      Assert.assertEquals(0L,
+              receiverCapsule.getAcquiredDelegatedFrozenV2BalanceForEnergy());
+      Assert.assertEquals(0L, receiverCapsule.getTronPower());
+
       DelegatedResourceCapsule delegatedResourceCapsule = dbManager.getDelegatedResourceStore()
           .get(DelegatedResourceCapsule
               .createDbKeyV2(ByteArray.fromHexString(OWNER_ADDRESS),
                   ByteArray.fromHexString(RECEIVER_ADDRESS), false));
 
-      assertEquals(delegateBalance, delegatedResourceCapsule.getFrozenBalanceForBandwidth());
+      Assert.assertEquals(delegateBalance, delegatedResourceCapsule.getFrozenBalanceForBandwidth());
+
+      delegatedResourceCapsule = queryInstance.getDelegatedResource(DelegatedResourceCapsule
+              .createDbKeyV2(ByteArray.fromHexString(OWNER_ADDRESS),
+                      ByteArray.fromHexString(RECEIVER_ADDRESS), false));
+      Assert.assertEquals(delegateBalance, delegatedResourceCapsule.getFrozenBalanceForBandwidth());
+
       long totalNetWeightAfter = dbManager.getDynamicPropertiesStore().getTotalNetWeight();
-      assertEquals(totalNetWeightBefore, totalNetWeightAfter);
+      Assert.assertEquals(totalNetWeightBefore, totalNetWeightAfter);
+      DynamicPropertiesStateStore stateStore = new DynamicPropertiesStateStore(queryInstance);
+      Assert.assertEquals(totalNetWeightBefore, stateStore.getTotalNetWeight());
+
 
       //check DelegatedResourceAccountIndex
       DelegatedResourceAccountIndexCapsule ownerIndexCapsule = dbManager
@@ -887,4 +923,13 @@ public class DelegateResourceActuatorTest extends BaseTest {
     Assert.assertEquals(true, bSuccess);
   }
 
+
+  private WorldStateQueryInstance getQueryInstance() {
+    Assert.assertNotNull(worldStateCallBack.getTrie());
+    worldStateCallBack.clear();
+    worldStateCallBack.getTrie().commit();
+    worldStateCallBack.getTrie().flush();
+    return new WorldStateQueryInstance(worldStateCallBack.getTrie().getRootHashByte32(),
+            chainBaseManager);
+  }
 }

@@ -19,7 +19,6 @@ import org.junit.ClassRule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.rocksdb.RocksDBException;
-import org.tron.plugins.ArchiveManifest;
 import org.tron.plugins.utils.DBUtils;
 import org.tron.plugins.utils.db.DbTool;
 

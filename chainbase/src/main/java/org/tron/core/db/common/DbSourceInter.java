@@ -26,11 +26,12 @@ import java.util.Map;
 import java.util.Set;
 import org.tron.common.utils.FileUtil;
 import org.tron.common.utils.PropUtil;
+import org.tron.common.storage.metric.Stat;
 import org.tron.core.db2.common.WrappedByteArray;
 import org.tron.core.exception.TronError;
 
 public interface DbSourceInter<V> extends BatchSourceInter<byte[], V>,
-    Iterable<Map.Entry<byte[], V>> {
+    Iterable<Map.Entry<byte[], V>>, Stat {
 
   String ENGINE_KEY = "ENGINE";
   String ENGINE_FILE = "engine.properties";
@@ -58,8 +59,6 @@ public interface DbSourceInter<V> extends BatchSourceInter<byte[], V>,
   @VisibleForTesting
   @Deprecated
   long getTotal() throws RuntimeException;
-
-  void stat();
 
   Map<WrappedByteArray, byte[]> prefixQuery(byte[] key);
 

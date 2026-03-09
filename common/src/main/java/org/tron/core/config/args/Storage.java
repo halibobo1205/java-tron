@@ -27,6 +27,7 @@ import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.hyperledger.besu.storage.RocksDBConfigurationBuilder;
 import org.iq80.leveldb.CompressionType;
 import org.iq80.leveldb.Options;
 import org.tron.common.arch.Arch;
@@ -85,6 +86,14 @@ public class Storage {
   public static final String TX_CACHE_INIT_OPTIMIZATION = "storage.txCache.initOptimization";
 
   private static final String MERKLE_ROOT = "storage.merkleRoot";
+  private static final String STATE_ROOT_SWITCH_KEY = "storage.stateRoot.switch";
+  private static final String STATE_DB_MAX_OPEN_FILES_KEY = "storage.stateRoot.db.maxOpenFiles";
+  private static final String STATE_DB_WRITE_BUFFER_SIZE_KEY =
+          "storage.stateRoot.db.writeBufferSize";
+  private static final String STATE_DB_CACHE_CAPACITY_KEY = "storage.stateRoot.db.cacheCapacity";
+  private static final String STATE_DB_CACHE_INDEX_AND_FILTER_KEY =
+          "storage.stateRoot.db.cacheIndexAndFilter";
+  private static final String STATE_GENESIS_DIRECTORY_KEY = "storage.stateGenesis.directory";
 
   /**
    * Default values of directory
@@ -100,6 +109,7 @@ public class Storage {
   private static final boolean DEFAULT_CHECKPOINT_SYNC = true;
   private static final int DEFAULT_ESTIMATED_TRANSACTIONS = 1000;
   private static final int DEFAULT_SNAPSHOT_MAX_FLUSH_COUNT = 1;
+  private static final String DEFAULT_STATE_GENESIS_DIRECTORY = "state-genesis";
   private Config storage;
 
   /**
@@ -164,6 +174,16 @@ public class Storage {
   @Getter
   private final List<String> cacheDbs = CacheStrategies.CACHE_DBS;
   // second cache
+
+  @Getter
+  private boolean allowStateRoot;
+
+  @Getter
+  private String stateGenesisDirectory = DEFAULT_STATE_GENESIS_DIRECTORY;
+
+  @Getter
+  private final RocksDBConfigurationBuilder stateDbConf = new RocksDBConfigurationBuilder();
+
 
   /**
    * Key: dbName, Value: Property object of that database
@@ -283,6 +303,28 @@ public class Storage {
       config.getConfig(MERKLE_ROOT).resolve().entrySet().forEach(c ->
           this.dbRoots.put(c.getKey(),  Sha256Hash.wrap(
               ByteString.fromHex(c.getValue().unwrapped().toString()))));
+    }
+  }
+
+  public void setStateConfig(final Config config) {
+    if (config.hasPath(STATE_ROOT_SWITCH_KEY)) {
+      this.allowStateRoot = config.getBoolean(STATE_ROOT_SWITCH_KEY);
+    }
+    if (config.hasPath(STATE_GENESIS_DIRECTORY_KEY)) {
+      this.stateGenesisDirectory = config.getString(STATE_GENESIS_DIRECTORY_KEY);
+    }
+    if (config.hasPath(STATE_DB_MAX_OPEN_FILES_KEY)) {
+      this.stateDbConf.maxOpenFiles(config.getInt(STATE_DB_MAX_OPEN_FILES_KEY));
+    }
+    if (config.hasPath(STATE_DB_CACHE_CAPACITY_KEY)) {
+      this.stateDbConf.cacheCapacity(config.getLong(STATE_DB_CACHE_CAPACITY_KEY));
+    }
+    if (config.hasPath(STATE_DB_WRITE_BUFFER_SIZE_KEY)) {
+      this.stateDbConf.writeBufferSize(config.getLong(STATE_DB_WRITE_BUFFER_SIZE_KEY));
+    }
+    if (config.hasPath(STATE_DB_CACHE_INDEX_AND_FILTER_KEY)) {
+      this.stateDbConf.isCacheIndexAndFilter(
+          config.getBoolean(STATE_DB_CACHE_INDEX_AND_FILTER_KEY));
     }
   }
 

@@ -24,6 +24,7 @@ import org.tron.core.config.Parameter.ChainConstant;
 import org.tron.core.db.TronStoreWithRevoking;
 import org.tron.core.exception.BadItemException;
 import org.tron.core.exception.ItemNotFoundException;
+import org.tron.core.state.WorldStateCallBack;
 
 @Slf4j(topic = "DB")
 @Component
@@ -239,8 +240,10 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule> 
       "ALLOW_TVM_SELFDESTRUCT_RESTRICTION".getBytes();
 
   @Autowired
-  private DynamicPropertiesStore(@Value("properties") String dbName) {
+  private DynamicPropertiesStore(@Value("properties") String dbName,
+                                 @Autowired WorldStateCallBack worldStateCallBack) {
     super(dbName);
+    this.worldStateCallBack = worldStateCallBack;
 
     try {
       this.getTotalSignNum();
@@ -973,6 +976,10 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule> 
     } catch (IllegalArgumentException e) {
       this.saveDynamicEnergyMaxFactor(CommonParameter.getInstance().getDynamicEnergyMaxFactor());
     }
+  }
+
+  protected DynamicPropertiesStore () {
+    super();
   }
 
   public String intArrayToString(int[] a) {

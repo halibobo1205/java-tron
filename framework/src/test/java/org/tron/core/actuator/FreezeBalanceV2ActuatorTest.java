@@ -5,7 +5,9 @@ import static org.tron.core.config.Parameter.ChainConstant.TRANSFER_FEE;
 
 import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
+import javax.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -20,6 +22,8 @@ import org.tron.core.config.Parameter.ChainConstant;
 import org.tron.core.config.args.Args;
 import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractValidateException;
+import org.tron.core.state.WorldStateCallBack;
+import org.tron.core.state.WorldStateQueryInstance;
 import org.tron.protos.Protocol.AccountType;
 import org.tron.protos.Protocol.Transaction.Result.code;
 import org.tron.protos.contract.AssetIssueContractOuterClass;
@@ -34,6 +38,8 @@ public class FreezeBalanceV2ActuatorTest extends BaseTest {
   private static final String OWNER_ADDRESS_INVALID = "aaaa";
   private static final String OWNER_ACCOUNT_INVALID;
   private static final long initBalance = 10_000_000_000L;
+  @Resource
+  private WorldStateCallBack worldStateCallBack;
 
   static {
     Args.setParam(new String[]{"--output-directory", dbPath()}, Constant.TEST_CONF);
@@ -48,6 +54,7 @@ public class FreezeBalanceV2ActuatorTest extends BaseTest {
    */
   @Before
   public void createAccountCapsule() {
+    worldStateCallBack.setExecute(true);
     dbManager.getDynamicPropertiesStore().saveUnfreezeDelayDays(1L);
     dbManager.getDynamicPropertiesStore().saveAllowNewResourceModel(1L);
 
@@ -66,6 +73,11 @@ public class FreezeBalanceV2ActuatorTest extends BaseTest {
             AccountType.Normal,
             initBalance);
     dbManager.getAccountStore().put(receiverCapsule.getAddress().toByteArray(), receiverCapsule);
+  }
+
+  @After
+  public void reset() {
+    worldStateCallBack.setExecute(false);
   }
 
   private Any getContractV2ForBandwidth(String ownerAddress, long frozenBalance) {
@@ -136,6 +148,12 @@ public class FreezeBalanceV2ActuatorTest extends BaseTest {
           - TRANSFER_FEE);
       Assert.assertEquals(owner.getFrozenV2BalanceForBandwidth(), frozenBalance);
       Assert.assertEquals(frozenBalance, owner.getTronPower());
+      WorldStateQueryInstance queryInstance = getQueryInstance();
+      owner = queryInstance.getAccount(ByteArray.fromHexString(OWNER_ADDRESS));
+      Assert.assertEquals(owner.getBalance(), initBalance - frozenBalance - TRANSFER_FEE);
+      Assert.assertEquals(owner.getFrozenV2BalanceForBandwidth(), frozenBalance);
+      Assert.assertEquals(frozenBalance, owner.getTronPower());
+
     } catch (ContractValidateException | ContractExeException e) {
       Assert.fail();
     }
@@ -158,6 +176,12 @@ public class FreezeBalanceV2ActuatorTest extends BaseTest {
 
       Assert.assertEquals(owner.getBalance(), initBalance - frozenBalance
           - TRANSFER_FEE);
+      Assert.assertEquals(0L, owner.getAllFrozenBalanceForBandwidth());
+      Assert.assertEquals(frozenBalance, owner.getAllFrozenBalanceForEnergy());
+      Assert.assertEquals(frozenBalance, owner.getTronPower());
+      WorldStateQueryInstance queryInstance = getQueryInstance();
+      owner = queryInstance.getAccount(ByteArray.fromHexString(OWNER_ADDRESS));
+      Assert.assertEquals(owner.getBalance(), initBalance - frozenBalance - TRANSFER_FEE);
       Assert.assertEquals(0L, owner.getAllFrozenBalanceForBandwidth());
       Assert.assertEquals(frozenBalance, owner.getAllFrozenBalanceForEnergy());
       Assert.assertEquals(frozenBalance, owner.getTronPower());
@@ -366,6 +390,11 @@ public class FreezeBalanceV2ActuatorTest extends BaseTest {
 
       Assert.assertEquals(100L, owner.getInstance().getOldTronPower());
       Assert.assertEquals(100L, owner.getAllTronPower());
+      WorldStateQueryInstance queryInstance = getQueryInstance();
+      owner = queryInstance.getAccount(ByteArray.fromHexString(OWNER_ADDRESS));
+      Assert.assertEquals(100L, owner.getInstance().getOldTronPower());
+      Assert.assertEquals(100L, owner.getAllTronPower());
+
     } catch (ContractValidateException | ContractExeException e) {
       Assert.fail();
     }
@@ -397,9 +426,26 @@ public class FreezeBalanceV2ActuatorTest extends BaseTest {
       Assert.assertEquals(100L, owner.getInstance().getOldTronPower());
       Assert.assertEquals(100L, owner.getTronPower());
       Assert.assertEquals(frozenBalance + 100, owner.getAllTronPower());
+
+      WorldStateQueryInstance queryInstance = getQueryInstance();
+      owner = queryInstance.getAccount(ByteArray.fromHexString(OWNER_ADDRESS));
+
+      Assert.assertEquals(100L, owner.getInstance().getOldTronPower());
+      Assert.assertEquals(100L, owner.getTronPower());
+      Assert.assertEquals(frozenBalance + 100, owner.getAllTronPower());
     } catch (ContractValidateException | ContractExeException e) {
       Assert.fail();
     }
   }
+
+  private WorldStateQueryInstance getQueryInstance() {
+    worldStateCallBack.clear();
+    worldStateCallBack.getTrie().commit();
+    worldStateCallBack.getTrie().flush();
+    return new WorldStateQueryInstance(
+            worldStateCallBack.getTrie().getRootHashByte32(),
+            chainBaseManager);
+  }
+
 
 }

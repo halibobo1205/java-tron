@@ -5,6 +5,8 @@ import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.CacheStats;
+import com.google.common.cache.LoadingCache;
+import com.google.common.cache.Weigher;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import lombok.Getter;
@@ -25,6 +27,11 @@ public class TronCache<K, V> {
     this.cache = CacheBuilder.from(strategy).build(loader);
   }
 
+  TronCache(CacheType name, String strategy, CacheLoader<K, V> loader, Weigher<K, V> weigher) {
+    this.name = name;
+    this.cache = CacheBuilder.from(strategy).weigher(weigher).build(loader);
+  }
+
   public void put(K k, V v) {
     this.cache.put(k, v);
   }
@@ -35,6 +42,13 @@ public class TronCache<K, V> {
 
   public V get(K k, Callable<? extends V> loader) throws ExecutionException {
     return this.cache.get(k, loader);
+  }
+
+  public V get(K k) throws ExecutionException {
+    if (this.cache instanceof LoadingCache) {
+      return ((LoadingCache<K, V>) this.cache).get(k);
+    }
+    return this.cache.getIfPresent(k);
   }
 
   public CacheStats stats() {

@@ -503,6 +503,15 @@ public class CommonParameter {
 
   @Getter
   @Setter
+  public boolean fullNodeRpcEnable = true;
+  @Getter
+  @Setter
+  public boolean solidityNodeRpcEnable = true;
+  @Getter
+  @Setter
+  public boolean PBFTNodeRpcEnable = true;
+  @Getter
+  @Setter
   public boolean fullNodeHttpEnable = true;
   @Getter
   @Setter
@@ -512,6 +521,9 @@ public class CommonParameter {
   @Setter
   public boolean pBFTHttpEnable = true;
 
+  @Getter
+  @Setter
+  public boolean PBFTNodeHttpEnable = true;
   @Getter
   @Setter
   public boolean jsonRpcHttpFullNodeEnable = false;

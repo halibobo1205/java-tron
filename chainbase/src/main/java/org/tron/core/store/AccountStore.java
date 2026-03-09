@@ -45,6 +45,10 @@ public class AccountStore extends TronStoreWithRevoking<AccountCapsule> {
     super(dbName);
   }
 
+  protected AccountStore() {
+    super();
+  }
+
   public static void setAccount(com.typesafe.config.Config config) {
     List list = config.getObjectList("genesis.block.assets");
     for (int i = 0; i < list.size(); i++) {
@@ -119,7 +123,7 @@ public class AccountStore extends TronStoreWithRevoking<AccountCapsule> {
   }
 
 
-  public byte[] getBlackholeAddress() {
+  public static byte[] getBlackholeAddress() {
     return assertsAddress.get(ACCOUNT_BLACKHOLE);
   }
 

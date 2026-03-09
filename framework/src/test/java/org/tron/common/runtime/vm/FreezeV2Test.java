@@ -28,6 +28,7 @@ import org.tron.common.runtime.Runtime;
 import org.tron.common.runtime.RuntimeImpl;
 import org.tron.common.runtime.TVMTestResult;
 import org.tron.common.runtime.TvmTestUtils;
+import org.tron.common.runtime.VmStateTestUtil;
 import org.tron.common.utils.Commons;
 import org.tron.common.utils.FastByteComparisons;
 import org.tron.common.utils.StringUtil;
@@ -47,6 +48,7 @@ import org.tron.core.db.BandwidthProcessor;
 import org.tron.core.db.EnergyProcessor;
 import org.tron.core.db.Manager;
 import org.tron.core.db.TransactionTrace;
+import org.tron.core.state.WorldStateCallBack;
 import org.tron.core.store.AccountStore;
 import org.tron.core.store.DelegatedResourceStore;
 import org.tron.core.store.DynamicPropertiesStore;
@@ -164,6 +166,8 @@ public class FreezeV2Test {
   private static Manager manager;
   private static byte[] owner;
   private static Repository rootRepository;
+  private static ChainBaseManager chainBaseManager;
+  private static WorldStateCallBack worldStateCallBack;
 
   @Before
   public void init() throws Exception {
@@ -171,6 +175,9 @@ public class FreezeV2Test {
         temporaryFolder.newFolder().toString(), "--debug"}, Constant.TEST_CONF);
     context = new TronApplicationContext(DefaultConfig.class);
     manager = context.getBean(Manager.class);
+    chainBaseManager = context.getBean(ChainBaseManager.class);
+    worldStateCallBack = context.getBean(WorldStateCallBack.class);
+    worldStateCallBack.setExecute(true);
     owner = Hex.decode(Wallet.getAddressPreFixString()
         + "abd4b9367799eaa3197fecb144eb71de1e049abc");
     rootRepository = RepositoryImpl.createRoot(StoreFactory.getInstance());
@@ -231,6 +238,8 @@ public class FreezeV2Test {
     TransactionCapsule trxCap = new TransactionCapsule(
         TvmTestUtils.generateTriggerSmartContractAndGetTransaction(
             callerAddr, contractAddr, Hex.decode(hexInput), 0, feeLimit));
+    VmStateTestUtil.runConstantCall(
+        chainBaseManager, worldStateCallBack, trxCap.getInstance());
     TransactionTrace trace = new TransactionTrace(trxCap, StoreFactory.getInstance(),
         new RuntimeImpl());
     trxCap.setTrxTrace(trace);
@@ -568,7 +577,7 @@ public class FreezeV2Test {
     cancelAllUnfreezeV2(owner, contract, 0);
 
     AccountCapsule contractCapsule = manager.getAccountStore().get(contract);
-    contractCapsule.setLatestConsumeTimeForEnergy(ChainBaseManager.getInstance().getHeadSlot());
+    contractCapsule.setLatestConsumeTimeForEnergy(chainBaseManager.getHeadSlot());
     contractCapsule.setNewWindowSize(ENERGY, WINDOW_SIZE_MS / BLOCK_PRODUCED_INTERVAL);
     contractCapsule.setEnergyUsage(frozenBalance);
     manager.getAccountStore().put(contract, contractCapsule);
@@ -908,15 +917,13 @@ public class FreezeV2Test {
         Assert.assertEquals(
             oldReceiver.getNetUsage() - transferUsage,
             newReceiver.getNetUsage());
-        Assert.assertEquals(
-            ChainBaseManager.getInstance().getHeadSlot(),
+        Assert.assertEquals(chainBaseManager.getHeadSlot(),
             newReceiver.getLastConsumeTime(BANDWIDTH));
       } else {
         Assert.assertEquals(
             oldReceiver.getEnergyUsage() + transferUsage,
             newReceiver.getEnergyUsage());
-        Assert.assertEquals(
-            ChainBaseManager.getInstance().getHeadSlot(),
+        Assert.assertEquals(chainBaseManager.getHeadSlot(),
             newReceiver.getLastConsumeTime(ENERGY));
       }
     } else {
@@ -970,12 +977,12 @@ public class FreezeV2Test {
       oldInheritorBandwidthUsage = oldInheritor.getUsage(BANDWIDTH);
       oldInheritorEnergyUsage = oldInheritor.getUsage(ENERGY);
     }
-    BandwidthProcessor bandwidthProcessor = new BandwidthProcessor(ChainBaseManager.getInstance());
+    BandwidthProcessor bandwidthProcessor = new BandwidthProcessor(chainBaseManager);
     bandwidthProcessor.updateUsage(oldContract);
     oldContract.setLatestConsumeTime(now);
     EnergyProcessor energyProcessor =
         new EnergyProcessor(
-            manager.getDynamicPropertiesStore(), ChainBaseManager.getInstance().getAccountStore());
+            manager.getDynamicPropertiesStore(), chainBaseManager.getAccountStore());
     energyProcessor.updateUsage(oldContract);
     oldContract.setLatestConsumeTimeForEnergy(now);
 
