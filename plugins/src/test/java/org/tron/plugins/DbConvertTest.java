@@ -1,12 +1,10 @@
-package org.tron.plugins.leveldb;
+package org.tron.plugins;
 
 import java.io.IOException;
 import java.util.UUID;
 import org.junit.Assert;
 import org.junit.Test;
 import org.rocksdb.RocksDBException;
-import org.tron.plugins.DbTest;
-import org.tron.plugins.Toolkit;
 import org.tron.plugins.utils.db.DbTool;
 import picocli.CommandLine;
 

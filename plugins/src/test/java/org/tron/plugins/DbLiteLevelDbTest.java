@@ -1,8 +1,7 @@
-package org.tron.plugins.leveldb;
+package org.tron.plugins;
 
 import java.io.IOException;
 import org.junit.Test;
-import org.tron.plugins.DbLiteTest;
 
 
 public class DbLiteLevelDbTest  extends DbLiteTest {

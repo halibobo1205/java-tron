@@ -75,11 +75,7 @@ public class WorldStateGenesisTest {
             parentBlock.getNum() + 1,
             Sha256Hash.wrap(parentBlock.getBlockId().getByteString()),
             System.currentTimeMillis(),
-            ByteString.copyFrom(
-                ECKey.fromPrivate(
-                    org.tron.common.utils.ByteArray.fromHexString(
-                        Args.getLocalWitnesses().getPrivateKey()))
-                    .getAddress()));
+            ByteString.copyFrom(new ECKey().getAddress()));
     blockCapsule.setMerkleRoot();
     blockCapsule.setArchiveRoot(Bytes32.random().toArray());
     chainBaseManager.getBlockStore().put(blockCapsule.getBlockId().getBytes(), blockCapsule);

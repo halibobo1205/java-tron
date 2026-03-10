@@ -1,14 +1,19 @@
 package org.tron.core.state;
 
+import com.google.common.collect.Maps;
 import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
 import java.io.IOException;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import org.apache.tuweni.bytes.Bytes32;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -31,7 +36,11 @@ import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.PublicMethod;
 import org.tron.common.utils.Sha256Hash;
+import org.tron.common.utils.Utils;
 import org.tron.common.utils.WalletUtil;
+import org.tron.consensus.ConsensusDelegate;
+import org.tron.consensus.dpos.DposService;
+import org.tron.consensus.dpos.DposSlot;
 import org.tron.core.ChainBaseManager;
 import org.tron.core.Wallet;
 import org.tron.core.capsule.AccountCapsule;
@@ -39,14 +48,15 @@ import org.tron.core.capsule.AssetIssueCapsule;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.ContractCapsule;
 import org.tron.core.capsule.TransactionCapsule;
+import org.tron.core.capsule.WitnessCapsule;
 import org.tron.core.config.DefaultConfig;
 import org.tron.core.config.args.Args;
 import org.tron.core.db.Manager;
 import org.tron.core.db2.ISession;
-import org.tron.core.exception.JsonRpcInternalException;
-import org.tron.core.exception.JsonRpcInvalidParamsException;
-import org.tron.core.exception.JsonRpcInvalidRequestException;
 import org.tron.core.exception.StoreException;
+import org.tron.core.exception.jsonrpc.JsonRpcInternalException;
+import org.tron.core.exception.jsonrpc.JsonRpcInvalidParamsException;
+import org.tron.core.exception.jsonrpc.JsonRpcInvalidRequestException;
 import org.tron.core.services.jsonrpc.TronJsonRpc;
 import org.tron.core.services.jsonrpc.types.CallArguments;
 import org.tron.core.state.store.StorageRowStateStore;
@@ -72,11 +82,20 @@ public class WorldStateQueryTest {
   private static final long TOKEN_ID1 = 1000001L;
   private static final long TOKEN_ID2 = 1000002L;
 
-  private static ECKey account1Prikey = new ECKey();
-  private static ECKey account2Prikey = new ECKey();
+  private static final ECKey account1Prikey = new ECKey();
+  private static final ECKey account2Prikey = new ECKey();
 
   byte[] contractAddress;
   private static WorldStateCallBack worldStateCallBack;
+
+  private static Map<String, String> witnesses;
+
+  private static DposService dposService;
+  private static ConsensusDelegate consensusDelegate;
+  private static DposSlot dposSlot;
+
+  private static final Instant instant = Instant.parse("2025-10-01T00:00:00Z");
+  private static final long time = instant.toEpochMilli();
 
   @ClassRule
   public static final TemporaryFolder temporaryFolder = new TemporaryFolder();
@@ -105,6 +124,9 @@ public class WorldStateQueryTest {
     manager = context.getBean(Manager.class);
     tronJsonRpc = context.getBean(TronJsonRpc.class);
     wallet = context.getBean(Wallet.class);
+    consensusDelegate = context.getBean(ConsensusDelegate.class);
+    dposService = context.getBean(DposService.class);
+    dposSlot = context.getBean(DposSlot.class);
     Protocol.Account acc = Protocol.Account.newBuilder()
         .setAccountName(ByteString.copyFrom(Objects.requireNonNull(ByteArray.fromString("acc"))))
         .setAddress(ByteString.copyFrom(account1Prikey.getAddress()))
@@ -117,7 +139,39 @@ public class WorldStateQueryTest {
         .setBalance(10000000000000000L).build();
     chainBaseManager.getAccountStore().put(account1Prikey.getAddress(), new AccountCapsule(acc));
     chainBaseManager.getAccountStore().put(account2Prikey.getAddress(), new AccountCapsule(sun));
+    chainBaseManager.getWitnessScheduleStore().reset();
+    chainBaseManager.getWitnessStore().reset();
+    witnesses = addTestWitnessAndAccount();
+    List<ByteString> allWitnesses = new ArrayList<>();
+    consensusDelegate.getAllWitnesses().forEach(witnessCapsule ->
+        allWitnesses.add(witnessCapsule.getAddress()));
+    dposService.updateWitness(allWitnesses);
+    List<ByteString> activeWitnesses = consensusDelegate.getActiveWitnesses();
+    activeWitnesses.forEach(address -> {
+      WitnessCapsule witnessCapsule = consensusDelegate.getWitness(address.toByteArray());
+      witnessCapsule.setIsJobs(true);
+      consensusDelegate.saveWitness(witnessCapsule);
+      consensusDelegate.getDynamicPropertiesStore().saveNextMaintenanceTime(time);
+    });
+  }
 
+  private static Map<String, String> addTestWitnessAndAccount() {
+    return IntStream.range(0, 27)
+        .mapToObj(
+            i -> {
+              ECKey ecKey = new ECKey(Utils.getRandom());
+              String privateKey = ByteArray.toHexString(ecKey.getPrivKey().toByteArray());
+              ByteString address = ByteString.copyFrom(ecKey.getAddress());
+
+              WitnessCapsule witnessCapsule = new WitnessCapsule(address, 27 - i, "SR" + i);
+              chainBaseManager.getWitnessStore().put(address.toByteArray(), witnessCapsule);
+              AccountCapsule accountCapsule =
+                  new AccountCapsule(Protocol.Account.newBuilder().setAddress(address).build());
+              chainBaseManager.getAccountStore().put(address.toByteArray(), accountCapsule);
+
+              return Maps.immutableEntry(ByteArray.toHexString(ecKey.getAddress()), privateKey);
+            })
+        .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
   }
 
   @AfterClass
@@ -390,36 +444,13 @@ public class WorldStateQueryTest {
         .setRawData(transactionBuilder.build()).build();
 
     TransactionCapsule transactionCapsule = setAndSignTx(transaction, parentBlock, account1Prikey);
-
-    BlockCapsule blockCapsule =
-        new BlockCapsule(
-            parentBlock.getNum() + 1,
-            Sha256Hash.wrap(parentBlock.getBlockId().getByteString()),
-            System.currentTimeMillis(),
-            ByteString.copyFrom(
-                ECKey.fromPrivate(
-                        org.tron.common.utils.ByteArray.fromHexString(
-                            Args.getLocalWitnesses().getPrivateKey()))
-                    .getAddress()));
-    blockCapsule.addTransaction(transactionCapsule);
-    blockCapsule.setMerkleRoot();
-    blockCapsule.sign(
-        ByteArray.fromHexString(Args.getLocalWitnesses().getPrivateKey()));
-    return blockCapsule;
+    return generateBlock(transactionCapsule);
   }
 
   private BlockCapsule buildTransferAssetBlock(BlockCapsule parentBlock) {
     TransactionCapsule transactionCapsule = buildTransferAsset(TOKEN_ID1, 5, parentBlock);
     TransactionCapsule transactionCapsule2 = buildTransferAsset(TOKEN_ID2, 10, parentBlock);
-    BlockCapsule blockCapsule = new BlockCapsule(parentBlock.getNum() + 1,
-            Sha256Hash.wrap(parentBlock.getBlockId().getByteString()), System.currentTimeMillis(),
-            ByteString.copyFrom(ECKey.fromPrivate(ByteArray.fromHexString(
-                    Args.getLocalWitnesses().getPrivateKey())).getAddress()));
-    blockCapsule.addTransaction(transactionCapsule);
-    blockCapsule.addTransaction(transactionCapsule2);
-    blockCapsule.setMerkleRoot();
-    blockCapsule.sign(ByteArray.fromHexString(Args.getLocalWitnesses().getPrivateKey()));
-    return blockCapsule;
+    return generateBlock(transactionCapsule, transactionCapsule2);
   }
 
   private TransactionCapsule buildTransferAsset(long token, long amt, BlockCapsule parentBlock) {
@@ -466,24 +497,8 @@ public class WorldStateQueryTest {
 
     transactionCapsule = setAndSignTx(transactionCapsule.getInstance(),
         parentBlock, account1Prikey);
-
-
-    BlockCapsule blockCapsule =
-        new BlockCapsule(
-            parentBlock.getNum() + 1,
-            Sha256Hash.wrap(parentBlock.getBlockId().getByteString()),
-            System.currentTimeMillis(),
-            ByteString.copyFrom(
-                ECKey.fromPrivate(
-                        org.tron.common.utils.ByteArray.fromHexString(
-                            Args.getLocalWitnesses().getPrivateKey()))
-                    .getAddress()));
-    blockCapsule.addTransaction(transactionCapsule);
-    blockCapsule.setMerkleRoot();
-    blockCapsule.sign(
-        ByteArray.fromHexString(Args.getLocalWitnesses().getPrivateKey()));
     contractAddress = WalletUtil.generateContractAddress(transactionCapsule.getInstance());
-    return blockCapsule;
+    return generateBlock(transactionCapsule);
   }
 
   private BlockCapsule buildTriggerBlock(BlockCapsule parentBlock) {
@@ -498,22 +513,7 @@ public class WorldStateQueryTest {
 
     transactionCapsule = setAndSignTx(transactionCapsule.getInstance(),
         parentBlock, account1Prikey);
-
-    BlockCapsule blockCapsule =
-        new BlockCapsule(
-            parentBlock.getNum() + 1,
-            Sha256Hash.wrap(parentBlock.getBlockId().getByteString()),
-            System.currentTimeMillis(),
-            ByteString.copyFrom(
-                ECKey.fromPrivate(
-                        org.tron.common.utils.ByteArray.fromHexString(
-                            Args.getLocalWitnesses().getPrivateKey()))
-                    .getAddress()));
-    blockCapsule.addTransaction(transactionCapsule);
-    blockCapsule.setMerkleRoot();
-    blockCapsule.sign(
-        ByteArray.fromHexString(Args.getLocalWitnesses().getPrivateKey()));
-    return blockCapsule;
+    return generateBlock(transactionCapsule);
   }
 
   private TransactionCapsule setAndSignTx(Protocol.Transaction transaction,
@@ -570,6 +570,21 @@ public class WorldStateQueryTest {
 
     Assert.assertEquals(assetV2, fromState.getAssetV2MapForTest());
     worldStateCallBack.setExecute(false);
+  }
+
+  private BlockCapsule generateBlock(TransactionCapsule... trxs) {
+    long time = chainBaseManager.getNextBlockSlotTime();
+    long slot = dposSlot.getSlot(time);
+    long number = chainBaseManager.getDynamicPropertiesStore().getLatestBlockHeaderNumber() + 1;
+    ByteString witness = dposSlot.getScheduledWitness(slot);
+    Sha256Hash parentHash = chainBaseManager.getDynamicPropertiesStore().getLatestBlockHeaderHash();
+    BlockCapsule  block = new BlockCapsule(number, parentHash, time, witness);
+    block.addAllTransactions(Arrays.asList(trxs));
+    block.generatedByMyself = true;
+    block.setMerkleRoot();
+    String pri = witnesses.get(ByteArray.toHexString(witness.toByteArray()));
+    block.sign(ByteArray.fromHexString(pri));
+    return block;
   }
 
   private WorldStateQueryInstance getQueryInstance() {

@@ -1,4 +1,4 @@
-package org.tron.plugins.leveldb;
+package org.tron.plugins;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -21,18 +21,18 @@ import org.junit.rules.TemporaryFolder;
 import org.rocksdb.RocksDBException;
 import org.tron.plugins.utils.DBUtils;
 import org.tron.plugins.utils.db.DbTool;
+import picocli.CommandLine;
 
 @Slf4j
-public class ArchiveManifestTest {
+public class DbArchiveTest {
 
   @ClassRule
   public static final TemporaryFolder temporaryFolder = new TemporaryFolder();
 
-  private static String OUTPUT_DIRECTORY;
+  private static  String OUTPUT_DIRECTORY;
 
   private static final String ACCOUNT = "account";
   private static final String ACCOUNT_ROCKSDB = "account-rocksdb";
-
 
   @BeforeClass
   public static void init() throws IOException, RocksDBException {
@@ -50,26 +50,31 @@ public class ArchiveManifestTest {
 
   @Test
   public void testRun() {
-    String[] args = new String[] { "-d", OUTPUT_DIRECTORY };
-    Assert.assertEquals(0, ArchiveManifest.run(args));
+    String[] args = new String[] {"db", "archive", "-d", OUTPUT_DIRECTORY };
+    CommandLine cli = new CommandLine(new Toolkit());
+    Assert.assertEquals(0, cli.execute(args));
   }
 
   @Test
   public void testHelp() {
-    String[] args = new String[] {"-h"};
-    Assert.assertEquals(0, ArchiveManifest.run(args));
+    String[] args = new String[] {"db", "archive", "-h"};
+    CommandLine cli = new CommandLine(new Toolkit());
+    Assert.assertEquals(0, cli.execute(args));
   }
 
   @Test
   public void testMaxManifest() {
-    String[] args = new String[] {"-d", OUTPUT_DIRECTORY, "-m", "128"};
-    Assert.assertEquals(0, ArchiveManifest.run(args));
+    String[] args = new String[] {"db", "archive", "-d", OUTPUT_DIRECTORY, "-m", "128"};
+    CommandLine cli = new CommandLine(new Toolkit());
+    Assert.assertEquals(0, cli.execute(args));
   }
 
   @Test
   public void testNotExist() {
-    String[] args = new String[] {"-d", OUTPUT_DIRECTORY + File.separator + UUID.randomUUID()};
-    Assert.assertEquals(404, ArchiveManifest.run(args));
+    String[] args = new String[] {"db", "archive", "-d",
+        OUTPUT_DIRECTORY + File.separator + UUID.randomUUID()};
+    CommandLine cli = new CommandLine(new Toolkit());
+    Assert.assertEquals(404, cli.execute(args));
   }
 
   @Test
@@ -77,8 +82,9 @@ public class ArchiveManifestTest {
     File file = new File(OUTPUT_DIRECTORY + File.separator + UUID.randomUUID());
     file.mkdirs();
     file.deleteOnExit();
-    String[] args = new String[] {"-d", file.toString()};
-    Assert.assertEquals(0, ArchiveManifest.run(args));
+    String[] args = new String[] {"db", "archive", "-d", file.toString()};
+    CommandLine cli = new CommandLine(new Toolkit());
+    Assert.assertEquals(0, cli.execute(args));
   }
 
   private static void writeProperty(String filename, String key, String value) throws IOException {
