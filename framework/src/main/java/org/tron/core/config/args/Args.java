@@ -348,7 +348,7 @@ public class Args extends CommonParameter {
         return "";
       }
       properties.load(in);
-    } catch (IOException e) {
+    } catch (Exception e) {
       logger.warn("Load resource failed,git.properties {}", e.getMessage());
     }
     return properties.getProperty("git.commit.id.abbrev");
