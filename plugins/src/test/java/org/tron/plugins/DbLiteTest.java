@@ -89,7 +89,20 @@ public class DbLiteTest {
 
   public void testTools(String dbType, int checkpointVersion)
       throws InterruptedException, IOException {
-    logger.info("dbType {}, checkpointVersion {}", dbType, checkpointVersion);
+    testTools(dbType, checkpointVersion, false, false);
+  }
+
+  /**
+   * @param advanceSnapshot when true, produce extra blocks on the snapshot before merge so that
+   *     snapshotMaxNum > historyMaxNum (exercises mergeBak2Database). When false, merge
+   *     immediately so that historyMaxNum > snapshotMaxNum (exercises trimExtraHistory).
+   * @param historyBalanceLookup when true, enable historical balance lookup so that balance-trace
+   *     and account-trace data are written and can be exercised during trim.
+   */
+  public void testTools(String dbType, int checkpointVersion, boolean advanceSnapshot,
+      boolean historyBalanceLookup) throws InterruptedException, IOException {
+    logger.info("dbType {}, checkpointVersion {}, advanceSnapshot {}, historyBalanceLookup {}",
+        dbType, checkpointVersion, advanceSnapshot, historyBalanceLookup);
     dbPath = String.format("%s_%s_%d", dbPath, dbType, System.currentTimeMillis());
     init(dbType);
     final String[] argsForSnapshot =
@@ -104,6 +117,7 @@ public class DbLiteTest {
         new String[] {"-o", "merge", "--fn-data-path", dbPath + File.separator + databaseDir,
             "--dataset-path", dbPath + File.separator + "history"};
     Args.getInstance().getStorage().setCheckpointVersion(checkpointVersion);
+    Args.getInstance().setHistoryBalanceLookup(historyBalanceLookup);
     DbLite.setRecentBlks(3);
     // start fullNode
     startApp();
@@ -117,8 +131,9 @@ public class DbLiteTest {
     cli.execute(argsForSnapshot);
     // start fullNode
     startApp();
-    // produce transactions
-    generateSomeTransactions(checkpointVersion == 1 ? 6 : 18);
+    // produce transactions; when trimming history we need more blocks beyond the snapshot
+    // so that trimExtraHistory has enough blocks with balance-trace data to exercise deletion
+    generateSomeTransactions(advanceSnapshot ? (checkpointVersion == 1 ? 6 : 18) : 18);
     // stop the node
     shutdown();
     // generate history
@@ -137,11 +152,13 @@ public class DbLiteTest {
           String.format("rename snapshot to %s failed",
               Paths.get(dbPath, databaseDir)));
     }
-    // start and validate the snapshot
-    startApp();
-    generateSomeTransactions(checkpointVersion == 1 ? 18 : 6);
-    // stop the node
-    shutdown();
+    if (advanceSnapshot) {
+      // start and validate the snapshot, producing blocks beyond history
+      startApp();
+      generateSomeTransactions(checkpointVersion == 1 ? 18 : 6);
+      // stop the node
+      shutdown();
+    }
     // merge history
     cli.execute(argsForMerge);
     // start and validate

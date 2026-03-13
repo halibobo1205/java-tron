@@ -57,3 +57,6 @@ Wallet
 
 /framework/propPath
 .cache
+
+#AI
+.claude

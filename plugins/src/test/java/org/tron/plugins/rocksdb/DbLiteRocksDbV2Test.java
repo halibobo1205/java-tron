@@ -8,6 +8,6 @@ public class DbLiteRocksDbV2Test extends DbLiteTest {
 
   @Test
   public void testToolsWithRocksDB() throws InterruptedException, IOException {
-    testTools("ROCKSDB", 2);
+    testTools("ROCKSDB", 2, true, false);
   }
 }

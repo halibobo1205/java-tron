@@ -6,6 +6,7 @@ import com.google.common.collect.Maps;
 import com.google.common.primitives.Bytes;
 import com.google.common.primitives.Ints;
 import com.google.common.primitives.Longs;
+import com.google.protobuf.ByteString;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -30,6 +31,7 @@ import org.tron.plugins.utils.db.DBInterface;
 import org.tron.plugins.utils.db.DBIterator;
 import org.tron.plugins.utils.db.DbTool;
 import org.tron.protos.Protocol;
+import org.tron.protos.contract.BalanceContract;
 import picocli.CommandLine;
 
 @Slf4j(topic = "lite")
@@ -57,13 +59,17 @@ public class DbLite implements Callable<Integer> {
   private static final String TRANSACTION_HISTORY_DB_NAME = "transactionHistoryStore";
   private static final String PROPERTIES_DB_NAME = "properties";
   private static final String TRANS_CACHE_DB_NAME = "trans-cache";
+  private static final String BALANCE_TRACE_DB_NAME = "balance-trace";
+  private static final String ACCOUNT_TRACE_DB_NAME = "account-trace";
 
   private static final List<String> archiveDbs = Arrays.asList(
       BLOCK_DB_NAME,
       BLOCK_INDEX_DB_NAME,
       TRANS_DB_NAME,
       TRANSACTION_RET_DB_NAME,
-      TRANSACTION_HISTORY_DB_NAME);
+      TRANSACTION_HISTORY_DB_NAME,
+      BALANCE_TRACE_DB_NAME,
+      ACCOUNT_TRACE_DB_NAME);
 
   enum Operate { split, merge }
 
@@ -522,24 +528,42 @@ public class DbLite implements Callable<Integer> {
     DBInterface blockDb = DbTool.getDB(liteDir, BLOCK_DB_NAME);
     DBInterface transDb = DbTool.getDB(liteDir, TRANS_DB_NAME);
     DBInterface tranRetDb = DbTool.getDB(liteDir, TRANSACTION_RET_DB_NAME);
-
+    DBInterface balanceTraceDb = DbTool.getDB(liteDir, BALANCE_TRACE_DB_NAME);
+    DBInterface accountTraceDb = DbTool.getDB(liteDir, ACCOUNT_TRACE_DB_NAME);
 
     ProgressBar.wrap(LongStream.rangeClosed(start, end)
         .boxed()
-        .sorted((a, b) -> Long.compare(b, a)), "trimHistory").forEach(n -> {
+        .sorted((a, b) -> Long.compare(b, a)), "trimHistory")
+        .map(ByteArray::fromLong).forEach(n -> {
           try {
-            byte[] blockIdHash = blockIndexDb.get(ByteArray.fromLong(n));
+            byte[] blockIdHash = blockIndexDb.get(n);
             Protocol.Block block = Protocol.Block.parseFrom(blockDb.get(blockIdHash));
             // delete transactions
             for (Protocol.Transaction e : block.getTransactionsList()) {
               transDb.delete(DBUtils.getTransactionId(e).getBytes());
             }
             // delete transaction result
-            tranRetDb.delete(ByteArray.fromLong(n));
+            tranRetDb.delete(n);
             // delete block
             blockDb.delete(blockIdHash);
             // delete block index
-            blockIndexDb.delete(ByteArray.fromLong(n));
+            blockIndexDb.delete(n);
+            byte[] balanceTrace = balanceTraceDb.get(n);
+            if (balanceTrace != null) {
+              // delete account trace
+              long blockNum = ByteArray.toLong(n);
+              BalanceContract.BlockBalanceTrace.parseFrom(balanceTrace)
+                  .getTransactionBalanceTraceList().stream()
+                  .flatMap(tx -> tx.getOperationList().stream())
+                  .map(BalanceContract.TransactionBalanceTrace.Operation::getAddress)
+                  .distinct()
+                  .map(ByteString::toByteArray)
+                  .map(address -> Bytes.concat(address, Longs.toByteArray(
+                      blockNum ^ Long.MAX_VALUE)))
+                  .forEach(accountTraceDb::delete);
+              // delete balance trace
+              balanceTraceDb.delete(n);
+            }
           } catch (IOException e) {
             throw new RuntimeException(e);
           }
@@ -570,7 +594,8 @@ public class DbLite implements Callable<Integer> {
         DBInterface bakDb = DbTool.getDB(bakDir.toString(), dbName);
         DBInterface destDb = DbTool.getDB(liteDir, dbName);
         try (DBIterator iterator = bakDb.iterator()) {
-          if (TRANS_DB_NAME.equals(dbName) || TRANSACTION_HISTORY_DB_NAME.equals(dbName)) {
+          if (TRANS_DB_NAME.equals(dbName) || TRANSACTION_HISTORY_DB_NAME.equals(dbName)
+              || ACCOUNT_TRACE_DB_NAME.equals(dbName)) {
             iterator.seekToFirst();
           } else {
             iterator.seek(head);
