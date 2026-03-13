@@ -89,7 +89,13 @@ public class DbLiteTest {
 
   public void testTools(String dbType, int checkpointVersion)
       throws InterruptedException, IOException {
-    logger.info("dbType {}, checkpointVersion {}", dbType, checkpointVersion);
+    testTools(dbType, checkpointVersion, false, false);
+  }
+
+  public void testTools(String dbType, int checkpointVersion, boolean advanceSnapshot,
+      boolean historyBalanceLookup) throws InterruptedException, IOException {
+    logger.info("dbType {}, checkpointVersion {}, advanceSnapshot {}, historyBalanceLookup {}",
+        dbType, checkpointVersion, advanceSnapshot, historyBalanceLookup);
     dbPath = String.format("%s_%s_%d", dbPath, dbType, System.currentTimeMillis());
     init(dbType);
     final String[] argsForSnapshot =
@@ -104,6 +110,7 @@ public class DbLiteTest {
         new String[] {"-o", "merge", "--fn-data-path", dbPath + File.separator + databaseDir,
             "--dataset-path", dbPath + File.separator + "history"};
     Args.getInstance().getStorage().setCheckpointVersion(checkpointVersion);
+    Args.getInstance().setHistoryBalanceLookup(historyBalanceLookup);
     DbLite.setRecentBlks(3);
     // start fullNode
     startApp();
@@ -117,8 +124,7 @@ public class DbLiteTest {
     cli.execute(argsForSnapshot);
     // start fullNode
     startApp();
-    // produce transactions
-    generateSomeTransactions(checkpointVersion == 1 ? 6 : 18);
+    generateSomeTransactions(advanceSnapshot ? (checkpointVersion == 1 ? 6 : 18) : 18);
     // stop the node
     shutdown();
     // generate history
@@ -137,11 +143,11 @@ public class DbLiteTest {
           String.format("rename snapshot to %s failed",
               Paths.get(dbPath, databaseDir)));
     }
-    // start and validate the snapshot
-    startApp();
-    generateSomeTransactions(checkpointVersion == 1 ? 18 : 6);
-    // stop the node
-    shutdown();
+    if (advanceSnapshot) {
+      startApp();
+      generateSomeTransactions(checkpointVersion == 1 ? 18 : 6);
+      shutdown();
+    }
     // merge history
     cli.execute(argsForMerge);
     // start and validate
