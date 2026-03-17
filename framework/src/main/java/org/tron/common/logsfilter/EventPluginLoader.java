@@ -3,6 +3,7 @@ package org.tron.common.logsfilter;
 import com.beust.jcommander.internal.Sets;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import java.io.File;
 import java.util.HashSet;
 import java.util.List;
@@ -37,7 +38,7 @@ public class EventPluginLoader {
 
   private List<IPluginEventListener> eventListeners;
 
-  private ObjectMapper objectMapper = new ObjectMapper();
+  private ObjectMapper objectMapper = JsonMapper.builder().build();
 
   private String serverAddress;
 
