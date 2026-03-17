@@ -7,6 +7,6 @@ public class SerializersTest {
 
   @Test
   public void testSerializeFieldsOnly() {
-    Serializers.serializeFieldsOnly("testString", true);
+    Serializers.serializeFieldsOnly("testString");
   }
 }

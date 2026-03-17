@@ -1,6 +1,5 @@
 package org.tron.core.zksnark;
 
-import com.alibaba.fastjson.JSONArray;
 import com.google.common.base.Charsets;
 import com.google.common.collect.Lists;
 import com.google.common.io.Files;
@@ -21,6 +20,7 @@ import org.tron.core.capsule.IncrementalMerkleTreeCapsule;
 import org.tron.core.capsule.IncrementalMerkleVoucherCapsule;
 import org.tron.core.capsule.PedersenHashCapsule;
 import org.tron.core.config.args.Args;
+import org.tron.json.JSONArray;
 import org.tron.protos.contract.ShieldContract.PedersenHash;
 
 public class MerkleTreeTest extends BaseTest {
@@ -63,8 +63,7 @@ public class MerkleTreeTest extends BaseTest {
     List<String> readLines = Files.readLines(new File(file1),
         Charsets.UTF_8);
 
-    return JSONArray
-        .parseArray(readLines.stream().reduce((s, s2) -> s + s2).get());
+    return JSONArray.parseArray(readLines.stream().reduce((s, s2) -> s + s2).get());
   }
 
   private String PedersenHash2String(PedersenHash hash) {
