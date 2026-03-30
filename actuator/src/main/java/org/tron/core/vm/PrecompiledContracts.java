@@ -65,7 +65,6 @@ import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.capsule.WitnessCapsule;
 import org.tron.core.db.TransactionTrace;
-import org.tron.core.exception.TronException;
 import org.tron.core.exception.ZksnarkException;
 import org.tron.core.vm.config.VMConfig;
 import org.tron.core.vm.program.Program;
@@ -666,10 +665,9 @@ public class PrecompiledContracts {
         MUtil.checkCPUTimeForModExp();
       }
 
-      if (VMConfig.allowTvmOsaka() &&
-          (baseLen > UPPER_BOUND || expLen > UPPER_BOUND || modLen > UPPER_BOUND)) {
-          throw Program.Exception.contractExecuteException(
-              new TronException("one or more of base/exponent/modulus length exceeded 1024 bytes"));
+      if (VMConfig.allowTvmOsaka()
+          && (baseLen > UPPER_BOUND || expLen > UPPER_BOUND || modLen > UPPER_BOUND)) {
+        return Pair.of(false, EMPTY_BYTE_ARRAY);
       }
 
       BigInteger base = parseArg(data, ARGS_OFFSET, baseLen);
