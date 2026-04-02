@@ -144,6 +144,17 @@ subprojects {
                         details.because("Automatically replace android guava with jre version: ${requestedVersion} -> ${jreVersion}")
                     }
                 }
+                // Fix CVE-2026-33871: Netty HTTP/2 CONTINUATION Frame Flood DoS
+                // Affected: netty-codec-http2 < 4.1.132.Final
+                // https://github.com/advisories/GHSA-w9fj-cfpg-grvv
+                if (details.requested.group == 'io.netty') {
+                    def nettyVersion = details.requested.version
+                    if (nettyVersion != null && nettyVersion.startsWith('4.1.') &&
+                            nettyVersion < '4.1.132.Final') {
+                        details.useVersion('4.1.132.Final')
+                        details.because("CVE-2026-33871: force Netty >= 4.1.132.Final to fix HTTP/2 CONTINUATION frame DoS")
+                    }
+                }
             }
         }
     }
