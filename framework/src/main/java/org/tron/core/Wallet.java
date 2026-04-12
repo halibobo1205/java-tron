@@ -52,6 +52,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
@@ -3847,14 +3848,14 @@ public class Wallet {
         for (String topic : topicsList) {
           byte[] topicHash = Hash.sha3(ByteArray.fromString(topic));
           if (Arrays.equals(topicsBytes, topicHash)) {
-            if (topic.toLowerCase().contains("mint")) {
+            if (topic.toLowerCase(Locale.ROOT).contains("mint")) {
               return 1;
-            } else if (topic.toLowerCase().contains("transfer")) {
+            } else if (topic.toLowerCase(Locale.ROOT).contains("transfer")) {
               return 2;
-            } else if (topic.toLowerCase().contains("burn")) {
-              if (topic.toLowerCase().contains("leaf")) {
+            } else if (topic.toLowerCase(Locale.ROOT).contains("burn")) {
+              if (topic.toLowerCase(Locale.ROOT).contains("leaf")) {
                 return 3;
-              } else if (topic.toLowerCase().contains("token")) {
+              } else if (topic.toLowerCase(Locale.ROOT).contains("token")) {
                 return 4;
               }
             }
