@@ -430,6 +430,7 @@ public class DataWord implements Comparable<DataWord> {
     return Hex.toHexString(pref).substring(0, 6);
   }
 
+  @SuppressWarnings("StringCaseLocaleUsage")
   public String shortHex() {
     String hexValue = Hex.toHexString(getNoLeadZeroesData()).toUpperCase();
     return "0x" + hexValue.replaceFirst("^0+(?!$)", "");

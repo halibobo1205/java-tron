@@ -161,6 +161,7 @@ public class CronExpressionTest {
 
   }
 
+  @SuppressWarnings("StringCaseLocaleUsage")
   @Test
   public void testQuartz() throws Exception {
     CronExpression cronExpression = new CronExpression("19 15 10 4 Apr ? ");

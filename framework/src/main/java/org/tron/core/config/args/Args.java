@@ -35,6 +35,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -892,7 +893,7 @@ public class Args extends CommonParameter {
     PARAMETER.disabledApiList =
         config.hasPath(ConfigKey.NODE_DISABLED_API_LIST)
             ? config.getStringList(ConfigKey.NODE_DISABLED_API_LIST)
-            .stream().map(String::toLowerCase).collect(Collectors.toList())
+            .stream().map(s -> s.toLowerCase(Locale.ROOT)).collect(Collectors.toList())
             : Collections.emptyList();
 
     if (config.hasPath(ConfigKey.NODE_SHUTDOWN_BLOCK_TIME)) {
@@ -1770,7 +1771,7 @@ public class Args extends CommonParameter {
     Map<String, String[]> groupOptionListMap = Args.getOptionGroup();
     for (Map.Entry<String, String[]> entry : groupOptionListMap.entrySet()) {
       String group = entry.getKey();
-      helpStr.append(String.format("%n%s OPTIONS:%n", group.toUpperCase()));
+      helpStr.append(String.format("%n%s OPTIONS:%n", group.toUpperCase(Locale.ROOT)));
       int optionMaxLength = Arrays.stream(entry.getValue()).mapToInt(p -> {
         ParameterDescription tmpParameterDescription = stringParameterDescriptionMap.get(p);
         if (tmpParameterDescription == null) {
@@ -1810,7 +1811,7 @@ public class Args extends CommonParameter {
     if (name.length() <= 1) {
       return name;
     }
-    name = name.substring(0, 1).toUpperCase() + name.substring(1);
+    name = name.substring(0, 1).toUpperCase(Locale.ROOT) + name.substring(1);
     return name;
   }
 

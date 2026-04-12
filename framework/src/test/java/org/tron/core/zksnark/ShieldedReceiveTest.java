@@ -2527,6 +2527,7 @@ public class ShieldedReceiveTest extends BaseTest {
     Assert.assertTrue(ok2);
   }
 
+  @SuppressWarnings("StringCaseLocaleUsage")
   @Test
   public void decodePaymentAddressIgnoreCase() {
     String addressLower =

@@ -12,6 +12,7 @@ public class BytecodeCompiler {
     return compile(code.split("\\s+"));
   }
 
+  @SuppressWarnings("StringCaseLocaleUsage")
   private byte[] compile(String[] tokens) {
     List<Byte> bytecodes = new ArrayList<>();
     int ntokens = tokens.length;

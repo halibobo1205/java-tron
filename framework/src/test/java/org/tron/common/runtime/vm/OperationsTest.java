@@ -489,6 +489,7 @@ public class OperationsTest extends BaseTest {
   }
 
   // test Memory, Storage and Flow Operations
+  @SuppressWarnings("StringCaseLocaleUsage")
   @Test
   public void testMemoryStorageAndFlowOperations() throws ContractValidateException {
     invoke = new ProgramInvokeMockImpl();
@@ -818,6 +819,7 @@ public class OperationsTest extends BaseTest {
     Assert.assertTrue(program.getResult().isRevert());
   }
 
+  @SuppressWarnings("StringCaseLocaleUsage")
   @Ignore
   @Test
   public void testComplexOperations() throws ContractValidateException {

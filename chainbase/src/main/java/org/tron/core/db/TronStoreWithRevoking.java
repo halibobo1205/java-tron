@@ -5,6 +5,7 @@ import com.google.common.collect.Maps;
 import com.google.common.collect.Streams;
 import com.google.common.reflect.TypeToken;
 import java.io.IOException;
+import java.util.Locale;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.nio.file.Paths;
@@ -54,10 +55,10 @@ public abstract class TronStoreWithRevoking<T extends ProtoCapsule> implements I
 
   protected TronStoreWithRevoking(String dbName) {
     String dbEngine = CommonParameter.getInstance().getStorage().getDbEngine();
-    if ("LEVELDB".equals(dbEngine.toUpperCase())) {
+    if ("LEVELDB".equals(dbEngine.toUpperCase(Locale.ROOT))) {
       this.db =  new LevelDB(
           new LevelDbDataSourceImpl(StorageUtils.getOutputDirectoryByDbName(dbName), dbName));
-    } else if ("ROCKSDB".equals(dbEngine.toUpperCase())) {
+    } else if ("ROCKSDB".equals(dbEngine.toUpperCase(Locale.ROOT))) {
       String parentPath = Paths
           .get(StorageUtils.getOutputDirectoryByDbName(dbName), CommonParameter
               .getInstance().getStorage().getDbDirectory()).toString();

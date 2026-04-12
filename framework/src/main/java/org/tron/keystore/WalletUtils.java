@@ -12,6 +12,7 @@ import java.security.NoSuchProviderException;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Locale;
 import java.util.Scanner;
 import org.apache.commons.lang3.StringUtils;
 import org.tron.common.crypto.SignInterface;
@@ -94,7 +95,7 @@ public class WalletUtils {
   }
 
   static String getDefaultKeyDirectory(String osName1) {
-    String osName = osName1.toLowerCase();
+    String osName = osName1.toLowerCase(Locale.ROOT);
 
     if (osName.startsWith("mac")) {
       return String.format(

@@ -116,6 +116,7 @@ public class SM2KeyTest {
     fail("Expecting a SignatureException for invalid signature length");
   }
 
+  @SuppressWarnings("StringCaseLocaleUsage")
   @Test
   public void testSM3Hash() {
     SM2 key = SM2.fromPublicOnly(pubKey);
