@@ -8,6 +8,6 @@ public class DbLiteWithHistoryRocksDbTest extends DbLiteTest {
 
   @Test
   public void testToolsWithTrimHistory() throws InterruptedException, IOException {
-    testTools("ROCKSDB", 1, true, true);
+    testTools("ROCKSDB", 1, false, true);
   }
 }
