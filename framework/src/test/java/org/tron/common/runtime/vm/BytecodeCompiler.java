@@ -2,6 +2,7 @@ package org.tron.common.runtime.vm;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 import org.bouncycastle.util.encoders.Hex;
 import org.tron.core.vm.Op;
@@ -12,13 +13,12 @@ public class BytecodeCompiler {
     return compile(code.split("\\s+"));
   }
 
-  @SuppressWarnings("StringCaseLocaleUsage")
   private byte[] compile(String[] tokens) {
     List<Byte> bytecodes = new ArrayList<>();
     int ntokens = tokens.length;
 
     for (String s : tokens) {
-      String token = s.trim().toUpperCase();
+      String token = s.trim().toUpperCase(Locale.ROOT);
 
       if (token.isEmpty()) {
         continue;
