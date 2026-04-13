@@ -37,10 +37,10 @@ import org.tron.protos.Protocol.AccountType;
  *  #5  Case-insensitive: mixed/lower/upper lookup
  *  #6  Attack: uppercase put + lowercase has
  *  #7  No 'I': ROOT and Turkish keys identical
- *  #8  Turkish legacy key: uppercase input
- *  #9  Turkish legacy key: lowercase input
- *  #10 Turkish legacy key: mixed-case input
- *  #11 Locale migration: tr/az write, non-tr/az read
+ *  #8  Turkish direct key behavior (toLowerCase(TURKISH))
+ *  #9  Valid accountId range: only 'I' differs
+ *  #10 Migration: mixed 'i'/'I' keys normalized to ROOT
+ *  #11 Only lowercase 'i': Turkish key equals ROOT key
  * </pre>
  */
 public class AccountIdIndexStoreTest extends BaseTest {
@@ -134,25 +134,25 @@ public class AccountIdIndexStoreTest extends BaseTest {
   /** Scenario #5: case-insensitive lookup with mixed/lower/upper. */
   @Test
   public void testCaseInsensitive() {
-    byte[] ACCOUNT_NAME = "aABbCcDd_ssd1234".getBytes();
-    byte[] ACCOUNT_ADDRESS = randomBytes(16);
+    byte[] accountName = "aABbCcDd_ssd1234".getBytes();
+    byte[] accountAddress = randomBytes(16);
 
-    AccountCapsule accountCapsule = new AccountCapsule(ByteString.copyFrom(ACCOUNT_ADDRESS),
-        ByteString.copyFrom(ACCOUNT_NAME), AccountType.Normal);
-    accountCapsule.setAccountId(ByteString.copyFrom(ACCOUNT_NAME).toByteArray());
+    AccountCapsule accountCapsule = new AccountCapsule(ByteString.copyFrom(accountAddress),
+        ByteString.copyFrom(accountName), AccountType.Normal);
+    accountCapsule.setAccountId(ByteString.copyFrom(accountName).toByteArray());
     accountIdIndexStore.put(accountCapsule);
 
-    Boolean result = accountIdIndexStore.has(ACCOUNT_NAME);
+    Boolean result = accountIdIndexStore.has(accountName);
     Assert.assertTrue("fail", result);
 
     byte[] lowerCase = ByteString
-        .copyFromUtf8(ByteString.copyFrom(ACCOUNT_NAME).toStringUtf8().toLowerCase(Locale.ROOT))
+        .copyFromUtf8(ByteString.copyFrom(accountName).toStringUtf8().toLowerCase(Locale.ROOT))
         .toByteArray();
     result = accountIdIndexStore.has(lowerCase);
     Assert.assertTrue("lowerCase fail", result);
 
     byte[] upperCase = ByteString
-        .copyFromUtf8(ByteString.copyFrom(ACCOUNT_NAME).toStringUtf8().toUpperCase(Locale.ROOT))
+        .copyFromUtf8(ByteString.copyFrom(accountName).toStringUtf8().toUpperCase(Locale.ROOT))
         .toByteArray();
     result = accountIdIndexStore.has(upperCase);
     Assert.assertTrue("upperCase fail", result);
@@ -243,8 +243,40 @@ public class AccountIdIndexStoreTest extends BaseTest {
   }
 
   /**
-   * Verify which characters in the valid accountId range (0x21 '!' to 0x7E '~')
-   * differ between ROOT and Turkish toLowerCase.
+   * Scenario #8: Turkish direct key — toLowerCase(TURKISH) produces
+   * different results for inputs containing uppercase 'I'.
+   *
+   * <pre>
+   * +-------+----------------+---------------------+
+   * | Case  | Input          | toLower(TURKISH)    |
+   * +-------+----------------+---------------------+
+   * |  #8a  | "AAAAAAAI"     | "aaaaaaaı"          |
+   * |  #8b  | "aaaaaaai"     | "aaaaaaai"          |
+   * |  #8c  | "AaAaAaAI"     | "aaaaaaaı"          |
+   * |  #8d  | "AiBI"         | "aibı"              |
+   * +-------+----------------+---------------------+
+   * </pre>
+   */
+  @Test
+  @SuppressWarnings("StringCaseLocaleUsage")
+  public void testTurkishDirectKey() {
+    // #8a: all uppercase with 'I' → 'ı'
+    Assert.assertEquals("aaaaaaaı",
+        "AAAAAAAI".toLowerCase(TURKISH));
+    // #8b: all lowercase — 'i' stays 'i'
+    Assert.assertEquals("aaaaaaai",
+        "aaaaaaai".toLowerCase(TURKISH));
+    // #8c: mixed case with uppercase 'I'
+    Assert.assertEquals("aaaaaaaı",
+        "AaAaAaAI".toLowerCase(TURKISH));
+    // #8d: mixed i/I — each mapped independently
+    Assert.assertEquals("aibı",
+        "AiBI".toLowerCase(TURKISH));
+  }
+
+  /**
+   * Scenario #9: verify which characters in the valid accountId range
+   * (0x21 '!' to 0x7E '~') differ between ROOT and Turkish toLowerCase.
    * Expected: only 'I' (U+0049) differs.
    *
    * @see org.tron.core.utils.TransactionUtil#validReadableBytes
@@ -276,167 +308,9 @@ public class AccountIdIndexStoreTest extends BaseTest {
   }
 
   /**
-   * Scenario #8: direct Turkish key — toLowerCase(TURKISH) reproduces
-   * the exact key a Turkish node stored for the same-case input.
-   *
-   * <pre>
-   * +-------+----------------+---------------------+
-   * | Case  | Input          | toLower(TURKISH)    |
-   * +-------+----------------+---------------------+
-   * |  #8a  | "AAAAAAAI"     | "aaaaaaaı"          |
-   * |  #8b  | "aaaaaaai"     | "aaaaaaai"          |
-   * |  #8c  | "AaAaAaAI"     | "aaaaaaaı"          |
-   * |  #8d  | "AiBI"         | "aibı"              |
-   * +-------+----------------+---------------------+
-   * </pre>
-   */
-  @Test
-  @SuppressWarnings("StringCaseLocaleUsage")
-  public void testTurkishDirectKey() {
-    // #8a: all uppercase with 'I' → 'ı'
-    Assert.assertEquals("aaaaaaaı",
-        "AAAAAAAI".toLowerCase(TURKISH));
-    // #8b: all lowercase — 'i' stays 'i'
-    Assert.assertEquals("aaaaaaai",
-        "aaaaaaai".toLowerCase(TURKISH));
-    // #8c: mixed case with uppercase 'I'
-    Assert.assertEquals("aaaaaaaı",
-        "AaAaAaAI".toLowerCase(TURKISH));
-    // #8d: mixed i/I — each mapped independently
-    Assert.assertEquals("aibı",
-        "AiBI".toLowerCase(TURKISH));
-  }
-
-  /**
-   * Scenario #9: normalized Turkish key — ROOT key with all 'i' replaced
-   * by 'ı'. This handles cross-case queries.
-   *
-   * <pre>
-   * +-------+----------------+-----------+---------------------+
-   * | Case  | Input          | ROOT key  | normalized key      |
-   * +-------+----------------+-----------+---------------------+
-   * |  #9a  | "AAAAAAAI"     | "aaaaaaai"| "aaaaaaaı"          |
-   * |  #9b  | "aaaaaaai"     | "aaaaaaai"| "aaaaaaaı"          |
-   * |  #9c  | "ABCDEFGH"     | "abcdefgh"| "abcdefgh" (same)   |
-   * +-------+----------------+-----------+---------------------+
-   * </pre>
-   */
-  @Test
-  public void testTurkishNormalizedKey() {
-    // #9a/#9b: any case variant with 'i' → all 'i' become 'ı'
-    byte[] rootKey = AccountIdIndexStore.getLowerCaseAccountId(
-        "AAAAAAAI".getBytes(StandardCharsets.UTF_8));
-    String normalized = new String(rootKey, StandardCharsets.UTF_8)
-        .replace('i', '\u0131'); // ı Turkish dotless-i
-    Assert.assertEquals("aaaaaaaı", normalized);
-
-    // same result for lowercase input
-    byte[] rootKey2 = AccountIdIndexStore.getLowerCaseAccountId(
-        "aaaaaaai".getBytes(StandardCharsets.UTF_8));
-    Assert.assertEquals(normalized,
-        new String(rootKey2, StandardCharsets.UTF_8)
-            .replace('i', '\u0131')); // ı Turkish dotless-i
-
-    // #9c: no 'i' → normalized equals ROOT (no extra probe needed)
-    byte[] rootKeyNoI = AccountIdIndexStore.getLowerCaseAccountId(
-        "ABCDEFGH".getBytes(StandardCharsets.UTF_8));
-    String normalizedNoI = new String(rootKeyNoI, StandardCharsets.UTF_8)
-        .replace('i', '\u0131'); // ı Turkish dotless-i
-    Assert.assertEquals("abcdefgh", normalizedNoI);
-  }
-
-  /**
-   * Scenario #10: locale migration — all uppercase 'I'.
-   * Turkish node stored "BBBBBBBI" → key "bbbbbbbbı".
-   * All query case variants must find it.
-   *
-   * <pre>
-   * stored: "BBBBBBBI".toLower(TR) = "bbbbbbbı"
-   * +---+-----------+-------+--------+------------+--------+
-   * |   | query     | ROOT  | direct | normalized | result |
-   * +---+-----------+-------+--------+------------+--------+
-   * | a | "BBBBBBBI"| miss  | hit    | -          |  ✓     |
-   * | b | "bbbbbbbi"| miss  | skip   | hit        |  ✓     |
-   * | c | "BbBbBbBi"| miss  | miss   | hit        |  ✓     |
-   * +---+-----------+-------+--------+------------+--------+
-   * </pre>
-   */
-  @Test
-  @SuppressWarnings("StringCaseLocaleUsage")
-  public void testLocaleMigrationAllUpperI() {
-    byte[] accountId = "BBBBBBBI".getBytes(StandardCharsets.UTF_8);
-    byte[] address = randomBytes(16);
-
-    byte[] legacyKey = new String(accountId, StandardCharsets.UTF_8)
-        .toLowerCase(TURKISH).getBytes(StandardCharsets.UTF_8);
-    accountIdIndexStore.put(legacyKey, new BytesCapsule(address));
-
-    // (a) same-case query — found via direct fallback
-    Assert.assertTrue("has(BBBBBBBI)", accountIdIndexStore.has(accountId));
-    Assert.assertArrayEquals("get(BBBBBBBI)",
-        address, accountIdIndexStore.get(ByteString.copyFrom(accountId)));
-
-    // (b) all-lowercase query — found via normalized fallback
-    byte[] lowerQuery = "bbbbbbbi".getBytes(StandardCharsets.UTF_8);
-    Assert.assertTrue("has(bbbbbbbi)", accountIdIndexStore.has(lowerQuery));
-    Assert.assertArrayEquals("get(bbbbbbbi)",
-        address, accountIdIndexStore.get(ByteString.copyFrom(lowerQuery)));
-
-    // (c) mixed-case query (lowercase 'i') — found via normalized fallback
-    byte[] mixedQuery = "BbBbBbBi".getBytes(StandardCharsets.UTF_8);
-    Assert.assertTrue("has(BbBbBbBi)", accountIdIndexStore.has(mixedQuery));
-    Assert.assertArrayEquals("get(BbBbBbBi)",
-        address, accountIdIndexStore.get(ByteString.copyFrom(mixedQuery)));
-  }
-
-  /**
-   * Scenario #11: locale migration — two uppercase 'I' (like "AIBI").
-   * All query case variants must find it.
-   *
-   * <pre>
-   * stored: "DDIDDI".toLower(TR) = "ddıddı"
-   * +---+-----------+-------+--------+------------+--------+
-   * |   | query     | ROOT  | direct | normalized | result |
-   * +---+-----------+-------+--------+------------+--------+
-   * | a | "DDIDDI"  | miss  | hit    | -          |  ✓     |
-   * | b | "ddiddi"  | miss  | skip   | hit        |  ✓     |
-   * | c | "DdIddI"  | miss  | hit    | -          |  ✓     |
-   * | d | "DdiDdi"  | miss  | miss   | hit        |  ✓     |
-   * +---+-----------+-------+--------+------------+--------+
-   * </pre>
-   */
-  @Test
-  @SuppressWarnings("StringCaseLocaleUsage")
-  public void testLocaleMigrationMultipleUpperI() {
-    byte[] accountId = "DDIDDI".getBytes(StandardCharsets.UTF_8);
-    byte[] address = randomBytes(16);
-
-    byte[] legacyKey = new String(accountId, StandardCharsets.UTF_8)
-        .toLowerCase(TURKISH).getBytes(StandardCharsets.UTF_8);
-    accountIdIndexStore.put(legacyKey, new BytesCapsule(address));
-
-    // (a) same-case
-    Assert.assertArrayEquals("get(DDIDDI)",
-        address, accountIdIndexStore.get(ByteString.copyFrom(accountId)));
-    // (b) all-lowercase — normalized fallback
-    Assert.assertArrayEquals("get(ddiddi)", address,
-        accountIdIndexStore.get(ByteString.copyFrom(
-            "ddiddi".getBytes(StandardCharsets.UTF_8))));
-    // (c) same uppercase I positions — direct fallback
-    Assert.assertArrayEquals("get(DdIddI)", address,
-        accountIdIndexStore.get(ByteString.copyFrom(
-            "DdIddI".getBytes(StandardCharsets.UTF_8))));
-    // (d) all lowercase i — normalized fallback
-    Assert.assertArrayEquals("get(DdiDdi)", address,
-        accountIdIndexStore.get(ByteString.copyFrom(
-            "DdiDdi".getBytes(StandardCharsets.UTF_8))));
-  }
-
-  /**
-   * Scenario #12: Turkish key migration — mixed 'i' and 'I' (like "AIBi", "AiBI").
-   * Before migration, cross-case query was a known limitation.
-   * After migrateTurkishKeys(), all Turkish keys are normalized to ROOT,
-   * so both same-case and cross-case queries work.
+   * Scenario #10: Turkish key migration — mixed 'i' and 'I' (like "AIBi", "AiBI").
+   * After {@link MigrateTurkishKeyHelper#doWork()}, all Turkish keys are
+   * normalized to ROOT, so all query case variants work.
    *
    * <pre>
    * stored(1): "EEIEEi".toLower(TR) = "eeıeei" → migrated to "eeieei"
@@ -460,7 +334,7 @@ public class AccountIdIndexStoreTest extends BaseTest {
         .toLowerCase(TURKISH).getBytes(StandardCharsets.UTF_8);
     accountIdIndexStore.put(legacyKey2, new BytesCapsule(address2));
 
-    // Before migration: cross-case query misses (mixed i/ı key)
+    // Before migration: ROOT key lookup misses (key contains ı not i)
     Assert.assertFalse("pre-migrate: has(eeieei) should miss",
         accountIdIndexStore.has("eeieei".getBytes(StandardCharsets.UTF_8)));
     Assert.assertFalse("pre-migrate: has(ffiffi) should miss",
@@ -501,8 +375,8 @@ public class AccountIdIndexStoreTest extends BaseTest {
   }
 
   /**
-   * Scenario #13: accountId with only lowercase 'i' (like "Ai", "AiBi").
-   * Turkish node stored the same key as ROOT — no fallback needed.
+   * Scenario #11: accountId with only lowercase 'i' (like "Ai", "AiBi").
+   * Turkish node stored the same key as ROOT — no migration needed.
    */
   @Test
   @SuppressWarnings("StringCaseLocaleUsage")
