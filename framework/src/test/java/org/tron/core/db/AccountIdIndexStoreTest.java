@@ -375,7 +375,102 @@ public class AccountIdIndexStoreTest extends BaseTest {
   }
 
   /**
-   * Scenario #11: accountId with only lowercase 'i' (like "Ai", "AiBi").
+   * Scenario #11: mainnet data — simulate Turkish locale writes for all 14
+   * mainnet accountId keys, run migration, verify all queries succeed.
+   *
+   * <p>Mainnet keys (already lowercase, as stored in DB):
+   * "", "12345678", "543838383", "bittorrent", "converse", "helloworld",
+   * "infstonessrwallet", "issrwallet", "justdoit", "justinsun",
+   * "justinsuntron", "rtytiturtet", "tronbetfestival", "vena_family"
+   *
+   * <p>Of these, 10 contain lowercase 'i'. On a Turkish node, the original
+   * accountId (which may have uppercase letters) would produce keys with
+   * 'ı' instead of 'i'. This test simulates that scenario.
+   *
+   * <pre>
+   * Phase 1: write keys as a Turkish node would (toLowerCase(TURKISH))
+   * Phase 2: verify ROOT-based queries miss for keys containing 'I'
+   * Phase 3: run MigrateTurkishKeyHelper
+   * Phase 4: verify all ROOT-based queries succeed
+   * </pre>
+   */
+  @Test
+  @SuppressWarnings("StringCaseLocaleUsage")
+  public void testMainnetKeysMigration() {
+    // Original accountIds as they might have been submitted (mixed case)
+    // The lowercase versions match the 14 mainnet keys observed in production
+    String[] mainnetAccountIds = {
+        "12345678",       // no letters
+        "543838383",      // no letters
+        "BitTorrent",     // contains I → Turkish key differs
+        "Converse",       // no I
+        "HelloWorld",     // no I
+        "InfStonesSSRWallet", // contains I → Turkish key differs
+        "ISSRWallet",     // contains I → Turkish key differs
+        "JustDoIt",       // contains I → Turkish key differs
+        "JustinSun",      // no I
+        "JustinSunTron",  // no I
+        "RtytIturtet",    // contains I → Turkish key differs
+        "TronBetFestival",// no I
+        "vena_family"     // no I, all lowercase
+    };
+
+    byte[][] addresses = new byte[mainnetAccountIds.length][];
+    byte[][] turkishKeys = new byte[mainnetAccountIds.length][];
+
+    // Phase 1: simulate Turkish node writes
+    for (int i = 0; i < mainnetAccountIds.length; i++) {
+      addresses[i] = randomBytes(16);
+      String turkishLower = mainnetAccountIds[i].toLowerCase(TURKISH);
+      turkishKeys[i] = turkishLower.getBytes(StandardCharsets.UTF_8);
+      accountIdIndexStore.put(turkishKeys[i], new BytesCapsule(addresses[i]));
+    }
+
+    // Phase 2: verify which keys are findable via ROOT lookup before migration
+    for (int i = 0; i < mainnetAccountIds.length; i++) {
+      String rootLower = mainnetAccountIds[i].toLowerCase(Locale.ROOT);
+      String turkishLower = mainnetAccountIds[i].toLowerCase(TURKISH);
+      boolean shouldMiss = !rootLower.equals(turkishLower);
+      if (shouldMiss) {
+        Assert.assertNull(
+            "pre-migrate: ROOT query should miss for " + mainnetAccountIds[i],
+            accountIdIndexStore.get(ByteString.copyFrom(
+                mainnetAccountIds[i].getBytes(StandardCharsets.UTF_8))));
+      } else {
+        Assert.assertArrayEquals(
+            "pre-migrate: ROOT query should hit for " + mainnetAccountIds[i],
+            addresses[i],
+            accountIdIndexStore.get(ByteString.copyFrom(
+                mainnetAccountIds[i].getBytes(StandardCharsets.UTF_8))));
+      }
+    }
+
+    // Phase 3: run migration
+    new MigrateTurkishKeyHelper(chainBaseManager).doWork();
+
+    // Phase 4: verify ALL queries succeed after migration
+    for (int i = 0; i < mainnetAccountIds.length; i++) {
+      // Original case query
+      Assert.assertArrayEquals(
+          "post-migrate: get(" + mainnetAccountIds[i] + ")",
+          addresses[i],
+          accountIdIndexStore.get(ByteString.copyFrom(
+              mainnetAccountIds[i].getBytes(StandardCharsets.UTF_8))));
+      // All-lowercase query
+      String lower = mainnetAccountIds[i].toLowerCase(Locale.ROOT);
+      Assert.assertTrue(
+          "post-migrate: has(" + lower + ")",
+          accountIdIndexStore.has(lower.getBytes(StandardCharsets.UTF_8)));
+      // All-uppercase query
+      String upper = mainnetAccountIds[i].toUpperCase(Locale.ROOT);
+      Assert.assertTrue(
+          "post-migrate: has(" + upper + ")",
+          accountIdIndexStore.has(upper.getBytes(StandardCharsets.UTF_8)));
+    }
+  }
+
+  /**
+   * Scenario #12: accountId with only lowercase 'i' (like "Ai", "AiBi").
    * Turkish node stored the same key as ROOT — no migration needed.
    */
   @Test
