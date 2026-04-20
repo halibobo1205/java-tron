@@ -1,18 +1,12 @@
 package org.tron.program;
 
+import com.google.protobuf.ByteString;
+import java.security.SignatureException;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.support.DefaultListableBeanFactory;
-import org.tron.common.application.Application;
-import org.tron.common.application.ApplicationFactory;
-import org.tron.common.application.TronApplicationContext;
-import org.tron.common.arch.Arch;
-import org.tron.common.exit.ExitManager;
-import org.tron.common.log.LogService;
-import org.tron.common.parameter.CommonParameter;
-import org.tron.common.prometheus.Metrics;
-import org.tron.core.config.DefaultConfig;
-import org.tron.core.config.args.Args;
-import org.tron.core.exception.TronError;
+import org.tron.common.crypto.SignUtils;
+import org.tron.common.utils.ByteArray;
+import org.tron.common.utils.Sha256Hash;
+import org.tron.core.capsule.TransactionCapsule;
 
 @Slf4j(topic = "app")
 public class FullNode {
@@ -20,50 +14,16 @@ public class FullNode {
   /**
    * Start the FullNode.
    */
-  public static void main(String[] args) {
-    ExitManager.initExceptionHandler();
-    checkJdkVersion();
-    Args.setParam(args, "config.conf");
-    CommonParameter parameter = Args.getInstance();
-
-    LogService.load(parameter.getLogbackPath());
-
-    if (parameter.isSolidityNode()) {
-      SolidityNode.start();
-      return;
-    }
-    if (parameter.isKeystoreFactory()) {
-      KeystoreFactory.start();
-      return;
-    }
-    logger.info("Full node running.");
-    if (Args.getInstance().isDebug()) {
-      logger.info("in debug mode, it won't check energy time");
-    } else {
-      logger.info("not in debug mode, it will check energy time");
-    }
-
-    // init metrics first
-    Metrics.init();
-
-    DefaultListableBeanFactory beanFactory = new DefaultListableBeanFactory();
-    beanFactory.setAllowCircularReferences(false);
-    TronApplicationContext context =
-        new TronApplicationContext(beanFactory);
-    context.register(DefaultConfig.class);
-    context.refresh();
-    Application appT = ApplicationFactory.create(context);
-    context.registerShutdownHook();
-    appT.startup();
-    appT.blockUntilShutdown();
-  }
-
-  private static void checkJdkVersion() {
-    try {
-      Arch.throwIfUnsupportedJavaVersion();
-    } catch (UnsupportedOperationException e) {
-      System.err.println(e.getMessage());
-      throw new TronError(e, TronError.ErrCode.JDK_VERSION);
+  public static void main(String[] args) throws SignatureException, InterruptedException {
+    ByteString signature = ByteString.copyFrom(ByteArray.fromHexString(
+        "6f9ef9d226dc87bceb571c859614fa7dcdbe0be6e1dfea54fb99cb997"
+            + "0fa09af91a945e3b0eb1eea559c89cc4bd16932bfabcf0e63a0e0848fbb7fa0db4dcfd600"));
+    Sha256Hash hash = Sha256Hash.wrap(ByteArray.fromHexString(
+        "73350db08350056f128734ec26444ea549299256ea99e0aaab7f5ad60d0d552a"));
+    while (true) {
+      String base64 = TransactionCapsule.getBase64FromByteString(signature);
+      SignUtils.signatureToAddress(hash.getBytes(), base64, true);
+      Thread.sleep(100);
     }
   }
 }
