@@ -1,6 +1,7 @@
 package org.tron.json;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.core.StreamReadConstraints;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
@@ -17,6 +18,14 @@ public final class JSON {
       .build();
 
   private JSON() {
+  }
+
+  public static void initConstraints(int maxNestingDepth, long maxTokenCount) {
+    MAPPER.getFactory().setStreamReadConstraints(
+        StreamReadConstraints.builder()
+            .maxNestingDepth(maxNestingDepth)
+            .maxTokenCount(maxTokenCount)
+            .build());
   }
 
   static boolean isNullLiteral(String text) {
