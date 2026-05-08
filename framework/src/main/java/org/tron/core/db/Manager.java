@@ -1638,6 +1638,7 @@ public class Manager {
     session.reset();
     session.setValue(revokingStore.buildSession());
 
+    HistoryBlockHashUtil.write(this, blockCapsule);
     accountStateCallBack.preExecute(blockCapsule);
 
     if (getDynamicPropertiesStore().getAllowMultiSign() == 1) {
