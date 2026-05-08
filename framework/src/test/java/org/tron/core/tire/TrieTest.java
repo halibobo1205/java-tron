@@ -18,6 +18,7 @@
 
 package org.tron.core.tire;
 
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -31,6 +32,7 @@ import org.tron.core.capsule.utils.FastByteComparisons;
 import org.tron.core.capsule.utils.RLP;
 import org.tron.core.trie.TrieImpl;
 import org.tron.core.trie.TrieImpl.Node;
+import org.tron.core.trie.TrieKey;
 
 public class TrieTest {
 
@@ -237,6 +239,38 @@ public class TrieTest {
     byte[] hashAfterReinsert = trie.getRootHash();
     Assert.assertArrayEquals("root hash must match original after re-insert",
         hashBefore, hashAfterReinsert);
+  }
+
+  @Test
+  public void testInsertPropagatesChangedExtensionChild() throws Exception {
+    TrieImpl trie = new TrieImpl();
+    byte[] oldKey = new byte[]{0x01, 0x12};
+    byte[] newKey = new byte[]{0x01, 0x34};
+    byte[] oldValue = "old".getBytes();
+    byte[] newValue = "new".getBytes();
+
+    Node child = trie.new Node(TrieKey.fromNormal(new byte[]{0x12}), oldValue);
+    Node root = trie.new Node(nonTerminalKey(0, 1), child);
+    setRoot(trie, root);
+
+    trie.put(newKey, newValue);
+
+    Assert.assertArrayEquals(oldValue, trie.get(oldKey));
+    Assert.assertArrayEquals(newValue, trie.get(newKey));
+  }
+
+  private static TrieKey nonTerminalKey(int... hexes) {
+    TrieKey key = TrieKey.empty(false);
+    for (int hex : hexes) {
+      key = key.concat(TrieKey.singleHex(hex));
+    }
+    return key;
+  }
+
+  private static void setRoot(TrieImpl trie, Node root) throws Exception {
+    Field rootField = TrieImpl.class.getDeclaredField("root");
+    rootField.setAccessible(true);
+    rootField.set(trie, root);
   }
 
   /*

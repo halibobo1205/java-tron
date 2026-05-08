@@ -192,8 +192,9 @@ public class TrieImpl implements Trie<byte[]> {
         n.dispose();
         return newBranchNode;
       } else if (commonPrefix.equals(currentNodeKey)) {
-        insert(n.kvNodeGetChildNode(), k.shift(commonPrefix.getLength()), nodeOrValue);
-        return n.invalidate();
+        Node newChild = insert(n.kvNodeGetChildNode(), k.shift(commonPrefix.getLength()),
+            nodeOrValue);
+        return n.kvNodeSetValueOrNode(newChild);
       } else {
         Node newBranchNode = new Node();
         Node newKvNode = new Node(commonPrefix, newBranchNode);
