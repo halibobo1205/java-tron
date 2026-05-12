@@ -16,6 +16,7 @@ allprojects {
 def arch = System.getProperty("os.arch").toLowerCase(Locale.ROOT)
 def javaVersion = JavaVersion.current()
 def isArm64 = Architectures.AARCH64.isAlias(arch)
+def isCompatibleWith17 = JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_17)
 def archSource = isArm64 ? "arm" : "x86"
 def isMac = OperatingSystem.current().isMacOsX()
 
@@ -43,10 +44,10 @@ ext.archInfo = [
                 // https://github.com/grpc/grpc-java/pull/11371 , 1.64.x is not supported CentOS 7.
                 ProtocGenVersion: isArm64 || isMac ? '1.81.0' : '1.60.0'
         ],
-        VMOptions: isArm64 ? "${rootDir}/gradle/jdk17/java-tron.vmoptions" : "${rootDir}/gradle/java-tron.vmoptions"
+        VMOptions: isCompatibleWith17 ? "${rootDir}/gradle/jdk17/java-tron.vmoptions" : "${rootDir}/gradle/java-tron.vmoptions"
 ]
 
-if (!archInfo.java.is(archInfo.requires.JavaVersion)) {
+if (!javaVersion.isCompatibleWith(archInfo.requires.JavaVersion)) {
     throw new GradleException("Java ${archInfo.requires.JavaVersion} is required for ${archInfo.name}. Detected version ${archInfo.java}")
 }
 

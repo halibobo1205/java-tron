@@ -29,6 +29,16 @@
 #
 ##############################################################################
 
+## Set TCMalloc as the memory allocator
+
+export LD_PRELOAD="/usr/lib64/libtcmalloc.so"
+export TCMALLOC_RELEASE_RATE=10
+
+# JDK
+ #export JAVA_HOME=/home/java-tron/jdk17
+ #export PATH=$JAVA_HOME/bin:$PATH
+ #export CLASSPATH=.:$JAVA_HOME/lib/dt.jar:$JAVA_HOME/lib/tools.jar
+ #JDK
 
 # adjust JVM start
 # Set the maximum heap size to 9G, adjust as needed
