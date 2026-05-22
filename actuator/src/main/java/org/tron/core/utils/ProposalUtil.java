@@ -6,8 +6,11 @@ import static org.tron.core.Constant.DYNAMIC_ENERGY_INCREASE_FACTOR_RANGE;
 import static org.tron.core.Constant.DYNAMIC_ENERGY_MAX_FACTOR_RANGE;
 import static org.tron.core.Constant.MAX_PROPOSAL_EXPIRE_TIME;
 import static org.tron.core.Constant.MIN_PROPOSAL_EXPIRE_TIME;
+import static org.tron.core.config.Parameter.AdaptiveResourceLimitConstants.EXPAND_RATE_DENOMINATOR;
+import static org.tron.core.config.Parameter.AdaptiveResourceLimitConstants.EXPAND_RATE_NUMERATOR;
 import static org.tron.core.config.Parameter.ChainConstant.ONE_YEAR_BLOCK_NUMBERS;
 
+import java.math.BigInteger;
 import org.tron.common.utils.ForkController;
 import org.tron.core.config.Parameter.ForkBlockVersionConsts;
 import org.tron.core.config.Parameter.ForkBlockVersionEnum;
@@ -25,6 +28,39 @@ public class ProposalUtil {
   private static final long MAX_SUPPLY = 100_000_000_000L;
   private static final String MAX_SUPPLY_ERROR
       = "Bad chain parameter value, valid range is [0, 100_000_000_000L]";
+  private static final long DEFAULT_ADAPTIVE_MULTIPLIER_AFTER_365 = 50L;
+
+  // Keep adaptive-energy parameter changes inside the hardened
+  // updateAdaptiveTotalEnergyLimit() range. This does not attempt to bound
+  // totalEnergyAverageUsage, which is governed by block-level energy consumption
+  // and operational parameters. The harden proposal itself is not a state repair
+  // mechanism; operators must heal unsafe private-chain state by proposing safe
+  // totalEnergyLimit / multiplier values before activation.
+  private static final BigInteger MAX_SAFE_ADAPTIVE_PRODUCT =
+      BigInteger.valueOf(Long.MAX_VALUE)
+          .multiply(BigInteger.valueOf(EXPAND_RATE_DENOMINATOR))
+          .divide(BigInteger.valueOf(EXPAND_RATE_NUMERATOR));
+
+  private static void checkAdaptiveEnergyProduct(
+      long totalEnergyLimit, long multiplier)
+      throws ContractValidateException {
+    if (totalEnergyLimit <= 0 || multiplier <= 0) {
+      return;
+    }
+    if (BigInteger.valueOf(totalEnergyLimit).multiply(BigInteger.valueOf(multiplier))
+        .compareTo(MAX_SAFE_ADAPTIVE_PRODUCT) > 0) {
+      long maxSafeMultiplier = MAX_SAFE_ADAPTIVE_PRODUCT
+          .divide(BigInteger.valueOf(totalEnergyLimit))
+          .longValueExact();
+      throw new ContractValidateException(
+          "Bad chain parameter value: totalEnergyLimit * adaptiveResourceLimitMultiplier "
+              + "must be <= " + MAX_SAFE_ADAPTIVE_PRODUCT
+              + " to keep updateAdaptiveTotalEnergyLimit inside long range. "
+              + "Current totalEnergyLimit=" + totalEnergyLimit
+              + ", multiplier=" + multiplier
+              + ", max safe multiplier for this limit=" + maxSafeMultiplier);
+    }
+  }
 
   public static void validator(DynamicPropertiesStore dynamicPropertiesStore,
       ForkController forkController,
@@ -138,6 +174,11 @@ public class ProposalUtil {
         if (value < 0 || value > LONG_VALUE) {
           throw new ContractValidateException(LONG_VALUE_ERROR);
         }
+        if (forkController.pass(ForkBlockVersionEnum.VERSION_4_8_2)) {
+          checkAdaptiveEnergyProduct(
+              value,
+              dynamicPropertiesStore.getAdaptiveResourceLimitMultiplier());
+        }
         break;
       }
       case ALLOW_MULTI_SIGN: {
@@ -157,6 +198,11 @@ public class ProposalUtil {
         if (value != 1) {
           throw new ContractValidateException(
               PRE_VALUE_NOT_ONE_ERROR + "ALLOW_ADAPTIVE_ENERGY" + VALUE_NOT_ONE_ERROR);
+        }
+        if (forkController.pass(ForkBlockVersionEnum.VERSION_4_8_2)) {
+          checkAdaptiveEnergyProduct(
+              dynamicPropertiesStore.getTotalEnergyLimit(),
+              DEFAULT_ADAPTIVE_MULTIPLIER_AFTER_365);
         }
         break;
       }
@@ -238,6 +284,11 @@ public class ProposalUtil {
           throw new ContractValidateException(
               "Bad chain parameter value, valid range is [1,1_000]");
         }
+        if (forkController.pass(ForkBlockVersionEnum.VERSION_4_8_2)) {
+          checkAdaptiveEnergyProduct(
+              dynamicPropertiesStore.getTotalEnergyLimit(),
+              dynamicPropertiesStore.getAdaptiveResourceLimitMultiplier());
+        }
         break;
       }
       case ADAPTIVE_RESOURCE_LIMIT_MULTIPLIER: {
@@ -247,6 +298,11 @@ public class ProposalUtil {
         if (value < 1 || value > 10_000L) {
           throw new ContractValidateException(
               "Bad chain parameter value, valid range is [1,10_000]");
+        }
+        if (forkController.pass(ForkBlockVersionEnum.VERSION_4_8_2)) {
+          checkAdaptiveEnergyProduct(
+              dynamicPropertiesStore.getTotalEnergyLimit(),
+              value);
         }
         break;
       }

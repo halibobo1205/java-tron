@@ -347,6 +347,8 @@ public class ProposalUtilTest extends BaseTest {
 
     testAllowHardenResourceCalculationProposal();
 
+    testAdaptiveEnergyOverflowGuard();
+
     testAllowHardenExchangeCalculationProposal();
 
     forkUtils.getManager().getDynamicPropertiesStore()
@@ -617,6 +619,137 @@ public class ProposalUtilTest extends BaseTest {
     Assert.assertEquals(
         "[ALLOW_HARDEN_RESOURCE_CALCULATION] has been valid, no need to propose again",
         e3.getMessage());
+  }
+
+  /**
+   * Proposal guards added on top of TIP-833 (PR #6721): after VERSION_4_8_2,
+   * adaptive-energy parameter proposals must not create state that the hardened
+   * {@code EnergyProcessor.updateAdaptiveTotalEnergyLimit} path cannot process.
+   * This check is intentionally scoped to that adaptive-limit update path; it does
+   * not claim to bound {@code totalEnergyAverageUsage}, which depends on block-level
+   * energy consumption and other operational parameters.
+   *
+   * <p>{@code ALLOW_HARDEN_RESOURCE_CALCULATION} only enables fail-fast arithmetic. It
+   * is not a repair mechanism for private chains that already contain unsafe adaptive
+   * energy parameters; those chains must first pass safe total-limit or multiplier
+   * proposals, which this test keeps allowed.
+   */
+  private void assertValidatorAccepts(long code, long value, String contextMsg) {
+    try {
+      ProposalUtil.validator(dynamicPropertiesStore, forkUtils, code, value);
+    } catch (ContractValidateException e) {
+      Assert.fail(contextMsg + ": " + e.getMessage());
+    }
+  }
+
+  private void testAdaptiveEnergyOverflowGuard() {
+    long savedTotalEnergyLimit = dynamicPropertiesStore.getTotalEnergyLimit();
+    long savedMultiplier = dynamicPropertiesStore.getAdaptiveResourceLimitMultiplier();
+    long savedHarden = dynamicPropertiesStore.getAllowHardenResourceCalculation();
+
+    // Ensure every fork gate this test depends on is enacted. Each version lives in
+    // an independent stats slot, so enacting VERSION_4_8_2 does not imply older
+    // versions. VERSION_3_2_2 gates TOTAL_CURRENT_ENERGY_LIMIT, VERSION_3_5 gates
+    // ALLOW_ADAPTIVE_ENERGY, VERSION_3_6_5 gates adaptive resource ratio / multiplier
+    // proposals, VERSION_4_8_2 gates
+    // ALLOW_HARDEN_RESOURCE_CALCULATION.
+    byte[] forkStats = new byte[27];
+    Arrays.fill(forkStats, (byte) 1);
+    DynamicPropertiesStore forkStore = forkUtils.getManager().getDynamicPropertiesStore();
+    forkStore.statsByVersion(ForkBlockVersionEnum.VERSION_3_2_2.getValue(), forkStats);
+    forkStore.statsByVersion(ForkBlockVersionEnum.VERSION_3_5.getValue(), forkStats);
+    forkStore.statsByVersion(ForkBlockVersionEnum.VERSION_3_6_5.getValue(), forkStats);
+    forkStore.statsByVersion(ForkBlockVersionEnum.VERSION_4_8_2.getValue(), forkStats);
+
+    try {
+      // The guard rejects any combo whose product exceeds
+      // Long.MAX_VALUE * EXPAND_RATE_DENOMINATOR / EXPAND_RATE_NUMERATOR (~= 9.214e18).
+      // This covers both updateAdaptiveTotalEnergyLimit's upperBound multiplication
+      // and the EXPAND-branch scaleByRate inside the same method. The bound leaves
+      // ~5 orders of magnitude headroom above mainnet's current ~8e10 product.
+      final String unsafeMessage = "must be <= ";
+
+      // ---- ALLOW_HARDEN_RESOURCE_CALCULATION itself is not a parameter-healing
+      // proposal. Production activation is expected to happen only after adaptive
+      // energy parameters are already in a safe range.
+      dynamicPropertiesStore.saveAllowHardenResourceCalculation(0);
+      dynamicPropertiesStore.saveTotalEnergyLimit(50_000_000_000L);
+      dynamicPropertiesStore.saveAdaptiveResourceLimitMultiplier(1000L);
+      assertValidatorAccepts(ProposalType.ALLOW_HARDEN_RESOURCE_CALCULATION.getCode(), 1L,
+          "ALLOW_HARDEN_RESOURCE_CALCULATION with mainnet-realistic combo should pass");
+      assertValidatorAccepts(ProposalType.ALLOW_ADAPTIVE_ENERGY.getCode(), 1L,
+          "ALLOW_ADAPTIVE_ENERGY uses safe default adaptive parameters after 3.6.5");
+
+      // ---- Healing path: a chain may already hold an unsafe combo when 4.8.2
+      // activates and harden is still 0. Governance must still be able to fix the
+      // parameters before enabling fail-fast arithmetic. Reset to an unsafe combo and
+      // verify product-healing proposals are accepted. Ratio-only proposals are not
+      // accepted while the product remains unsafe because they do not heal that state.
+      dynamicPropertiesStore.saveTotalEnergyLimit(10_000_000_000_000_000L);
+      dynamicPropertiesStore.saveAdaptiveResourceLimitMultiplier(1000L);
+      // total 1e16, multiplier 1000 -> product 1e19 unsafe; harden still 0.
+      ContractValidateException denyUnsafeRatio = Assert.assertThrows(
+          ContractValidateException.class,
+          () -> ProposalUtil.validator(dynamicPropertiesStore, forkUtils,
+              ProposalType.ADAPTIVE_RESOURCE_LIMIT_TARGET_RATIO.getCode(), 1L));
+      Assert.assertTrue(denyUnsafeRatio.getMessage(),
+          denyUnsafeRatio.getMessage().contains(unsafeMessage));
+
+      assertValidatorAccepts(ProposalType.ADAPTIVE_RESOURCE_LIMIT_MULTIPLIER.getCode(), 100L,
+          "healing: lowering multiplier to a safe value must pass even with harden off");
+      dynamicPropertiesStore.saveAdaptiveResourceLimitMultiplier(100L);
+      assertValidatorAccepts(ProposalType.ADAPTIVE_RESOURCE_LIMIT_TARGET_RATIO.getCode(), 1L,
+          "ADAPTIVE_RESOURCE_LIMIT_TARGET_RATIO should pass once product is safe");
+
+      dynamicPropertiesStore.saveAdaptiveResourceLimitMultiplier(1000L);
+      // Limit-reducing healing proposal: 1e15 * 1000 = 1e18 < 9.214e18, safe.
+      assertValidatorAccepts(ProposalType.TOTAL_CURRENT_ENERGY_LIMIT.getCode(),
+          1_000_000_000_000_000L,
+          "healing: lowering totalCurrentEnergyLimit to a safe value must pass "
+              + "even with harden off");
+
+      // A fresh proposal that would *create* an unsafe combo is still rejected
+      // even with harden off (silent-wrap path is closed).
+      dynamicPropertiesStore.saveAdaptiveResourceLimitMultiplier(100L);
+      // total 1e16, multiplier 100 -> product 1e18 safe; propose multiplier 1000
+      // -> would push product to 1e19, must be rejected.
+      ContractValidateException denyUnsafe = Assert.assertThrows(
+          ContractValidateException.class,
+          () -> ProposalUtil.validator(dynamicPropertiesStore, forkUtils,
+              ProposalType.ADAPTIVE_RESOURCE_LIMIT_MULTIPLIER.getCode(), 1000L));
+      Assert.assertTrue(denyUnsafe.getMessage(),
+          denyUnsafe.getMessage().contains(unsafeMessage));
+
+      // ---- Post-enact: harden flag does not control the check (4.8.2 fork does).
+      dynamicPropertiesStore.saveAllowHardenResourceCalculation(1);
+      ContractValidateException e2 = Assert.assertThrows(ContractValidateException.class,
+          () -> ProposalUtil.validator(dynamicPropertiesStore, forkUtils,
+              ProposalType.ADAPTIVE_RESOURCE_LIMIT_MULTIPLIER.getCode(), 1000L));
+      Assert.assertTrue(e2.getMessage(), e2.getMessage().contains(unsafeMessage));
+
+      assertValidatorAccepts(ProposalType.ADAPTIVE_RESOURCE_LIMIT_MULTIPLIER.getCode(), 100L,
+          "ADAPTIVE_RESOURCE_LIMIT_MULTIPLIER with safe value should pass under harden");
+
+      // current multiplier still 100; safe bound / 100 ~= 9.214e16, so a proposed
+      // totalCurrentEnergyLimit of 1e17 (LONG_VALUE) would overflow.
+      ContractValidateException e3 = Assert.assertThrows(ContractValidateException.class,
+          () -> ProposalUtil.validator(dynamicPropertiesStore, forkUtils,
+              ProposalType.TOTAL_CURRENT_ENERGY_LIMIT.getCode(), 100_000_000_000_000_000L));
+      Assert.assertTrue(e3.getMessage(), e3.getMessage().contains(unsafeMessage));
+
+      assertValidatorAccepts(ProposalType.TOTAL_CURRENT_ENERGY_LIMIT.getCode(),
+          1_000_000_000_000_000L,
+          "TOTAL_CURRENT_ENERGY_LIMIT with safe value should pass under harden");
+
+      // ---- Zero factor is exempt (no false positive on legacy / fresh state).
+      dynamicPropertiesStore.saveTotalEnergyLimit(0L);
+      assertValidatorAccepts(ProposalType.ADAPTIVE_RESOURCE_LIMIT_MULTIPLIER.getCode(), 10_000L,
+          "zero totalEnergyLimit should bypass overflow guard");
+    } finally {
+      dynamicPropertiesStore.saveTotalEnergyLimit(savedTotalEnergyLimit);
+      dynamicPropertiesStore.saveAdaptiveResourceLimitMultiplier(savedMultiplier);
+      dynamicPropertiesStore.saveAllowHardenResourceCalculation(savedHarden);
+    }
   }
 
   private void testAllowTvmPragueProposal() {
