@@ -708,6 +708,9 @@ public class PrecompiledContracts {
 
       // check if modulus is zero
       if (isZero(mod)) {
+        if (VMConfig.allowTvmOsaka()) {
+          return Pair.of(true, new byte[modLen]);
+        }
         return Pair.of(true, EMPTY_BYTE_ARRAY);
       }
 
