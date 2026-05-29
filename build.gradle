@@ -130,6 +130,7 @@ subprojects {
                 errorproneArgs.addAll([
                         '-Xep:StringCaseLocaleUsage:ERROR',
                         '-Xep:StringCaseLocaleUsageMethodRef:ERROR',
+                        '-Xep:ForbidJavaLangMath:ERROR',
                 ])
             }
         }

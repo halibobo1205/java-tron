@@ -6,6 +6,7 @@ package org.tron.common.math;
  * especially for floating-point calculations.
  */
 @Deprecated
+@SuppressWarnings("ForbidJavaLangMath") // canonical wrapper: deliberately delegates to java.lang.Math
 public class MathWrapper {
 
   public static double pow(double a, double b) {
