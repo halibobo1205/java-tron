@@ -167,6 +167,7 @@ subprojects {
                         '-Xep:StringCaseLocaleUsage:ERROR',
                         '-Xep:StringCaseLocaleUsageMethodRef:ERROR',
                         '-Xep:ComparatorNeverReturnsZero:ERROR',
+                        '-Xep:ForbidJavaLangMath:ERROR',
                 ])
             }
         }
