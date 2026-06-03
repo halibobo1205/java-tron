@@ -61,6 +61,7 @@ jobs:
           java -jar "$JAR" help
           java -jar "$JAR" db --help
           java -jar "$JAR" db archive -h
+          java -jar "$JAR" keystore --help
 
   build-ubuntu:
     name: Build ubuntu24 (JDK 17 / aarch64)
@@ -99,6 +100,7 @@ jobs:
           java -jar "$JAR" help
           java -jar "$JAR" db --help
           java -jar "$JAR" db archive -h
+          java -jar "$JAR" keystore --help
 
   docker-build-rockylinux:
     name: Build rockylinux (JDK 8 / x86_64)
@@ -150,7 +152,10 @@ jobs:
           java -jar "$JAR" help
           java -jar "$JAR" db --help
           java -jar "$JAR" db archive -h
+          java -jar "$JAR" keystore --help
 
+      - name: Test with RocksDB engine
+        run: ./gradlew :framework:testWithRocksDb --no-daemon
 
   docker-build-debian11:
     name: Build debian11 (JDK 8 / x86_64)
@@ -201,7 +206,10 @@ jobs:
           java -jar "$JAR" help
           java -jar "$JAR" db --help
           java -jar "$JAR" db archive -h
+          java -jar "$JAR" keystore --help
 
+      - name: Test with RocksDB engine
+        run: ./gradlew :framework:testWithRocksDb --no-daemon --no-build-cache
 
       - name: Generate module coverage reports
         run: ./gradlew jacocoTestReport --no-daemon
@@ -253,6 +261,9 @@ jobs:
 
       - name: Build (base)
         run: ./gradlew clean build --no-daemon --no-build-cache
+
+      - name: Test with RocksDB engine (base)
+        run: ./gradlew :framework:testWithRocksDb --no-daemon --no-build-cache
 
       - name: Generate module coverage reports (base)
         run: ./gradlew jacocoTestReport --no-daemon
