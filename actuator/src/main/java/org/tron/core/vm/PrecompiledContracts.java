@@ -663,6 +663,7 @@ public class PrecompiledContracts {
       int expLen = parseLen(data, 1);
       int modLen = parseLen(data, 2);
 
+
       byte[] expHighBytes = parseBytes(data, addSafely(ARGS_OFFSET, baseLen), min(expLen, 32,
           VMConfig.disableJavaLangMath()));
 
