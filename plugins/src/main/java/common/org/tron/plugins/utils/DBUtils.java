@@ -115,13 +115,15 @@ public class DBUtils {
         1, Runtime.getRuntime().availableProcessors()));
     options.setLevel0FileNumCompactionTrigger(4);
     options.setLevelCompactionDynamicLevelBytes(true);
-    final BlockBasedTableConfig tableCfg;
-    options.setTableFormatConfig(tableCfg = new BlockBasedTableConfig());
+    // NOTE: setTableFormatConfig() snapshots the config into a native TableFactory immediately,
+    // so it MUST be the last call - any tableCfg.setXxx() after it would be silently ignored.
+    final BlockBasedTableConfig tableCfg = new BlockBasedTableConfig();
     tableCfg.setBlockSize(64 * 1024);
     tableCfg.setBlockCacheSize(32 * 1024 * 1024);
     tableCfg.setCacheIndexAndFilterBlocks(true);
     tableCfg.setPinL0FilterAndIndexBlocksInCache(true);
     tableCfg.setFilter(new BloomFilter(10, false));
+    options.setTableFormatConfig(tableCfg);
     if (forBulkLoad) {
       options.prepareForBulkLoad();
     }
