@@ -211,13 +211,15 @@ public class RocksDbSettings {
     options.setTargetFileSizeBase(settings.getTargetFileSizeBase());
 
     // table options
-    final BlockBasedTableConfig tableCfg;
-    options.setTableFormatConfig(tableCfg = new BlockBasedTableConfig());
+    // NOTE: setTableFormatConfig() snapshots the config into a native TableFactory immediately,
+    // so it MUST be the last call - any tableCfg.setXxx() after it would be silently ignored.
+    final BlockBasedTableConfig tableCfg = new BlockBasedTableConfig();
     tableCfg.setBlockSize(settings.getBlockSize());
     tableCfg.setBlockCache(RocksDbSettings.getCache());
     tableCfg.setCacheIndexAndFilterBlocks(true);
     tableCfg.setPinL0FilterAndIndexBlocksInCache(true);
     tableCfg.setFilter(new BloomFilter(10, false));
+    options.setTableFormatConfig(tableCfg);
     if (Constant.MARKET_PAIR_PRICE_TO_ORDER.equals(dbName)) {
       ComparatorOptions comparatorOptions = new ComparatorOptions();
       options.setComparator(new MarketOrderPriceComparatorForRocksDB(comparatorOptions));
