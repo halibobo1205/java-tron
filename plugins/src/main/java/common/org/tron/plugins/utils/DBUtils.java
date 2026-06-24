@@ -17,6 +17,7 @@ import org.rocksdb.Options;
 import org.tron.common.arch.Arch;
 import org.tron.common.utils.MarketOrderPriceComparatorForLevelDB;
 import org.tron.common.utils.MarketOrderPriceComparatorForRocksDB;
+import org.tron.common.utils.RocksDbPartitionedFilter;
 import org.tron.protos.Protocol;
 
 public class DBUtils {
@@ -123,6 +124,7 @@ public class DBUtils {
     tableCfg.setCacheIndexAndFilterBlocks(true);
     tableCfg.setPinL0FilterAndIndexBlocksInCache(true);
     tableCfg.setFilter(new BloomFilter(10, false));
+    RocksDbPartitionedFilter.enable(tableCfg);
     options.setTableFormatConfig(tableCfg);
     if (forBulkLoad) {
       options.prepareForBulkLoad();
