@@ -10,6 +10,7 @@ import picocli.CommandLine;
         DbMove.class,
         DbArchive.class,
         DbConvert.class,
+        DbCompact.class,
         DbLite.class,
         DbCopy.class,
         DbRoot.class
