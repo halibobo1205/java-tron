@@ -16,6 +16,7 @@ import org.rocksdb.RocksDB;
 import org.rocksdb.Statistics;
 import org.slf4j.LoggerFactory;
 import org.tron.common.utils.MarketOrderPriceComparatorForRocksDB;
+import org.tron.common.utils.RocksDbPartitionedFilter;
 import org.tron.core.Constant;
 
 @Slf4j
@@ -48,7 +49,11 @@ public class RocksDbSettings {
     RocksDB.loadLibrary();
   }
 
-  private static final LRUCache cache = new LRUCache(1 * 1024 * 1024 * 1024L);
+  // high_pri_pool_ratio = 0.5 so index/filter blocks (high-priority on RocksDB 9.x) get a
+  // protected pool and are not evicted by data blocks. Harmless on 5.15.10: filters are
+  // low-priority there, the high-pri pool stays empty and data blocks still use the whole cache.
+  private static final LRUCache cache =
+      new LRUCache(1L * 1024 * 1024 * 1024, -1, false, 0.5);
 
   private static final String[] CI_ENVIRONMENT_VARIABLES = {
       "CI",
@@ -219,6 +224,12 @@ public class RocksDbSettings {
     tableCfg.setCacheIndexAndFilterBlocks(true);
     tableCfg.setPinL0FilterAndIndexBlocksInCache(true);
     tableCfg.setFilter(new BloomFilter(10, false));
+    // Partitioned index/filter for every DB: large stores (trans/transactionRetStore/account/
+    // storage-row/...) have multi-MB full-filter blocks whose combined footprint far exceeds the
+    // cache, so full filters get evicted and re-read whole; partitioning reads only the small
+    // relevant partition per lookup and pins just the tiny top level. Negligible overhead on small
+    // DBs. arm/9.x only; no-op on x86/5.15.10. Must run before setTableFormatConfig (see above).
+    RocksDbPartitionedFilter.enable(tableCfg);
     options.setTableFormatConfig(tableCfg);
     if (Constant.MARKET_PAIR_PRICE_TO_ORDER.equals(dbName)) {
       ComparatorOptions comparatorOptions = new ComparatorOptions();
