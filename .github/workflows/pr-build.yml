@@ -117,17 +117,22 @@ jobs:
       LC_ALL: en_US.UTF-8
 
     steps:
-      - name: Install dependencies (Rocky 8 + JDK8)
+      - name: Install dependencies (Rocky 8 + JDK 8 + JDK 17)
         run: |
           set -euxo pipefail
-          dnf -y install java-1.8.0-openjdk-devel git wget unzip which jq bc curl glibc-langpack-en
+          # JDK 8 runs the FullNode and the tests; JDK 17 runs Gradle (9.1 requires JVM 17+).
+          dnf -y install java-1.8.0-openjdk-devel java-17-openjdk-devel git wget unzip which jq bc curl glibc-langpack-en
           dnf -y groupinstall "Development Tools"
+          echo "JAVA8_HOME=$(readlink -f /usr/lib/jvm/java-1.8.0-openjdk)"  >> "$GITHUB_ENV"
+          echo "JAVA17_HOME=$(readlink -f /usr/lib/jvm/java-17-openjdk)" >> "$GITHUB_ENV"
 
       - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Check Java version
-        run: java -version
+      - name: Check Java versions
+        run: |
+          "$JAVA8_HOME/bin/java" -version
+          "$JAVA17_HOME/bin/java" -version
 
       - name: Cache Gradle
         uses: actions/cache@v5
@@ -140,22 +145,26 @@ jobs:
             rockylinux-x86_64-gradle-
 
       - name: Stop Gradle daemon
-        run: ./gradlew --stop || true
+        run: JAVA_HOME="$JAVA17_HOME" ./gradlew --stop || true
 
-      - name: Build
-        run: ./gradlew clean build --no-daemon
+      - name: Build (Gradle on JDK 17, tests forked on JDK 8)
+        run: |
+          JAVA_HOME="$JAVA17_HOME" ./gradlew clean build --no-daemon \
+            -PtestJavaVersion=8 "-Porg.gradle.java.installations.paths=$JAVA8_HOME"
 
-      - name: Toolkit jar smoke test
+      - name: Toolkit jar smoke test (JDK 8)
         run: |
           set -e
           JAR=plugins/build/libs/Toolkit.jar
-          java -jar "$JAR" help
-          java -jar "$JAR" db --help
-          java -jar "$JAR" db archive -h
-          java -jar "$JAR" keystore --help
+          "$JAVA8_HOME/bin/java" -jar "$JAR" help
+          "$JAVA8_HOME/bin/java" -jar "$JAR" db --help
+          "$JAVA8_HOME/bin/java" -jar "$JAR" db archive -h
+          "$JAVA8_HOME/bin/java" -jar "$JAR" keystore --help
 
-      - name: Test with RocksDB engine
-        run: ./gradlew :framework:testWithRocksDb --no-daemon
+      - name: Test with RocksDB engine (Gradle on JDK 17, tests on JDK 8)
+        run: |
+          JAVA_HOME="$JAVA17_HOME" ./gradlew :framework:testWithRocksDb --no-daemon \
+            -PtestJavaVersion=8 "-Porg.gradle.java.installations.paths=$JAVA8_HOME"
 
   docker-build-debian11:
     name: Build debian11 (JDK 8 / x86_64)
@@ -174,17 +183,26 @@ jobs:
       GRADLE_USER_HOME: /github/home/.gradle
 
     steps:
-      - name: Install dependencies (Debian + build tools)
+      - name: Install dependencies (Debian + build tools + JDK 17 for Gradle)
         run: |
           set -euxo pipefail
           apt-get update
           apt-get install -y git wget unzip build-essential curl jq
+          # JDK 8 (container default, /opt/java/openjdk) runs the FullNode and tests;
+          # JDK 17 runs Gradle (9.1 requires JVM 17+).
+          mkdir -p /opt/jdk17
+          curl -fsSL "https://api.adoptium.net/v3/binary/latest/17/ga/linux/x64/jdk/hotspot/normal/eclipse" \
+            | tar -xz --strip-components=1 -C /opt/jdk17
+          echo "JAVA8_HOME=${JAVA_HOME:-/opt/java/openjdk}" >> "$GITHUB_ENV"
+          echo "JAVA17_HOME=/opt/jdk17" >> "$GITHUB_ENV"
 
       - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Check Java version
-        run: java -version
+      - name: Check Java versions
+        run: |
+          "$JAVA8_HOME/bin/java" -version
+          "$JAVA17_HOME/bin/java" -version
 
       - name: Cache Gradle
         uses: actions/cache@v5
@@ -196,23 +214,27 @@ jobs:
           restore-keys: |
             debian11-x86_64-gradle-
 
-      - name: Build
-        run: ./gradlew clean build --no-daemon --no-build-cache
+      - name: Build (Gradle on JDK 17, tests forked on JDK 8)
+        run: |
+          JAVA_HOME="$JAVA17_HOME" ./gradlew clean build --no-daemon --no-build-cache \
+            -PtestJavaVersion=8 "-Porg.gradle.java.installations.paths=$JAVA8_HOME"
 
-      - name: Toolkit jar smoke test
+      - name: Toolkit jar smoke test (JDK 8)
         run: |
           set -e
           JAR=plugins/build/libs/Toolkit.jar
-          java -jar "$JAR" help
-          java -jar "$JAR" db --help
-          java -jar "$JAR" db archive -h
-          java -jar "$JAR" keystore --help
+          "$JAVA8_HOME/bin/java" -jar "$JAR" help
+          "$JAVA8_HOME/bin/java" -jar "$JAR" db --help
+          "$JAVA8_HOME/bin/java" -jar "$JAR" db archive -h
+          "$JAVA8_HOME/bin/java" -jar "$JAR" keystore --help
 
-      - name: Test with RocksDB engine
-        run: ./gradlew :framework:testWithRocksDb --no-daemon --no-build-cache
+      - name: Test with RocksDB engine (Gradle on JDK 17, tests on JDK 8)
+        run: |
+          JAVA_HOME="$JAVA17_HOME" ./gradlew :framework:testWithRocksDb --no-daemon --no-build-cache \
+            -PtestJavaVersion=8 "-Porg.gradle.java.installations.paths=$JAVA8_HOME"
 
       - name: Generate module coverage reports
-        run: ./gradlew jacocoTestReport --no-daemon
+        run: JAVA_HOME="$JAVA17_HOME" ./gradlew jacocoTestReport --no-daemon
 
       - name: Upload PR coverage reports
         uses: actions/upload-artifact@v6

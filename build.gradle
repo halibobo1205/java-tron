@@ -65,6 +65,30 @@ subprojects {
         targetCompatibility = JavaVersion.VERSION_1_8
     }
 
+    // -target 8 only sets the bytecode version; method calls still resolve against the build JDK's
+    // classes, so a JDK 9+ API compiles on JDK 17 but fails at RUNTIME on JDK 8 (NoSuchMethodError).
+    // --release 8 compiles against the historical JDK 8 API so such usage is a compile error,
+    // regardless of which JDK runs Gradle. errorprone is excluded: it uses jdk.compiler internals
+    // and only runs on the build JVM, never on the JDK 8 runtime.
+    if (project.name != 'errorprone') {
+        tasks.withType(JavaCompile).configureEach {
+            options.release = 8
+        }
+    }
+
+    // Gradle 9.1 must run on JVM 17+, but the x86 stack is validated on JDK 8. When CI passes
+    // -PtestJavaVersion=8, test JVMs are forked on that JDK (classes are still compiled to bytecode 8
+    // by the Gradle JVM); Gradle locates the JDK via -Porg.gradle.java.installations.paths. Without
+    // the property, tests run on the Gradle JVM (arm64 JDK 17-21 and local dev) — unchanged.
+    if (project.hasProperty('testJavaVersion')) {
+        tasks.withType(Test).configureEach {
+            javaLauncher.set(javaToolchains.launcherFor {
+                languageVersion = JavaLanguageVersion.of(
+                        Integer.parseInt(project.property('testJavaVersion').toString()))
+            })
+        }
+    }
+
     [compileJava, compileTestJava]*.options*.encoding = 'UTF-8'
     jacoco {
         toolVersion = "0.8.15" // see https://www.jacoco.org/jacoco/trunk/doc/changes.html
