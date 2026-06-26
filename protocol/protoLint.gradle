@@ -98,13 +98,19 @@ task protoLint {
         
         def bufConfig = new JsonBuilder([version: "v1beta1", build: [roots: ["src/main/protos", includeProtoDirRel]]]).toString()
         
-        def execResult = exec {
-            commandLine bufExe.absolutePath, 'build', '.', '--config', bufConfig, '-o', "${imageFile.absolutePath}#format=json"
-            ignoreExitValue = true
-        }
+        // Gradle 9 removed Project/Task.exec(); use ProcessBuilder (working dir = projectDir so
+        // buf resolves 'src/main/protos' and the '.' build target relative to the protocol module).
+        def command = [bufExe.absolutePath, 'build', '.', '--config', bufConfig,
+                       '-o', "${imageFile.absolutePath}#format=json".toString()]
+        def process = new ProcessBuilder(command)
+            .directory(projectDir)
+            .redirectErrorStream(true)
+            .start()
+        process.inputStream.withReader { reader -> reader.eachLine { line -> println line } }
+        def exitValue = process.waitFor()
 
-        if (execResult.exitValue != 0) {
-            throw new GradleException("Failed to generate AST image. Ensure your .proto files are valid. Buf exited with code ${execResult.exitValue}")
+        if (exitValue != 0) {
+            throw new GradleException("Failed to generate AST image. Ensure your .proto files are valid. Buf exited with code ${exitValue}")
         }
 
         if (!imageFile.exists()) {
