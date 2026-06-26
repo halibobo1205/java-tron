@@ -40,8 +40,15 @@ sourceSets {
 
 }
 
+afterEvaluate {
+    def generatedProtoDir = file("$buildDir/generated/sources/proto")
+    sourceSets.main.java.setSrcDirs(sourceSets.main.java.srcDirs.findAll {
+        !it.absolutePath.startsWith(generatedProtoDir.absolutePath)
+    })
+}
+
 protobuf {
-    generatedFilesBaseDir = "$projectDir/src/"
+    generatedFilesBaseDirProperty.set("$projectDir/src")
     protoc {
         artifact = "com.google.protobuf:protoc:${protobufVersion}"
     }
@@ -70,3 +77,14 @@ clean.doFirst {
 }
 
 processResources.dependsOn(generateProto) // explicit_dependency
+// Gradle 9 + protobuf-gradle-plugin 0.9.6 no longer auto-wires compileJava -> generateProto.
+// Without this, a clean build runs compileJava (NO-SOURCE, src/main/java was just deleted by
+// clean) before protos are generated, so :common etc. can't find org.tron.protos.
+compileJava.dependsOn(generateProto) // explicit_dependency
+sourcesJar.dependsOn(generateProto)  // explicit_dependency
+// generatedFilesBaseDir redirects generated protos to src/main/java, but that path is NOT a
+// declared task output, so a FROM-CACHE generateProto restores only build/generated and leaves
+// src/main/java empty after clean -> compileJava NO-SOURCE. Disable caching so a clean build
+// really re-executes generateProto (writes src/main/java); incremental builds still skip it
+// via normal up-to-date checks.
+generateProto.outputs.cacheIf { false }

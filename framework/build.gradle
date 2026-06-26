@@ -1,15 +1,20 @@
 plugins {
-    id "org.gradle.test-retry" version "1.5.9"
+    id "org.gradle.test-retry" version "1.6.5"
     id "org.sonarqube" version "2.6"
-    id "com.gorylenko.gradle-git-properties" version "2.4.1"
+    id "com.gorylenko.gradle-git-properties" version "4.0.1"
 }
 
 gitProperties.failOnNoGitDirectory = false;
+tasks.named('generateGitProperties') {
+    doNotTrackState('The task snapshots .git, which may contain non-regular fsmonitor IPC files.')
+}
 
 apply plugin: 'application'
 apply plugin: 'checkstyle'
 
-mainClassName = 'org.tron.program.FullNode'
+application {
+    mainClass = 'org.tron.program.FullNode'
+}
 
 def versions = [
         checkstyle: '8.7',
@@ -95,7 +100,7 @@ tasks.matching { it instanceof Test }.all {
 }
 
 if (project.hasProperty("mainClass")) {
-    mainClassName = mainClass
+    application.mainClass = mainClass
 }
 
 run {
@@ -167,17 +172,17 @@ tasks.register('testWithRocksDb', Test) {
 
 jacocoTestReport {
     reports {
-        xml.enabled true
-        csv.enabled false
-        html.destination file("${buildDir}/jacocoHtml")
+        xml.required.set(true)
+        csv.required.set(false)
+        html.outputLocation.set(file("${buildDir}/jacocoHtml"))
     }
     getExecutionData().setFrom(fileTree('../framework/build/jacoco').include("**.exec"))
 }
 
 def binaryRelease(taskName, jarName, mainClass) {
     return tasks.create("${taskName}", Jar) {
-        baseName = jarName
-        version = null
+        archiveBaseName.set(jarName)
+        archiveVersion.set("")
         from(sourceSets.main.output) {
             include "/**"
         }
@@ -212,7 +217,7 @@ def createScript(project, mainClass, name) {
         unixStartScriptGenerator.template = resources.text.fromFile('../gradle/unixStartScript.txt')
         windowsStartScriptGenerator.template = resources.text.fromFile('../gradle/windowsStartScript.txt')
         outputDir = new File(project.buildDir, 'scripts')
-        mainClassName = mainClass
+        getMainClass().set(mainClass)
         applicationName = name
         classpath = project.tasks[JavaPlugin.JAR_TASK_NAME].outputs.files + project.configurations.runtimeClasspath
 //        defaultJvmOpts = ['-XX:+UseConcMarkSweepGC',
@@ -225,15 +230,24 @@ def createScript(project, mainClass, name) {
 //        ]
     }
     project.tasks[name].dependsOn(project.jar)
-    project.applicationDistribution.with {
+    project.distributions.main.contents {
         into("bin") {
-            from(project.tasks[name])
-            fileMode = 0755
+            from(project.tasks[name]) {
+                filePermissions {
+                    unix("rwxr-xr-x")
+                }
+            }
         }
     }
 }
-applicationDistribution.from(rootProject.archInfo.VMOptions) {
-    into "bin"
+distributions {
+    main {
+        contents {
+            from(rootProject.archInfo.VMOptions) {
+                into "bin"
+            }
+        }
+    }
 }
 //distZip {
 //    doLast {
@@ -241,7 +255,9 @@ applicationDistribution.from(rootProject.archInfo.VMOptions) {
 //    }
 //}
 configurations.archives.artifacts.removeAll { it.type == 'tar' }
-applicationName = 'java-tron'
+application {
+    applicationName = 'java-tron'
+}
 startScripts.enabled = false
 run.enabled = false
 tasks.distTar.enabled = false

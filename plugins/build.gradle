@@ -8,7 +8,9 @@ apply plugin: 'checkstyle'
 def versions = [
         checkstyle: '8.7',
 ]
-mainClassName = 'org.tron.plugins.ArchiveManifest'
+application {
+    mainClass = 'org.tron.plugins.ArchiveManifest'
+}
 group 'org.tron'
 version '1.0.0'
 
@@ -102,7 +104,7 @@ tasks.matching { it instanceof Test }.all {
 }
 
 if (project.hasProperty("mainClass")) {
-    mainClassName = mainClass
+    application.mainClass = mainClass
 }
 
 test {
@@ -129,17 +131,17 @@ test {
 
 jacocoTestReport {
     reports {
-        xml.enabled true
-        csv.enabled false
-        html.destination file("${buildDir}/jacocoHtml")
+        xml.required.set(true)
+        csv.required.set(false)
+        html.outputLocation.set(file("${buildDir}/jacocoHtml"))
     }
     getExecutionData().setFrom(fileTree('../framework/build/jacoco').include("**.exec"))
 }
 
 def binaryRelease(taskName, jarName, mainClass) {
     return tasks.create("${taskName}", Jar) {
-        baseName = jarName
-        version = null
+        archiveBaseName.set(jarName)
+        archiveVersion.set("")
         from(sourceSets.main.output) {
             include "/**"
         }
@@ -170,20 +172,29 @@ def binaryRelease(taskName, jarName, mainClass) {
 def createScript(project, mainClass, name) {
     project.tasks.create(name: name, type: CreateStartScripts) {
         outputDir = new File(project.buildDir, 'scripts')
-        mainClassName = mainClass
+        getMainClass().set(mainClass)
         applicationName = name
         classpath = project.tasks[JavaPlugin.JAR_TASK_NAME].outputs.files + project.configurations.runtimeClasspath
     }
     project.tasks[name].dependsOn(project.jar)
-    project.applicationDistribution.with {
+    project.distributions.main.contents {
         into("bin") {
-            from(project.tasks[name])
-            fileMode = 0755
+            from(project.tasks[name]) {
+                filePermissions {
+                    unix("rwxr-xr-x")
+                }
+            }
         }
     }
 }
-applicationDistribution.from(rootProject.archInfo.VMOptions) {
-    into "bin"
+distributions {
+    main {
+        contents {
+            from(rootProject.archInfo.VMOptions) {
+                into "bin"
+            }
+        }
+    }
 }
 createScript(project, 'org.tron.plugins.ArchiveManifest', 'ArchiveManifest')
 createScript(project, 'org.tron.plugins.Toolkit', 'Toolkit')

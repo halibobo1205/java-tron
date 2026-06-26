@@ -1,5 +1,6 @@
 version '1.0.0'
 
+def aspectjVersion = '1.9.25'
 
 dependencies {
     api group: 'com.fasterxml.jackson.core', name: 'jackson-databind', version: '2.18.6' // https://github.com/FasterXML/jackson-databind/issues/3627
@@ -12,9 +13,9 @@ dependencies {
     api group: 'io.prometheus', name: 'simpleclient_hotspot', version: '0.15.0'
     // https://openjdk.org/jeps/396, JEP 396: Strongly Encapsulate JDK Internals by Default
     // https://eclipse.dev/aspectj/doc/latest/release/JavaVersionCompatibility.html
-    api 'org.aspectj:aspectjrt:1.9.8'
-    api 'org.aspectj:aspectjweaver:1.9.8'
-    api 'org.aspectj:aspectjtools:1.9.8'
+    api "org.aspectj:aspectjrt:${aspectjVersion}"
+    api "org.aspectj:aspectjweaver:${aspectjVersion}"
+    api "org.aspectj:aspectjtools:${aspectjVersion}"
     api group: 'io.github.tronprotocol', name: 'libp2p', version: '2.2.8',{
         exclude group: 'io.grpc', module: 'grpc-context'
         exclude group: 'io.grpc', module: 'grpc-core'
