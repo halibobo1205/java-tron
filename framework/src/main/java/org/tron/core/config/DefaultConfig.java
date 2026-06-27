@@ -1,5 +1,6 @@
 package org.tron.core.config;
 
+import java.nio.file.Paths;
 import lombok.extern.slf4j.Slf4j;
 import org.rocksdb.RocksDB;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -7,10 +8,12 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
+import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.StorageUtils;
 import org.tron.core.archive.ArchiveService;
 import org.tron.core.archive.ArchiveServiceFactory;
 import org.tron.core.config.args.Args;
+import org.tron.core.config.args.StorageConfig;
 import org.tron.core.db.RevokingDatabase;
 import org.tron.core.db2.core.SnapshotManager;
 import org.tron.core.services.interfaceOnPBFT.RpcApiServiceOnPBFT;
@@ -36,9 +39,16 @@ public class DefaultConfig {
   public DefaultConfig() {
   }
 
-  @Bean
+  @Bean(destroyMethod = "close")
   public ArchiveService archiveService() {
-    return ArchiveServiceFactory.create(Args.getInstance().getStorage().getArchive());
+    CommonParameter parameter = CommonParameter.getInstance();
+    StorageConfig.ArchiveConfig archive = parameter.getStorage().getArchive();
+    if (archive == null || !archive.isEnable()) {
+      return ArchiveServiceFactory.create(archive); // disabled: no db path to resolve
+    }
+    String archiveDbPath = Paths.get(parameter.getOutputDirectory(),
+        parameter.getStorage().getDbDirectory(), archive.getDb().getDirectory()).toString();
+    return ArchiveServiceFactory.create(archive, archiveDbPath);
   }
 
   @Bean(destroyMethod = "")
