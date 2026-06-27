@@ -97,8 +97,9 @@ public final class ArchiveCaptureEngine {
    * Derives ACCOUNT_ASSET (TRC10) records from an account write by value-diffing the old vs new
    * {@code assetV2} maps (decision 2). Only assetIds whose balance actually changed are emitted
    * (a balance == new value, or a tombstone when it drops to 0) -- value-diff, not map-presence, so
-   * lazily-imported but unchanged assets are skipped. Works in both asset_optimized regimes because
-   * the account value written per-tx carries the post-mutation balances for the assets touched.
+   * lazily-imported but unchanged assets are skipped. Both regimes use one diff;
+   * in the optimized regime a read-induced lazy import against an already-flushed (asset-stripped)
+   * old value may emit a redundant but value-correct record, which is harmless.
    */
   public void captureAccountAsset(byte[] addressKey, byte[] oldAccount, byte[] newAccount) {
     Optional<ArchiveTxPosition> position = context.current();
