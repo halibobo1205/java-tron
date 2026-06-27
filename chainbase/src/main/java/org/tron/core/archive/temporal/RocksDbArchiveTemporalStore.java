@@ -1,7 +1,7 @@
 package org.tron.core.archive.temporal;
 
 import com.google.common.primitives.Bytes;
-import java.util.Arrays;
+import com.google.common.primitives.Longs;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -31,9 +31,6 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
   }
 
   private static final byte[] EMPTY = new byte[0];
-  private static final byte[] MAX_TXNUM_SUFFIX = {
-      (byte) 0xff, (byte) 0xff, (byte) 0xff, (byte) 0xff,
-      (byte) 0xff, (byte) 0xff, (byte) 0xff, (byte) 0xff};
 
   private final Options options;
   private final RocksDB db;
@@ -91,42 +88,50 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
 
   @Override
   public void unwind(long fromTxNum) {
-    // Phase 1: walk the txNum-ordered changeset from fromTxNum, deleting each change's history and
-    // changeset entry; collect the affected (deduplicated) history prefixes.
     Map<WrappedByteArray, byte[]> affected = new HashMap<>();
-    try (WriteOptions writeOptions = new WriteOptions()) {
-      try (WriteBatch deletions = new WriteBatch();
-          RocksIterator it = db.newIterator()) {
+    // One atomic batch: delete each reverted change's history + changeset entry, and reset each
+    // affected key's latest to its surviving (txNum < fromTxNum) value -- computed against the
+    // pre-deletion state -- so a crash can never leave latest pointing at a deleted entry.
+    try (WriteBatch batch = new WriteBatch(); WriteOptions writeOptions = new WriteOptions()) {
+      try (RocksIterator it = db.newIterator()) {
         it.seek(ArchiveTemporalCodec.changesetSeekFrom(fromTxNum));
         while (it.isValid() && it.key()[0] == ArchiveTemporalCodec.CHANGESET_PREFIX) {
           byte[] changesetKey = it.key();
-          deletions.delete(ArchiveTemporalCodec.historyKeyOfChangeset(changesetKey));
-          deletions.delete(changesetKey);
+          batch.delete(ArchiveTemporalCodec.historyKeyOfChangeset(changesetKey));
+          batch.delete(changesetKey);
           byte[] historyPrefix = ArchiveTemporalCodec.historyPrefixOfChangeset(changesetKey);
           affected.put(WrappedByteArray.of(historyPrefix), historyPrefix);
           it.next();
         }
-        db.write(writeOptions, deletions);
       }
-      // Phase 2: restore each affected key's latest to its largest remaining (older) history entry.
-      try (WriteBatch latestUpdates = new WriteBatch()) {
+      try (RocksIterator it = db.newIterator()) {
         for (byte[] historyPrefix : affected.values()) {
           byte[] latestKey = historyPrefix.clone();
           latestKey[0] = ArchiveTemporalCodec.LATEST_PREFIX;
-          try (RocksIterator it = db.newIterator()) {
-            it.seekForPrev(Bytes.concat(historyPrefix, MAX_TXNUM_SUFFIX));
-            if (it.isValid() && ArchiveTemporalCodec.startsWith(it.key(), historyPrefix)) {
-              latestUpdates.put(latestKey, it.value());
-            } else {
-              latestUpdates.delete(latestKey);
-            }
+          byte[] surviving = survivingLatest(historyPrefix, fromTxNum, it);
+          if (surviving != null) {
+            batch.put(latestKey, surviving);
+          } else {
+            batch.delete(latestKey);
           }
         }
-        db.write(writeOptions, latestUpdates);
       }
+      db.write(writeOptions, batch);
     } catch (RocksDBException e) {
       throw new ArchiveException("archive temporal unwind failed", e);
     }
+  }
+
+  /** The value of the largest surviving (txNum &lt; fromTxNum) history entry, or null if none. */
+  private static byte[] survivingLatest(byte[] historyPrefix, long fromTxNum, RocksIterator it) {
+    if (fromTxNum == 0) {
+      return null; // everything is being unwound; no older history survives
+    }
+    it.seekForPrev(Bytes.concat(historyPrefix, Longs.toByteArray(fromTxNum - 1)));
+    if (it.isValid() && ArchiveTemporalCodec.startsWith(it.key(), historyPrefix)) {
+      return it.value();
+    }
+    return null;
   }
 
   @Override
