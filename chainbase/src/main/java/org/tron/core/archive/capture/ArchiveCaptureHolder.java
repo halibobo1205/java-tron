@@ -55,4 +55,17 @@ public final class ArchiveCaptureHolder {
       logger.warn("archive capture(delete) failed for {} (dropped): {}", dbName, e.getMessage());
     }
   }
+
+  /** Derive ACCOUNT_ASSET (TRC10) records from an account write; isolated like capturePut. */
+  public static void captureAccountAsset(byte[] addressKey, byte[] oldAccount, byte[] newAccount) {
+    ArchiveCaptureEngine active = engine;
+    if (active == null) {
+      return;
+    }
+    try {
+      active.captureAccountAsset(addressKey, oldAccount, newAccount);
+    } catch (Exception e) {
+      logger.warn("archive account-asset capture failed (dropped): {}", e.getMessage());
+    }
+  }
 }
