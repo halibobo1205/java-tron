@@ -95,6 +95,11 @@ public class Storage {
   @Setter
   private boolean txCacheInitOptimization = false;
 
+  // Archive (transaction-level historical state) sidecar config. Default disabled = pure no-op.
+  @Getter
+  @Setter
+  private StorageConfig.ArchiveConfig archive = new StorageConfig.ArchiveConfig();
+
   // second cache
   private final Map<CacheType, String> cacheStrategies = Maps.newConcurrentMap();
 

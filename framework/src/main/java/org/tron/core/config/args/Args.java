@@ -224,6 +224,9 @@ public class Args extends CommonParameter {
     PARAMETER.storage.setTxCacheInitOptimization(sc.getTxCache().isInitOptimization());
     PARAMETER.storage.setMaxFlushCount(sc.getSnapshot().getMaxFlushCount());
 
+    // Archive sidecar config (non-consensus; default disabled = no-op).
+    PARAMETER.storage.setArchive(sc.getArchive());
+
     // RocksDB settings
     StorageConfig.DbSettingsConfig dbs = sc.getDbSettings();
     PARAMETER.rocksDBCustomSettings = RocksDbSettings

@@ -76,7 +76,7 @@ public abstract class TronStoreWithRevoking<T extends ProtoCapsule> implements I
 
   @Override
   public String getDbName() {
-    return null;
+    return db.getDbName();
   }
 
   @PostConstruct
