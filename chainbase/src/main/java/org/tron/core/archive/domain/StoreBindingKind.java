@@ -10,6 +10,6 @@ public enum StoreBindingKind {
   P1_DOMAIN,
   /** Explicitly excluded from archive state, with a recorded reason. */
   EXCLUDED,
-  /** dbName not recognised — must be surfaced as a warning, never silently treated as excluded. */
+  /** dbName not recognised - must be surfaced as a warning, never silently treated as excluded. */
   UNKNOWN
 }

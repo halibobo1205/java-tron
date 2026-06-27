@@ -5,7 +5,8 @@ import org.tron.core.archive.ArchiveException;
 
 /**
  * Canonical key codec for domains keyed by a 21-byte TRON address (ACCOUNT, CONTRACT, CODE). The
- * codec id is supplied so the same logic can carry a per-domain version (e.g. {@code tron-code-key-v1}).
+ * codec id is supplied so the same logic can carry a per-domain version
+ * (e.g. {@code tron-code-key-v1}).
  */
 public final class Address21KeyCodec implements CanonicalKeyCodec {
 

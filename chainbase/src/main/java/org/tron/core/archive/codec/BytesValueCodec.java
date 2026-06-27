@@ -5,7 +5,7 @@ import org.tron.core.archive.ArchiveException;
 /**
  * Canonical value codec that treats the value as opaque bytes (clone + typed tombstone). Suitable
  * for non-protobuf domains (CODE bytecode, CONTRACT_STORAGE word). Proto-valued domains (ACCOUNT)
- * need a canonicalizing codec (decision 4) layered on top — that is a follow-on, not this codec.
+ * need a canonicalizing codec (decision 4) layered on top - that is a follow-on, not this codec.
  */
 public final class BytesValueCodec implements CanonicalValueCodec {
 
