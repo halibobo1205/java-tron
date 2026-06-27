@@ -6,7 +6,6 @@ import static org.junit.Assert.assertTrue;
 
 import com.google.protobuf.ByteString;
 import java.util.Arrays;
-import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.After;
 import org.junit.Test;
@@ -22,7 +21,7 @@ import org.tron.core.archive.ArchiveExecutionContextHolder;
 import org.tron.core.archive.DefaultArchiveService;
 import org.tron.core.archive.capture.ArchiveCaptureEngine;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
-import org.tron.core.archive.capture.ArchiveChangeRecord;
+import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockCapsule;
@@ -113,21 +112,18 @@ public class ManagerArchiveLifecycleTest extends BaseMethodTest {
   }
 
   @Test
-  public void archiveCapturesDomainWritesDuringBlockApply() throws Exception {
+  public void archiveCapturesAndDrainsDomainWritesToTemporalStore() throws Exception {
     assertTrue("an enabled archive service must install a capture engine",
         ArchiveCaptureHolder.isActive());
     ArchiveCaptureEngine captureEngine = archiveService.getCaptureEngine();
 
     dbManager.pushBlock(signedEmptyBlock());
 
-    List<ArchiveChangeRecord> records = captureEngine.records();
-    assertFalse("block apply must capture at least one domain write", records.isEmpty());
-    ArchiveBlockRange range = archiveService.getTxNumIndex().getBlockRange(1)
-        .orElseThrow(() -> new AssertionError("no committed range for block 1"));
-    for (ArchiveChangeRecord record : records) {
-      assertTrue("captured txNum must be within block 1's range",
-          record.getTxNum() >= range.getPrepareTxNum()
-              && record.getTxNum() <= range.getFinalizeTxNum());
-    }
+    // commitBlock drains the per-block capture buffer into the temporal store and clears it.
+    assertTrue("capture buffer must be drained at commit", captureEngine.records().isEmpty());
+    InMemoryArchiveTemporalStore temporalStore =
+        (InMemoryArchiveTemporalStore) archiveService.getTemporalStore();
+    assertTrue("block apply must persist at least one domain change to the temporal store",
+        temporalStore.changeCount() > 0);
   }
 }
