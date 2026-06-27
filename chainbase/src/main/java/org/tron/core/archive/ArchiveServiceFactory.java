@@ -3,12 +3,12 @@ package org.tron.core.archive;
 import org.tron.core.config.args.StorageConfig;
 
 /**
- * Builds the {@link ArchiveService} for the current configuration.
+ * Builds the {@link ArchiveService} for the current configuration. Disabled config returns the
+ * shared {@link NoopArchiveService}; enabled config returns a {@link DefaultArchiveService}.
  *
- * <p>L1 deliberately refuses real enablement: it parses {@code storage.archive.enable = true}
- * but throws instead of returning a half-built service, so the node never runs in a
- * "looks enabled but silently no-op" state. Later landings (L2+) relax this once a real
- * implementation exists.
+ * <p>At L2 the enabled service only allocates the in-memory txNum coordinate (no persistence).
+ * The "x86 archive disabled in P0" rule is enforced at L5, where the RocksDB-backed persistence
+ * module is absent from the x86 build and enablement is rejected there.
  */
 public final class ArchiveServiceFactory {
 
@@ -19,7 +19,6 @@ public final class ArchiveServiceFactory {
     if (config == null || !config.isEnable()) {
       return NoopArchiveService.INSTANCE;
     }
-    throw new ArchiveException(
-        "storage.archive.enable=true requires an archive implementation from a later landing");
+    return new DefaultArchiveService(true);
   }
 }

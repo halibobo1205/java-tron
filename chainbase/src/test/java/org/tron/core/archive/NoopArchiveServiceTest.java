@@ -2,7 +2,6 @@ package org.tron.core.archive;
 
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
-import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
@@ -15,7 +14,7 @@ public class NoopArchiveServiceTest {
     ArchiveService service = NoopArchiveService.INSTANCE;
     assertFalse(service.isEnabled());
     // Every lifecycle callback is a no-op; invoking them (even with null) must not throw.
-    service.beginBlock(null);
+    service.beginBlock(null, ArchiveSource.NORMAL);
     service.beginSystemTx(null, ArchivePhase.BLOCK_PREPARE);
     service.beginUserTx(null, 0, null);
     service.endTx();
@@ -37,11 +36,11 @@ public class NoopArchiveServiceTest {
   }
 
   @Test
-  public void factoryRejectsEnableUntilImplementationLands() {
+  public void factoryReturnsEnabledDefaultServiceWhenEnabled() {
     StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
     config.setEnable(true);
-    ArchiveException ex = assertThrows(ArchiveException.class,
-        () -> ArchiveServiceFactory.create(config));
-    assertTrue(ex.getMessage().contains("later landing"));
+    ArchiveService service = ArchiveServiceFactory.create(config);
+    assertTrue(service instanceof DefaultArchiveService);
+    assertTrue(service.isEnabled());
   }
 }
