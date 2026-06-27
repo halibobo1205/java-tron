@@ -4,7 +4,14 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import org.junit.After;
 import org.junit.Test;
+import org.tron.core.archive.capture.ArchiveCaptureHolder;
+import org.tron.core.archive.temporal.RocksDbArchiveTemporalStore;
 import org.tron.core.config.args.StorageConfig;
 
 public class NoopArchiveServiceTest {
@@ -42,5 +49,36 @@ public class NoopArchiveServiceTest {
     ArchiveService service = ArchiveServiceFactory.create(config);
     assertTrue(service instanceof DefaultArchiveService);
     assertTrue(service.isEnabled());
+  }
+
+  @Test
+  public void factoryInstallsPersistentStoreWhenPathSupplied() throws IOException {
+    StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
+    config.setEnable(true);
+    Path dir = Files.createTempDirectory("archive-factory-test");
+    try {
+      ArchiveService service = ArchiveServiceFactory.create(config, dir.toString());
+      assertTrue(((DefaultArchiveService) service).getTemporalStore()
+          instanceof RocksDbArchiveTemporalStore);
+      service.close(); // must release the RocksDB cleanly
+    } finally {
+      deleteRecursively(dir.toFile());
+    }
+  }
+
+  @After
+  public void clearCaptureHolder() {
+    // An enabled DefaultArchiveService installs a static capture engine; clear between tests.
+    ArchiveCaptureHolder.clear();
+  }
+
+  private static void deleteRecursively(File f) {
+    File[] children = f.listFiles();
+    if (children != null) {
+      for (File c : children) {
+        deleteRecursively(c);
+      }
+    }
+    f.delete();
   }
 }

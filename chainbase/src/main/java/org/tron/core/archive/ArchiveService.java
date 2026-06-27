@@ -28,4 +28,8 @@ public interface ArchiveService {
   void beginUserTx(BlockCapsule block, int txIndex, TransactionCapsule tx);
 
   void endTx();
+
+  /** Release resources (e.g. close a persistent temporal store) at shutdown; no-op by default. */
+  default void close() {
+  }
 }

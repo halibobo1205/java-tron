@@ -29,18 +29,30 @@ public final class DefaultArchiveService implements ArchiveService {
   private final ArchiveTemporalStore temporalStore;
 
   public DefaultArchiveService(boolean enabled) {
-    this(enabled, new InMemoryArchiveTxNumIndex(), ArchiveExecutionContextHolder.get());
+    this(enabled, enabled ? new InMemoryArchiveTemporalStore() : null);
+  }
+
+  /** Production entry: the factory injects a persistent (RocksDB) temporal store when enabled. */
+  public DefaultArchiveService(boolean enabled, ArchiveTemporalStore temporalStore) {
+    this(enabled, new InMemoryArchiveTxNumIndex(), ArchiveExecutionContextHolder.get(),
+        temporalStore);
   }
 
   DefaultArchiveService(boolean enabled, ArchiveTxNumIndex txNumIndex,
       ArchiveExecutionContext executionContext) {
+    this(enabled, txNumIndex, executionContext,
+        enabled ? new InMemoryArchiveTemporalStore() : null);
+  }
+
+  DefaultArchiveService(boolean enabled, ArchiveTxNumIndex txNumIndex,
+      ArchiveExecutionContext executionContext, ArchiveTemporalStore temporalStore) {
     this.enabled = enabled;
     this.txNumIndex = txNumIndex;
     this.executionContext = executionContext;
     if (enabled) {
       this.captureEngine = new ArchiveCaptureEngine(new DefaultArchiveDomainRegistry(),
           new DefaultArchiveDomainCatalog(), new DynamicKeyPolicy(), executionContext);
-      this.temporalStore = new InMemoryArchiveTemporalStore();
+      this.temporalStore = temporalStore;
       ArchiveCaptureHolder.set(captureEngine);
     } else {
       this.captureEngine = null;
@@ -126,5 +138,17 @@ public final class DefaultArchiveService implements ArchiveService {
     }
     txNumIndex.unwindBlock(block.getNum());
     captureEngine.clear();
+  }
+
+  @Override
+  public void close() {
+    ArchiveCaptureHolder.clear();
+    if (temporalStore instanceof AutoCloseable) {
+      try {
+        ((AutoCloseable) temporalStore).close();
+      } catch (Exception e) {
+        throw new ArchiveException("failed to close archive temporal store", e);
+      }
+    }
   }
 }
