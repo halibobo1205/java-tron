@@ -139,7 +139,7 @@ public final class DefaultArchiveService implements ArchiveService {
     // Drop the reverted block's already-persisted changes (txNum >= its first txNum) before the
     // index forgets the range, so the temporal store never retains rolled-back state.
     txNumIndex.getBlockRange(block.getNum())
-        .ifPresent(range -> temporalStore.unwind(range.getPrepareTxNum()));
+        .ifPresent(range -> temporalStore.unwind(range.getFirstTxNum()));
     txNumIndex.unwindBlock(block.getNum());
     captureEngine.clear();
   }

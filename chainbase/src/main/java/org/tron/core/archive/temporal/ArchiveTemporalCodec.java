@@ -34,13 +34,23 @@ public final class ArchiveTemporalCodec {
     return new byte[] {(byte) (id >>> 8), (byte) id};
   }
 
+  // 2-byte big-endian length of the canonical key, inserted before the key so that no key can be a
+  // byte prefix of another (the spec's length-prefix requirement); otherwise seekForPrev/startsWith
+  // could cross key boundaries for variable-length keys (e.g. DYNAMIC_PROPERTIES property names).
+  private static byte[] keyLength(byte[] canonicalKey) {
+    int len = canonicalKey.length;
+    return new byte[] {(byte) (len >>> 8), (byte) len};
+  }
+
   static byte[] latestKey(ArchiveDomain domain, byte[] canonicalKey) {
-    return Bytes.concat(new byte[] {LATEST_PREFIX}, domainId(domain), canonicalKey);
+    return Bytes.concat(new byte[] {LATEST_PREFIX}, domainId(domain), keyLength(canonicalKey),
+        canonicalKey);
   }
 
   /** Prefix shared by all history entries of a (domain, key); a history key starts with it. */
   static byte[] historyPrefix(ArchiveDomain domain, byte[] canonicalKey) {
-    return Bytes.concat(new byte[] {HISTORY_PREFIX}, domainId(domain), canonicalKey);
+    return Bytes.concat(new byte[] {HISTORY_PREFIX}, domainId(domain), keyLength(canonicalKey),
+        canonicalKey);
   }
 
   static byte[] historyKey(ArchiveDomain domain, byte[] canonicalKey, long txNum) {
@@ -49,7 +59,7 @@ public final class ArchiveTemporalCodec {
 
   static byte[] changesetKey(long txNum, ArchiveDomain domain, byte[] canonicalKey) {
     return Bytes.concat(new byte[] {CHANGESET_PREFIX}, Longs.toByteArray(txNum),
-        domainId(domain), canonicalKey);
+        domainId(domain), keyLength(canonicalKey), canonicalKey);
   }
 
   /** Seek target for unwind: the first changeset entry at txNum == fromTxNum. */
