@@ -26,8 +26,8 @@ public class ArchiveTemporalCodecTest {
     byte[] history = ArchiveTemporalCodec.historyKey(ArchiveDomain.ACCOUNT, key, 7L);
     assertEquals(ArchiveTemporalCodec.LATEST_PREFIX, latest[0]);
     assertEquals(ArchiveTemporalCodec.HISTORY_PREFIX, history[0]);
-    assertEquals(6, latest.length);  // prefix(1) + domainId(2) + key(3)
-    assertEquals(14, history.length); // + txNum(8)
+    assertEquals(8, latest.length);  // prefix(1) + domainId(2) + keyLen(2) + key(3)
+    assertEquals(16, history.length); // + txNum(8)
     assertTrue(ArchiveTemporalCodec.startsWith(history,
         ArchiveTemporalCodec.historyPrefix(ArchiveDomain.ACCOUNT, key)));
   }

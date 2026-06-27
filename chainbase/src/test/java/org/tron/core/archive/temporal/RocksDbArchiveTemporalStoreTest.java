@@ -6,6 +6,7 @@ import static org.junit.Assert.assertTrue;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.After;
@@ -38,9 +39,14 @@ public class RocksDbArchiveTemporalStoreTest {
   }
 
   private static ArchiveChangeRecord change(long txNum, DomainValue value) {
+    return rec(txNum, ArchiveDomain.ACCOUNT, KEY, value);
+  }
+
+  private static ArchiveChangeRecord rec(long txNum, ArchiveDomain domain, byte[] key,
+      DomainValue value) {
     return new ArchiveChangeRecord(
         new ArchiveTxPosition(txNum, 1, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, null),
-        ArchiveDomain.ACCOUNT, KEY, value);
+        domain, key, value);
   }
 
   @Test
@@ -99,6 +105,23 @@ public class RocksDbArchiveTemporalStoreTest {
     store.unwind(8);
     assertFalse(store.latest(ArchiveDomain.ACCOUNT, KEY).isPresent());
     assertFalse(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 100).isPresent());
+  }
+
+  @Test
+  public void prefixCollidingKeysDoNotCrossContaminate() {
+    // keyA is a strict byte-prefix of keyB in the same domain (the variable-length-key trap).
+    ArchiveDomain domain = ArchiveDomain.DYNAMIC_PROPERTIES;
+    byte[] keyA = "ENERGY_FEE".getBytes(StandardCharsets.US_ASCII);
+    byte[] keyB = "ENERGY_FEE_HISTORY".getBytes(StandardCharsets.US_ASCII);
+    store.putChange(rec(10, domain, keyA, DomainValue.present(new byte[] {0x0A})));
+    store.putChange(rec(12, domain, keyB, DomainValue.present(new byte[] {0x0B})));
+    store.putChange(rec(18, domain, keyA, DomainValue.present(new byte[] {0x0C})));
+    // getAsOf for keyA must never resolve to keyB's value.
+    assertArrayEquals(new byte[] {0x0A}, store.getAsOf(domain, keyA, 11).get().getValue());
+    // unwind(15) drops keyA@18; keyA.latest must restore to keyA@10, NOT keyB@12.
+    store.unwind(15);
+    assertArrayEquals(new byte[] {0x0A}, store.latest(domain, keyA).get().getValue());
+    assertArrayEquals(new byte[] {0x0B}, store.latest(domain, keyB).get().getValue()); // untouched
   }
 
   private static void deleteRecursively(File f) {
