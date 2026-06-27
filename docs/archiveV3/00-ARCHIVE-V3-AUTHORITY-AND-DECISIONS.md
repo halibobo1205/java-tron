@@ -92,7 +92,8 @@
   2. **用满 9.7.4**：大 HISTORY/CHANGESET value 上 **BlobDB（KV 分离）**减写放大；per-CF Zstd/compaction/bloom/prefix；配合决策 6 的 solidified 批量写用 `IngestExternalFile` + 可 `disableWAL`（靠 `PROGRESS` checkpoint 重建）。
   3. **多盘**用 `cf_paths`（HISTORY 容量盘 / LATEST·ROOT 快盘）；真·冷段 freeze 留 M6。
   4. **模块拆分（关键，与 L1 契合）**：`ArchiveService` 接口 + `NoopArchiveService` + 配置 bean + `ArchiveServiceFactory` 放**基础模块、Java 8 源码级、到处都编**（默认关闭；x86 上 `enable=true` → factory 拒绝"本构建不支持 archive"）。L2-L9 真实现（RocksDB-CF / temporal / reader / commitment）放 **arm64-only 编译单元（Java 17 + RocksDB 9.7.4）**，x86 构建排除。L1 现有"接口 + noop + factory 拒绝 enable"设计本就支持这种拆分。
-  5. **真实现可用 Java 17**（arm64-only）；只有 L1 基础那层必须 **Java 8 兼容**。
+  5. **真实现可用 Java 17**（arm64-only）；只有 Java-8 基础那层必须 **Java 8 兼容**。
+  6. **细化（2026-06-26，L2 落地后确认）**：arm64-only 边界**落在 L5（RocksDB 9.7.4）**——L2-L4（txNum index / domain registry / write-collector）是**纯内存 Java、无 RocksDB 依赖**，与 L1 一同留 **chainbase（Java 8、x86/arm 都编）**；只有 **L5-L9（temporal store / reader / commitment，依赖 RocksDB-CF）进 arm64-only 模块**。"x86 archive 禁用"由 L5 模块在 x86 构建缺席、`ArchiveServiceFactory` 拒 enable 强制（L2-L4 阶段 enable 仅供 arm 开发自测）。故 **L1-L4 须 Java 8 兼容，L5-L9 可 Java 17**。
 - **代价/后续**：x86 迁移"是否容易"取决于 x86 是否跟进现代栈——若 x86 上 Java17+9.7.4，纳入模块即可；若仍 Java8/5.15.10，需真 backport（降 Java 语法 + 丢 BlobDB）。建议把"x86 统一现代工具链"作为项目独立 initiative 跟踪。
 
 **实现细化（2026-06-26）— CF 划分 + BlobDB 阈值**
