@@ -1,6 +1,7 @@
 package org.tron.core.archive;
 
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
@@ -12,6 +13,7 @@ import org.junit.After;
 import org.junit.Test;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.archive.temporal.RocksDbArchiveTemporalStore;
+import org.tron.core.archive.txnum.PersistentArchiveTxNumIndex;
 import org.tron.core.config.args.StorageConfig;
 
 public class NoopArchiveServiceTest {
@@ -57,10 +59,12 @@ public class NoopArchiveServiceTest {
     config.setEnable(true);
     Path dir = Files.createTempDirectory("archive-factory-test");
     try {
-      ArchiveService service = ArchiveServiceFactory.create(config, dir.toString());
-      assertTrue(((DefaultArchiveService) service).getTemporalStore()
-          instanceof RocksDbArchiveTemporalStore);
-      service.close(); // must release the RocksDB cleanly
+      DefaultArchiveService service =
+          (DefaultArchiveService) ArchiveServiceFactory.create(config, dir.toString());
+      assertTrue(service.getTemporalStore() instanceof RocksDbArchiveTemporalStore);
+      assertTrue(service.getTxNumIndex() instanceof PersistentArchiveTxNumIndex);
+      assertNotNull(service.getReaderFactory());
+      service.close(); // must release both RocksDB stores cleanly
     } finally {
       deleteRecursively(dir.toFile());
     }

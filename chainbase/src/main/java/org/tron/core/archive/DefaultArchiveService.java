@@ -3,9 +3,12 @@ package org.tron.core.archive;
 import org.tron.core.archive.capture.ArchiveCaptureEngine;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
+import org.tron.core.archive.domain.ArchiveDomainCatalog;
 import org.tron.core.archive.domain.DefaultArchiveDomainCatalog;
 import org.tron.core.archive.domain.DefaultArchiveDomainRegistry;
 import org.tron.core.archive.domain.DynamicKeyPolicy;
+import org.tron.core.archive.reader.ArchiveStateReaderFactory;
+import org.tron.core.archive.reader.DefaultArchiveStateReaderFactory;
 import org.tron.core.archive.temporal.ArchiveTemporalStore;
 import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
 import org.tron.core.archive.txnum.ArchiveTxNumIndex;
@@ -27,6 +30,7 @@ public final class DefaultArchiveService implements ArchiveService {
   private final ArchiveExecutionContext executionContext;
   private final ArchiveCaptureEngine captureEngine;
   private final ArchiveTemporalStore temporalStore;
+  private final ArchiveStateReaderFactory readerFactory;
 
   public DefaultArchiveService(boolean enabled) {
     this(enabled, enabled ? new InMemoryArchiveTemporalStore() : null);
@@ -50,13 +54,16 @@ public final class DefaultArchiveService implements ArchiveService {
     this.txNumIndex = txNumIndex;
     this.executionContext = executionContext;
     if (enabled) {
+      ArchiveDomainCatalog catalog = new DefaultArchiveDomainCatalog();
       this.captureEngine = new ArchiveCaptureEngine(new DefaultArchiveDomainRegistry(),
-          new DefaultArchiveDomainCatalog(), new DynamicKeyPolicy(), executionContext);
+          catalog, new DynamicKeyPolicy(), executionContext);
       this.temporalStore = temporalStore;
+      this.readerFactory = new DefaultArchiveStateReaderFactory(temporalStore, catalog);
       ArchiveCaptureHolder.set(captureEngine);
     } else {
       this.captureEngine = null;
       this.temporalStore = null;
+      this.readerFactory = null;
     }
   }
 
@@ -70,6 +77,11 @@ public final class DefaultArchiveService implements ArchiveService {
 
   public ArchiveTemporalStore getTemporalStore() {
     return temporalStore;
+  }
+
+  /** Opens historical state readers over the temporal store; null when archive is disabled. */
+  public ArchiveStateReaderFactory getReaderFactory() {
+    return readerFactory;
   }
 
   @Override
@@ -147,11 +159,16 @@ public final class DefaultArchiveService implements ArchiveService {
   @Override
   public void close() {
     ArchiveCaptureHolder.clear();
-    if (temporalStore instanceof AutoCloseable) {
+    closeQuietly(temporalStore, "temporal store");
+    closeQuietly(txNumIndex, "txNum index");
+  }
+
+  private static void closeQuietly(Object resource, String name) {
+    if (resource instanceof AutoCloseable) {
       try {
-        ((AutoCloseable) temporalStore).close();
+        ((AutoCloseable) resource).close();
       } catch (Exception e) {
-        throw new ArchiveException("failed to close archive temporal store", e);
+        throw new ArchiveException("failed to close archive " + name, e);
       }
     }
   }
