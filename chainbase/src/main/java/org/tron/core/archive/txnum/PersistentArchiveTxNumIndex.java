@@ -54,6 +54,9 @@ public final class PersistentArchiveTxNumIndex implements ArchiveTxNumIndex, Aut
 
   @Override
   public void unwindBlock(long blockNum) {
+    // Only blocks committed since startup (held by inner) are ever unwound -- fork switches stay
+    // within the recent KhaosDB window; solidified/pre-restart blocks are never reverted. Unwinding
+    // a store-only block would throw "not committed" from inner, which is the intended fail-fast.
     inner.unwindBlock(blockNum);
     store.unwindRange(blockNum, inner.getCommittedNextTxNum());
   }
