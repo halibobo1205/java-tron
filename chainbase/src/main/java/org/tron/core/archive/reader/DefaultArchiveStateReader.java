@@ -1,6 +1,5 @@
 package org.tron.core.archive.reader;
 
-import com.google.common.primitives.Bytes;
 import com.google.protobuf.InvalidProtocolBufferException;
 import java.util.Optional;
 import org.tron.core.archive.codec.DomainValue;
@@ -93,8 +92,8 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
     // Known limitation: a create2 redeploy at the same address that changed the storage version
     // could leave both versions in history; the probe would prefer the older version 0 -- revisit
     // with a historical-contract version lookup if that edge matters.
-    for (byte version = 0; version <= 1; version++) {
-      byte[] key = Bytes.concat(address, slot, new byte[] {version});
+    for (int contractVersion = 0; contractVersion <= 1; contractVersion++) {
+      byte[] key = ArchiveStorageKeyCodec.contractStorageKey(address, slot, contractVersion);
       ArchiveReadResult<byte[]> raw = getRaw(ArchiveDomain.CONTRACT_STORAGE, key);
       if (raw.getStatus() != ArchiveReadResult.Status.MISSING) {
         if (raw.isPresent() && raw.getValue().length > MAX_STORAGE_VALUE_LEN) {
