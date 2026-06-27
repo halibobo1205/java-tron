@@ -64,7 +64,8 @@ public class ArchiveDomainRegistryTest {
     assertEquals(RawHookMode.GENERIC_TRON_STORE_ALLOWLIST,
         registry.bindingForDbName("properties").getRawHookMode());
     // contract / contract-state have a non-generic write path.
-    assertEquals(RawHookMode.STORE_SPECIFIC, registry.bindingForDbName("contract").getRawHookMode());
+    assertEquals(RawHookMode.STORE_SPECIFIC,
+        registry.bindingForDbName("contract").getRawHookMode());
     // abi is HISTORY_ONLY.
     assertEquals(RootPolicy.HISTORY_ONLY, registry.bindingForDbName("abi").getRootPolicy());
     // reward-vi is excluded (one-time immutable).
@@ -106,7 +107,7 @@ public class ArchiveDomainRegistryTest {
     byte[] b = new DefaultArchiveDomainRegistry().checksum();
     assertEquals(32, a.length);
     assertArrayEquals("registry checksum must be deterministic across instances", a, b);
-    // Different schema content (a different domain set) would not equal this checksum — sanity guard
+    // A different schema would not equal this checksum - sanity guard
     // that the checksum actually depends on bindings.
     assertNotEquals(0, a.length);
   }

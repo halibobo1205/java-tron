@@ -33,7 +33,7 @@ public final class ContractStorageKeyCodec implements CanonicalKeyCodec {
     }
     int version = canonicalKey[LENGTH - 1] & 0xff;
     if (version != 0 && version != 1) {
-      throw new ArchiveException(codecId() + ": storage key version must be 0 or 1, got " + version);
+      throw new ArchiveException(codecId() + ": storage version must be 0/1, got " + version);
     }
   }
 }

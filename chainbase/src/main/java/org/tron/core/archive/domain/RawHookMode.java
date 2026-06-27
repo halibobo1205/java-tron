@@ -11,7 +11,7 @@ public enum RawHookMode {
   GENERIC_TRON_STORE_ALLOWLIST,
   /** Store has a non-generic write path (e.g. ContractStore clears ABI then writes directly). */
   STORE_SPECIFIC,
-  /** Raw hook produces no domain write; a semantic hook supplies it (e.g. storage-row, account-asset). */
+  /** No domain write from raw hook; a semantic hook supplies it (e.g. storage-row). */
   SEMANTIC_ONLY,
   /** Raw writes are ignored (excluded / index / operational stores). */
   IGNORE_RAW

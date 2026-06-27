@@ -48,7 +48,7 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
   public synchronized ArchiveTxPosition allocateSystemTx(long blockNum, ArchivePhase phase) {
     requirePending(blockNum);
     if (phase != ArchivePhase.BLOCK_PREPARE && phase != ArchivePhase.BLOCK_FINALIZE) {
-      throw new ArchiveException("system tx phase must be BLOCK_PREPARE or BLOCK_FINALIZE: " + phase);
+      throw new ArchiveException("system phase must be BLOCK_PREPARE/BLOCK_FINALIZE: " + phase);
     }
     ArchiveTxPosition position = new ArchiveTxPosition(
         workingNextTxNum++, blockNum, phase, pendingSource, -1, null);
@@ -106,7 +106,8 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
     for (ArchiveTxPosition position : pendingPositions) {
       positionsByTxNum.put(position.getTxNum(), position);
       if (position.getTxIndex() >= 0) {
-        txNumByBlockAndIndex.put(blockIndexKey(blockNum, position.getTxIndex()), position.getTxNum());
+        txNumByBlockAndIndex.put(
+            blockIndexKey(blockNum, position.getTxIndex()), position.getTxNum());
       }
       byte[] txId = position.getTxId();
       if (txId.length > 0) {
