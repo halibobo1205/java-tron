@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.Commons;
+import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.db.TronStoreWithRevoking;
@@ -84,8 +85,15 @@ public class AccountStore extends TronStoreWithRevoking<AccountCapsule> {
         }
       }
     }
+    // L4c: read the pre-put account so ACCOUNT_ASSET can value-diff assetV2 (gated to avoid the
+    // extra read + serialize when archive is off).
+    boolean archiveActive = ArchiveCaptureHolder.isActive();
+    byte[] oldArchiveValue = archiveActive ? revokingDB.getUnchecked(key) : null;
     super.put(key, item);
     accountStateCallBackUtils.accountCallBack(key, item);
+    if (archiveActive) {
+      ArchiveCaptureHolder.captureAccountAsset(key, oldArchiveValue, item.getData());
+    }
   }
 
   @Override
