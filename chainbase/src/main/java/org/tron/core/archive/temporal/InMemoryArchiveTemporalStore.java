@@ -2,6 +2,7 @@ package org.tron.core.archive.temporal;
 
 import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.NavigableMap;
 import java.util.Optional;
@@ -51,6 +52,20 @@ public final class InMemoryArchiveTemporalStore implements ArchiveTemporalStore 
       return Optional.empty();
     }
     return Optional.of(history.lastEntry().getValue());
+  }
+
+  @Override
+  public void unwind(long fromTxNum) {
+    for (Map<WrappedByteArray, NavigableMap<Long, DomainValue>> domainMap : byDomain.values()) {
+      Iterator<NavigableMap<Long, DomainValue>> histories = domainMap.values().iterator();
+      while (histories.hasNext()) {
+        NavigableMap<Long, DomainValue> history = histories.next();
+        history.tailMap(fromTxNum, true).clear(); // latest() is derived (lastEntry); it self-heals
+        if (history.isEmpty()) {
+          histories.remove();
+        }
+      }
+    }
   }
 
   /** Total number of txNum change entries across all domains/keys; for diagnostics and tests. */
