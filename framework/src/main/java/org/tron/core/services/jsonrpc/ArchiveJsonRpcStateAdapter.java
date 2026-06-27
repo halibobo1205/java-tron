@@ -102,6 +102,11 @@ public final class ArchiveJsonRpcStateAdapter {
   }
 
   private static byte[] normalizeSlot(String storageIdx) throws JsonRpcInvalidParamsException {
+    if (storageIdx == null) {
+      // Match the latest path (TronJsonRpcImpl.getStorageAt), which rejects a null slot rather
+      // than letting fromHexString(null) -> empty -> DataWord silently read slot 0.
+      throw new JsonRpcInvalidParamsException("invalid storage key value");
+    }
     try {
       return new DataWord(ByteArray.fromHexString(storageIdx)).getData();
     } catch (RuntimeException e) {
