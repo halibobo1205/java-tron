@@ -195,6 +195,9 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
   private final Wallet wallet;
   @Autowired
   private Manager manager;
+  // L6: historical eth_get* served from the archive; null/disabled falls back to latest-only logic.
+  @Autowired(required = false)
+  private ArchiveJsonRpcStateAdapter archiveJsonRpcStateAdapter;
   private final String esName = "query-section";
 
   @Autowired
@@ -448,7 +451,11 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
 
   @Override
   public String getTrxBalance(String address, String blockNumOrTag)
-      throws JsonRpcInvalidParamsException {
+      throws JsonRpcInvalidParamsException, JsonRpcInternalException {
+    if (archiveJsonRpcStateAdapter != null
+        && archiveJsonRpcStateAdapter.shouldUseArchive(blockNumOrTag)) {
+      return archiveJsonRpcStateAdapter.getBalance(address, blockNumOrTag);
+    }
     requireLatestBlockTag(blockNumOrTag);
 
     byte[] addressData = addressCompatibleToByteArray(address);
@@ -602,7 +609,11 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
 
   @Override
   public String getStorageAt(String address, String storageIdx, String blockNumOrTag)
-      throws JsonRpcInvalidParamsException {
+      throws JsonRpcInvalidParamsException, JsonRpcInternalException {
+    if (archiveJsonRpcStateAdapter != null
+        && archiveJsonRpcStateAdapter.shouldUseArchive(blockNumOrTag)) {
+      return archiveJsonRpcStateAdapter.getStorageAt(address, storageIdx, blockNumOrTag);
+    }
     requireLatestBlockTag(blockNumOrTag);
 
     if (storageIdx == null || storageIdx.length() > MAX_STORAGE_KEY_HEX_LEN) {
@@ -637,7 +648,11 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
 
   @Override
   public String getABIOfSmartContract(String contractAddress, String blockNumOrTag)
-      throws JsonRpcInvalidParamsException {
+      throws JsonRpcInvalidParamsException, JsonRpcInternalException {
+    if (archiveJsonRpcStateAdapter != null
+        && archiveJsonRpcStateAdapter.shouldUseArchive(blockNumOrTag)) {
+      return archiveJsonRpcStateAdapter.getCode(contractAddress, blockNumOrTag);
+    }
     requireLatestBlockTag(blockNumOrTag);
 
     byte[] addressData = addressCompatibleToByteArray(contractAddress);

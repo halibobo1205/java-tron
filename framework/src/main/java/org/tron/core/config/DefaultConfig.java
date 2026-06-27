@@ -10,6 +10,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.StorageUtils;
+import org.tron.core.Wallet;
 import org.tron.core.archive.ArchiveService;
 import org.tron.core.archive.ArchiveServiceFactory;
 import org.tron.core.config.args.Args;
@@ -17,6 +18,7 @@ import org.tron.core.config.args.StorageConfig;
 import org.tron.core.db.RevokingDatabase;
 import org.tron.core.db2.core.SnapshotManager;
 import org.tron.core.services.interfaceOnPBFT.RpcApiServiceOnPBFT;
+import org.tron.core.services.jsonrpc.ArchiveJsonRpcStateAdapter;
 import org.tron.core.services.interfaceOnPBFT.http.PBFT.HttpApiOnPBFTService;
 import org.tron.core.services.interfaceOnSolidity.RpcApiServiceOnSolidity;
 import org.tron.core.services.interfaceOnSolidity.http.solidity.HttpApiOnSolidityService;
@@ -49,6 +51,12 @@ public class DefaultConfig {
     String archiveDbPath = Paths.get(parameter.getOutputDirectory(),
         parameter.getStorage().getDbDirectory(), archive.getDb().getDirectory()).toString();
     return ArchiveServiceFactory.create(archive, archiveDbPath);
+  }
+
+  @Bean
+  public ArchiveJsonRpcStateAdapter archiveJsonRpcStateAdapter(Wallet wallet,
+      ArchiveService archiveService) {
+    return new ArchiveJsonRpcStateAdapter(wallet, archiveService);
   }
 
   @Bean(destroyMethod = "")
