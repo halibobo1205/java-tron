@@ -2,6 +2,7 @@ package org.tron.core.archive.capture;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.tron.core.archive.domain.ArchiveDomain;
 
 /**
  * Process-wide bridge from the Store path to the active {@link ArchiveCaptureEngine}, mirroring
@@ -66,6 +67,34 @@ public final class ArchiveCaptureHolder {
       active.captureAccountAsset(addressKey, oldAccount, newAccount);
     } catch (Exception e) {
       logger.warn("archive account-asset capture failed (dropped): {}", e.getMessage());
+    }
+  }
+
+  /** Capture a SEMANTIC domain put (e.g. CONTRACT_STORAGE); no-op + isolated like capturePut. */
+  public static void captureSemanticPut(ArchiveDomain domain, byte[] canonicalKey, byte[] value) {
+    ArchiveCaptureEngine active = engine;
+    if (active == null) {
+      return;
+    }
+    try {
+      active.captureSemanticPut(domain, canonicalKey, value);
+    } catch (Exception e) {
+      logger.warn("archive semantic capture(put) failed for {} (dropped): {}",
+          domain, e.getMessage());
+    }
+  }
+
+  /** Capture a SEMANTIC domain delete (e.g. zeroed storage slot); no-op + isolated. */
+  public static void captureSemanticDelete(ArchiveDomain domain, byte[] canonicalKey) {
+    ArchiveCaptureEngine active = engine;
+    if (active == null) {
+      return;
+    }
+    try {
+      active.captureSemanticDelete(domain, canonicalKey);
+    } catch (Exception e) {
+      logger.warn("archive semantic capture(delete) failed for {} (dropped): {}", domain,
+          e.getMessage());
     }
   }
 }

@@ -2,6 +2,7 @@ package org.tron.core.vm.program;
 
 import static java.lang.System.arraycopy;
 
+import com.google.common.primitives.Bytes;
 import java.util.HashMap;
 import java.util.Map;
 import lombok.Getter;
@@ -9,6 +10,8 @@ import lombok.Setter;
 import org.tron.common.crypto.Hash;
 import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.utils.ByteUtil;
+import org.tron.core.archive.capture.ArchiveCaptureHolder;
+import org.tron.core.archive.domain.ArchiveDomain;
 import org.tron.core.capsule.StorageRowCapsule;
 import org.tron.core.store.StorageRowStore;
 
@@ -94,12 +97,25 @@ public class Storage {
   }
 
   public void commit() {
+    // L4c archive: capture CONTRACT_STORAGE here (root per-tx storage write) where the contract
+    // address + un-hashed slot are known; raw store key (row.getRowKey()) is irreversible.
+    boolean archiveActive = ArchiveCaptureHolder.isActive();
     rowCache.forEach((DataWord rowKey, StorageRowCapsule row) -> {
       if (row.isDirty()) {
-        if (new DataWord(row.getValue()).isZero()) {
+        boolean zero = new DataWord(row.getValue()).isZero();
+        if (zero) {
           this.store.delete(row.getRowKey());
         } else {
           this.store.put(row.getRowKey(), row);
+        }
+        if (archiveActive) {
+          byte[] key = Bytes.concat(address, rowKey.getData(), new byte[] {(byte) contractVersion});
+          if (zero) {
+            ArchiveCaptureHolder.captureSemanticDelete(ArchiveDomain.CONTRACT_STORAGE, key);
+          } else {
+            ArchiveCaptureHolder.captureSemanticPut(
+                ArchiveDomain.CONTRACT_STORAGE, key, row.getValue());
+          }
         }
       }
     });

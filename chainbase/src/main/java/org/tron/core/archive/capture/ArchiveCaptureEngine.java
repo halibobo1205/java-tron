@@ -64,6 +64,36 @@ public final class ArchiveCaptureEngine {
   }
 
   /**
+   * Captures a record for a SEMANTIC domain (e.g. CONTRACT_STORAGE) whose canonical key is built by
+   * a caller that has the semantic context (the raw store key is irreversible). Resolves the codec
+   * by domain directly, bypassing the dbName/registry lookup.
+   */
+  public void captureSemanticPut(ArchiveDomain domain, byte[] canonicalKey, byte[] value) {
+    captureSemantic(domain, canonicalKey, value, false);
+  }
+
+  public void captureSemanticDelete(ArchiveDomain domain, byte[] canonicalKey) {
+    captureSemantic(domain, canonicalKey, null, true);
+  }
+
+  private void captureSemantic(ArchiveDomain domain, byte[] canonicalKey, byte[] value,
+      boolean delete) {
+    Optional<ArchiveTxPosition> position = context.current();
+    if (!position.isPresent()) {
+      return;
+    }
+    ArchiveDomainDescriptor descriptor = catalog.descriptorFor(domain);
+    if (descriptor == null) {
+      return;
+    }
+    byte[] key = descriptor.getKeyCodec().normalize(canonicalKey);
+    DomainValue domainValue = delete
+        ? descriptor.getValueCodec().normalizeDelete()
+        : descriptor.getValueCodec().normalizePut(value);
+    records.add(new ArchiveChangeRecord(position.get(), domain, key, domainValue));
+  }
+
+  /**
    * Derives ACCOUNT_ASSET (TRC10) records from an account write by value-diffing the old vs new
    * {@code assetV2} maps (decision 2). Only assetIds whose balance actually changed are emitted
    * (a balance == new value, or a tombstone when it drops to 0) -- value-diff, not map-presence, so
