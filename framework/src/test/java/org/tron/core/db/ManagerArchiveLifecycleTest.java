@@ -3,6 +3,8 @@ package org.tron.core.db;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
 import java.util.Arrays;
@@ -17,7 +19,10 @@ import org.tron.common.utils.PublicMethod;
 import org.tron.common.utils.ReflectUtils;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.ChainBaseManager;
+import org.tron.core.Wallet;
 import org.tron.core.archive.ArchiveExecutionContextHolder;
+import org.tron.core.archive.ArchivePhase;
+import org.tron.core.archive.ArchiveSource;
 import org.tron.core.archive.DefaultArchiveService;
 import org.tron.core.archive.capture.ArchiveCaptureEngine;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
@@ -28,6 +33,7 @@ import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.WitnessCapsule;
 import org.tron.core.config.args.Args;
 import org.tron.core.consensus.ConsensusService;
+import org.tron.core.services.jsonrpc.ArchiveJsonRpcStateAdapter;
 import org.tron.protos.Protocol;
 
 /**
@@ -128,5 +134,47 @@ public class ManagerArchiveLifecycleTest extends BaseMethodTest {
         (InMemoryArchiveTemporalStore) archiveService.getTemporalStore();
     assertTrue("block apply must persist at least one domain change to the temporal store",
         temporalStore.changeCount() > 0);
+  }
+
+  @Test
+  public void historicalGetBalanceReadsCapturedAccountThroughAdapter() throws Exception {
+    // Drive one captured block that writes an account balance, exactly as the Manager would:
+    // beginBlock -> BLOCK_PREPARE (account write captured) -> BLOCK_FINALIZE -> commitBlock (drains
+    // into the temporal store and commits the txNum range).
+    BlockCapsule block = signedEmptyBlock();
+    byte[] addr = new byte[21];
+    addr[0] = 0x41;
+    for (int i = 1; i < addr.length; i++) {
+      addr[i] = (byte) i;
+    }
+    long expectedBalance = 123_456_789L;
+
+    archiveService.beginBlock(block, ArchiveSource.NORMAL);
+    archiveService.beginSystemTx(block, ArchivePhase.BLOCK_PREPARE);
+    chainManager.getAccountStore().put(addr, new AccountCapsule(Protocol.Account.newBuilder()
+        .setAddress(ByteString.copyFrom(addr)).setBalance(expectedBalance).build()));
+    archiveService.endTx();
+    archiveService.beginSystemTx(block, ArchivePhase.BLOCK_FINALIZE);
+    archiveService.endTx();
+    archiveService.commitBlock(block);
+
+    // The resolver resolves a quantity tag without touching the wallet, then fetches the block by
+    // number; a mock supplies that single block so the test needs no live block store.
+    Wallet wallet = mock(Wallet.class);
+    when(wallet.getBlockByNum(block.getNum())).thenReturn(block.getInstance());
+    ArchiveJsonRpcStateAdapter adapter = new ArchiveJsonRpcStateAdapter(wallet, archiveService);
+
+    String blockTag = "0x" + Long.toHexString(block.getNum());
+    // Captured account: the historical balance is read back end-to-end (resolver -> reader ->
+    // render) at the block's finalize txNum.
+    assertEquals(ByteArray.toJsonHex(expectedBalance),
+        adapter.getBalance(ByteArray.toHexString(addr), blockTag));
+
+    // An account never written in this block is MISSING -> rendered as zero, not an archive gap.
+    byte[] unknown = new byte[21];
+    unknown[0] = 0x41;
+    unknown[20] = (byte) 0xff;
+    assertEquals(ByteArray.toJsonHex(0L),
+        adapter.getBalance(ByteArray.toHexString(unknown), blockTag));
   }
 }
