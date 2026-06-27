@@ -28,6 +28,7 @@ public class StorageConfig {
   private CheckpointConfig checkpoint = new CheckpointConfig();
   private SnapshotConfig snapshot = new SnapshotConfig();
   private TxCacheConfig txCache = new TxCacheConfig();
+  private ArchiveConfig archive = new ArchiveConfig();
   // ConfigBeanFactory requires all bean fields present per item, so we parse manually.
   @Setter(lombok.AccessLevel.NONE)
   private List<PropertyConfig> properties = new ArrayList<>();
@@ -158,6 +159,67 @@ public class StorageConfig {
     }
   }
 
+  // Archive (transaction-level historical state) sidecar config. Default disabled = pure no-op.
+  // Nested beans bind 1:1 via ConfigBeanFactory; keys/defaults mirror reference.conf storage.archive.
+  @Getter
+  @Setter
+  public static class ArchiveConfig {
+
+    private boolean enable = false;
+    private DbConfig db = new DbConfig();
+    private TxNumConfig txnum = new TxNumConfig();
+    private TemporalConfig temporal = new TemporalConfig();
+    private CommitmentConfig commitment = new CommitmentConfig();
+    private DebugConfig debug = new DebugConfig();
+    private String coverage = "TVM_STATE_ONLY";
+    private boolean warnUnclassifiedStoreWrites = true;
+
+    void postProcess() {
+      if (db.directory == null || db.directory.trim().isEmpty()) {
+        throw new IllegalArgumentException("storage.archive.db.directory must not be empty");
+      }
+      if (coverage == null || coverage.trim().isEmpty()) {
+        throw new IllegalArgumentException("storage.archive.coverage must not be empty");
+      }
+    }
+
+    @Getter
+    @Setter
+    public static class DbConfig {
+
+      private String directory = "archive";
+    }
+
+    @Getter
+    @Setter
+    public static class TxNumConfig {
+
+      private boolean enable = true;
+    }
+
+    @Getter
+    @Setter
+    public static class TemporalConfig {
+
+      private boolean enable = true;
+    }
+
+    @Getter
+    @Setter
+    public static class CommitmentConfig {
+
+      private boolean enable = false;
+      private boolean persistTxRoots = false;
+    }
+
+    @Getter
+    @Setter
+    public static class DebugConfig {
+
+      private boolean enable = false;
+    }
+  }
+
   // A named database entry: name/path plus the optional LevelDB option overrides
   // inherited from DbOptionOverride (boxed types, null = "inherit per-tier defaults").
   @Getter
@@ -185,6 +247,7 @@ public class StorageConfig {
     sc.dbSettings.postProcess();
     sc.snapshot.postProcess();
     sc.txCache.postProcess();
+    sc.archive.postProcess();
     return sc;
   }
 

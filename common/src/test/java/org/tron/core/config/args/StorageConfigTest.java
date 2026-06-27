@@ -138,6 +138,50 @@ public class StorageConfigTest {
     assertEquals(5000, sc.getTxCache().getEstimatedTransactions());
   }
 
+  // ---- archive ----
+
+  @Test
+  public void testArchiveDefaults() {
+    StorageConfig.ArchiveConfig a = StorageConfig.fromConfig(withRef()).getArchive();
+    assertFalse(a.isEnable());
+    assertEquals("archive", a.getDb().getDirectory());
+    assertTrue(a.getTxnum().isEnable());
+    assertTrue(a.getTemporal().isEnable());
+    assertFalse(a.getCommitment().isEnable());
+    assertFalse(a.getCommitment().isPersistTxRoots());
+    assertFalse(a.getDebug().isEnable());
+    assertEquals("TVM_STATE_ONLY", a.getCoverage());
+    assertTrue(a.isWarnUnclassifiedStoreWrites());
+  }
+
+  @Test
+  public void testArchiveOverride() {
+    StorageConfig.ArchiveConfig a = StorageConfig.fromConfig(withRef(
+        "storage.archive { enable = true, db { directory = arc }, txnum { enable = false },"
+            + " temporal { enable = false }, commitment { enable = true, persistTxRoots = true },"
+            + " debug { enable = true }, coverage = FULL, warnUnclassifiedStoreWrites = false }"))
+        .getArchive();
+    assertTrue(a.isEnable());
+    assertEquals("arc", a.getDb().getDirectory());
+    assertFalse(a.getTxnum().isEnable());
+    assertFalse(a.getTemporal().isEnable());
+    assertTrue(a.getCommitment().isEnable());
+    assertTrue(a.getCommitment().isPersistTxRoots());
+    assertTrue(a.getDebug().isEnable());
+    assertEquals("FULL", a.getCoverage());
+    assertFalse(a.isWarnUnclassifiedStoreWrites());
+  }
+
+  @Test(expected = IllegalArgumentException.class)
+  public void testArchiveRejectsEmptyDirectory() {
+    StorageConfig.fromConfig(withRef("storage.archive.db.directory = \"\""));
+  }
+
+  @Test(expected = IllegalArgumentException.class)
+  public void testArchiveRejectsEmptyCoverage() {
+    StorageConfig.fromConfig(withRef("storage.archive.coverage = \"\""));
+  }
+
   // ---- readProperties() ----
 
   private static List<PropertyConfig> props(String storageProperties) {
