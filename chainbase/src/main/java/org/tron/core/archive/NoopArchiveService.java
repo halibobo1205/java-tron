@@ -20,7 +20,7 @@ public final class NoopArchiveService implements ArchiveService {
   }
 
   @Override
-  public void beginBlock(BlockCapsule block) {
+  public void beginBlock(BlockCapsule block, ArchiveSource source) {
   }
 
   @Override
