@@ -5,6 +5,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import com.google.common.primitives.Bytes;
 import com.google.protobuf.ByteString;
 import java.nio.charset.StandardCharsets;
 import org.junit.Before;
@@ -109,6 +110,53 @@ public class ArchiveCaptureEngineTest {
     enterTx(1);
     engine.capturePut("account", new byte[21], account(1));
     engine.clear();
+    assertTrue(engine.records().isEmpty());
+  }
+
+  private static byte[] acct(Object... assetIdThenBalance) {
+    Account.Builder b = Account.newBuilder();
+    for (int i = 0; i < assetIdThenBalance.length; i += 2) {
+      b.putAssetV2((String) assetIdThenBalance[i], (Long) assetIdThenBalance[i + 1]);
+    }
+    return b.build().toByteArray();
+  }
+
+  @Test
+  public void accountAssetCapturesOnlyValueChangedAssets() {
+    enterTx(11);
+    byte[] addr = new byte[21];
+    byte[] old = acct("1000001", 100L, "1000002", 5L);
+    byte[] now = acct("1000001", 150L, "1000002", 5L); // only 1000001 changed
+    engine.captureAccountAsset(addr, old, now);
+    assertEquals(1, engine.records().size());
+    ArchiveChangeRecord r = engine.records().get(0);
+    assertEquals(ArchiveDomain.ACCOUNT_ASSET, r.getDomain());
+    assertEquals(11, r.getTxNum());
+    assertFalse(r.getValue().isDeleted());
+    assertArrayEquals(Bytes.concat(addr, ascii("1000001")), r.getCanonicalKey());
+  }
+
+  @Test
+  public void accountAssetTombstoneWhenBalanceDropsToZero() {
+    enterTx(1);
+    engine.captureAccountAsset(new byte[21], acct("1", 9L), acct());
+    assertEquals(1, engine.records().size());
+    assertTrue(engine.records().get(0).getValue().isDeleted());
+  }
+
+  @Test
+  public void accountAssetEmitsForNewAccountAndSkipsUnchanged() {
+    enterTx(1);
+    engine.captureAccountAsset(new byte[21], null, acct("1", 50L)); // new account
+    assertEquals(1, engine.records().size());
+    engine.clear();
+    engine.captureAccountAsset(new byte[21], acct("1", 5L), acct("1", 5L)); // unchanged
+    assertTrue(engine.records().isEmpty());
+  }
+
+  @Test
+  public void accountAssetNoCaptureOutsideContext() {
+    engine.captureAccountAsset(new byte[21], null, acct("1", 5L));
     assertTrue(engine.records().isEmpty());
   }
 }

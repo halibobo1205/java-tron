@@ -1,11 +1,20 @@
 package org.tron.core.archive.capture;
 
+import com.google.common.primitives.Bytes;
+import com.google.common.primitives.Longs;
+import com.google.protobuf.InvalidProtocolBufferException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
+import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchiveExecutionContext;
 import org.tron.core.archive.codec.DomainValue;
+import org.tron.core.archive.domain.ArchiveDomain;
 import org.tron.core.archive.domain.ArchiveDomainCatalog;
 import org.tron.core.archive.domain.ArchiveDomainDescriptor;
 import org.tron.core.archive.domain.ArchiveDomainRegistry;
@@ -14,6 +23,7 @@ import org.tron.core.archive.domain.DynamicKeyPolicy;
 import org.tron.core.archive.domain.HistoryPolicy;
 import org.tron.core.archive.domain.StoreBinding;
 import org.tron.core.archive.txnum.ArchiveTxPosition;
+import org.tron.protos.Protocol.Account;
 
 /**
  * Routes store writes to domain change records. Given a {@code (dbName, key, value)} and the
@@ -51,6 +61,57 @@ public final class ArchiveCaptureEngine {
 
   public void captureDelete(String dbName, byte[] key) {
     capture(dbName, key, null, true);
+  }
+
+  /**
+   * Derives ACCOUNT_ASSET (TRC10) records from an account write by value-diffing the old vs new
+   * {@code assetV2} maps (decision 2). Only assetIds whose balance actually changed are emitted
+   * (a balance == new value, or a tombstone when it drops to 0) -- value-diff, not map-presence, so
+   * lazily-imported but unchanged assets are skipped. Works in both asset_optimized regimes because
+   * the account value written per-tx carries the post-mutation balances for the assets touched.
+   */
+  public void captureAccountAsset(byte[] addressKey, byte[] oldAccount, byte[] newAccount) {
+    Optional<ArchiveTxPosition> position = context.current();
+    if (!position.isPresent()) {
+      return;
+    }
+    Map<String, Long> oldAssets = assetV2(oldAccount);
+    Map<String, Long> newAssets = assetV2(newAccount);
+    if (oldAssets.isEmpty() && newAssets.isEmpty()) {
+      return;
+    }
+    ArchiveDomainDescriptor descriptor = catalog.descriptorFor(ArchiveDomain.ACCOUNT_ASSET);
+    if (descriptor == null) {
+      return;
+    }
+    Set<String> assetIds = new TreeSet<>(); // sorted for deterministic capture order
+    assetIds.addAll(oldAssets.keySet());
+    assetIds.addAll(newAssets.keySet());
+    for (String assetId : assetIds) {
+      long oldBalance = oldAssets.getOrDefault(assetId, 0L);
+      long newBalance = newAssets.getOrDefault(assetId, 0L);
+      if (oldBalance == newBalance) {
+        continue;
+      }
+      byte[] canonicalKey = descriptor.getKeyCodec().normalize(
+          Bytes.concat(addressKey, assetId.getBytes(StandardCharsets.US_ASCII)));
+      DomainValue value = (newBalance == 0)
+          ? descriptor.getValueCodec().normalizeDelete()
+          : descriptor.getValueCodec().normalizePut(Longs.toByteArray(newBalance));
+      records.add(new ArchiveChangeRecord(
+          position.get(), ArchiveDomain.ACCOUNT_ASSET, canonicalKey, value));
+    }
+  }
+
+  private Map<String, Long> assetV2(byte[] accountBytes) {
+    if (accountBytes == null || accountBytes.length == 0) {
+      return Collections.emptyMap();
+    }
+    try {
+      return Account.parseFrom(accountBytes).getAssetV2Map();
+    } catch (InvalidProtocolBufferException e) {
+      throw new ArchiveException("account-asset: value is not a valid Account proto", e);
+    }
   }
 
   private void capture(String dbName, byte[] key, byte[] value, boolean delete) {
