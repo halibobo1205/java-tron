@@ -59,7 +59,7 @@ public final class ArchiveCaptureEngine {
       return; // outside block apply / archive disabled
     }
     StoreBinding binding = registry.bindingForDbName(dbName);
-    if (!isGenericCaptured(binding, key)) {
+    if (!isRawCaptured(binding, key)) {
       return;
     }
     ArchiveDomainDescriptor descriptor = catalog.descriptorFor(binding.getDomain().get());
@@ -74,12 +74,19 @@ public final class ArchiveCaptureEngine {
         canonicalKey, domainValue));
   }
 
-  private boolean isGenericCaptured(StoreBinding binding, byte[] key) {
+  /**
+   * Whether a raw store write is captured. GENERIC and STORE_SPECIFIC domains are both raw-captured
+   * (STORE_SPECIFIC stores bypass the base put and call from their own hook, so there is no
+   * double-capture); ALLOWLIST domains capture per key policy; SEMANTIC_ONLY / IGNORE_RAW are
+   * captured by semantic hooks (L4c), not here.
+   */
+  private boolean isRawCaptured(StoreBinding binding, byte[] key) {
     if (!binding.getDomain().isPresent()) {
       return false;
     }
     switch (binding.getRawHookMode()) {
       case GENERIC_TRON_STORE:
+      case STORE_SPECIFIC:
         return true;
       case GENERIC_TRON_STORE_ALLOWLIST:
         // DYNAMIC_PROPERTIES: archive every key that keeps history; skip only NO_ARCHIVE keys
@@ -87,7 +94,7 @@ public final class ArchiveCaptureEngine {
         DynamicKeyDecision decision = dynamicKeyPolicy.decision(key);
         return decision.getHistoryPolicy() != HistoryPolicy.NO_ARCHIVE;
       default:
-        // STORE_SPECIFIC / SEMANTIC_ONLY / IGNORE_RAW are captured by dedicated hooks.
+        // SEMANTIC_ONLY / IGNORE_RAW are captured by semantic hooks, not the raw path.
         return false;
     }
   }

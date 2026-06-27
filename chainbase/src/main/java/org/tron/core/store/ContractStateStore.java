@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.capsule.ContractStateCapsule;
 import org.tron.core.db.TronStoreWithRevoking;
 
@@ -29,7 +30,10 @@ public class ContractStateStore extends TronStoreWithRevoking<ContractStateCapsu
       return;
     }
 
-    revokingDB.put(key, item.getData());
+    byte[] value = item.getData();
+    revokingDB.put(key, value);
+    // L4 archive: contract-state is STORE_SPECIFIC and bypasses the base put hook.
+    ArchiveCaptureHolder.capturePut(getDbName(), key, value);
   }
 
 }
