@@ -1,5 +1,9 @@
 package org.tron.core.archive.temporal;
 
+import com.google.common.primitives.Bytes;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 import org.rocksdb.Options;
 import org.rocksdb.RocksDB;
@@ -11,6 +15,7 @@ import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
+import org.tron.core.db2.common.WrappedByteArray;
 
 /**
  * RocksDB-backed {@link ArchiveTemporalStore}. A single column family holds both the latest record
@@ -24,6 +29,11 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
   static {
     RocksDB.loadLibrary();
   }
+
+  private static final byte[] EMPTY = new byte[0];
+  private static final byte[] MAX_TXNUM_SUFFIX = {
+      (byte) 0xff, (byte) 0xff, (byte) 0xff, (byte) 0xff,
+      (byte) 0xff, (byte) 0xff, (byte) 0xff, (byte) 0xff};
 
   private final Options options;
   private final RocksDB db;
@@ -46,6 +56,8 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
     try (WriteBatch batch = new WriteBatch(); WriteOptions writeOptions = new WriteOptions()) {
       batch.put(ArchiveTemporalCodec.latestKey(domain, key), value);
       batch.put(ArchiveTemporalCodec.historyKey(domain, key, record.getTxNum()), value);
+      // changeset marker (txNum-ordered) so unwind can find this change without a full scan.
+      batch.put(ArchiveTemporalCodec.changesetKey(record.getTxNum(), domain, key), EMPTY);
       db.write(writeOptions, batch);
     } catch (RocksDBException e) {
       throw new ArchiveException("archive temporal putChange failed", e);
@@ -74,6 +86,46 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
           : Optional.of(ArchiveTemporalCodec.decodeValue(value));
     } catch (RocksDBException e) {
       throw new ArchiveException("archive temporal latest failed", e);
+    }
+  }
+
+  @Override
+  public void unwind(long fromTxNum) {
+    // Phase 1: walk the txNum-ordered changeset from fromTxNum, deleting each change's history and
+    // changeset entry; collect the affected (deduplicated) history prefixes.
+    Map<WrappedByteArray, byte[]> affected = new HashMap<>();
+    try (WriteOptions writeOptions = new WriteOptions()) {
+      try (WriteBatch deletions = new WriteBatch();
+          RocksIterator it = db.newIterator()) {
+        it.seek(ArchiveTemporalCodec.changesetSeekFrom(fromTxNum));
+        while (it.isValid() && it.key()[0] == ArchiveTemporalCodec.CHANGESET_PREFIX) {
+          byte[] changesetKey = it.key();
+          deletions.delete(ArchiveTemporalCodec.historyKeyOfChangeset(changesetKey));
+          deletions.delete(changesetKey);
+          byte[] historyPrefix = ArchiveTemporalCodec.historyPrefixOfChangeset(changesetKey);
+          affected.put(WrappedByteArray.of(historyPrefix), historyPrefix);
+          it.next();
+        }
+        db.write(writeOptions, deletions);
+      }
+      // Phase 2: restore each affected key's latest to its largest remaining (older) history entry.
+      try (WriteBatch latestUpdates = new WriteBatch()) {
+        for (byte[] historyPrefix : affected.values()) {
+          byte[] latestKey = historyPrefix.clone();
+          latestKey[0] = ArchiveTemporalCodec.LATEST_PREFIX;
+          try (RocksIterator it = db.newIterator()) {
+            it.seekForPrev(Bytes.concat(historyPrefix, MAX_TXNUM_SUFFIX));
+            if (it.isValid() && ArchiveTemporalCodec.startsWith(it.key(), historyPrefix)) {
+              latestUpdates.put(latestKey, it.value());
+            } else {
+              latestUpdates.delete(latestKey);
+            }
+          }
+        }
+        db.write(writeOptions, latestUpdates);
+      }
+    } catch (RocksDBException e) {
+      throw new ArchiveException("archive temporal unwind failed", e);
     }
   }
 

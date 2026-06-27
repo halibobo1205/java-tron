@@ -1,6 +1,7 @@
 package org.tron.core.archive.temporal;
 
 import static org.junit.Assert.assertArrayEquals;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -59,5 +60,25 @@ public class InMemoryArchiveTemporalStoreTest {
     assertFalse(store.latest(ArchiveDomain.ACCOUNT, "nope".getBytes()).isPresent());
     store.putChange(change(5, KEY, DomainValue.present(new byte[] {1})));
     assertFalse(store.getAsOf(ArchiveDomain.CODE, KEY, 5).isPresent()); // different domain
+  }
+
+  @Test
+  public void unwindDropsChangesAtOrAfterTxNumAndRestoresLatest() {
+    store.putChange(change(5, KEY, DomainValue.present(new byte[] {0x0A})));
+    store.putChange(change(8, KEY, DomainValue.present(new byte[] {0x0B})));
+    store.putChange(change(12, KEY, DomainValue.present(new byte[] {0x0C})));
+    store.unwind(8); // drop tx8 and tx12
+    assertArrayEquals(new byte[] {0x0A}, store.latest(ArchiveDomain.ACCOUNT, KEY).get().getValue());
+    assertArrayEquals(new byte[] {0x0A},
+        store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 100).get().getValue());
+    assertEquals(1, store.changeCount());
+  }
+
+  @Test
+  public void unwindRemovesKeyWhenNoOlderHistoryRemains() {
+    store.putChange(change(8, KEY, DomainValue.present(new byte[] {0x0B})));
+    store.unwind(8);
+    assertFalse(store.latest(ArchiveDomain.ACCOUNT, KEY).isPresent());
+    assertEquals(0, store.changeCount());
   }
 }
