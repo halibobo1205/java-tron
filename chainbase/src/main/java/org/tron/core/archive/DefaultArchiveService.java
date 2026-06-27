@@ -2,9 +2,12 @@ package org.tron.core.archive;
 
 import org.tron.core.archive.capture.ArchiveCaptureEngine;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
+import org.tron.core.archive.capture.ArchiveChangeRecord;
 import org.tron.core.archive.domain.DefaultArchiveDomainCatalog;
 import org.tron.core.archive.domain.DefaultArchiveDomainRegistry;
 import org.tron.core.archive.domain.DynamicKeyPolicy;
+import org.tron.core.archive.temporal.ArchiveTemporalStore;
+import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
 import org.tron.core.archive.txnum.ArchiveTxNumIndex;
 import org.tron.core.archive.txnum.InMemoryArchiveTxNumIndex;
 import org.tron.core.capsule.BlockCapsule;
@@ -13,8 +16,9 @@ import org.tron.core.capsule.TransactionCapsule;
 /**
  * Default {@link ArchiveService}: allocates the canonical txNum coordinate, tracks the current
  * execution position (L2), and owns the {@link ArchiveCaptureEngine} that Store hooks route writes
- * to (L4). When disabled every callback is a no-op and no capture engine is installed. Nothing is
- * persisted yet; L5 wires in the temporal store.
+ * to (L4), and an {@link ArchiveTemporalStore} that committed blocks drain into for getAsOf reads
+ * (L5). When disabled every callback is a no-op and neither is installed. The temporal store is the
+ * in-memory reference; the RocksDB-backed store (arm64 module) supersedes it for real nodes.
  */
 public final class DefaultArchiveService implements ArchiveService {
 
@@ -22,6 +26,7 @@ public final class DefaultArchiveService implements ArchiveService {
   private final ArchiveTxNumIndex txNumIndex;
   private final ArchiveExecutionContext executionContext;
   private final ArchiveCaptureEngine captureEngine;
+  private final ArchiveTemporalStore temporalStore;
 
   public DefaultArchiveService(boolean enabled) {
     this(enabled, new InMemoryArchiveTxNumIndex(), ArchiveExecutionContextHolder.get());
@@ -35,9 +40,11 @@ public final class DefaultArchiveService implements ArchiveService {
     if (enabled) {
       this.captureEngine = new ArchiveCaptureEngine(new DefaultArchiveDomainRegistry(),
           new DefaultArchiveDomainCatalog(), new DynamicKeyPolicy(), executionContext);
+      this.temporalStore = new InMemoryArchiveTemporalStore();
       ArchiveCaptureHolder.set(captureEngine);
     } else {
       this.captureEngine = null;
+      this.temporalStore = null;
     }
   }
 
@@ -47,6 +54,10 @@ public final class DefaultArchiveService implements ArchiveService {
 
   public ArchiveCaptureEngine getCaptureEngine() {
     return captureEngine;
+  }
+
+  public ArchiveTemporalStore getTemporalStore() {
+    return temporalStore;
   }
 
   @Override
@@ -91,6 +102,11 @@ public final class DefaultArchiveService implements ArchiveService {
       return;
     }
     txNumIndex.commitBlock(block.getNum(), block.getTransactions().size());
+    // Drain the committed block's captured changes into the temporal store, then clear the buffer.
+    for (ArchiveChangeRecord record : captureEngine.records()) {
+      temporalStore.putChange(record);
+    }
+    captureEngine.clear();
   }
 
   @Override
