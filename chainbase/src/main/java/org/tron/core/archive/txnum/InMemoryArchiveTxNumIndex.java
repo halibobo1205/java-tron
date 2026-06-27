@@ -32,6 +32,21 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
   private final Map<String, Long> txNumByBlockAndIndex = new HashMap<>();
   private final Map<String, Long> txNumByTxId = new HashMap<>();
 
+  public InMemoryArchiveTxNumIndex() {
+    this(0L);
+  }
+
+  /** Seeds the committed cursor (e.g. restored from a persistent index on restart). */
+  public InMemoryArchiveTxNumIndex(long startTxNum) {
+    this.committedNextTxNum = startTxNum;
+    this.workingNextTxNum = startTxNum;
+  }
+
+  /** The next txNum to be allocated for the following block (the committed cursor). */
+  public synchronized long getCommittedNextTxNum() {
+    return committedNextTxNum;
+  }
+
   @Override
   public synchronized void beginBlock(long blockNum, ArchiveSource source) {
     if (pendingBlockNum != null) {
