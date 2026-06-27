@@ -90,22 +90,26 @@ public interface TronJsonRpc {
   @JsonRpcMethod("eth_getBalance")
   @JsonRpcErrors({
       @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInternalException.class, code = -32000, data = "{}"),
   })
-  String getTrxBalance(String address, String blockNumOrTag) throws JsonRpcInvalidParamsException;
+  String getTrxBalance(String address, String blockNumOrTag)
+      throws JsonRpcInvalidParamsException, JsonRpcInternalException;
 
   @JsonRpcMethod("eth_getStorageAt")
   @JsonRpcErrors({
       @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInternalException.class, code = -32000, data = "{}"),
   })
   String getStorageAt(String address, String storageIdx, String blockNumOrTag)
-      throws JsonRpcInvalidParamsException;
+      throws JsonRpcInvalidParamsException, JsonRpcInternalException;
 
   @JsonRpcMethod("eth_getCode")
   @JsonRpcErrors({
       @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInternalException.class, code = -32000, data = "{}"),
   })
   String getABIOfSmartContract(String contractAddress, String bnOrId)
-      throws JsonRpcInvalidParamsException;
+      throws JsonRpcInvalidParamsException, JsonRpcInternalException;
 
   @JsonRpcMethod("eth_coinbase")
   @JsonRpcErrors({
