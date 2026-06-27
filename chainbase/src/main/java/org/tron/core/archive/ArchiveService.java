@@ -15,7 +15,7 @@ public interface ArchiveService {
 
   boolean isEnabled();
 
-  void beginBlock(BlockCapsule block);
+  void beginBlock(BlockCapsule block, ArchiveSource source);
 
   void commitBlock(BlockCapsule block);
 
