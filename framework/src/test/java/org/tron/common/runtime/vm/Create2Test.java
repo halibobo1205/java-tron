@@ -21,6 +21,7 @@ import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractValidateException;
 import org.tron.core.exception.ReceiptCheckErrException;
 import org.tron.core.exception.VMIllegalException;
+import org.tron.core.exception.jsonrpc.JsonRpcInternalException;
 import org.tron.core.exception.jsonrpc.JsonRpcInvalidParamsException;
 import org.tron.core.services.NodeInfoService;
 import org.tron.core.services.jsonrpc.TronJsonRpcImpl;
@@ -215,7 +216,7 @@ public class Create2Test extends VMTestBase {
       String res =
           tronJsonRpc.getStorageAt(ByteArray.toHexString(actualContract), "0", "latest");
       Assert.assertEquals(loop, ByteArray.jsonHexToLong(res));
-    } catch (JsonRpcInvalidParamsException e) {
+    } catch (JsonRpcInvalidParamsException | JsonRpcInternalException e) {
       Assert.fail();
     }
   }
