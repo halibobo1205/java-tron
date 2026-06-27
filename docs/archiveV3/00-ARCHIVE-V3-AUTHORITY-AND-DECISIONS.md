@@ -119,6 +119,8 @@
 2. **Capture = 交易级 @ 执行时（不可省）**。内存快照层只保留**块级**最终值（`SnapshotImpl` 是 HashMap，同块内 `K=v1→v2` 只剩 v2；per-tx session 在 generate 路径 `merge()` 即折叠、在 apply 路径直接写块头快照）→ **事后捞不出 tx 级**。L4 WriteCollector 必须在 per-tx 边界（generate 的 per-tx merge 点 / apply 的 `processTransaction` 边界）抓每笔 `firstBefore/finalAfter` 进 **in-flight buffer**。
 3. **Persist = solidified 边界 + Latest = read-through（消重复）**。in-flight buffer 覆盖可逆窗口（~19 块不可逆 lag）；块 **solidified 后才落 archive 盘** → 冻进 archive 的数据**永不 unwind**，CHANGESET-driven unwind 从热路径降级为罕见修复/校验工具。当前值 / GetAsOf 未变兜底**读现有 store**（read-through），不为可逆 tip 存热副本；Archive LATEST 只需"截至最后 solidified 块"的 canonical 快照（将来可缩成 `lastTxNum 索引 + read-through`）。
 
+**L4 待办（L2 落地发现，2026-06-27）— `updateFork` 的 txNum 归属**：`Manager.applyBlock` 在 `processBlock` 返回后（即 archive `endTx` 之后、`BLOCK_FINALIZE` 上下文之外）还有几个写：`blockStore`/`blockIndexStore`/`transactionRetStore`（均 EXCLUDED 域 → 无所谓）+ **`updateFork`**（`Manager.java:~1084`）。`updateFork` 可能写 `DYNAMIC_PROPERTIES`（rooted）却**无 archive 上下文/无 txNum**。L4 落地前须确认 `updateFork` 是否写 rooted 动态属性；若是，二选一：(a) 把它移进 `processBlock` 的 `BLOCK_FINALIZE` 段内，或 (b) L4 显式把这些写归属到块末 finalize txNum。注：`payReward`（块奖励）+ 维护 `consensus.applyBlock`（witness 重排 / proposal 生效）**已在 `BLOCK_FINALIZE` 上下文内**（`Manager.java:1943/1951`），无此问题。
+
 ### 决策 7 — Root/Proof 模型 + 覆盖 + 域分类原则 + id 方案（2026-06-26 已拍板）
 
 **确认 L7/s10/L9 已成熟的 root/proof 模型**（不重造）：
