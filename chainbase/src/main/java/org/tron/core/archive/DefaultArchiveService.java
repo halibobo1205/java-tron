@@ -1,21 +1,27 @@
 package org.tron.core.archive;
 
+import org.tron.core.archive.capture.ArchiveCaptureEngine;
+import org.tron.core.archive.capture.ArchiveCaptureHolder;
+import org.tron.core.archive.domain.DefaultArchiveDomainCatalog;
+import org.tron.core.archive.domain.DefaultArchiveDomainRegistry;
+import org.tron.core.archive.domain.DynamicKeyPolicy;
 import org.tron.core.archive.txnum.ArchiveTxNumIndex;
-import org.tron.core.archive.txnum.ArchiveTxPosition;
 import org.tron.core.archive.txnum.InMemoryArchiveTxNumIndex;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
 
 /**
- * L2 {@link ArchiveService}: allocates the canonical txNum coordinate and tracks the current
- * execution position. When disabled every callback is a no-op (only the thread-local context is
- * defensively cleared). L2 does not persist anything; L5 wires in the temporal store.
+ * Default {@link ArchiveService}: allocates the canonical txNum coordinate, tracks the current
+ * execution position (L2), and owns the {@link ArchiveCaptureEngine} that Store hooks route writes
+ * to (L4). When disabled every callback is a no-op and no capture engine is installed. Nothing is
+ * persisted yet; L5 wires in the temporal store.
  */
 public final class DefaultArchiveService implements ArchiveService {
 
   private final boolean enabled;
   private final ArchiveTxNumIndex txNumIndex;
   private final ArchiveExecutionContext executionContext;
+  private final ArchiveCaptureEngine captureEngine;
 
   public DefaultArchiveService(boolean enabled) {
     this(enabled, new InMemoryArchiveTxNumIndex(), ArchiveExecutionContextHolder.get());
@@ -26,10 +32,21 @@ public final class DefaultArchiveService implements ArchiveService {
     this.enabled = enabled;
     this.txNumIndex = txNumIndex;
     this.executionContext = executionContext;
+    if (enabled) {
+      this.captureEngine = new ArchiveCaptureEngine(new DefaultArchiveDomainRegistry(),
+          new DefaultArchiveDomainCatalog(), new DynamicKeyPolicy(), executionContext);
+      ArchiveCaptureHolder.set(captureEngine);
+    } else {
+      this.captureEngine = null;
+    }
   }
 
   public ArchiveTxNumIndex getTxNumIndex() {
     return txNumIndex;
+  }
+
+  public ArchiveCaptureEngine getCaptureEngine() {
+    return captureEngine;
   }
 
   @Override
@@ -43,6 +60,7 @@ public final class DefaultArchiveService implements ArchiveService {
       return;
     }
     txNumIndex.beginBlock(block.getNum(), source);
+    captureEngine.clear();
   }
 
   @Override
@@ -82,6 +100,7 @@ public final class DefaultArchiveService implements ArchiveService {
       return;
     }
     txNumIndex.abortBlock(block.getNum());
+    captureEngine.clear();
   }
 
   @Override
@@ -90,5 +109,6 @@ public final class DefaultArchiveService implements ArchiveService {
       return;
     }
     txNumIndex.unwindBlock(block.getNum());
+    captureEngine.clear();
   }
 }

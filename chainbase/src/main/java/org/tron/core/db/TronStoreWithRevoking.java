@@ -22,6 +22,7 @@ import org.tron.common.storage.leveldb.LevelDbDataSourceImpl;
 import org.tron.common.storage.metric.DbStatService;
 import org.tron.common.storage.rocksdb.RocksDbDataSourceImpl;
 import org.tron.common.utils.StorageUtils;
+import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.capsule.ProtoCapsule;
 import org.tron.core.db.common.iterator.DBIterator;
 import org.tron.core.db2.common.DB;
@@ -91,12 +92,16 @@ public abstract class TronStoreWithRevoking<T extends ProtoCapsule> implements I
       return;
     }
 
-    revokingDB.put(key, item.getData());
+    byte[] value = item.getData();
+    revokingDB.put(key, value);
+    // L4 archive sidecar (no-op unless enabled + inside block apply; capture failures isolated).
+    ArchiveCaptureHolder.capturePut(getDbName(), key, value);
   }
 
   @Override
   public void delete(byte[] key) {
     revokingDB.delete(key);
+    ArchiveCaptureHolder.captureDelete(getDbName(), key);
   }
 
   @Override

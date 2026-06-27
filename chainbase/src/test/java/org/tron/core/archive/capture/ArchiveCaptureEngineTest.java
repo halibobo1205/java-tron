@@ -5,6 +5,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import com.google.protobuf.ByteString;
 import java.nio.charset.StandardCharsets;
 import org.junit.Before;
 import org.junit.Test;
@@ -17,6 +18,7 @@ import org.tron.core.archive.domain.DefaultArchiveDomainRegistry;
 import org.tron.core.archive.domain.DynamicKeyPolicy;
 import org.tron.core.archive.txnum.ArchiveTxPosition;
 import org.tron.protos.Protocol.Account;
+import org.tron.protos.contract.SmartContractOuterClass.SmartContract;
 
 public class ArchiveCaptureEngineTest {
 
@@ -64,13 +66,25 @@ public class ArchiveCaptureEngineTest {
   }
 
   @Test
-  public void noCaptureForUnknownStoreSpecificSemanticExcluded() {
+  public void noCaptureForUnknownSemanticExcluded() {
     enterTx(1);
     engine.capturePut("no-such-store", new byte[21], account(1)); // unknown
-    engine.capturePut("contract", new byte[21], account(1));      // store-specific
     engine.capturePut("account-asset", new byte[8], new byte[8]); // semantic IGNORE_RAW
+    engine.capturePut("storage-row", new byte[8], new byte[32]);  // semantic-only
     engine.capturePut("block", new byte[4], new byte[4]);         // excluded
     assertTrue(engine.records().isEmpty());
+  }
+
+  @Test
+  public void capturesStoreSpecificContractDomain() {
+    // STORE_SPECIFIC stores (contract) bypass the base put and capture from their own hook.
+    enterTx(3);
+    byte[] addr = new byte[21];
+    byte[] contract = SmartContract.newBuilder()
+        .setBytecode(ByteString.copyFromUtf8("6080")).build().toByteArray();
+    engine.capturePut("contract", addr, contract);
+    assertEquals(1, engine.records().size());
+    assertEquals(ArchiveDomain.CONTRACT, engine.records().get(0).getDomain());
   }
 
   @Test
