@@ -102,6 +102,9 @@ public class ManagerArchiveLifecycleTest extends BaseMethodTest {
       dbManager.eraseBlock();
     }
     assertFalse(archiveService.getTxNumIndex().getBlockRange(1).isPresent());
+    // eraseBlock also unwinds the temporal store: block 1's drained changes are gone.
+    assertEquals(0,
+        ((InMemoryArchiveTemporalStore) archiveService.getTemporalStore()).changeCount());
   }
 
   @After

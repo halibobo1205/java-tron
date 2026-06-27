@@ -23,6 +23,8 @@ public final class ArchiveTemporalCodec {
 
   static final byte LATEST_PREFIX = 0x00;
   static final byte HISTORY_PREFIX = 0x01;
+  // changeset: 0x02 || txNum(8) || domainId(2) || canonicalKey -> ordered by txNum, for unwind.
+  static final byte CHANGESET_PREFIX = 0x02;
 
   private ArchiveTemporalCodec() {
   }
@@ -43,6 +45,38 @@ public final class ArchiveTemporalCodec {
 
   static byte[] historyKey(ArchiveDomain domain, byte[] canonicalKey, long txNum) {
     return Bytes.concat(historyPrefix(domain, canonicalKey), Longs.toByteArray(txNum));
+  }
+
+  static byte[] changesetKey(long txNum, ArchiveDomain domain, byte[] canonicalKey) {
+    return Bytes.concat(new byte[] {CHANGESET_PREFIX}, Longs.toByteArray(txNum),
+        domainId(domain), canonicalKey);
+  }
+
+  /** Seek target for unwind: the first changeset entry at txNum == fromTxNum. */
+  static byte[] changesetSeekFrom(long fromTxNum) {
+    return Bytes.concat(new byte[] {CHANGESET_PREFIX}, Longs.toByteArray(fromTxNum));
+  }
+
+  static long txNumOfChangeset(byte[] changesetKey) {
+    return Longs.fromByteArray(Arrays.copyOfRange(changesetKey, 1, 9));
+  }
+
+  // The (domainId || canonicalKey) bytes shared by latest/history keys, recovered from a changeset.
+  private static byte[] domainAndKeyOfChangeset(byte[] changesetKey) {
+    return Arrays.copyOfRange(changesetKey, 9, changesetKey.length);
+  }
+
+  static byte[] historyKeyOfChangeset(byte[] changesetKey) {
+    return Bytes.concat(new byte[] {HISTORY_PREFIX}, domainAndKeyOfChangeset(changesetKey),
+        Arrays.copyOfRange(changesetKey, 1, 9));
+  }
+
+  static byte[] latestKeyOfChangeset(byte[] changesetKey) {
+    return Bytes.concat(new byte[] {LATEST_PREFIX}, domainAndKeyOfChangeset(changesetKey));
+  }
+
+  static byte[] historyPrefixOfChangeset(byte[] changesetKey) {
+    return Bytes.concat(new byte[] {HISTORY_PREFIX}, domainAndKeyOfChangeset(changesetKey));
   }
 
   static boolean startsWith(byte[] array, byte[] prefix) {

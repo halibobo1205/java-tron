@@ -29,4 +29,11 @@ public interface ArchiveTemporalStore {
 
   /** The most recent value of {@code (domain, key)} across all txNums; empty if never written. */
   Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey);
+
+  /**
+   * Drop every change with {@code txNum >= fromTxNum} and restore each affected key's latest value
+   * to its largest remaining change (or remove it if none remain). Used when a committed block is
+   * reverted (fork switch / eraseBlock) so the store never retains rolled-back state.
+   */
+  void unwind(long fromTxNum);
 }

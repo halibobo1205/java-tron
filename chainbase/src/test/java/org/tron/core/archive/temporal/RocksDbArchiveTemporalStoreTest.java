@@ -80,6 +80,27 @@ public class RocksDbArchiveTemporalStoreTest {
     assertFalse(store.getAsOf(ArchiveDomain.ACCOUNT, new byte[] {99}, 5).isPresent());
   }
 
+  @Test
+  public void unwindDropsHistoryAndRestoresLatest() {
+    store.putChange(change(5, DomainValue.present(new byte[] {0x0A})));
+    store.putChange(change(8, DomainValue.present(new byte[] {0x0B})));
+    store.unwind(8); // remove tx8, restore latest to tx5
+    assertArrayEquals(new byte[] {0x0A}, store.latest(ArchiveDomain.ACCOUNT, KEY).get().getValue());
+    assertArrayEquals(new byte[] {0x0A},
+        store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 100).get().getValue());
+    // the tx8 history entry is gone: as-of 8 now resolves to tx5
+    assertArrayEquals(new byte[] {0x0A},
+        store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 8).get().getValue());
+  }
+
+  @Test
+  public void unwindRemovesLatestWhenNoOlderHistory() {
+    store.putChange(change(8, DomainValue.present(new byte[] {0x0B})));
+    store.unwind(8);
+    assertFalse(store.latest(ArchiveDomain.ACCOUNT, KEY).isPresent());
+    assertFalse(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 100).isPresent());
+  }
+
   private static void deleteRecursively(File f) {
     File[] children = f.listFiles();
     if (children != null) {
