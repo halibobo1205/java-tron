@@ -16,7 +16,7 @@ public interface ArchiveDomainRegistry {
   /** All registered store bindings, sorted by dbName. */
   List<StoreBinding> allStoreBindings();
 
-  /** Domains with {@link RootPolicy#IN_GLOBAL_ROOT}, sorted by domain id (root aggregation order). */
+  /** Domains with {@link RootPolicy#IN_GLOBAL_ROOT}, sorted by domain id (root order). */
   List<ArchiveDomain> rootDomains();
 
   /** Deterministic 32-byte checksum over the sorted schema (domain ids, bindings, policies). */

@@ -4,7 +4,7 @@ import java.util.Arrays;
 
 /**
  * Canonical domain value: either a present value or a typed tombstone (delete). A tombstone is
- * {@code deleted=true}, NOT an empty byte array — empty bytes are a valid present value.
+ * {@code deleted=true}, NOT an empty byte array - empty bytes are a valid present value.
  */
 public final class DomainValue {
 

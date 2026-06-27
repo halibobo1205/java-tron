@@ -16,7 +16,7 @@ import org.tron.core.archive.ArchiveException;
  * {@code docs/archiveV3/00-ARCHIVE-V3-AUTHORITY-AND-DECISIONS.md}. Every known store dbName is
  * classified explicitly; an unknown dbName resolves to {@link StoreBinding#unknown}.
  *
- * <p>17 domains are {@code IN_GLOBAL_ROOT} (all canonical block-tx-driven state — globalRoot is a
+ * <p>17 domains are {@code IN_GLOBAL_ROOT} (all canonical block-tx-driven state - globalRoot is a
  * near-complete TRON state root); ABI is the only {@code HISTORY_ONLY} domain (client metadata);
  * derived/index/receipt/one-time/operational stores are {@code EXCLUDED} with a recorded reason.
  */
@@ -42,14 +42,15 @@ public final class DefaultArchiveDomainRegistry implements ArchiveDomainRegistry
     domain("contract", ArchiveDomain.CONTRACT, RawHookMode.STORE_SPECIFIC);
     domain("contract-state", ArchiveDomain.CONTRACT_STATE, RawHookMode.STORE_SPECIFIC);
     // IN_GLOBAL_ROOT, key-level allowlist (only VM-relevant config keys are rooted)
-    domain("properties", ArchiveDomain.DYNAMIC_PROPERTIES, RawHookMode.GENERIC_TRON_STORE_ALLOWLIST);
+    domain("properties", ArchiveDomain.DYNAMIC_PROPERTIES,
+        RawHookMode.GENERIC_TRON_STORE_ALLOWLIST);
 
     // --- HISTORY_ONLY (client metadata, not consensus-affecting) ---
     add("abi", StoreBindingKind.DOMAIN, ArchiveDomain.ABI, RawHookMode.GENERIC_TRON_STORE,
         RootPolicy.HISTORY_ONLY, HistoryPolicy.FULL_HISTORY,
         "ABI is immutable client metadata; queryable but not VM/consensus-affecting, not rooted");
 
-    // --- IN_GLOBAL_ROOT semantic backing (domain captured via a semantic hook, raw store ignored) ---
+    // --- IN_GLOBAL_ROOT semantic backing (domain from a semantic hook, raw store ignored) ---
     add("account-asset", StoreBindingKind.SEMANTIC_BACKING, ArchiveDomain.ACCOUNT_ASSET,
         RawHookMode.IGNORE_RAW, RootPolicy.IN_GLOBAL_ROOT, HistoryPolicy.FULL_HISTORY,
         "TRC10 balances captured semantically from account.assetV2 (decision 2); flush-layer "
@@ -101,8 +102,8 @@ public final class DefaultArchiveDomainRegistry implements ArchiveDomainRegistry
         RootPolicy.EXCLUDED, HistoryPolicy.NO_ARCHIVE, reason);
   }
 
-  private void add(String dbName, StoreBindingKind kind, ArchiveDomain domain, RawHookMode rawHookMode,
-      RootPolicy rootPolicy, HistoryPolicy historyPolicy, String reason) {
+  private void add(String dbName, StoreBindingKind kind, ArchiveDomain domain,
+      RawHookMode rawHookMode, RootPolicy rootPolicy, HistoryPolicy historyPolicy, String reason) {
     if (byDbName.containsKey(dbName)) {
       throw new ArchiveException("duplicate dbName in archive registry: " + dbName);
     }
@@ -137,7 +138,7 @@ public final class DefaultArchiveDomainRegistry implements ArchiveDomainRegistry
 
   @Override
   public byte[] checksum() {
-    // Canonical, sorted-by-dbName serialization so the checksum is stable regardless of insert order.
+    // Sorted-by-dbName serialization so the checksum is stable regardless of insert order.
     StringBuilder sb = new StringBuilder("tron-archive-registry-v1\n");
     Map<String, StoreBinding> sorted = new TreeMap<>(byDbName);
     for (StoreBinding b : sorted.values()) {

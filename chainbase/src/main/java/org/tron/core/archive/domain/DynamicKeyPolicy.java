@@ -8,11 +8,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Key-level policy for the DYNAMIC_PROPERTIES domain. Only VM/fee config keys that change historical
+ * Key-level policy for the DYNAMIC_PROPERTIES domain. Only VM/fee config keys changing historical
  * execution enter the global root; header cursors and price history are kept history-only; one-time
  * migration markers and aggregate statistics are excluded. Unknown keys default to
  * {@code EXCLUDED} root + {@code FULL_HISTORY} (keep history, don't root) so a future
- * execution-affecting key is never silently lost to history — but it never enters the root until
+ * execution-affecting key is never silently lost to history - but it never enters the root until
  * explicitly classified and the registry checksum updated.
  */
 public final class DynamicKeyPolicy {
@@ -89,7 +89,7 @@ public final class DynamicKeyPolicy {
         RootPolicy.EXCLUDED, HistoryPolicy.NO_ARCHIVE, ReaderPolicy.INTERNAL_ONLY));
   }
 
-  /** Decision for a dynamic property key (ASCII bytes); unknown keys default to excluded-from-root. */
+  /** Decision for a dynamic property key (ASCII bytes); unknown keys are excluded-from-root. */
   public DynamicKeyDecision decision(byte[] key) {
     String name = new String(key, StandardCharsets.US_ASCII);
     DynamicKeyDecision decision = decisions.get(name);

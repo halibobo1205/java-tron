@@ -2,7 +2,7 @@ package org.tron.core.archive.domain;
 
 /**
  * Stable archive domain identity. The {@code id} (u16) is the persistent domain id used in archive
- * keys and root aggregation order — it is NOT the enum ordinal and must never be reused/reordered.
+ * keys and root aggregation order - it is NOT the enum ordinal and must never be reused/reordered.
  *
  * <p>Ids and names follow the frozen domain registry in
  * {@code docs/archiveV3/00-ARCHIVE-V3-AUTHORITY-AND-DECISIONS.md} (u16 flat, supersedes the older

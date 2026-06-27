@@ -6,7 +6,8 @@ package org.tron.core.archive.codec;
  *
  * <p>Decision 4 (cross-node-reproducible root) requires per-domain CANONICALIZING value codecs for
  * proto-valued domains (e.g. ACCOUNT must strip asset/assetV2/asset_optimized and sort map fields).
- * That canonicalization is a follow-on step layered on this interface; {@link #codecId} versions it.
+ * That canonicalization is a follow-on step layered on this interface;
+ * {@link #codecId} versions it.
  */
 public interface CanonicalValueCodec {
 
