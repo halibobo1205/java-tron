@@ -6,7 +6,9 @@ import static org.junit.Assert.assertTrue;
 
 import com.google.protobuf.ByteString;
 import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.After;
 import org.junit.Test;
 import org.tron.common.BaseMethodTest;
 import org.tron.common.crypto.ECKey;
@@ -18,6 +20,9 @@ import org.tron.common.utils.Sha256Hash;
 import org.tron.core.ChainBaseManager;
 import org.tron.core.archive.ArchiveExecutionContextHolder;
 import org.tron.core.archive.DefaultArchiveService;
+import org.tron.core.archive.capture.ArchiveCaptureEngine;
+import org.tron.core.archive.capture.ArchiveCaptureHolder;
+import org.tron.core.archive.capture.ArchiveChangeRecord;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockCapsule;
@@ -98,5 +103,31 @@ public class ManagerArchiveLifecycleTest extends BaseMethodTest {
       dbManager.eraseBlock();
     }
     assertFalse(archiveService.getTxNumIndex().getBlockRange(1).isPresent());
+  }
+
+  @After
+  public void clearArchiveCaptureHolder() {
+    // The enabled DefaultArchiveService installs a process-wide capture engine; clear it so other
+    // framework tests do not see a stale engine.
+    ArchiveCaptureHolder.clear();
+  }
+
+  @Test
+  public void archiveCapturesDomainWritesDuringBlockApply() throws Exception {
+    assertTrue("an enabled archive service must install a capture engine",
+        ArchiveCaptureHolder.isActive());
+    ArchiveCaptureEngine captureEngine = archiveService.getCaptureEngine();
+
+    dbManager.pushBlock(signedEmptyBlock());
+
+    List<ArchiveChangeRecord> records = captureEngine.records();
+    assertFalse("block apply must capture at least one domain write", records.isEmpty());
+    ArchiveBlockRange range = archiveService.getTxNumIndex().getBlockRange(1)
+        .orElseThrow(() -> new AssertionError("no committed range for block 1"));
+    for (ArchiveChangeRecord record : records) {
+      assertTrue("captured txNum must be within block 1's range",
+          record.getTxNum() >= range.getPrepareTxNum()
+              && record.getTxNum() <= range.getFinalizeTxNum());
+    }
   }
 }

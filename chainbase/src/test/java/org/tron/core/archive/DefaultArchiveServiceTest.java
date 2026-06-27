@@ -6,8 +6,10 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import com.google.protobuf.ByteString;
+import org.junit.After;
 import org.junit.Test;
 import org.tron.common.utils.Sha256Hash;
+import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.archive.txnum.ArchiveTxPosition;
 import org.tron.core.archive.txnum.InMemoryArchiveTxNumIndex;
@@ -16,6 +18,12 @@ import org.tron.core.capsule.TransactionCapsule;
 import org.tron.protos.Protocol.Transaction;
 
 public class DefaultArchiveServiceTest {
+
+  @After
+  public void clearCaptureHolder() {
+    // An enabled service installs a process-wide capture engine; clear it between tests.
+    ArchiveCaptureHolder.clear();
+  }
 
   private static BlockCapsule block(long num) {
     return new BlockCapsule(num, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY);
