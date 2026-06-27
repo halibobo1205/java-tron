@@ -90,6 +90,9 @@ import org.tron.core.ChainBaseManager;
 import org.tron.core.Constant;
 import org.tron.core.Wallet;
 import org.tron.core.actuator.ActuatorCreator;
+import org.tron.core.archive.ArchivePhase;
+import org.tron.core.archive.ArchiveService;
+import org.tron.core.archive.ArchiveSource;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockBalanceTraceCapsule;
 import org.tron.core.capsule.BlockCapsule;
@@ -202,6 +205,8 @@ public class Manager {
   @Getter
   @Autowired
   private RevokingDatabase revokingStore;
+  @Autowired
+  private ArchiveService archiveService;
   @Getter
   private SessionOptional session = SessionOptional.instance();
   @Getter
@@ -1039,6 +1044,8 @@ public class Manager {
       logger.info("Start to erase block: {}.", oldHeadBlock);
       khaosDb.pop();
       revokingStore.fastPop();
+      // Archive unwind only after canonical fastPop succeeds (no-op when archive disabled).
+      archiveService.unwindBlock(oldHeadBlock);
       logger.info("End to erase block: {}.", oldHeadBlock);
       oldHeadBlock.getTransactions().forEach(tc ->
           poppedTransactions.add(new TransactionCapsule(tc.getInstance())));
@@ -1140,6 +1147,7 @@ public class Manager {
       for (KhaosBlock item : first) {
         Exception exception = null;
         // todo  process the exception carefully later
+        archiveService.beginBlock(item.getBlk(), ArchiveSource.REPLAY);
         try (ISession tmpSession = revokingStore.buildSession()) {
           if (!item.getBlk().validateSignature(
               getDynamicPropertiesStore(), getAccountStore())) {
@@ -1155,6 +1163,8 @@ public class Manager {
           }
           applyBlock(item.getBlk().setSwitch(true));
           tmpSession.commit();
+          // Archive commit inside try, after canonical commit (catch handles any failure).
+          archiveService.commitBlock(item.getBlk());
         } catch (AccountResourceInsufficientException
             | ValidateSignatureException
             | ContractValidateException
@@ -1169,6 +1179,7 @@ public class Manager {
             | VMIllegalException
             | ZksnarkException
             | BadBlockException e) {
+          archiveService.abortBlock(item.getBlk());
           logger.warn(e.getMessage(), e);
           exception = e;
           throw e;
@@ -1190,9 +1201,12 @@ public class Manager {
             Collections.reverse(second);
             for (KhaosBlock khaosBlock : second) {
               // todo  process the exception carefully later
+              archiveService.beginBlock(khaosBlock.getBlk(), ArchiveSource.RECOVERY);
               try (ISession tmpSession = revokingStore.buildSession()) {
                 applyBlock(khaosBlock.getBlk().setSwitch(true));
                 tmpSession.commit();
+                // Archive commit inside try; recovery catch swallows, so commit only on success.
+                archiveService.commitBlock(khaosBlock.getBlk());
               } catch (AccountResourceInsufficientException
                   | ValidateSignatureException
                   | ContractValidateException
@@ -1203,6 +1217,7 @@ public class Manager {
                   | TooBigTransactionException
                   | ValidateScheduleException
                   | ZksnarkException e) {
+                archiveService.abortBlock(khaosBlock.getBlk());
                 logger.warn(e.getMessage(), e);
               }
             }
@@ -1386,15 +1401,20 @@ public class Manager {
               return;
             }
             long oldSolidNum = getDynamicPropertiesStore().getLatestSolidifiedBlockNum();
+            archiveService.beginBlock(newBlock, ArchiveSource.NORMAL);
             try (ISession tmpSession = revokingStore.buildSession()) {
               applyBlock(newBlock, txs);
               tmpSession.commit();
             } catch (Throwable throwable) {
+              archiveService.abortBlock(newBlock);
               logger.error(throwable.getMessage(), throwable);
               khaosDb.removeBlk(block.getBlockId());
               clearSolidityContractTriggerCache(block.getNum());
               throw throwable;
             }
+            // Archive commit after canonical commit, before blockTrigger reads progress.
+            // L5 note: a commitBlock failure here must become a deterministic fail-stop.
+            archiveService.commitBlock(newBlock);
             long newSolidNum = getDynamicPropertiesStore().getLatestSolidifiedBlockNum();
             blockTrigger(newBlock, oldSolidNum, newSolidNum);
           }
@@ -1859,29 +1879,38 @@ public class Manager {
       throw new ValidateScheduleException("validateWitnessSchedule error");
     }
 
-    chainBaseManager.getBalanceTraceStore().initCurrentBlockBalanceTrace(block);
-
-    //reset BlockEnergyUsage
-    chainBaseManager.getDynamicPropertiesStore().saveBlockEnergyUsage(0);
-    //parallel check sign
-    if (!block.generatedByMyself) {
-      try {
-        preValidateTransactionSign(txs);
-      } catch (InterruptedException e) {
-        logger.error("Parallel check sign interrupted exception! block info: {}.", block, e);
-        Thread.currentThread().interrupt();
-      }
-    }
-
     TransactionRetCapsule transactionRetCapsule =
         new TransactionRetCapsule(block);
-    HistoryBlockHashUtil.write(this, block);
+    // BLOCK_PREPARE: block-level pre-tx system writes share one txNum (no-op when disabled).
+    archiveService.beginSystemTx(block, ArchivePhase.BLOCK_PREPARE);
+    try {
+      chainBaseManager.getBalanceTraceStore().initCurrentBlockBalanceTrace(block);
+
+      //reset BlockEnergyUsage
+      chainBaseManager.getDynamicPropertiesStore().saveBlockEnergyUsage(0);
+      //parallel check sign
+      if (!block.generatedByMyself) {
+        try {
+          preValidateTransactionSign(txs);
+        } catch (InterruptedException e) {
+          logger.error("Parallel check sign interrupted exception! block info: {}.", block, e);
+          Thread.currentThread().interrupt();
+        }
+      }
+      HistoryBlockHashUtil.write(this, block);
+    } finally {
+      archiveService.endTx();
+    }
     try {
       merkleContainer.resetCurrentMerkleTree();
       accountStateCallBack.preExecute(block);
       List<TransactionInfo> results = new ArrayList<>();
       long num = block.getNum();
+      // USER_TX: one txNum per canonical tx in original block order (no-op when disabled).
+      // On failure the pushBlock/fork/recovery catch calls abortBlock, which clears context.
+      int txIndex = 0;
       for (TransactionCapsule transactionCapsule : block.getTransactions()) {
+        archiveService.beginUserTx(block, txIndex, transactionCapsule);
         rejectExchangeTransaction(transactionCapsule.getInstance());
         if (chainBaseManager.getDynamicPropertiesStore().allowConsensusLogicOptimization()
             && transactionCapsule.retCountIsGreatThanContractCount()) {
@@ -1899,12 +1928,16 @@ public class Manager {
         if (Objects.nonNull(result)) {
           results.add(result);
         }
+        archiveService.endTx();
+        txIndex++;
       }
       transactionRetCapsule.addAllTransactionInfos(results);
       accountStateCallBack.executePushFinish();
     } finally {
       accountStateCallBack.exceptionFinish();
     }
+    // BLOCK_FINALIZE: block-end system writes share one txNum (no-op when disabled).
+    archiveService.beginSystemTx(block, ArchivePhase.BLOCK_FINALIZE);
     merkleContainer.saveCurrentMerkleTreeAsBestMerkleTree(block.getNum());
     block.setResult(transactionRetCapsule);
     if (getDynamicPropertiesStore().getAllowAdaptiveEnergy() == 1) {
@@ -1941,6 +1974,7 @@ public class Manager {
         .initBlockSection(transactionRetCapsule);
     chainBaseManager.getSectionBloomStore().write(block.getNum());
     block.setBloom(blockBloom);
+    archiveService.endTx();
   }
 
   private void payReward(BlockCapsule block) {

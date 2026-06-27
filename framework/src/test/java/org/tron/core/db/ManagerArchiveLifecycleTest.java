@@ -1,0 +1,102 @@
+package org.tron.core.db;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+
+import com.google.protobuf.ByteString;
+import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.Test;
+import org.tron.common.BaseMethodTest;
+import org.tron.common.crypto.ECKey;
+import org.tron.common.utils.ByteArray;
+import org.tron.common.utils.LocalWitnesses;
+import org.tron.common.utils.PublicMethod;
+import org.tron.common.utils.ReflectUtils;
+import org.tron.common.utils.Sha256Hash;
+import org.tron.core.ChainBaseManager;
+import org.tron.core.archive.ArchiveExecutionContextHolder;
+import org.tron.core.archive.DefaultArchiveService;
+import org.tron.core.archive.txnum.ArchiveBlockRange;
+import org.tron.core.capsule.AccountCapsule;
+import org.tron.core.capsule.BlockCapsule;
+import org.tron.core.capsule.WitnessCapsule;
+import org.tron.core.config.args.Args;
+import org.tron.core.consensus.ConsensusService;
+import org.tron.protos.Protocol;
+
+/**
+ * Integration test for the L2 Manager archive lifecycle hooks with archive ENABLED. The default
+ * (disabled) path is a no-op and exercised by every other Manager test; this one injects an enabled
+ * {@link DefaultArchiveService} so the begin/commit/abort/unwind hooks are actually invoked.
+ */
+public class ManagerArchiveLifecycleTest extends BaseMethodTest {
+
+  private static final AtomicInteger PORT = new AtomicInteger(0);
+  private final String privateKey = PublicMethod.getRandomPrivateKey();
+  private ChainBaseManager chainManager;
+  private DefaultArchiveService archiveService;
+
+  @Override
+  protected void afterInit() {
+    Args.getInstance().setNodeListenPort(11000 + PORT.incrementAndGet());
+    BlockGenerate.setManager(dbManager);
+    context.getBean(ConsensusService.class).start();
+    chainManager = dbManager.getChainBaseManager();
+
+    LocalWitnesses localWitnesses = new LocalWitnesses();
+    localWitnesses.setPrivateKeys(Arrays.asList(privateKey));
+    localWitnesses.initWitnessAccountAddress(null, true);
+    Args.setLocalWitnesses(localWitnesses);
+
+    byte[] address = PublicMethod.getAddressByteByPrivateKey(privateKey);
+    ByteString addressByte = ByteString.copyFrom(address);
+    WitnessCapsule witnessCapsule = new WitnessCapsule(addressByte);
+    chainManager.getWitnessStore().put(addressByte.toByteArray(), witnessCapsule);
+    chainManager.addWitness(addressByte);
+    AccountCapsule accountCapsule =
+        new AccountCapsule(Protocol.Account.newBuilder().setAddress(addressByte).build());
+    chainManager.getAccountStore().put(addressByte.toByteArray(), accountCapsule);
+
+    // Inject an ENABLED archive service so the Manager hooks become active for this test.
+    archiveService = new DefaultArchiveService(true);
+    ReflectUtils.setFieldValue(dbManager, "archiveService", archiveService);
+  }
+
+  private BlockCapsule signedEmptyBlock() {
+    BlockCapsule block = new BlockCapsule(
+        1,
+        Sha256Hash.wrap(chainManager.getGenesisBlockId().getByteString()),
+        1,
+        ByteString.copyFrom(ECKey.fromPrivate(
+            ByteArray.fromHexString(Args.getLocalWitnesses().getPrivateKey())).getAddress()));
+    block.setMerkleRoot();
+    block.sign(ByteArray.fromHexString(Args.getLocalWitnesses().getPrivateKey()));
+    return block;
+  }
+
+  @Test
+  public void pushBlockAllocatesTxNumRangeAndEraseUnwinds() throws Exception {
+    BlockCapsule block = signedEmptyBlock();
+
+    dbManager.pushBlock(block);
+    assertEquals(1, chainManager.getDynamicPropertiesStore().getLatestBlockHeaderNumber());
+
+    // Archive committed a range for block 1: prepare + finalize system tx, no user tx.
+    ArchiveBlockRange range = archiveService.getTxNumIndex().getBlockRange(1)
+        .orElseThrow(() -> new AssertionError("archive has no committed range for block 1"));
+    assertEquals(1, range.getBlockNum());
+    assertEquals(0, range.getUserTxCount());
+    assertTrue("finalize txNum must follow prepare txNum",
+        range.getFinalizeTxNum() > range.getPrepareTxNum());
+    // Execution context is clean once the block has been applied and committed.
+    assertFalse(ArchiveExecutionContextHolder.get().current().isPresent());
+
+    // eraseBlock unwinds the archive range after canonical fastPop.
+    while (chainManager.getDynamicPropertiesStore().getLatestBlockHeaderNumber() > 0) {
+      dbManager.eraseBlock();
+    }
+    assertFalse(archiveService.getTxNumIndex().getBlockRange(1).isPresent());
+  }
+}

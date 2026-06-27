@@ -8,6 +8,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.tron.common.utils.StorageUtils;
+import org.tron.core.archive.ArchiveService;
+import org.tron.core.archive.ArchiveServiceFactory;
 import org.tron.core.config.args.Args;
 import org.tron.core.db.RevokingDatabase;
 import org.tron.core.db2.core.SnapshotManager;
@@ -32,6 +34,11 @@ public class DefaultConfig {
   public CommonConfig commonConfig;
 
   public DefaultConfig() {
+  }
+
+  @Bean
+  public ArchiveService archiveService() {
+    return ArchiveServiceFactory.create(Args.getInstance().getStorage().getArchive());
   }
 
   @Bean(destroyMethod = "")
