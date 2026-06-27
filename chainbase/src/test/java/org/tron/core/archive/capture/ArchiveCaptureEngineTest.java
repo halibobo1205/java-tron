@@ -159,4 +159,33 @@ public class ArchiveCaptureEngineTest {
     engine.captureAccountAsset(new byte[21], null, acct("1", 5L));
     assertTrue(engine.records().isEmpty());
   }
+
+  @Test
+  public void capturesSemanticContractStorage() {
+    enterTx(21);
+    byte[] key = new byte[54]; // address(21) || slot(32) || version(1=0)
+    byte[] value = new byte[32];
+    value[31] = 7;
+    engine.captureSemanticPut(ArchiveDomain.CONTRACT_STORAGE, key, value);
+    assertEquals(1, engine.records().size());
+    ArchiveChangeRecord r = engine.records().get(0);
+    assertEquals(ArchiveDomain.CONTRACT_STORAGE, r.getDomain());
+    assertEquals(21, r.getTxNum());
+    assertArrayEquals(key, r.getCanonicalKey());
+    assertFalse(r.getValue().isDeleted());
+  }
+
+  @Test
+  public void capturesSemanticStorageDeleteAsTombstone() {
+    enterTx(1);
+    engine.captureSemanticDelete(ArchiveDomain.CONTRACT_STORAGE, new byte[54]);
+    assertEquals(1, engine.records().size());
+    assertTrue(engine.records().get(0).getValue().isDeleted());
+  }
+
+  @Test
+  public void semanticCaptureNoOpOutsideContext() {
+    engine.captureSemanticPut(ArchiveDomain.CONTRACT_STORAGE, new byte[54], new byte[32]);
+    assertTrue(engine.records().isEmpty());
+  }
 }
