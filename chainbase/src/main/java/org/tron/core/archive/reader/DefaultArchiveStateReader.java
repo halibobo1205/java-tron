@@ -86,7 +86,13 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
       throws ArchiveReaderException {
     requireLength(address, ADDRESS_LEN, "address");
     requireLength(slot, SLOT_LEN, "slot");
-    // The storage-key version (0 or 1) is per-contract; try both and take whichever is archived.
+    // The storage-key version (0 or 1) is per-contract. Instead of reading the historical contract
+    // to derive it (the code plan's approach), probe both versions and take whichever is archived.
+    // A given (address, slot) only ever has one version, so this returns the right value while
+    // staying strictly inside CONTRACT_STORAGE (more latest-isolated than a contract lookup).
+    // Known limitation: a create2 redeploy at the same address that changed the storage version
+    // could leave both versions in history; the probe would prefer the older version 0 -- revisit
+    // with a historical-contract version lookup if that edge matters.
     for (byte version = 0; version <= 1; version++) {
       byte[] key = Bytes.concat(address, slot, new byte[] {version});
       ArchiveReadResult<byte[]> raw = getRaw(ArchiveDomain.CONTRACT_STORAGE, key);
