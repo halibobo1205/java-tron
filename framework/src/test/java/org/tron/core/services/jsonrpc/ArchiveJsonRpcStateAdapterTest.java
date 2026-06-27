@@ -1,6 +1,7 @@
 package org.tron.core.services.jsonrpc;
 
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.After;
@@ -55,5 +56,15 @@ public class ArchiveJsonRpcStateAdapterTest {
         new JsonRpcArchiveStatePointResolver(null, new DefaultArchiveService(true));
     ResolvedArchiveStatePoint resolved = resolver.resolveBlockEnd("latest");
     assertTrue(resolved.isLatest());
+  }
+
+  @Test
+  public void nullStorageSlotRejectedLikeLatestPath() {
+    ArchiveJsonRpcStateAdapter adapter =
+        new ArchiveJsonRpcStateAdapter(null, new DefaultArchiveService(true));
+    // A null slot must be rejected as invalid params (like TronJsonRpcImpl.getStorageAt), not
+    // silently read as slot 0. normalizeSlot runs before the reader opens, so no Wallet is needed.
+    assertThrows(JsonRpcInvalidParamsException.class,
+        () -> adapter.getStorageAt("0xabd4b9367799eaa3197fecb144eb71de1e049abc", null, "0x10"));
   }
 }
