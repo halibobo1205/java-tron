@@ -16,6 +16,7 @@ import org.tron.core.store.AssetIssueStore;
 import org.tron.core.store.AssetIssueV2Store;
 import org.tron.core.store.DelegationStore;
 import org.tron.core.store.DynamicPropertiesStore;
+import org.tron.core.store.VmDynamicProperties;
 import org.tron.core.vm.program.invoke.ProgramInvoke;
 import org.tron.core.vm.program.listener.ProgramListener;
 import org.tron.core.vm.program.listener.ProgramListenerAware;
@@ -59,6 +60,11 @@ public class ContractState implements Repository, ProgramListenerAware {
   @Override
   public DynamicPropertiesStore getDynamicPropertiesStore() {
     return repository.getDynamicPropertiesStore();
+  }
+
+  @Override
+  public VmDynamicProperties getVmDynamicProperties() {
+    return repository.getVmDynamicProperties();
   }
 
   @Override

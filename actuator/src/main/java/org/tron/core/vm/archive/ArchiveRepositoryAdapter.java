@@ -307,14 +307,20 @@ public class ArchiveRepositoryAdapter implements Repository {
     throw unsupported("transient storage");
   }
 
+  /**
+   * P0 does not archive per-contract dynamic-energy usage. Return a fresh capsule at the historical
+   * cycle so the energy factor degrades to neutral (zero usage -> DYNAMIC_ENERGY_FACTOR_DECIMAL),
+   * rather than aborting; the factor only affects energy accounting, which a constant call does not
+   * charge. Must be non-null: the VM dereferences it directly in addContextContractUsage.
+   */
   @Override
   public ContractStateCapsule getContractState(byte[] address) {
-    throw unsupported("contract-state reads");
+    return new ContractStateCapsule(getVmDynamicProperties().getCurrentCycleNumber());
   }
 
   @Override
   public void updateContractState(byte[] address, ContractStateCapsule contractStateCapsule) {
-    throw unsupported("contract-state writes");
+    // The dynamic-energy factor write is discarded on the read-only historical path.
   }
 
   @Override

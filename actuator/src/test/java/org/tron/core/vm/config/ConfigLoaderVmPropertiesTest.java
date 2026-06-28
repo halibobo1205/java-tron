@@ -29,6 +29,10 @@ public class ConfigLoaderVmPropertiesTest {
       return v;
     }
 
+    public long getCurrentCycleNumber() {
+      return v;
+    }
+
     public boolean supportVM() {
       return b;
     }
