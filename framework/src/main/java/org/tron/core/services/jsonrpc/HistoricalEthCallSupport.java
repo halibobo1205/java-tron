@@ -1,0 +1,112 @@
+package org.tron.core.services.jsonrpc;
+
+import static org.tron.core.services.jsonrpc.JsonRpcApiUtil.triggerCallContract;
+
+import org.tron.common.utils.ByteArray;
+import org.tron.core.Wallet;
+import org.tron.core.archive.ArchiveService;
+import org.tron.core.archive.DefaultArchiveService;
+import org.tron.core.archive.reader.ArchiveStateReader;
+import org.tron.core.archive.reader.ArchiveStateReaderFactory;
+import org.tron.core.archive.reader.ArchiveStatePoint;
+import org.tron.core.archive.reader.ArchiveReaderException;
+import org.tron.core.archive.reader.JsonRpcArchiveStatePointResolver;
+import org.tron.core.archive.reader.ResolvedArchiveStatePoint;
+import org.tron.core.capsule.BlockCapsule;
+import org.tron.core.capsule.TransactionCapsule;
+import org.tron.core.exception.ContractExeException;
+import org.tron.core.exception.ContractValidateException;
+import org.tron.core.exception.jsonrpc.JsonRpcInternalException;
+import org.tron.core.exception.jsonrpc.JsonRpcInvalidParamsException;
+import org.tron.core.store.StoreFactory;
+import org.tron.core.store.VmDynamicProperties;
+import org.tron.core.vm.archive.HistoricalConstantCallExecutor;
+import org.tron.core.vm.archive.HistoricalConstantCallResult;
+import org.tron.core.vm.archive.HistoricalVmExecutionException;
+import org.tron.core.vm.archive.UnsupportedHistoricalStateException;
+import org.tron.protos.Protocol.Block;
+import org.tron.protos.Protocol.Transaction.Contract.ContractType;
+import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
+
+/**
+ * Serves the historical {@code eth_call} path: resolves a non-latest block selector to an archive
+ * state point, replays the call against the archived state via the constant-call executor and
+ * renders the result as JSON-RPC hex. {@code latest} / archive-disabled stay on the existing
+ * latest-only logic ({@link #shouldUseArchive} returns false).
+ *
+ * <p>Account / code / storage are read historically. The VM hard-fork / fee config, however, is
+ * sourced from the LATEST dynamic-properties store as a baseline (proposal flags are near-
+ * monotonic, so for a recent block latest equals historical). A fully historical config view,
+ * reading the archived dynamic-properties at the block, is a later refinement.
+ */
+public final class HistoricalEthCallSupport {
+
+  private final Wallet wallet;
+  private final ArchiveService archiveService;
+  private final JsonRpcArchiveStatePointResolver resolver;
+
+  public HistoricalEthCallSupport(Wallet wallet, ArchiveService archiveService) {
+    this.wallet = wallet;
+    this.archiveService = archiveService;
+    this.resolver = new JsonRpcArchiveStatePointResolver(wallet, archiveService);
+  }
+
+  /** True when the call must be served from the archive (enabled + a non-latest selector). */
+  public boolean shouldUseArchive(String blockNumOrTag) {
+    return archiveService.isEnabled()
+        && !JsonRpcApiUtil.LATEST_STR.equalsIgnoreCase(blockNumOrTag);
+  }
+
+  public String call(byte[] ownerAddress, byte[] contractAddress, long callValue, byte[] data,
+      String blockNumOrTag) throws JsonRpcInvalidParamsException, JsonRpcInternalException {
+    ResolvedArchiveStatePoint resolved = resolver.resolveBlockEnd(blockNumOrTag);
+    if (resolved.isLatest()) {
+      // shouldUseArchive already filters latest; reaching here means a caller skipped that guard.
+      throw new JsonRpcInternalException("historical eth_call invoked for the latest tag");
+    }
+    ArchiveStatePoint point = resolved.getPoint();
+
+    Block block = wallet.getBlockByNum(point.getBlockNum());
+    if (block == null) {
+      throw new JsonRpcInternalException("archive history unavailable for block "
+          + point.getBlockNum());
+    }
+    BlockCapsule historicalBlock = new BlockCapsule(block);
+    VmDynamicProperties vmProperties =
+        StoreFactory.getInstance().getChainBaseManager().getDynamicPropertiesStore();
+    TriggerSmartContract trigger =
+        triggerCallContract(ownerAddress, contractAddress, callValue, data, 0, null);
+
+    try (ArchiveStateReader reader = readerFactory().open(point)) {
+      TransactionCapsule trxCap =
+          wallet.createTransactionCapsule(trigger, ContractType.TriggerSmartContract);
+      HistoricalConstantCallResult result = new HistoricalConstantCallExecutor()
+          .execute(reader, vmProperties, historicalBlock, trxCap);
+      if (result.isReverted()) {
+        throw new JsonRpcInternalException("REVERT opcode executed",
+            ByteArray.toJsonHex(result.getResult()));
+      }
+      if (result.getRuntimeError() != null && !result.getRuntimeError().isEmpty()) {
+        throw new JsonRpcInternalException(result.getRuntimeError());
+      }
+      return ByteArray.toJsonHex(result.getResult());
+    } catch (ArchiveReaderException | HistoricalVmExecutionException
+        | UnsupportedHistoricalStateException e) {
+      throw new JsonRpcInternalException(e.getMessage());
+    } catch (ContractValidateException | ContractExeException e) {
+      throw new JsonRpcInternalException(
+          e.getMessage() == null ? "historical eth_call failed" : e.getMessage());
+    }
+  }
+
+  private ArchiveStateReaderFactory readerFactory() throws JsonRpcInternalException {
+    if (!(archiveService instanceof DefaultArchiveService)) {
+      throw new JsonRpcInternalException("archive is not available");
+    }
+    ArchiveStateReaderFactory factory = ((DefaultArchiveService) archiveService).getReaderFactory();
+    if (factory == null) {
+      throw new JsonRpcInternalException("archive reader is not available");
+    }
+    return factory;
+  }
+}
