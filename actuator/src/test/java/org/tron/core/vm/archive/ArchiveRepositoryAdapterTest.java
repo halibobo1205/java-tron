@@ -153,9 +153,44 @@ public class ArchiveRepositoryAdapterTest {
   }
 
   @Test
-  public void overlayOperationsDeferredToSlice3() {
-    assertThrows(UnsupportedHistoricalStateException.class, adapter::newRepositoryChild);
+  public void unsupportedOverlayVariantsStillFailFast() {
+    // The VM never calls these on the archive path; they fail fast rather than silently no-op.
     assertThrows(UnsupportedHistoricalStateException.class, () -> adapter.getStorage(ADDR));
     assertThrows(UnsupportedHistoricalStateException.class, () -> adapter.putAccount(null, null));
+    assertThrows(UnsupportedHistoricalStateException.class,
+        () -> adapter.createNormalAccount(ADDR));
+  }
+
+  @Test
+  public void storageWriteThenReadIsVisibleInOverlay() {
+    DataWord key = new DataWord(new byte[] {7});
+    DataWord value = new DataWord(new byte[] {0, 9});
+    adapter.putStorageValue(ADDR, key, value);
+    assertEquals(value, adapter.getStorageValue(ADDR, key));
+  }
+
+  @Test
+  public void accountOverlayWriteIsReadBack() {
+    adapter.putAccountValue(ADDR, account(500L));
+    assertEquals(500L, adapter.getBalance(ADDR));
+    assertEquals(500L, adapter.getAccount(ADDR).getBalance());
+  }
+
+  @Test
+  public void childWritesAreInvisibleToParentUntilCommit() {
+    // The account must exist so the parent's archive storage path is reachable (returns missing).
+    reader.account = ArchiveReadResult.present(account(1L));
+    ArchiveRepositoryAdapter child = (ArchiveRepositoryAdapter) adapter.newRepositoryChild();
+    DataWord key = new DataWord(new byte[] {3});
+    DataWord value = new DataWord(new byte[] {42});
+    child.putStorageValue(ADDR, key, value);
+
+    // Child sees its own write; the parent does not (the archive has no such row).
+    assertEquals(value, child.getStorageValue(ADDR, key));
+    assertNull(adapter.getStorageValue(ADDR, key));
+
+    // Commit merges the child overlay into the parent.
+    child.commit();
+    assertEquals(value, adapter.getStorageValue(ADDR, key));
   }
 }
