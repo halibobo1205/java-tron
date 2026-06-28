@@ -1,5 +1,11 @@
 package org.tron.core.vm.archive;
 
+import static org.tron.common.math.Maths.addExact;
+
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 import org.apache.commons.lang3.tuple.Pair;
 import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.utils.ByteUtil;
@@ -22,6 +28,7 @@ import org.tron.core.store.AssetIssueV2Store;
 import org.tron.core.store.DelegationStore;
 import org.tron.core.store.DynamicPropertiesStore;
 import org.tron.core.store.VmDynamicProperties;
+import org.tron.core.vm.config.VMConfig;
 import org.tron.core.vm.program.Storage;
 import org.tron.core.vm.repository.Key;
 import org.tron.core.vm.repository.Repository;
@@ -29,36 +36,66 @@ import org.tron.core.vm.repository.Value;
 import org.tron.protos.Protocol;
 
 /**
- * Root {@link Repository} that serves the TVM's state reads from the archive at a fixed historical
- * point (L6 {@link ArchiveStateReader}) instead of the latest stores, so a constant call replays
- * against the state as it was at the target block. Dynamic-properties / hard-fork flags come from a
- * historical {@link VmDynamicProperties}.
+ * {@link Repository} that replays a constant call against the archive state at a fixed historical
+ * point. A root instance reads through an L6 {@link ArchiveStateReader}; the VM executes against a
+ * {@link #newRepositoryChild() child} whose writes land in an in-memory copy-on-write overlay and
+ * are discarded at the top (a constant call persists nothing). Reads resolve overlay first, then
+ * the parent chain, then the archive root; a value absent from the archive is reported absent,
+ * never read from the latest stores.
  *
- * <p>Three buckets: archive-backed reads (account / balance / contract / code / storage / token
- * balance) map to the reader; domains the archive does not cover in P0 (delegation, votes, witness,
- * asset-issue, resource accounting, the live dynamic-properties store) throw
- * {@link UnsupportedHistoricalStateException}, never a silent latest fallback. Writes and the
- * copy-on-write overlay (child repository, storage object, commit) are deferred to L8 Slice 3; till
- * then they throw, so this class is exercised only as a read source.
+ * <p>Hard-fork / proposal flags are NOT read here: they come from the thread-local {@link VMConfig}
+ * snapshot the executor installs (L8 Slice 3). Domains the archive does not cover in P0
+ * (delegation, votes, witness, asset-issue, resource accounting, the live dynamic-properties store)
+ * and account-creation paths that need block context throw
+ * {@link UnsupportedHistoricalStateException} rather than fall back to latest.
  */
 public class ArchiveRepositoryAdapter implements Repository {
 
-  private static final String SLICE3 = " is implemented in L8 Slice 3";
+  private static final String NEEDS_BLOCK_CTX = " needs block context (L8 Slice 3b)";
 
+  // Root: reader + vmProperties set, parent null. Child: parent set, reader/vmProperties null.
   private final ArchiveStateReader reader;
   private final VmDynamicProperties vmProperties;
+  private final ArchiveRepositoryAdapter parent;
+
+  // Copy-on-write overlay. containsKey decides; a null value marks a deletion at this level.
+  private final Map<Key, AccountCapsule> accounts = new HashMap<>();
+  private final Map<Key, byte[]> codes = new HashMap<>();
+  private final Map<Key, ContractCapsule> contracts = new HashMap<>();
+  private final Map<Key, Map<DataWord, DataWord>> storage = new HashMap<>();
+  private final Set<Key> newContracts = new HashSet<>();
 
   public ArchiveRepositoryAdapter(ArchiveStateReader reader, VmDynamicProperties vmProperties) {
     this.reader = reader;
     this.vmProperties = vmProperties;
+    this.parent = null;
+  }
+
+  private ArchiveRepositoryAdapter(ArchiveRepositoryAdapter parent) {
+    this.reader = null;
+    this.vmProperties = null;
+    this.parent = parent;
+  }
+
+  @Override
+  public Repository newRepositoryChild() {
+    return new ArchiveRepositoryAdapter(this);
   }
 
   // ---------------------------------------------------------------------------------------------
-  // Archive-backed reads.
+  // Reads: overlay -> parent -> archive root.
   // ---------------------------------------------------------------------------------------------
 
   @Override
   public AccountCapsule getAccount(byte[] address) {
+    Key key = Key.create(address);
+    if (accounts.containsKey(key)) {
+      AccountCapsule account = accounts.get(key);
+      return account == null ? null : new AccountCapsule(account.getData());
+    }
+    if (parent != null) {
+      return parent.getAccount(address);
+    }
     return present(read(() -> reader.getAccount(address), "account"));
   }
 
@@ -66,27 +103,6 @@ public class ArchiveRepositoryAdapter implements Repository {
   public long getBalance(byte[] address) {
     AccountCapsule account = getAccount(address);
     return account == null ? 0L : account.getBalance();
-  }
-
-  @Override
-  public ContractCapsule getContract(byte[] address) {
-    return present(read(() -> reader.getContract(address), "contract"));
-  }
-
-  @Override
-  public byte[] getCode(byte[] address) {
-    return present(read(() -> reader.getCode(address), "code"));
-  }
-
-  @Override
-  public DataWord getStorageValue(byte[] address, DataWord key) {
-    byte[] tronAddress = TransactionTrace.convertToTronAddress(address);
-    if (getAccount(tronAddress) == null) {
-      return null;
-    }
-    ArchiveReadResult<byte[]> row = read(() -> reader.getStorage(tronAddress, key.getData()),
-        "storage");
-    return row.isPresent() ? new DataWord(row.getValue()) : null;
   }
 
   @Override
@@ -99,26 +115,206 @@ public class ArchiveRepositoryAdapter implements Repository {
   }
 
   @Override
-  public VmDynamicProperties getVmDynamicProperties() {
-    return vmProperties;
+  public byte[] getCode(byte[] address) {
+    Key key = Key.create(address);
+    if (codes.containsKey(key)) {
+      byte[] code = codes.get(key);
+      return code == null ? null : code.clone();
+    }
+    if (parent != null) {
+      return parent.getCode(address);
+    }
+    return present(read(() -> reader.getCode(address), "code"));
   }
 
-  /**
-   * No contract is "newly created" when read from the archive root; the per-call overlay (Slice 3)
-   * tracks contracts created during the current call.
-   */
+  @Override
+  public ContractCapsule getContract(byte[] address) {
+    Key key = Key.create(address);
+    if (contracts.containsKey(key)) {
+      ContractCapsule contract = contracts.get(key);
+      return contract == null ? null : new ContractCapsule(contract.getData());
+    }
+    if (parent != null) {
+      return parent.getContract(address);
+    }
+    return present(read(() -> reader.getContract(address), "contract"));
+  }
+
+  @Override
+  public DataWord getStorageValue(byte[] address, DataWord key) {
+    byte[] tronAddress = TransactionTrace.convertToTronAddress(address);
+    Map<DataWord, DataWord> slots = storage.get(Key.create(tronAddress));
+    if (slots != null && slots.containsKey(key)) {
+      DataWord value = slots.get(key);
+      return value == null ? null : new DataWord(value.getData());
+    }
+    if (parent != null) {
+      return parent.getStorageValue(address, key);
+    }
+    if (getAccount(tronAddress) == null) {
+      return null;
+    }
+    ArchiveReadResult<byte[]> row = read(() -> reader.getStorage(tronAddress, key.getData()),
+        "storage");
+    return row.isPresent() ? new DataWord(row.getValue()) : null;
+  }
+
   @Override
   public boolean isNewContract(byte[] address) {
-    return false;
+    Key key = Key.create(address);
+    if (newContracts.contains(key)) {
+      return true;
+    }
+    return parent != null && parent.isNewContract(address);
+  }
+
+  @Override
+  public VmDynamicProperties getVmDynamicProperties() {
+    return parent != null ? parent.getVmDynamicProperties() : vmProperties;
   }
 
   // ---------------------------------------------------------------------------------------------
-  // Domains outside P0 archive coverage: fail fast, never read latest.
+  // Writes: into this level's overlay.
+  // ---------------------------------------------------------------------------------------------
+
+  @Override
+  public void putAccountValue(byte[] address, AccountCapsule accountCapsule) {
+    accounts.put(Key.create(address), accountCapsule);
+  }
+
+  @Override
+  public void updateAccount(byte[] address, AccountCapsule accountCapsule) {
+    accounts.put(Key.create(address), accountCapsule);
+  }
+
+  @Override
+  public long addBalance(byte[] address, long value) {
+    AccountCapsule account = getAccount(address);
+    if (account == null) {
+      // Creating the account needs the historical block timestamp / multi-sign flag.
+      throw unsupported("addBalance to a non-existent account" + NEEDS_BLOCK_CTX);
+    }
+    account.setBalance(addExact(account.getBalance(), value, VMConfig.disableJavaLangMath()));
+    accounts.put(Key.create(address), account);
+    return account.getBalance();
+  }
+
+  @Override
+  public void saveCode(byte[] address, byte[] code) {
+    codes.put(Key.create(address), code);
+  }
+
+  @Override
+  public void createContract(byte[] address, ContractCapsule contractCapsule) {
+    contracts.put(Key.create(address), contractCapsule);
+  }
+
+  @Override
+  public void updateContract(byte[] address, ContractCapsule contractCapsule) {
+    contracts.put(Key.create(address), contractCapsule);
+  }
+
+  @Override
+  public void deleteContract(byte[] address) {
+    contracts.put(Key.create(address), null);
+  }
+
+  @Override
+  public void putNewContract(byte[] address) {
+    newContracts.add(Key.create(address));
+  }
+
+  @Override
+  public void putStorageValue(byte[] address, DataWord key, DataWord value) {
+    byte[] tronAddress = TransactionTrace.convertToTronAddress(address);
+    storage.computeIfAbsent(Key.create(tronAddress), k -> new HashMap<>())
+        .put(key.clone(), value.clone());
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Commit: merge this overlay into the parent; the root discards (constant calls persist nothing).
+  // ---------------------------------------------------------------------------------------------
+
+  @Override
+  public void commit() {
+    if (parent == null) {
+      return;
+    }
+    accounts.forEach((key, account) -> {
+      if (account != null) {
+        parent.putAccountValue(key.getData(), account);
+      }
+    });
+    codes.forEach((key, code) -> parent.saveCode(key.getData(), code));
+    contracts.forEach((key, contract) -> {
+      if (contract == null) {
+        parent.deleteContract(key.getData());
+      } else {
+        parent.updateContract(key.getData(), contract);
+      }
+    });
+    newContracts.forEach(key -> parent.putNewContract(key.getData()));
+    storage.forEach((addrKey, slots) ->
+        slots.forEach((slot, value) -> parent.putStorageValue(addrKey.getData(), slot, value)));
+  }
+
+  @Override
+  public void setParent(Repository deposit) {
+    throw unsupported("setParent (the archive overlay sets its parent at construction)");
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Account creation: needs the historical block context; wired in L8 Slice 3b.
+  // ---------------------------------------------------------------------------------------------
+
+  @Override
+  public AccountCapsule createAccount(byte[] address, Protocol.AccountType type) {
+    throw unsupported("createAccount" + NEEDS_BLOCK_CTX);
+  }
+
+  @Override
+  public AccountCapsule createAccount(byte[] address, String accountName,
+      Protocol.AccountType type) {
+    throw unsupported("createAccount" + NEEDS_BLOCK_CTX);
+  }
+
+  @Override
+  public AccountCapsule createNormalAccount(byte[] address) {
+    throw unsupported("createNormalAccount" + NEEDS_BLOCK_CTX);
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Domains outside P0 archive coverage / unused on the constant-call path: fail fast.
   // ---------------------------------------------------------------------------------------------
 
   @Override
   public DynamicPropertiesStore getDynamicPropertiesStore() {
     throw unsupported("getDynamicPropertiesStore (use getVmDynamicProperties on the archive path)");
+  }
+
+  @Override
+  public Storage getStorage(byte[] address) {
+    throw unsupported("getStorage object access (the VM reads via getStorageValue)");
+  }
+
+  @Override
+  public byte[] getTransientStorageValue(byte[] address, byte[] key) {
+    throw unsupported("transient storage");
+  }
+
+  @Override
+  public void updateTransientStorageValue(byte[] address, byte[] key, byte[] value) {
+    throw unsupported("transient storage");
+  }
+
+  @Override
+  public ContractStateCapsule getContractState(byte[] address) {
+    throw unsupported("contract-state reads");
+  }
+
+  @Override
+  public void updateContractState(byte[] address, ContractStateCapsule contractStateCapsule) {
+    throw unsupported("contract-state writes");
   }
 
   @Override
@@ -182,23 +378,18 @@ public class ArchiveRepositoryAdapter implements Repository {
   }
 
   @Override
-  public ContractStateCapsule getContractState(byte[] address) {
-    throw unsupported("contract-state reads");
-  }
-
-  @Override
   public WitnessCapsule getWitness(byte[] address) {
     throw unsupported("witness reads");
   }
 
   @Override
   public byte[] getBlackHoleAddress() {
-    throw unsupported("black-hole address");
+    throw unsupported("black-hole address" + NEEDS_BLOCK_CTX);
   }
 
   @Override
   public BlockCapsule getBlockByNum(long num) {
-    throw unsupported("block reads (BLOCKHASH)" + SLICE3);
+    throw unsupported("block reads (BLOCKHASH)" + NEEDS_BLOCK_CTX);
   }
 
   @Override
@@ -218,12 +409,12 @@ public class ArchiveRepositoryAdapter implements Repository {
 
   @Override
   public long getHeadSlot() {
-    throw unsupported("head-slot reads");
+    throw unsupported("head-slot reads" + NEEDS_BLOCK_CTX);
   }
 
   @Override
   public long getSlotByTimestampMs(long timestamp) {
-    throw unsupported("slot-by-timestamp reads");
+    throw unsupported("slot-by-timestamp reads" + NEEDS_BLOCK_CTX);
   }
 
   @Override
@@ -251,235 +442,139 @@ public class ArchiveRepositoryAdapter implements Repository {
     throw unsupported("global-energy-limit accounting");
   }
 
+  @Override
+  public long addTokenBalance(byte[] address, byte[] tokenId, long value) {
+    throw unsupported("addTokenBalance" + NEEDS_BLOCK_CTX);
+  }
+
   // ---------------------------------------------------------------------------------------------
-  // Writes + copy-on-write overlay: deferred to L8 Slice 3 (executor wiring).
+  // Key/Value merge variants (used by RepositoryImpl.commit, not by this overlay) + uncovered puts.
   // ---------------------------------------------------------------------------------------------
 
   @Override
-  public Storage getStorage(byte[] address) {
-    throw overlay("getStorage");
+  public void putAccount(Key key, Value value) {
+    throw unsupported("putAccount(Key, Value)");
   }
 
   @Override
-  public byte[] getTransientStorageValue(byte[] address, byte[] key) {
-    throw overlay("transient storage");
+  public void putCode(Key key, Value value) {
+    throw unsupported("putCode(Key, Value)");
   }
 
   @Override
-  public Repository newRepositoryChild() {
-    throw overlay("newRepositoryChild");
+  public void putContract(Key key, Value value) {
+    throw unsupported("putContract(Key, Value)");
   }
 
   @Override
-  public void setParent(Repository deposit) {
-    throw overlay("setParent");
+  public void putContractState(Key key, Value value) {
+    throw unsupported("putContractState(Key, Value)");
   }
 
   @Override
-  public void commit() {
-    throw overlay("commit");
+  public void putStorage(Key key, Storage cache) {
+    throw unsupported("putStorage(Key, Storage)");
   }
 
   @Override
-  public AccountCapsule createAccount(byte[] address, Protocol.AccountType type) {
-    throw overlay("createAccount");
+  public void putDynamicProperty(Key key, Value value) {
+    throw unsupported("putDynamicProperty");
   }
 
   @Override
-  public AccountCapsule createAccount(byte[] address, String accountName,
-      Protocol.AccountType type) {
-    throw overlay("createAccount");
+  public void putDelegatedResource(Key key, Value value) {
+    throw unsupported("putDelegatedResource");
   }
 
   @Override
-  public AccountCapsule createNormalAccount(byte[] address) {
-    throw overlay("createNormalAccount");
+  public void putVotes(Key key, Value value) {
+    throw unsupported("putVotes");
   }
 
   @Override
-  public void deleteContract(byte[] address) {
-    throw overlay("deleteContract");
+  public void putDelegation(Key key, Value value) {
+    throw unsupported("putDelegation");
   }
 
   @Override
-  public void createContract(byte[] address, ContractCapsule contractCapsule) {
-    throw overlay("createContract");
+  public void putDelegatedResourceAccountIndex(Key key, Value value) {
+    throw unsupported("putDelegatedResourceAccountIndex");
   }
 
   @Override
-  public void updateContract(byte[] address, ContractCapsule contractCapsule) {
-    throw overlay("updateContract");
-  }
-
-  @Override
-  public void updateContractState(byte[] address, ContractStateCapsule contractStateCapsule) {
-    throw overlay("updateContractState");
-  }
-
-  @Override
-  public void putNewContract(byte[] address) {
-    throw overlay("putNewContract");
-  }
-
-  @Override
-  public void updateAccount(byte[] address, AccountCapsule accountCapsule) {
-    throw overlay("updateAccount");
+  public void putTransientStorageValue(Key address, Key key, Value value) {
+    throw unsupported("putTransientStorageValue");
   }
 
   @Override
   public void updateDynamicProperty(byte[] word, BytesCapsule bytesCapsule) {
-    throw overlay("updateDynamicProperty");
+    throw unsupported("updateDynamicProperty");
   }
 
   @Override
   public void updateDelegatedResource(byte[] word, DelegatedResourceCapsule capsule) {
-    throw overlay("updateDelegatedResource");
+    throw unsupported("updateDelegatedResource");
   }
 
   @Override
   public void updateVotes(byte[] word, VotesCapsule votesCapsule) {
-    throw overlay("updateVotes");
+    throw unsupported("updateVotes");
   }
 
   @Override
   public void updateBeginCycle(byte[] word, long cycle) {
-    throw overlay("updateBeginCycle");
+    throw unsupported("updateBeginCycle");
   }
 
   @Override
   public void updateEndCycle(byte[] word, long cycle) {
-    throw overlay("updateEndCycle");
+    throw unsupported("updateEndCycle");
   }
 
   @Override
   public void updateAccountVote(byte[] word, long cycle, AccountCapsule accountCapsule) {
-    throw overlay("updateAccountVote");
+    throw unsupported("updateAccountVote");
   }
 
   @Override
   public void updateDelegation(byte[] word, BytesCapsule bytesCapsule) {
-    throw overlay("updateDelegation");
+    throw unsupported("updateDelegation");
   }
 
   @Override
   public void updateDelegatedResourceAccountIndex(byte[] word,
       DelegatedResourceAccountIndexCapsule capsule) {
-    throw overlay("updateDelegatedResourceAccountIndex");
-  }
-
-  @Override
-  public void updateTransientStorageValue(byte[] address, byte[] key, byte[] value) {
-    throw overlay("updateTransientStorageValue");
-  }
-
-  @Override
-  public void saveCode(byte[] address, byte[] code) {
-    throw overlay("saveCode");
-  }
-
-  @Override
-  public void putStorageValue(byte[] address, DataWord key, DataWord value) {
-    throw overlay("putStorageValue");
-  }
-
-  @Override
-  public long addBalance(byte[] address, long value) {
-    throw overlay("addBalance");
-  }
-
-  @Override
-  public long addTokenBalance(byte[] address, byte[] tokenId, long value) {
-    throw overlay("addTokenBalance");
-  }
-
-  @Override
-  public void putAccount(Key key, Value value) {
-    throw overlay("putAccount");
-  }
-
-  @Override
-  public void putCode(Key key, Value value) {
-    throw overlay("putCode");
-  }
-
-  @Override
-  public void putContract(Key key, Value value) {
-    throw overlay("putContract");
-  }
-
-  @Override
-  public void putContractState(Key key, Value value) {
-    throw overlay("putContractState");
-  }
-
-  @Override
-  public void putStorage(Key key, Storage cache) {
-    throw overlay("putStorage");
-  }
-
-  @Override
-  public void putAccountValue(byte[] address, AccountCapsule accountCapsule) {
-    throw overlay("putAccountValue");
-  }
-
-  @Override
-  public void putDynamicProperty(Key key, Value value) {
-    throw overlay("putDynamicProperty");
-  }
-
-  @Override
-  public void putDelegatedResource(Key key, Value value) {
-    throw overlay("putDelegatedResource");
-  }
-
-  @Override
-  public void putVotes(Key key, Value value) {
-    throw overlay("putVotes");
-  }
-
-  @Override
-  public void putDelegation(Key key, Value value) {
-    throw overlay("putDelegation");
-  }
-
-  @Override
-  public void putDelegatedResourceAccountIndex(Key key, Value value) {
-    throw overlay("putDelegatedResourceAccountIndex");
-  }
-
-  @Override
-  public void putTransientStorageValue(Key address, Key key, Value value) {
-    throw overlay("putTransientStorageValue");
+    throw unsupported("updateDelegatedResourceAccountIndex");
   }
 
   @Override
   public void addTotalNetWeight(long amount) {
-    throw overlay("addTotalNetWeight");
+    throw unsupported("addTotalNetWeight");
   }
 
   @Override
   public void addTotalEnergyWeight(long amount) {
-    throw overlay("addTotalEnergyWeight");
+    throw unsupported("addTotalEnergyWeight");
   }
 
   @Override
   public void addTotalTronPowerWeight(long amount) {
-    throw overlay("addTotalTronPowerWeight");
+    throw unsupported("addTotalTronPowerWeight");
   }
 
   @Override
   public void saveTotalNetWeight(long totalNetWeight) {
-    throw overlay("saveTotalNetWeight");
+    throw unsupported("saveTotalNetWeight");
   }
 
   @Override
   public void saveTotalEnergyWeight(long totalEnergyWeight) {
-    throw overlay("saveTotalEnergyWeight");
+    throw unsupported("saveTotalEnergyWeight");
   }
 
   @Override
   public void saveTotalTronPowerWeight(long totalTronPowerWeight) {
-    throw overlay("saveTotalTronPowerWeight");
+    throw unsupported("saveTotalTronPowerWeight");
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -505,9 +600,5 @@ public class ArchiveRepositoryAdapter implements Repository {
   private static UnsupportedHistoricalStateException unsupported(String what) {
     return new UnsupportedHistoricalStateException(
         "historical archive call does not support " + what);
-  }
-
-  private static UnsupportedHistoricalStateException overlay(String what) {
-    return new UnsupportedHistoricalStateException(what + SLICE3);
   }
 }
