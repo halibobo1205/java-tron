@@ -20,15 +20,22 @@ public class ConfigLoader {
 
   /**
    * Load the VMConfig flags from a dynamic-properties view into a snapshot. The latest path passes
-   * the live {@code DynamicPropertiesStore}; a historical archive call (L8) passes the parameters in
-   * effect at the target block, so the same flags drive both paths. {@code isolate} routes the result
-   * to the thread-local view (constant call) or the process-wide global (block path).
+   * the live {@code DynamicPropertiesStore}; a historical archive call (L8) passes the parameters
+   * in effect at the target block, so the same flags drive both paths. {@code isolate} routes the
+   * result to the thread-local view (constant call) or the process-wide global (block path).
    */
   public static void load(VmDynamicProperties ds, boolean isolate) {
     if (!disable) {
       VMConfig.setVmTrace(CommonParameter.getInstance().isVmTrace());
       if (ds != null) {
-        VMConfig.initVmHardFork(isEnergyLimitForkActive(ds));
+        // The energy-limit hard fork is a process-wide global (not part of the thread-local
+        // snapshot), so an isolated constant call must NOT write it from its (possibly historical,
+        // pre-fork) block number -- that would pollute the consensus path. The constant call does
+        // not read it: isConstantCall short-circuits the energy branches and the archive repository
+        // routes storage through getStorageValue (never RepositoryImpl's deep-copy gate).
+        if (!isolate) {
+          VMConfig.initVmHardFork(isEnergyLimitForkActive(ds));
+        }
         VMConfig.Snapshot snapshot = new VMConfig.Snapshot();
         snapshot.allowMultiSign = ds.getAllowMultiSign() == 1;
         snapshot.allowTvmTransferTrc10 = ds.getAllowTvmTransferTrc10() == 1;

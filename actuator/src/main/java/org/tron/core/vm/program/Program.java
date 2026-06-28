@@ -2374,11 +2374,11 @@ public class Program {
 
     if (contractStateCapsule == null) {
       contractStateCapsule = new ContractStateCapsule(
-          contractState.getDynamicPropertiesStore().getCurrentCycleNumber());
+          contractState.getVmDynamicProperties().getCurrentCycleNumber());
       contractState.updateContractState(getContextAddress(), contractStateCapsule);
     } else {
       if (contractStateCapsule.catchUpToCycle(
-          contractState.getDynamicPropertiesStore().getCurrentCycleNumber(),
+          contractState.getVmDynamicProperties().getCurrentCycleNumber(),
           VMConfig.getDynamicEnergyThreshold(),
           VMConfig.getDynamicEnergyIncreaseFactor(),
           VMConfig.getDynamicEnergyMaxFactor(),

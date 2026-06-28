@@ -30,8 +30,13 @@ import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
 public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
 
   // PUSH1 0; SLOAD; PUSH1 0; MSTORE; PUSH1 0x20; PUSH1 0; RETURN -> returns 32-byte storage slot 0.
-  private static final byte[] CODE = {
+  private static final byte[] SLOAD_CODE = {
       0x60, 0x00, 0x54, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, (byte) 0xf3
+  };
+
+  // BASEFEE; PUSH1 0; MSTORE; PUSH1 0x20; PUSH1 0; RETURN -> returns the historical energy fee.
+  private static final byte[] BASEFEE_CODE = {
+      (byte) 0x48, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, (byte) 0xf3
   };
 
   @Override
@@ -44,16 +49,26 @@ public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
     // proves the call read code + storage from the archive, at the archived value.
     byte[] storedWord = new byte[32];
     storedWord[31] = 0x2a;
-    assertArrayEquals(storedWord, runSlotReadCall(ArchiveReadResult.present(storedWord)));
+    assertArrayEquals(storedWord, runViewCall(SLOAD_CODE, ArchiveReadResult.present(storedWord)));
   }
 
   @Test
   public void historicalViewCallReadsZeroForMissingArchivedSlot() throws Exception {
     // A slot absent from the archive resolves to zero in execution (three-state MISSING -> 0 word).
-    assertArrayEquals(new byte[32], runSlotReadCall(ArchiveReadResult.missing()));
+    assertArrayEquals(new byte[32], runViewCall(SLOAD_CODE, ArchiveReadResult.missing()));
   }
 
-  private byte[] runSlotReadCall(ArchiveReadResult<byte[]> archivedSlot) throws Exception {
+  @Test
+  public void historicalBaseFeeReturnsHistoricalEnergyFee() throws Exception {
+    // BASEFEE reads getEnergyFee() through the archive adapter's getVmDynamicProperties() (not the
+    // throwing getDynamicPropertiesStore()); the dynamic-energy factor (allowDynamicEnergy on) must
+    // also degrade to neutral instead of crashing on the unarchived contract-state.
+    byte[] expectedFee = new byte[32];
+    expectedFee[31] = 100;
+    assertArrayEquals(expectedFee, runViewCall(BASEFEE_CODE, ArchiveReadResult.missing()));
+  }
+
+  private byte[] runViewCall(byte[] code, ArchiveReadResult<byte[]> archivedSlot) throws Exception {
     byte[] contractAddr = new byte[21];
     contractAddr[0] = 0x41;
     contractAddr[20] = 0x11;
@@ -66,7 +81,7 @@ public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
         Account.newBuilder().setAddress(ByteString.copyFrom(contractAddr)).build()));
     reader.contract = ArchiveReadResult.present(new ContractCapsule(SmartContract.newBuilder()
         .setContractAddress(ByteString.copyFrom(contractAddr)).build()));
-    reader.code = ArchiveReadResult.present(CODE);
+    reader.code = ArchiveReadResult.present(code);
     reader.storage = archivedSlot;
 
     VmDynamicProperties vmProps = mock(VmDynamicProperties.class);
@@ -74,6 +89,10 @@ public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
     when(vmProps.getMaxFeeLimit()).thenReturn(1_000_000_000_000L);
     when(vmProps.getMaxCpuTimeOfOneTx()).thenReturn(50L);
     when(vmProps.getEnergyFee()).thenReturn(100L);
+    // Dynamic energy active at the historical block (mainnet default) must NOT crash the call, and
+    // London enables the BASEFEE opcode.
+    when(vmProps.getAllowDynamicEnergy()).thenReturn(1L);
+    when(vmProps.getAllowTvmLondon()).thenReturn(1L);
 
     BlockCapsule block = new BlockCapsule(1L, Sha256Hash.ZERO_HASH, 1000L,
         ByteString.copyFrom(new byte[21]));
