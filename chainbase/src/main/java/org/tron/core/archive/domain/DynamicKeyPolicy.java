@@ -49,6 +49,12 @@ public final class DynamicKeyPolicy {
     root("ALLOW_TVM_PRAGUE", DynamicKeyClass.VM_CONFIG);
     root("ALLOW_HARDEN_RESOURCE_CALCULATION", DynamicKeyClass.VM_CONFIG);
     root("ALLOW_HARDEN_EXCHANGE_CALCULATION", DynamicKeyClass.VM_CONFIG);
+    // These also change historical execution: UNFREEZE_DELAY_DAYS gates the FreezeV2 opcodes
+    // (FREEZEBALANCEV2 / DELEGATERESOURCE), shielded-TRC20 gates the verify* precompiles, and
+    // multi-sign changes ADDRESS / ORIGIN return bytes -- so they belong in the VM_CONFIG root.
+    root("UNFREEZE_DELAY_DAYS", DynamicKeyClass.VM_CONFIG);
+    root("ALLOW_SHIELDED_TRC20_TRANSACTION", DynamicKeyClass.VM_CONFIG);
+    root("ALLOW_MULTI_SIGN", DynamicKeyClass.VM_CONFIG);
 
     // --- HISTORY_ONLY: header cursors + price history ---
     historyOnly("latest_block_header_timestamp", DynamicKeyClass.HEADER_CURSOR);

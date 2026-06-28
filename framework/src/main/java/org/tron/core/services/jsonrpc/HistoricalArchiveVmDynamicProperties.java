@@ -29,12 +29,9 @@ import org.tron.core.store.VmDynamicProperties;
  *
  * <p>Only proposals ever write these keys (the constructor's default seed is not part of block
  * application, so it is never captured), which is what makes MISSING-means-default exact under
- * genesis coverage. 14 keys are rooted VM_CONFIG in {@code DynamicKeyPolicy}; the FreezeV2 /
- * shielded / multi-sign keys are not yet rooted but are kept in FULL_HISTORY (the unknown-key
- * default), so getDynamicProperty reconstructs them the same way (rooting them for the L9 global
- * state root is a follow-up). The energy/math flags (dynamic-energy, strict-math) are intentionally
- * NOT reconstructed -- they do not change a read-only result (energy is discarded, the Maths
- * wrappers are integer-domain identical).
+ * genesis coverage. All 17 keys are rooted VM_CONFIG in {@code DynamicKeyPolicy}. The energy/math
+ * flags (dynamic-energy, strict-math) are intentionally NOT reconstructed -- they do not change a
+ * read-only result (energy is discarded, the Maths wrappers are integer-domain identical).
  */
 final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProperties {
 
@@ -53,9 +50,8 @@ final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProp
   private final long allowTvmCompatibleEvm;
   private final long allowOptimizedReturnValueOfChainId;
   // FreezeV2 / shielded-TRC20 / multi-sign also change a constant-call result (opcode validity,
-  // precompile presence, ADDRESS/ORIGIN bytes). They are NOT in the VM_CONFIG global root, but
-  // DynamicKeyPolicy keeps unknown keys in FULL_HISTORY, so getDynamicProperty reconstructs them
-  // at the target block exactly like the rooted flags.
+  // precompile presence, ADDRESS / ORIGIN bytes), so they are rooted VM_CONFIG and reconstructed
+  // at the target block exactly like the other flags.
   private final long unfreezeDelayDays;
   private final long allowShieldedTRC20Transaction;
   private final long allowMultiSign;
