@@ -23,6 +23,19 @@ public class DynamicKeyPolicyTest {
   }
 
   @Test
+  public void executionAffectingGovernanceKeysAreRooted() {
+    // FreezeV2 / shielded / multi-sign gate VM execution (opcode validity, precompiles, ADDRESS /
+    // ORIGIN bytes), so they are VM_CONFIG (rooted + readable), not left as unknown.
+    for (String key : new String[] {
+        "UNFREEZE_DELAY_DAYS", "ALLOW_SHIELDED_TRC20_TRANSACTION", "ALLOW_MULTI_SIGN"}) {
+      DynamicKeyDecision d = decide(key);
+      assertEquals(RootPolicy.IN_GLOBAL_ROOT, d.getRootPolicy());
+      assertEquals(DynamicKeyClass.VM_CONFIG, d.getKeyClass());
+      assertEquals(ReaderPolicy.HISTORICAL_VM, d.getReaderPolicy());
+    }
+  }
+
+  @Test
   public void headerCursorsAndPriceHistoryAreHistoryOnly() {
     assertEquals(RootPolicy.HISTORY_ONLY, decide("latest_block_header_number").getRootPolicy());
     assertEquals(RootPolicy.HISTORY_ONLY, decide("ENERGY_PRICE_HISTORY").getRootPolicy());
