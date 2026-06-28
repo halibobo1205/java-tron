@@ -1,0 +1,117 @@
+package org.tron.core.vm.archive;
+
+import static org.junit.Assert.assertArrayEquals;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+import com.google.protobuf.ByteString;
+import org.junit.Test;
+import org.tron.common.BaseMethodTest;
+import org.tron.common.runtime.TvmTestUtils;
+import org.tron.common.utils.Sha256Hash;
+import org.tron.core.archive.reader.ArchiveReadResult;
+import org.tron.core.archive.reader.ArchiveStatePoint;
+import org.tron.core.archive.reader.ArchiveStateReader;
+import org.tron.core.capsule.AccountCapsule;
+import org.tron.core.capsule.BlockCapsule;
+import org.tron.core.capsule.ContractCapsule;
+import org.tron.core.capsule.TransactionCapsule;
+import org.tron.core.store.VmDynamicProperties;
+import org.tron.protos.Protocol.Account;
+import org.tron.protos.Protocol.Transaction.Contract.ContractType;
+import org.tron.protos.contract.SmartContractOuterClass.SmartContract;
+import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
+
+/**
+ * End-to-end: a historical constant call replays a contract against archived state. The contract's
+ * runtime simply returns storage slot 0, so the call proves SLOAD reads the archived value (not the
+ * latest store) through the executor -> VMActuator injected seam -> ArchiveRepositoryAdapter.
+ */
+public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
+
+  // PUSH1 0; SLOAD; PUSH1 0; MSTORE; PUSH1 0x20; PUSH1 0; RETURN -> returns 32-byte storage slot 0.
+  private static final byte[] CODE = {
+      0x60, 0x00, 0x54, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, (byte) 0xf3
+  };
+
+  @Override
+  protected void afterInit() {
+  }
+
+  @Test
+  public void historicalViewCallReturnsArchivedStorageSlot() throws Exception {
+    // The contract exists only in the archive (not the latest test stores), so a non-empty return
+    // proves the call read code + storage from the archive, at the archived value.
+    byte[] storedWord = new byte[32];
+    storedWord[31] = 0x2a;
+    assertArrayEquals(storedWord, runSlotReadCall(ArchiveReadResult.present(storedWord)));
+  }
+
+  @Test
+  public void historicalViewCallReadsZeroForMissingArchivedSlot() throws Exception {
+    // A slot absent from the archive resolves to zero in execution (three-state MISSING -> 0 word).
+    assertArrayEquals(new byte[32], runSlotReadCall(ArchiveReadResult.missing()));
+  }
+
+  private byte[] runSlotReadCall(ArchiveReadResult<byte[]> archivedSlot) throws Exception {
+    byte[] contractAddr = new byte[21];
+    contractAddr[0] = 0x41;
+    contractAddr[20] = 0x11;
+    byte[] caller = new byte[21];
+    caller[0] = 0x41;
+    caller[20] = 0x22;
+
+    FakeReader reader = new FakeReader();
+    reader.account = ArchiveReadResult.present(new AccountCapsule(
+        Account.newBuilder().setAddress(ByteString.copyFrom(contractAddr)).build()));
+    reader.contract = ArchiveReadResult.present(new ContractCapsule(SmartContract.newBuilder()
+        .setContractAddress(ByteString.copyFrom(contractAddr)).build()));
+    reader.code = ArchiveReadResult.present(CODE);
+    reader.storage = archivedSlot;
+
+    VmDynamicProperties vmProps = mock(VmDynamicProperties.class);
+    when(vmProps.supportVM()).thenReturn(true);
+    when(vmProps.getMaxFeeLimit()).thenReturn(1_000_000_000_000L);
+    when(vmProps.getMaxCpuTimeOfOneTx()).thenReturn(50L);
+    when(vmProps.getEnergyFee()).thenReturn(100L);
+
+    BlockCapsule block = new BlockCapsule(1L, Sha256Hash.ZERO_HASH, 1000L,
+        ByteString.copyFrom(new byte[21]));
+    TriggerSmartContract trigger =
+        TvmTestUtils.buildTriggerSmartContract(caller, contractAddr, new byte[0], 0L);
+    TransactionCapsule trxCap = new TransactionCapsule(trigger, ContractType.TriggerSmartContract);
+
+    return new HistoricalConstantCallExecutor().execute(reader, vmProps, block, trxCap).getResult();
+  }
+
+  /** Returns the configured archived state for any address. */
+  private static final class FakeReader implements ArchiveStateReader {
+    ArchiveReadResult<AccountCapsule> account = ArchiveReadResult.missing();
+    ArchiveReadResult<ContractCapsule> contract = ArchiveReadResult.missing();
+    ArchiveReadResult<byte[]> code = ArchiveReadResult.missing();
+    ArchiveReadResult<byte[]> storage = ArchiveReadResult.missing();
+
+    public ArchiveStatePoint getPoint() {
+      return null;
+    }
+
+    public ArchiveReadResult<AccountCapsule> getAccount(byte[] address) {
+      return account;
+    }
+
+    public ArchiveReadResult<ContractCapsule> getContract(byte[] address) {
+      return contract;
+    }
+
+    public ArchiveReadResult<byte[]> getCode(byte[] address) {
+      return code;
+    }
+
+    public ArchiveReadResult<byte[]> getStorage(byte[] address, byte[] slot) {
+      return storage;
+    }
+
+    public void close() {
+    }
+  }
+}
