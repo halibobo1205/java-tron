@@ -1,6 +1,7 @@
 package org.tron.core.services.jsonrpc;
 
 import static org.tron.core.Wallet.CONTRACT_VALIDATE_ERROR;
+import static org.tron.core.services.jsonrpc.JsonRpcApiUtil.parseEnergyFee;
 import static org.tron.core.services.jsonrpc.JsonRpcApiUtil.triggerCallContract;
 
 import org.tron.common.utils.ByteArray;
@@ -20,6 +21,7 @@ import org.tron.core.exception.ContractValidateException;
 import org.tron.core.exception.jsonrpc.JsonRpcInternalException;
 import org.tron.core.exception.jsonrpc.JsonRpcInvalidParamsException;
 import org.tron.core.exception.jsonrpc.JsonRpcInvalidRequestException;
+import org.tron.core.store.DynamicPropertiesStore;
 import org.tron.core.store.StoreFactory;
 import org.tron.core.store.VmDynamicProperties;
 import org.tron.core.vm.archive.HistoricalConstantCallExecutor;
@@ -36,10 +38,12 @@ import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
  * renders the result as JSON-RPC hex. {@code latest} / archive-disabled stay on the existing
  * latest-only logic ({@link #shouldUseArchive} returns false).
  *
- * <p>Account / code / storage are read historically. The VM hard-fork / fee config, however, is
- * sourced from the LATEST dynamic-properties store as a baseline (proposal flags are near-
- * monotonic, so for a recent block latest equals historical). A fully historical config view,
- * reading the archived dynamic-properties at the block, is a later refinement.
+ * <p>Account / code / storage are read historically, and the energy price is reconstructed from the
+ * live {@code EnergyPriceHistory} (see {@link HistoricalVmDynamicProperties}), so {@code BASEFEE} /
+ * {@code GASPRICE} replay at the value in force then. The remaining hard-fork flags are still
+ * sourced from the LATEST store as a baseline (they are near-monotonic, so for a recent block
+ * latest equals historical); a fully historical flag view, reading the archived dynamic-properties
+ * at the block, is a later refinement.
  */
 public final class HistoricalEthCallSupport {
 
@@ -75,8 +79,17 @@ public final class HistoricalEthCallSupport {
           + point.getBlockNum());
     }
     BlockCapsule historicalBlock = new BlockCapsule(block);
-    VmDynamicProperties vmProperties =
+    DynamicPropertiesStore latestStore =
         StoreFactory.getInstance().getChainBaseManager().getDynamicPropertiesStore();
+    // Energy price has a complete, time-keyed history in the live store, so we replay BASEFEE /
+    // GASPRICE with the value in force at the target block rather than the current price.
+    long historicalEnergyFee =
+        parseEnergyFee(historicalBlock.getTimeStamp(), latestStore.getEnergyPriceHistory());
+    if (historicalEnergyFee == -1) {
+      historicalEnergyFee = latestStore.getEnergyFee();
+    }
+    VmDynamicProperties vmProperties =
+        new HistoricalVmDynamicProperties(latestStore, historicalEnergyFee);
     TriggerSmartContract trigger =
         triggerCallContract(ownerAddress, contractAddress, callValue, data, 0, null);
 
