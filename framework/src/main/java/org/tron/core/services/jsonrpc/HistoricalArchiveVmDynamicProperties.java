@@ -10,10 +10,12 @@ import org.tron.core.store.VmDynamicProperties;
 
 /**
  * Archive-backed historical {@link VmDynamicProperties}: reconstructs the hard-fork flags that can
- * change an {@code eth_call} RESULT (opcode availability + the two CHAINID-value flags) from the
- * DYNAMIC_PROPERTIES history at the target block, instead of using the latest values. Energy price
- * and every other parameter keep {@link HistoricalVmDynamicProperties}'s behaviour (historical fee
- * via {@code EnergyPriceHistory}, latest baseline for the rest).
+ * change an {@code eth_call} RESULT from the DYNAMIC_PROPERTIES history at the target block, rather
+ * than the latest values. These are the 12 opcode-availability flags, the 2 CHAINID-value flags,
+ * plus FreezeV2 (FREEZEBALANCEV2 / DELEGATERESOURCE opcode validity), shielded-TRC20 (precompile
+ * presence) and multi-sign (ADDRESS / ORIGIN return bytes) -- 17 in all. Energy price and every
+ * other parameter keep {@link HistoricalVmDynamicProperties}'s behaviour (historical fee via
+ * {@code EnergyPriceHistory}, latest baseline for the rest).
  *
  * <p>Each flag is read once at construction (reader open) via {@code getDynamicProperty}:
  * <ul>
@@ -27,9 +29,12 @@ import org.tron.core.store.VmDynamicProperties;
  *
  * <p>Only proposals ever write these keys (the constructor's default seed is not part of block
  * application, so it is never captured), which is what makes MISSING-means-default exact under
- * genesis coverage. These 14 keys are all rooted in {@code DynamicKeyPolicy}; the energy/math flags
- * (dynamic-energy, strict-math) are intentionally NOT reconstructed because they do not change a
- * read-only call result (energy is discarded, the Maths wrappers are integer-domain identical).
+ * genesis coverage. 14 keys are rooted VM_CONFIG in {@code DynamicKeyPolicy}; the FreezeV2 /
+ * shielded / multi-sign keys are not yet rooted but are kept in FULL_HISTORY (the unknown-key
+ * default), so getDynamicProperty reconstructs them the same way (rooting them for the L9 global
+ * state root is a follow-up). The energy/math flags (dynamic-energy, strict-math) are intentionally
+ * NOT reconstructed -- they do not change a read-only result (energy is discarded, the Maths
+ * wrappers are integer-domain identical).
  */
 final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProperties {
 
@@ -47,6 +52,13 @@ final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProp
   private final long allowTvmSelfdestructRestriction;
   private final long allowTvmCompatibleEvm;
   private final long allowOptimizedReturnValueOfChainId;
+  // FreezeV2 / shielded-TRC20 / multi-sign also change a constant-call result (opcode validity,
+  // precompile presence, ADDRESS/ORIGIN bytes). They are NOT in the VM_CONFIG global root, but
+  // DynamicKeyPolicy keeps unknown keys in FULL_HISTORY, so getDynamicProperty reconstructs them
+  // at the target block exactly like the rooted flags.
+  private final long unfreezeDelayDays;
+  private final long allowShieldedTRC20Transaction;
+  private final long allowMultiSign;
 
   HistoricalArchiveVmDynamicProperties(VmDynamicProperties latest, long energyFee,
       ArchiveStateReader reader, boolean genesisComplete) throws ArchiveReaderException {
@@ -82,6 +94,13 @@ final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProp
     this.allowOptimizedReturnValueOfChainId = resolve(reader,
         "ALLOW_OPTIMIZED_RETURN_VALUE_OF_CHAIN_ID", genesisComplete,
         p.getAllowOptimizedReturnValueOfChainId(), latest.getAllowOptimizedReturnValueOfChainId());
+    this.unfreezeDelayDays = resolve(reader, "UNFREEZE_DELAY_DAYS", genesisComplete,
+        p.getUnfreezeDelayDays(), latest.supportUnfreezeDelay() ? 1L : 0L);
+    this.allowShieldedTRC20Transaction = resolve(reader, "ALLOW_SHIELDED_TRC20_TRANSACTION",
+        genesisComplete, p.getAllowShieldedTRC20Transaction(),
+        latest.getAllowShieldedTRC20Transaction());
+    this.allowMultiSign = resolve(reader, "ALLOW_MULTI_SIGN", genesisComplete,
+        p.getAllowMultiSign(), latest.getAllowMultiSign());
   }
 
   private static long resolve(ArchiveStateReader reader, String key, boolean genesisComplete,
@@ -164,5 +183,21 @@ final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProp
   @Override
   public long getAllowOptimizedReturnValueOfChainId() {
     return allowOptimizedReturnValueOfChainId;
+  }
+
+  @Override
+  public boolean supportUnfreezeDelay() {
+    // allowTvmFreezeV2 = unfreezeDelayDays > 0; gates FREEZEBALANCEV2 / DELEGATERESOURCE opcodes.
+    return unfreezeDelayDays > 0;
+  }
+
+  @Override
+  public long getAllowShieldedTRC20Transaction() {
+    return allowShieldedTRC20Transaction;
+  }
+
+  @Override
+  public long getAllowMultiSign() {
+    return allowMultiSign;
   }
 }
