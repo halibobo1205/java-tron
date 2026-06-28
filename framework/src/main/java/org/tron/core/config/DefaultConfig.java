@@ -23,6 +23,7 @@ import org.tron.core.services.interfaceOnSolidity.RpcApiServiceOnSolidity;
 import org.tron.core.services.interfaceOnSolidity.http.solidity.HttpApiOnSolidityService;
 import org.tron.core.services.jsonrpc.ArchiveJsonRpcStateAdapter;
 import org.tron.core.services.jsonrpc.HistoricalEthCallSupport;
+import org.tron.core.services.jsonrpc.HistoricalTraceSupport;
 
 @Slf4j(topic = "app")
 @Configuration
@@ -64,6 +65,12 @@ public class DefaultConfig {
   public HistoricalEthCallSupport historicalEthCallSupport(Wallet wallet,
       ArchiveService archiveService) {
     return new HistoricalEthCallSupport(wallet, archiveService);
+  }
+
+  @Bean
+  public HistoricalTraceSupport historicalTraceSupport(Wallet wallet,
+      ArchiveService archiveService) {
+    return new HistoricalTraceSupport(wallet, archiveService);
   }
 
   @Bean(destroyMethod = "")
