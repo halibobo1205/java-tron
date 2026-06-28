@@ -348,7 +348,7 @@ public class VMActuator implements Actuator2 {
 
   private void create()
       throws ContractValidateException {
-    if (!rootRepository.getDynamicPropertiesStore().supportVM()) {
+    if (!rootRepository.getVmDynamicProperties().supportVM()) {
       throw new ContractValidateException("vm work is off, need to be opened by the committee");
     }
 
@@ -396,10 +396,10 @@ public class VMActuator implements Actuator2 {
     // create vm to constructor smart contract
     try {
       long feeLimit = trx.getRawData().getFeeLimit();
-      if (feeLimit < 0 || feeLimit > rootRepository.getDynamicPropertiesStore().getMaxFeeLimit()) {
+      if (feeLimit < 0 || feeLimit > rootRepository.getVmDynamicProperties().getMaxFeeLimit()) {
         logger.info("invalid feeLimit {}", feeLimit);
         throw new ContractValidateException("feeLimit must be >= 0 and <= "
-            + rootRepository.getDynamicPropertiesStore().getMaxFeeLimit());
+            + rootRepository.getVmDynamicProperties().getMaxFeeLimit());
       }
       AccountCapsule creator = rootRepository
           .getAccount(newSmartContract.getOriginAddress().toByteArray());
@@ -432,7 +432,7 @@ public class VMActuator implements Actuator2 {
       rootInternalTx = new InternalTransaction(trx, trxType);
 
       long thisTxCPULimitInUs = calculateCpuLimitInUs(isConstantCall,
-          rootRepository.getDynamicPropertiesStore().getMaxCpuTimeOfOneTx(),
+          rootRepository.getVmDynamicProperties().getMaxCpuTimeOfOneTx(),
           getCpuLimitInUsRatio(), CommonParameter.getInstance().getConstantCallTimeoutMs());
       long vmStartInUs = System.nanoTime() / VMConstant.ONE_THOUSAND;
       long vmShouldEndInUs = vmStartInUs + thisTxCPULimitInUs;
@@ -501,7 +501,7 @@ public class VMActuator implements Actuator2 {
   private void call()
       throws ContractValidateException {
 
-    if (!rootRepository.getDynamicPropertiesStore().supportVM()) {
+    if (!rootRepository.getVmDynamicProperties().supportVM()) {
       logger.info("vm work is off, need to be opened by the committee");
       throw new ContractValidateException("VM work is off, need to be opened by the committee");
     }
@@ -546,10 +546,10 @@ public class VMActuator implements Actuator2 {
     byte[] code = rootRepository.getCode(contractAddress);
     if (isNotEmpty(code)) {
       long feeLimit = trx.getRawData().getFeeLimit();
-      if (feeLimit < 0 || feeLimit > rootRepository.getDynamicPropertiesStore().getMaxFeeLimit()) {
+      if (feeLimit < 0 || feeLimit > rootRepository.getVmDynamicProperties().getMaxFeeLimit()) {
         logger.info("invalid feeLimit {}", feeLimit);
         throw new ContractValidateException("feeLimit must be >= 0 and <= "
-            + rootRepository.getDynamicPropertiesStore().getMaxFeeLimit());
+            + rootRepository.getVmDynamicProperties().getMaxFeeLimit());
       }
       AccountCapsule caller = rootRepository.getAccount(callerAddress);
       long energyLimit;
@@ -562,7 +562,7 @@ public class VMActuator implements Actuator2 {
       }
 
       long thisTxCPULimitInUs = calculateCpuLimitInUs(isConstantCall,
-          rootRepository.getDynamicPropertiesStore().getMaxCpuTimeOfOneTx(),
+          rootRepository.getVmDynamicProperties().getMaxCpuTimeOfOneTx(),
           getCpuLimitInUsRatio(), CommonParameter.getInstance().getConstantCallTimeoutMs());
       long vmStartInUs = System.nanoTime() / VMConstant.ONE_THOUSAND;
       long vmShouldEndInUs = vmStartInUs + thisTxCPULimitInUs;
