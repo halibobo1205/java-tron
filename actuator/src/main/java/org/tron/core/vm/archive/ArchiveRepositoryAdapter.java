@@ -2,6 +2,7 @@ package org.tron.core.vm.archive;
 
 import static org.tron.common.math.Maths.addExact;
 
+import com.google.protobuf.ByteString;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -192,8 +193,9 @@ public class ArchiveRepositoryAdapter implements Repository {
   public long addBalance(byte[] address, long value) {
     AccountCapsule account = getAccount(address);
     if (account == null) {
-      // Creating the account needs the historical block timestamp / multi-sign flag.
-      throw unsupported("addBalance to a non-existent account" + NEEDS_BLOCK_CTX);
+      // A value-bearing CALL to a fresh address materializes it in the overlay (discarded at the
+      // top), mirroring RepositoryImpl, so a read-only call that forwards value does not abort.
+      account = createAccount(address, Protocol.AccountType.Normal);
     }
     account.setBalance(addExact(account.getBalance(), value, VMConfig.disableJavaLangMath()));
     accounts.put(Key.create(address), account);
@@ -268,20 +270,30 @@ public class ArchiveRepositoryAdapter implements Repository {
   // Account creation: needs the historical block context; wired in L8 Slice 3b.
   // ---------------------------------------------------------------------------------------------
 
+  // Account creation materializes a fresh zero-balance account in the overlay (discarded at the top
+  // of a constant call). The persisted-only fields RepositoryImpl derives from the store (creation
+  // time, default permission) do not affect a read-only result, so a minimal account is safe.
   @Override
   public AccountCapsule createAccount(byte[] address, Protocol.AccountType type) {
-    throw unsupported("createAccount" + NEEDS_BLOCK_CTX);
+    AccountCapsule account = new AccountCapsule(Protocol.Account.newBuilder()
+        .setAddress(ByteString.copyFrom(address)).setType(type).build());
+    accounts.put(Key.create(address), account);
+    return account;
   }
 
   @Override
   public AccountCapsule createAccount(byte[] address, String accountName,
       Protocol.AccountType type) {
-    throw unsupported("createAccount" + NEEDS_BLOCK_CTX);
+    AccountCapsule account = new AccountCapsule(Protocol.Account.newBuilder()
+        .setAddress(ByteString.copyFrom(address))
+        .setAccountName(ByteString.copyFromUtf8(accountName)).setType(type).build());
+    accounts.put(Key.create(address), account);
+    return account;
   }
 
   @Override
   public AccountCapsule createNormalAccount(byte[] address) {
-    throw unsupported("createNormalAccount" + NEEDS_BLOCK_CTX);
+    return createAccount(address, Protocol.AccountType.Normal);
   }
 
   // ---------------------------------------------------------------------------------------------
