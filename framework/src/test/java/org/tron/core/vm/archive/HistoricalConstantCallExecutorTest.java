@@ -1,6 +1,7 @@
 package org.tron.core.vm.archive;
 
 import static org.junit.Assert.assertArrayEquals;
+import static org.junit.Assert.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -82,7 +83,23 @@ public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
     org.junit.Assert.assertEquals(32, result.length);
   }
 
+  @Test
+  public void push0OpcodeGatedOnReconstructedShanghaiFlag() throws Exception {
+    // PUSH0; PUSH0; RETURN -> RETURN(0,0). With Shanghai ON, PUSH0 is valid and the call returns
+    // empty; with Shanghai OFF, PUSH0 is an invalid opcode and the call fails. This is the exact
+    // opcode-gating the historical flag reconstruction exists to get right for pre-Shanghai blocks.
+    byte[] push0 = {0x5f, 0x5f, (byte) 0xf3};
+    assertArrayEquals(new byte[0], runViewCall(push0, ArchiveReadResult.missing(), 1L));
+    assertThrows(HistoricalVmExecutionException.class,
+        () -> runViewCall(push0, ArchiveReadResult.missing(), 0L));
+  }
+
   private byte[] runViewCall(byte[] code, ArchiveReadResult<byte[]> archivedSlot) throws Exception {
+    return runViewCall(code, archivedSlot, 0L);
+  }
+
+  private byte[] runViewCall(byte[] code, ArchiveReadResult<byte[]> slot, long allowShangHai)
+      throws Exception {
     byte[] contractAddr = new byte[21];
     contractAddr[0] = 0x41;
     contractAddr[20] = 0x11;
@@ -96,7 +113,7 @@ public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
     reader.contract = ArchiveReadResult.present(new ContractCapsule(SmartContract.newBuilder()
         .setContractAddress(ByteString.copyFrom(contractAddr)).build()));
     reader.code = ArchiveReadResult.present(code);
-    reader.storage = archivedSlot;
+    reader.storage = slot;
 
     VmDynamicProperties vmProps = mock(VmDynamicProperties.class);
     when(vmProps.supportVM()).thenReturn(true);
@@ -108,6 +125,7 @@ public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
     when(vmProps.getAllowDynamicEnergy()).thenReturn(1L);
     when(vmProps.getAllowTvmLondon()).thenReturn(1L);
     when(vmProps.getAllowTvmIstanbul()).thenReturn(1L);
+    when(vmProps.getAllowTvmShangHai()).thenReturn(allowShangHai);
 
     BlockCapsule block = new BlockCapsule(1L, Sha256Hash.ZERO_HASH, 1000L,
         ByteString.copyFrom(new byte[21]));
