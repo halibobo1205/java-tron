@@ -198,6 +198,9 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
   // L6: historical eth_get* served from the archive; null/disabled falls back to latest-only logic.
   @Autowired(required = false)
   private ArchiveJsonRpcStateAdapter archiveJsonRpcStateAdapter;
+  // L8: historical eth_call replayed against archived state; null/disabled falls back to latest.
+  @Autowired(required = false)
+  private HistoricalEthCallSupport historicalEthCallSupport;
   private final String esName = "query-section";
 
   @Autowired
@@ -1056,6 +1059,15 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
       throw new JsonRpcInvalidRequestException(JSON_ERROR);
     }
 
+    if (historicalEthCallSupport != null
+        && historicalEthCallSupport.shouldUseArchive(blockNumOrTag)) {
+      return historicalEthCallSupport.call(
+          addressCompatibleToByteArray(transactionCall.getFrom()),
+          addressCompatibleToByteArray(transactionCall.getTo()),
+          transactionCall.parseValue(),
+          ByteArray.fromHexString(transactionCall.resolveData()),
+          blockNumOrTag);
+    }
     requireLatestBlockTag(blockNumOrTag);
 
     byte[] addressData = addressCompatibleToByteArray(transactionCall.getFrom());
