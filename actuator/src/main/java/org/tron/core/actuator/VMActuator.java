@@ -37,6 +37,7 @@ import org.tron.core.db.EnergyProcessor;
 import org.tron.core.db.TransactionContext;
 import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractValidateException;
+import org.tron.core.store.VmDynamicProperties;
 import org.tron.core.utils.TransactionUtil;
 import org.tron.core.vm.EnergyCost;
 import org.tron.core.vm.LogInfoTriggerParser;
@@ -95,6 +96,15 @@ public class VMActuator implements Actuator2 {
   @Setter
   private boolean enableEventListener;
 
+  // L8 historical eth_call: when set, the VM reads state from this archive-backed repository and
+  // the matching historical dynamic-properties view instead of the latest stores. Null on the
+  // latest path, so that path is byte-for-byte unchanged.
+  @Setter
+  private Repository injectedRootRepository;
+
+  @Setter
+  private VmDynamicProperties injectedVmProperties;
+
   private LogInfoTriggerParser logInfoTriggerParser;
 
   public VMActuator(boolean isConstantCall) {
@@ -119,16 +129,24 @@ public class VMActuator implements Actuator2 {
       throw new RuntimeException("TransactionContext is null");
     }
 
-    // Load Config
-    ConfigLoader.load(context.getStoreFactory(), isConstantCall);
+    // Load Config. A historical call installs an isolated thread-local snapshot from its archived
+    // dynamic-properties view; the latest path keeps writing the global (or its own isolated view).
+    if (injectedVmProperties != null) {
+      ConfigLoader.load(injectedVmProperties, true);
+    } else {
+      ConfigLoader.load(context.getStoreFactory(), isConstantCall);
+    }
     // Warm up registry class
     OperationRegistry.init();
     trx = context.getTrxCap().getInstance();
     // If tx`s fee limit is set, use it to calc max energy limit for constant call
     if (isConstantCall && trx.getRawData().getFeeLimit() > 0) {
-      maxEnergyLimit = min(maxEnergyLimit, trx.getRawData().getFeeLimit()
-          / context.getStoreFactory().getChainBaseManager()
-          .getDynamicPropertiesStore().getEnergyFee(), VMConfig.disableJavaLangMath());
+      long energyFee = injectedVmProperties != null
+          ? injectedVmProperties.getEnergyFee()
+          : context.getStoreFactory().getChainBaseManager().getDynamicPropertiesStore()
+              .getEnergyFee();
+      maxEnergyLimit = min(maxEnergyLimit, trx.getRawData().getFeeLimit() / energyFee,
+          VMConfig.disableJavaLangMath());
     }
     blockCap = context.getBlockCap();
     if ((VMConfig.allowTvmFreeze() || VMConfig.allowTvmFreezeV2())
@@ -138,7 +156,9 @@ public class VMActuator implements Actuator2 {
     //Route Type
     ContractType contractType = this.trx.getRawData().getContract(0).getType();
     //Prepare Repository
-    rootRepository = RepositoryImpl.createRoot(context.getStoreFactory());
+    rootRepository = injectedRootRepository != null
+        ? injectedRootRepository
+        : RepositoryImpl.createRoot(context.getStoreFactory());
 
     enableEventListener = context.isEventPluginLoaded();
 
