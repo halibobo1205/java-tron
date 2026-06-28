@@ -13,6 +13,11 @@ public class VMConfig {
   @Setter
   private static boolean vmTrace = false;
 
+  // Per-thread vmTrace override, used only by the historical debug_traceCall path so a single trace
+  // call enables the native opcode tracer on its own thread without touching the global default or
+  // polluting concurrent consensus. Mirrors the localSnapshot thread-local pattern below.
+  private static final ThreadLocal<Boolean> localVmTrace = new ThreadLocal<>();
+
   /**
    * Snapshot of all chain/store-derived VM config flags. The block-processing (HEAD) path
    * installs it as the process-wide {@link #globalSnapshot}; a constant call executing against a
@@ -86,7 +91,22 @@ public class VMConfig {
   }
 
   public static boolean vmTrace() {
-    return vmTrace;
+    Boolean local = localVmTrace.get();
+    return local != null ? local : vmTrace;
+  }
+
+  /**
+   * Enable the native opcode tracer on the current thread only (historical debug_traceCall).
+   */
+  public static void setLocalVmTrace(boolean enabled) {
+    localVmTrace.set(enabled);
+  }
+
+  /**
+   * Drop the thread-local vmTrace override so this thread falls back to the global default.
+   */
+  public static void clearLocalVmTrace() {
+    localVmTrace.remove();
   }
 
   public static boolean vmTraceCompressed() {

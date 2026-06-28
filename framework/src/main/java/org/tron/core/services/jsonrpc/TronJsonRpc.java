@@ -27,6 +27,7 @@ import org.tron.core.exception.jsonrpc.JsonRpcTooManyResultException;
 import org.tron.core.services.jsonrpc.types.BlockResult;
 import org.tron.core.services.jsonrpc.types.BuildArguments;
 import org.tron.core.services.jsonrpc.types.CallArguments;
+import org.tron.core.services.jsonrpc.types.TraceResult;
 import org.tron.core.services.jsonrpc.types.TransactionReceipt;
 import org.tron.core.services.jsonrpc.types.TransactionResult;
 import org.tron.json.JSONObject;
@@ -170,6 +171,16 @@ public interface TronJsonRpc {
       @JsonRpcError(exception = JsonRpcInternalException.class, code = -32000, data = "{}"),
   })
   String getCall(CallArguments transactionCall, Object blockNumOrTag)
+      throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
+      JsonRpcInternalException;
+
+  @JsonRpcMethod("debug_traceCall")
+  @JsonRpcErrors({
+      @JsonRpcError(exception = JsonRpcInvalidRequestException.class, code = -32600, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInternalException.class, code = -32000, data = "{}"),
+  })
+  TraceResult traceCall(CallArguments transactionCall, Object blockNumOrTag, Object traceOptions)
       throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
       JsonRpcInternalException;
 
