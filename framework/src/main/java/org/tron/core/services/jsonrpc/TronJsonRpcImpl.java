@@ -88,6 +88,7 @@ import org.tron.core.services.jsonrpc.filters.LogMatch;
 import org.tron.core.services.jsonrpc.types.BlockResult;
 import org.tron.core.services.jsonrpc.types.BuildArguments;
 import org.tron.core.services.jsonrpc.types.CallArguments;
+import org.tron.core.services.jsonrpc.types.TraceResult;
 import org.tron.core.services.jsonrpc.types.TransactionReceipt;
 import org.tron.core.services.jsonrpc.types.TransactionReceipt.TransactionContext;
 import org.tron.core.services.jsonrpc.types.TransactionResult;
@@ -201,6 +202,10 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
   // L8: historical eth_call replayed against archived state; null/disabled falls back to latest.
   @Autowired(required = false)
   private HistoricalEthCallSupport historicalEthCallSupport;
+  // Historical debug_traceCall replayed against archived state with the native tracer on; archive
+  // only (no latest debug_traceCall yet). Null/disabled rejects the request.
+  @Autowired(required = false)
+  private HistoricalTraceSupport historicalTraceSupport;
   private final String esName = "query-section";
 
   @Autowired
@@ -1083,6 +1088,56 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
 
     return call(addressData, contractAddressData, transactionCall.parseValue(),
         ByteArray.fromHexString(transactionCall.resolveData()));
+  }
+
+  @Override
+  public TraceResult traceCall(CallArguments transactionCall, Object blockParamObj,
+      Object traceOptions) throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
+      JsonRpcInternalException {
+    // traceOptions (tracer / config) is accepted for Geth wire-compatibility; only the default
+    // struct-log tracer is implemented, so the field is currently ignored.
+    String blockNumOrTag = resolveBlockParam(blockParamObj);
+    if (historicalTraceSupport == null
+        || !historicalTraceSupport.shouldUseArchive(blockNumOrTag)) {
+      // No latest debug_traceCall yet: a latest tag (or archive disabled) has no handler here.
+      throw new JsonRpcInternalException(
+          "debug_traceCall is only available for archived (non-latest) blocks");
+    }
+    return historicalTraceSupport.traceCall(
+        addressCompatibleToByteArray(transactionCall.getFrom()),
+        addressCompatibleToByteArray(transactionCall.getTo()),
+        transactionCall.parseValue(),
+        ByteArray.fromHexString(transactionCall.resolveData()),
+        blockNumOrTag);
+  }
+
+  /**
+   * Normalises the JSON-RPC block parameter (string tag, or the object form with blockNumber /
+   * blockHash) to a block-number-or-tag string, mirroring how {@link #getCall} reads it.
+   */
+  private String resolveBlockParam(Object blockParamObj) throws JsonRpcInvalidParamsException,
+      JsonRpcInvalidRequestException, JsonRpcInternalException {
+    if (blockParamObj instanceof String) {
+      return (String) blockParamObj;
+    }
+    if (blockParamObj instanceof HashMap) {
+      HashMap<String, String> paramMap = (HashMap<String, String>) blockParamObj;
+      if (paramMap.containsKey("blockNumber")) {
+        String blockNumOrTag = paramMap.get("blockNumber");
+        if (wallet.getBlockByNum(parseBlockNumber(blockNumOrTag)) == null) {
+          throw new JsonRpcInternalException(NO_BLOCK_HEADER);
+        }
+        return blockNumOrTag;
+      }
+      if (paramMap.containsKey("blockHash")) {
+        Block objectFormBlock = getBlockByJsonHash(paramMap.get("blockHash"));
+        if (objectFormBlock == null) {
+          throw new JsonRpcInternalException(NO_BLOCK_HEADER_BY_HASH);
+        }
+        return ByteArray.toJsonHex(objectFormBlock.getBlockHeader().getRawData().getNumber());
+      }
+    }
+    throw new JsonRpcInvalidRequestException(JSON_ERROR);
   }
 
   @Override

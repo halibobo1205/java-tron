@@ -112,6 +112,12 @@ public class VMActuator implements Actuator2 {
     this.maxEnergyLimit = CommonParameter.getInstance().maxEnergyLimitForConstant;
   }
 
+  // Exposes the Program so the historical debug_traceCall path can read the in-memory ProgramTrace
+  // (program.getTrace()) captured during execute(). Null before execute() builds the program.
+  public Program getProgram() {
+    return program;
+  }
+
   private static long getEnergyFee(long callerEnergyUsage, long callerEnergyFrozen,
       long callerEnergyTotal) {
     if (callerEnergyTotal <= 0) {
@@ -324,7 +330,7 @@ public class VMActuator implements Actuator2 {
     //use program returned fill context
     context.setProgramResult(result);
 
-    if (VMConfig.vmTrace() && program != null) {
+    if (VMConfig.vmTrace() && program != null && injectedRootRepository == null) {
       String traceContent = program.getTrace()
           .result(result.getHReturn())
           .error(result.getException())
