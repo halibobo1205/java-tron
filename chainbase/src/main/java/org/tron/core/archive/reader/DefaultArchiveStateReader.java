@@ -106,6 +106,14 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
     return ArchiveReadResult.missing();
   }
 
+  @Override
+  public ArchiveReadResult<byte[]> getDynamicProperty(byte[] key) throws ArchiveReaderException {
+    if (key == null || key.length == 0) {
+      throw new IllegalArgumentException("dynamic property key must be non-empty");
+    }
+    return getRaw(ArchiveDomain.DYNAMIC_PROPERTIES, key);
+  }
+
   private ArchiveReadResult<byte[]> getRaw(ArchiveDomain domain, byte[] canonicalKey)
       throws ArchiveReaderException {
     ArchiveDomainDescriptor descriptor = catalog.descriptorFor(domain);

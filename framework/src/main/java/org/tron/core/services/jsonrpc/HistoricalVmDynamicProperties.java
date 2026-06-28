@@ -14,8 +14,12 @@ import org.tron.core.store.VmDynamicProperties;
  * history accumulates from genesis in the latest store, the historical price needs no archive read
  * and has no baseline gap -- so {@code BASEFEE} / {@code GASPRICE} and energy pricing replay with
  * the value that was actually in force then, not the current one.
+ *
+ * <p>{@link HistoricalArchiveVmDynamicProperties} extends this to additionally reconstruct the
+ * result-affecting hard-fork flags from the archive; the flags it does not override keep this
+ * class's latest-store baseline.
  */
-final class HistoricalVmDynamicProperties implements VmDynamicProperties {
+class HistoricalVmDynamicProperties implements VmDynamicProperties {
 
   private final VmDynamicProperties latest;
   private final long energyFee;

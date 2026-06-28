@@ -145,6 +145,10 @@ public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
       return storage;
     }
 
+    public ArchiveReadResult<byte[]> getDynamicProperty(byte[] key) {
+      return ArchiveReadResult.missing();
+    }
+
     public void close() {
     }
   }
