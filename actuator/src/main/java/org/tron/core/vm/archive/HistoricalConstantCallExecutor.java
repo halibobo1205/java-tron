@@ -15,9 +15,10 @@ import org.tron.core.vm.config.VMConfig;
 /**
  * Runs a TVM constant call against the archive state at a historical point. It mirrors the latest
  * constant-call path ({@code Wallet.callConstantContract}) but injects an
- * {@link ArchiveRepositoryAdapter} as the VM's root repository and a historical
- * {@link VmDynamicProperties} view, so account / code / storage reads and the hard-fork / fee flags
- * all come from the target block rather than the latest stores.
+ * {@link ArchiveRepositoryAdapter} as the VM's root repository and a {@link VmDynamicProperties}
+ * view, so account / code / storage reads come from the target block. The hard-fork / fee config
+ * comes from whatever view the caller injects; the current RPC caller supplies a latest-store
+ * baseline (see HistoricalEthCallSupport) rather than a fully historical config.
  *
  * <p>The historical config is installed by {@code VMActuator.validate} into a thread-local
  * {@code VMConfig} snapshot; this executor always drops it in a {@code finally} so it cannot leak

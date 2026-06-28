@@ -1045,14 +1045,17 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
           throw new JsonRpcInvalidParamsException(JSON_ERROR);
         }
 
-        if (getBlockByJsonHash(blockNumOrTag) == null) {
+        Block objectFormBlock = getBlockByJsonHash(blockNumOrTag);
+        if (objectFormBlock == null) {
           throw new JsonRpcInternalException(NO_BLOCK_HEADER_BY_HASH);
         }
+        // Resolve the hash to its block number so a historical call keys on the right block; the
+        // object form must NOT be collapsed to latest (that would return the wrong state).
+        blockNumOrTag =
+            ByteArray.toJsonHex(objectFormBlock.getBlockHeader().getRawData().getNumber());
       } else {
         throw new JsonRpcInvalidRequestException(JSON_ERROR);
       }
-
-      blockNumOrTag = LATEST_STR;
     } else if (blockParamObj instanceof String) {
       blockNumOrTag = (String) blockParamObj;
     } else {
@@ -1067,6 +1070,11 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
           transactionCall.parseValue(),
           ByteArray.fromHexString(transactionCall.resolveData()),
           blockNumOrTag);
+    }
+    if (blockParamObj instanceof HashMap) {
+      // Archive is not serving this object-form request (disabled): keep the pre-L8 behaviour of
+      // running it against latest, so default nodes are unchanged.
+      blockNumOrTag = LATEST_STR;
     }
     requireLatestBlockTag(blockNumOrTag);
 
