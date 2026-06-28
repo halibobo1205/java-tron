@@ -8,10 +8,10 @@ import org.tron.common.utils.ByteArray;
 import org.tron.core.Wallet;
 import org.tron.core.archive.ArchiveService;
 import org.tron.core.archive.DefaultArchiveService;
+import org.tron.core.archive.reader.ArchiveReaderException;
+import org.tron.core.archive.reader.ArchiveStatePoint;
 import org.tron.core.archive.reader.ArchiveStateReader;
 import org.tron.core.archive.reader.ArchiveStateReaderFactory;
-import org.tron.core.archive.reader.ArchiveStatePoint;
-import org.tron.core.archive.reader.ArchiveReaderException;
 import org.tron.core.archive.reader.JsonRpcArchiveStatePointResolver;
 import org.tron.core.archive.reader.ResolvedArchiveStatePoint;
 import org.tron.core.capsule.BlockCapsule;
@@ -88,12 +88,15 @@ public final class HistoricalEthCallSupport {
     if (historicalEnergyFee == -1) {
       historicalEnergyFee = latestStore.getEnergyFee();
     }
-    VmDynamicProperties vmProperties =
-        new HistoricalVmDynamicProperties(latestStore, historicalEnergyFee);
+    boolean genesisComplete = isGenesisComplete();
     TriggerSmartContract trigger =
         triggerCallContract(ownerAddress, contractAddress, callValue, data, 0, null);
 
     try (ArchiveStateReader reader = readerFactory().open(point)) {
+      // The result-affecting hard-fork flags are read from the archive at the target block, so the
+      // config view is built here (reader open) rather than before the try.
+      VmDynamicProperties vmProperties = new HistoricalArchiveVmDynamicProperties(
+          latestStore, historicalEnergyFee, reader, genesisComplete);
       TransactionCapsule trxCap =
           wallet.createTransactionCapsule(trigger, ContractType.TriggerSmartContract);
       HistoricalConstantCallResult result = new HistoricalConstantCallExecutor()
@@ -128,5 +131,19 @@ public final class HistoricalEthCallSupport {
       throw new JsonRpcInternalException("archive reader is not available");
     }
     return factory;
+  }
+
+  /**
+   * True when the archive covers from genesis, so a MISSING dynamic-property flag is the in-memory
+   * default rather than an un-captured pre-coverage change. A mid-chain archive (or an empty index)
+   * returns false, and the flag reconstruction degrades to the latest baseline instead of risking a
+   * silently-wrong default.
+   */
+  private boolean isGenesisComplete() {
+    if (!(archiveService instanceof DefaultArchiveService)) {
+      return false;
+    }
+    long first = ((DefaultArchiveService) archiveService).getTxNumIndex().getFirstArchivedBlock();
+    return first >= 0 && first <= 1;
   }
 }

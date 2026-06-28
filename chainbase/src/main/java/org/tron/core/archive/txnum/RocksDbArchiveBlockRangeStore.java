@@ -19,13 +19,21 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
     RocksDB.loadLibrary();
   }
 
+  /** Sentinel for "no block committed yet" (empty archive). */
+  public static final long NO_FIRST_BLOCK = -1L;
+
   private final Options options;
   private final RocksDB db;
+  // Cached lowest-committed-block so commitRange does not read on every block; -1 = not yet known.
+  private volatile long firstArchivedBlock;
 
   public RocksDbArchiveBlockRangeStore(String path) {
     this.options = new Options().setCreateIfMissing(true);
     try {
       this.db = RocksDB.open(options, path);
+      byte[] value = db.get(ArchiveBlockRangeCodec.FIRST_BLOCK_KEY);
+      this.firstArchivedBlock =
+          (value == null) ? NO_FIRST_BLOCK : ArchiveBlockRangeCodec.decodeFirstBlock(value);
     } catch (RocksDBException e) {
       options.close();
       throw new ArchiveException("failed to open archive block-range store at " + path, e);
@@ -39,10 +47,25 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
           ArchiveBlockRangeCodec.encodeRange(range));
       batch.put(ArchiveBlockRangeCodec.CURSOR_KEY,
           ArchiveBlockRangeCodec.encodeCursor(committedNextTxNum));
+      // Record the lowest committed block exactly once; never overwrite on resume (blocks commit in
+      // ascending order, so the first commit ever carries the floor of archive coverage).
+      boolean recordFirstBlock = firstArchivedBlock == NO_FIRST_BLOCK;
+      if (recordFirstBlock) {
+        batch.put(ArchiveBlockRangeCodec.FIRST_BLOCK_KEY,
+            ArchiveBlockRangeCodec.encodeFirstBlock(range.getBlockNum()));
+      }
       db.write(writeOptions, batch);
+      if (recordFirstBlock) {
+        firstArchivedBlock = range.getBlockNum();
+      }
     } catch (RocksDBException e) {
       throw new ArchiveException("archive block-range commit failed", e);
     }
+  }
+
+  /** The lowest block ever committed, or {@link #NO_FIRST_BLOCK} if the archive is empty. */
+  public long getFirstArchivedBlock() {
+    return firstArchivedBlock;
   }
 
   /** Atomically drop a reverted block's range and rewind the persisted cursor. */
