@@ -82,8 +82,8 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
 
   @Test
   public void freezeV2OpcodeGateReconstructsFromUnfreezeDelayDays() throws Exception {
-    // allowTvmFreezeV2 = (UNFREEZE_DELAY_DAYS > 0) gates FREEZEBALANCEV2 / DELEGATERESOURCE. The
-    // key is unrooted but kept in FULL_HISTORY, so it must reconstruct, not silently use latest.
+    // allowTvmFreezeV2 = (UNFREEZE_DELAY_DAYS > 0) gates FREEZEBALANCEV2 / DELEGATERESOURCE, so it
+    // must reconstruct from the archive at block N, not silently use the latest activation.
     FakeReader present = new FakeReader();
     present.put("UNFREEZE_DELAY_DAYS", 14L);            // activated as of this block
     VmDynamicProperties latestOff = mock(VmDynamicProperties.class);
