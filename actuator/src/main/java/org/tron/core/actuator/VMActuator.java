@@ -129,6 +129,13 @@ public class VMActuator implements Actuator2 {
       throw new RuntimeException("TransactionContext is null");
     }
 
+    // The archive seam is all-or-nothing: a repository without its matching historical config view
+    // (or vice versa) would silently read latest state. Fail fast rather than answer wrongly.
+    if ((injectedRootRepository == null) != (injectedVmProperties == null)) {
+      throw new RuntimeException(
+          "archive seam requires both injectedRootRepository and injectedVmProperties");
+    }
+
     // Load Config. A historical call installs an isolated thread-local snapshot from its archived
     // dynamic-properties view; the latest path keeps writing the global (or its own isolated view).
     if (injectedVmProperties != null) {

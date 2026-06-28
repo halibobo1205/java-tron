@@ -17,6 +17,8 @@ public interface VmDynamicProperties {
 
   long getLatestBlockHeaderNumber();
 
+  long getCurrentCycleNumber();
+
   boolean supportVM();
 
   boolean supportUnfreezeDelay();
