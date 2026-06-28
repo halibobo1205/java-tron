@@ -70,13 +70,35 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
   public void energyFeeIsHistoricalAndUnreconstructedParamsDelegate() throws Exception {
     FakeReader reader = new FakeReader();
     VmDynamicProperties latest = mock(VmDynamicProperties.class);
-    when(latest.getAllowMultiSign()).thenReturn(1L);
+    when(latest.getAllowStrictMath()).thenReturn(1L);
 
     HistoricalArchiveVmDynamicProperties view =
         new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true);
 
     assertEquals(ENERGY_FEE, view.getEnergyFee());      // inherited historical fee
-    assertEquals(1L, view.getAllowMultiSign());          // not result-affecting -> delegates latest
+    // strict-math does not change a constant-call result, so it is NOT reconstructed -> latest.
+    assertEquals(1L, view.getAllowStrictMath());
+  }
+
+  @Test
+  public void freezeV2OpcodeGateReconstructsFromUnfreezeDelayDays() throws Exception {
+    // allowTvmFreezeV2 = (UNFREEZE_DELAY_DAYS > 0) gates FREEZEBALANCEV2 / DELEGATERESOURCE. The
+    // key is unrooted but kept in FULL_HISTORY, so it must reconstruct, not silently use latest.
+    FakeReader present = new FakeReader();
+    present.put("UNFREEZE_DELAY_DAYS", 14L);            // activated as of this block
+    VmDynamicProperties latestOff = mock(VmDynamicProperties.class);
+    when(latestOff.supportUnfreezeDelay()).thenReturn(false);
+    assertEquals(true,
+        new HistoricalArchiveVmDynamicProperties(latestOff, ENERGY_FEE, present, true)
+            .supportUnfreezeDelay());
+
+    // Absent on a mid-chain archive -> latest fallback (cannot prove a pre-coverage activation).
+    FakeReader missing = new FakeReader();
+    VmDynamicProperties latestOn = mock(VmDynamicProperties.class);
+    when(latestOn.supportUnfreezeDelay()).thenReturn(true);
+    assertEquals(true,
+        new HistoricalArchiveVmDynamicProperties(latestOn, ENERGY_FEE, missing, false)
+            .supportUnfreezeDelay());
   }
 
   /** Serves configured DYNAMIC_PROPERTIES values by key; everything else MISSING. */
