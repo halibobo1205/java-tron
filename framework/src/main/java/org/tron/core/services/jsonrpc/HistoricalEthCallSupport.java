@@ -1,5 +1,6 @@
 package org.tron.core.services.jsonrpc;
 
+import static org.tron.core.Wallet.CONTRACT_VALIDATE_ERROR;
 import static org.tron.core.services.jsonrpc.JsonRpcApiUtil.triggerCallContract;
 
 import org.tron.common.utils.ByteArray;
@@ -18,6 +19,7 @@ import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractValidateException;
 import org.tron.core.exception.jsonrpc.JsonRpcInternalException;
 import org.tron.core.exception.jsonrpc.JsonRpcInvalidParamsException;
+import org.tron.core.exception.jsonrpc.JsonRpcInvalidRequestException;
 import org.tron.core.store.StoreFactory;
 import org.tron.core.store.VmDynamicProperties;
 import org.tron.core.vm.archive.HistoricalConstantCallExecutor;
@@ -58,7 +60,8 @@ public final class HistoricalEthCallSupport {
   }
 
   public String call(byte[] ownerAddress, byte[] contractAddress, long callValue, byte[] data,
-      String blockNumOrTag) throws JsonRpcInvalidParamsException, JsonRpcInternalException {
+      String blockNumOrTag) throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
+      JsonRpcInternalException {
     ResolvedArchiveStatePoint resolved = resolver.resolveBlockEnd(blockNumOrTag);
     if (resolved.isLatest()) {
       // shouldUseArchive already filters latest; reaching here means a caller skipped that guard.
@@ -83,17 +86,21 @@ public final class HistoricalEthCallSupport {
       HistoricalConstantCallResult result = new HistoricalConstantCallExecutor()
           .execute(reader, vmProperties, historicalBlock, trxCap);
       if (result.isReverted()) {
-        throw new JsonRpcInternalException("REVERT opcode executed",
+        // Mirror the latest path: message carries the decoded revert reason, data the raw bytes.
+        throw new JsonRpcInternalException(
+            "REVERT opcode executed" + TronJsonRpcImpl.tryDecodeRevertReason(result.getResult()),
             ByteArray.toJsonHex(result.getResult()));
       }
       if (result.getRuntimeError() != null && !result.getRuntimeError().isEmpty()) {
         throw new JsonRpcInternalException(result.getRuntimeError());
       }
       return ByteArray.toJsonHex(result.getResult());
+    } catch (ContractValidateException e) {
+      // Match the latest eth_call path, which maps a validate failure to an invalid-request error.
+      throw new JsonRpcInvalidRequestException(
+          e.getMessage() == null ? CONTRACT_VALIDATE_ERROR : e.getMessage());
     } catch (ArchiveReaderException | HistoricalVmExecutionException
-        | UnsupportedHistoricalStateException e) {
-      throw new JsonRpcInternalException(e.getMessage());
-    } catch (ContractValidateException | ContractExeException e) {
+        | UnsupportedHistoricalStateException | ContractExeException e) {
       throw new JsonRpcInternalException(
           e.getMessage() == null ? "historical eth_call failed" : e.getMessage());
     }

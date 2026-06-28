@@ -27,6 +27,7 @@ import org.tron.core.store.AssetIssueStore;
 import org.tron.core.store.AssetIssueV2Store;
 import org.tron.core.store.DelegationStore;
 import org.tron.core.store.DynamicPropertiesStore;
+import org.tron.core.store.StoreFactory;
 import org.tron.core.store.VmDynamicProperties;
 import org.tron.core.vm.config.VMConfig;
 import org.tron.core.vm.program.Storage;
@@ -393,9 +394,18 @@ public class ArchiveRepositoryAdapter implements Repository {
     throw unsupported("black-hole address" + NEEDS_BLOCK_CTX);
   }
 
+  /**
+   * Block hashes are immutable canonical-chain data (not mutable latest state), so serving them
+   * from the live block store is correct for historical CHAINID (block 0) and BLOCKHASH (an
+   * ancestor of the executing block) and is NOT a latest-state leak.
+   */
   @Override
   public BlockCapsule getBlockByNum(long num) {
-    throw unsupported("block reads (BLOCKHASH)" + NEEDS_BLOCK_CTX);
+    try {
+      return StoreFactory.getInstance().getChainBaseManager().getBlockByNum(num);
+    } catch (Exception e) {
+      throw new UnsupportedHistoricalStateException("historical block " + num + " unavailable", e);
+    }
   }
 
   @Override

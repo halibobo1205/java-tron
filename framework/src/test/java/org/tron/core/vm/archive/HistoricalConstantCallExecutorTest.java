@@ -39,6 +39,11 @@ public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
       (byte) 0x48, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, (byte) 0xf3
   };
 
+  // CHAINID; PUSH1 0; MSTORE; PUSH1 0x20; PUSH1 0; RETURN -> reads genesis block 0 for chain id.
+  private static final byte[] CHAINID_CODE = {
+      0x46, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, (byte) 0xf3
+  };
+
   @Override
   protected void afterInit() {
   }
@@ -68,6 +73,15 @@ public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
     assertArrayEquals(expectedFee, runViewCall(BASEFEE_CODE, ArchiveReadResult.missing()));
   }
 
+  @Test
+  public void historicalChainIdDoesNotCrashOnGenesisBlockRead() throws Exception {
+    // CHAINID reads block 0 via getBlockByNum; the adapter must serve it from the immutable block
+    // store (EIP-712 / permit contracts use it) instead of throwing. Value is genesis-derived, so
+    // we only assert the call completes and returns a 32-byte word.
+    byte[] result = runViewCall(CHAINID_CODE, ArchiveReadResult.missing());
+    org.junit.Assert.assertEquals(32, result.length);
+  }
+
   private byte[] runViewCall(byte[] code, ArchiveReadResult<byte[]> archivedSlot) throws Exception {
     byte[] contractAddr = new byte[21];
     contractAddr[0] = 0x41;
@@ -89,10 +103,11 @@ public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
     when(vmProps.getMaxFeeLimit()).thenReturn(1_000_000_000_000L);
     when(vmProps.getMaxCpuTimeOfOneTx()).thenReturn(50L);
     when(vmProps.getEnergyFee()).thenReturn(100L);
-    // Dynamic energy active at the historical block (mainnet default) must NOT crash the call, and
-    // London enables the BASEFEE opcode.
+    // Dynamic energy active at the historical block (mainnet default) must NOT crash the call;
+    // London enables BASEFEE, Istanbul enables CHAINID.
     when(vmProps.getAllowDynamicEnergy()).thenReturn(1L);
     when(vmProps.getAllowTvmLondon()).thenReturn(1L);
+    when(vmProps.getAllowTvmIstanbul()).thenReturn(1L);
 
     BlockCapsule block = new BlockCapsule(1L, Sha256Hash.ZERO_HASH, 1000L,
         ByteString.copyFrom(new byte[21]));
