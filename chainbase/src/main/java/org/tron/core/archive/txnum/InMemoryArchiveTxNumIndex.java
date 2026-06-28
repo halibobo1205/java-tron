@@ -21,6 +21,10 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
 
   private long committedNextTxNum;
   private long workingNextTxNum;
+  // Lowest block committed since this index was created; -1 = none yet. The persistent index keeps
+  // its own restart-surviving floor, so this in-memory value is the coverage floor only when the
+  // in-memory index is used standalone (no persistence).
+  private long firstArchivedBlock = -1L;
 
   // null when no block is pending; only one block may be pending at a time.
   private Long pendingBlockNum;
@@ -118,6 +122,9 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
     ArchiveBlockRange range = new ArchiveBlockRange(
         blockNum, firstTxNum, lastTxNum, prepareTxNum, finalizeTxNum, userTxCount, pendingSource);
     blockRanges.put(blockNum, range);
+    if (firstArchivedBlock < 0 || blockNum < firstArchivedBlock) {
+      firstArchivedBlock = blockNum;
+    }
     for (ArchiveTxPosition position : pendingPositions) {
       positionsByTxNum.put(position.getTxNum(), position);
       if (position.getTxIndex() >= 0) {
@@ -190,6 +197,11 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
     }
     Long txNum = txNumByTxId.get(ByteArray.toHexString(txId));
     return (txNum == null) ? OptionalLong.empty() : OptionalLong.of(txNum);
+  }
+
+  @Override
+  public synchronized long getFirstArchivedBlock() {
+    return firstArchivedBlock;
   }
 
   private void requirePending(long blockNum) {

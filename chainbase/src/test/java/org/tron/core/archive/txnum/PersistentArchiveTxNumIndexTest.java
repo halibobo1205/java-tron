@@ -72,6 +72,21 @@ public class PersistentArchiveTxNumIndexTest {
     assertFalse(index.getBlockRange(99).isPresent());
   }
 
+  @Test
+  public void firstArchivedBlockIsLowestCommittedAndSurvivesRestart() {
+    assertEquals(RocksDbArchiveBlockRangeStore.NO_FIRST_BLOCK, index.getFirstArchivedBlock());
+    pushBlock(7); // a mid-chain start: the first commit records 7 as the coverage floor
+    pushBlock(8);
+    assertEquals(7, index.getFirstArchivedBlock());
+    // Restart: the floor survives and a later commit must NOT overwrite it.
+    index.close();
+    store = new RocksDbArchiveBlockRangeStore(dir.toString());
+    index = new PersistentArchiveTxNumIndex(store);
+    assertEquals(7, index.getFirstArchivedBlock());
+    pushBlock(9);
+    assertEquals(7, index.getFirstArchivedBlock());
+  }
+
   private static void deleteRecursively(File f) {
     File[] children = f.listFiles();
     if (children != null) {

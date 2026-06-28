@@ -6,8 +6,10 @@ import static org.junit.Assert.assertThrows;
 
 import com.google.common.primitives.Bytes;
 import com.google.protobuf.ByteString;
+import java.nio.charset.StandardCharsets;
 import org.junit.Before;
 import org.junit.Test;
+import org.tron.common.utils.ByteArray;
 import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveSource;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
@@ -43,6 +45,21 @@ public class DefaultArchiveStateReaderTest {
         new ArchiveTxPosition(txNum, 1, ArchivePhase.BLOCK_FINALIZE,
             ArchiveSource.NORMAL, -1, null),
         domain, key, value));
+  }
+
+  @Test
+  public void dynamicPropertyPresentDecodesAndAbsentIsMissing() throws Exception {
+    byte[] london = "ALLOW_TVM_LONDON".getBytes(StandardCharsets.US_ASCII);
+    put(ArchiveDomain.DYNAMIC_PROPERTIES, london, DomainValue.present(ByteArray.fromLong(1L)), 5);
+    ArchiveStateReader reader = readerAt(10);
+
+    ArchiveReadResult<byte[]> present = reader.getDynamicProperty(london);
+    assertEquals(Status.PRESENT, present.getStatus());
+    assertEquals(1L, ByteArray.toLong(present.getValue()));
+
+    // A key never written by a proposal is MISSING (the historical view maps this to the default).
+    assertEquals(Status.MISSING, reader.getDynamicProperty(
+        "ALLOW_TVM_CANCUN".getBytes(StandardCharsets.US_ASCII)).getStatus());
   }
 
   private static byte[] addr(int last) {

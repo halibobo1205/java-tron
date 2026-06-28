@@ -23,6 +23,14 @@ public interface ArchiveStateReader extends AutoCloseable {
 
   ArchiveReadResult<byte[]> getStorage(byte[] address, byte[] slot) throws ArchiveReaderException;
 
+  /**
+   * Reads a DYNAMIC_PROPERTIES value (raw bytes, e.g. a {@code ByteArray.fromLong} flag) as of this
+   * point. {@code key} is the property's ASCII key bytes (e.g. {@code ALLOW_TVM_LONDON}). MISSING
+   * means the key was never explicitly written by a proposal as of this point -- which, for an
+   * archive that captured from genesis, is unambiguously the in-memory default.
+   */
+  ArchiveReadResult<byte[]> getDynamicProperty(byte[] key) throws ArchiveReaderException;
+
   @Override
   void close();
 }

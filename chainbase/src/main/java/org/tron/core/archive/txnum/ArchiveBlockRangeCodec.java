@@ -21,6 +21,11 @@ public final class ArchiveBlockRangeCodec {
   static final byte RANGE_PREFIX = 0x00;
   static final byte CURSOR_PREFIX = 0x01;
   static final byte[] CURSOR_KEY = {CURSOR_PREFIX};
+  // The lowest block ever committed to this index -- written once on the first commit and never
+  // overwritten. The historical-read coverage gate uses it to tell a genesis-complete archive
+  // (where a MISSING dynamic-property is unambiguously the in-memory default) from a mid-chain one.
+  static final byte FIRST_BLOCK_PREFIX = 0x02;
+  static final byte[] FIRST_BLOCK_KEY = {FIRST_BLOCK_PREFIX};
 
   private ArchiveBlockRangeCodec() {
   }
@@ -58,6 +63,14 @@ public final class ArchiveBlockRangeCodec {
   }
 
   static long decodeCursor(byte[] bytes) {
+    return Longs.fromByteArray(bytes);
+  }
+
+  static byte[] encodeFirstBlock(long blockNum) {
+    return Longs.toByteArray(blockNum);
+  }
+
+  static long decodeFirstBlock(byte[] bytes) {
     return Longs.fromByteArray(bytes);
   }
 

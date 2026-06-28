@@ -66,6 +66,10 @@ public class ArchiveRepositoryAdapterTest {
       return storage;
     }
 
+    public ArchiveReadResult<byte[]> getDynamicProperty(byte[] key) {
+      return ArchiveReadResult.missing();
+    }
+
     public void close() {
     }
   }

@@ -83,6 +83,13 @@ public final class PersistentArchiveTxNumIndex implements ArchiveTxNumIndex, Aut
   }
 
   @Override
+  public long getFirstArchivedBlock() {
+    // The persisted floor survives restart, unlike the in-memory window which only holds blocks
+    // committed since startup.
+    return store.getFirstArchivedBlock();
+  }
+
+  @Override
   public void close() {
     store.close();
   }
