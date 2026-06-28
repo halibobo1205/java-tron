@@ -157,8 +157,16 @@ public class ArchiveRepositoryAdapterTest {
     // The VM never calls these on the archive path; they fail fast rather than silently no-op.
     assertThrows(UnsupportedHistoricalStateException.class, () -> adapter.getStorage(ADDR));
     assertThrows(UnsupportedHistoricalStateException.class, () -> adapter.putAccount(null, null));
-    assertThrows(UnsupportedHistoricalStateException.class,
-        () -> adapter.createNormalAccount(ADDR));
+    assertThrows(UnsupportedHistoricalStateException.class, () -> adapter.getWitness(ADDR));
+  }
+
+  @Test
+  public void valueTransferToFreshAccountMaterializesItInOverlay() {
+    // A value-bearing CALL to a non-existent address creates it in the overlay instead of aborting.
+    long balance = adapter.addBalance(ADDR, 250L);
+    assertEquals(250L, balance);
+    assertEquals(250L, adapter.getBalance(ADDR));
+    assertEquals(250L, adapter.getAccount(ADDR).getBalance());
   }
 
   @Test
