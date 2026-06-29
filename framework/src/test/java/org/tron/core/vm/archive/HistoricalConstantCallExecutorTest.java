@@ -6,8 +6,10 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
+import org.junit.Before;
 import org.junit.Test;
 import org.tron.common.BaseMethodTest;
+import org.tron.common.parameter.CommonParameter;
 import org.tron.common.runtime.TvmTestUtils;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.archive.reader.ArchiveReadResult;
@@ -47,6 +49,13 @@ public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
 
   @Override
   protected void afterInit() {
+  }
+
+  @Before
+  public void generousConstantCallTimeout() {
+    // Headroom for the constant-call CPU deadline so a tiny timeout another test left in the shared
+    // CommonParameter singleton cannot fail this replay (a positive timeout bypasses the ratio).
+    CommonParameter.getInstance().setConstantCallTimeoutMs(60_000);
   }
 
   @Test

@@ -1111,6 +1111,20 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
         blockNumOrTag);
   }
 
+  @Override
+  public TraceResult traceTransaction(String txHash, Object traceOptions)
+      throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
+      JsonRpcInternalException {
+    // traceOptions (tracer / config) is accepted for Geth wire-compatibility; only the default
+    // struct-log tracer is implemented, so the field is currently ignored.
+    if (historicalTraceSupport == null || !historicalTraceSupport.isArchiveEnabled()) {
+      throw new JsonRpcInternalException(
+          "debug_traceTransaction is only available when archiving is enabled");
+    }
+    byte[] txId = hashToByteArray(txHash);
+    return historicalTraceSupport.traceTransaction(txId, traceOptions);
+  }
+
   /**
    * Normalises the JSON-RPC block parameter (string tag, or the object form with blockNumber /
    * blockHash) to a block-number-or-tag string, mirroring how {@link #getCall} reads it.

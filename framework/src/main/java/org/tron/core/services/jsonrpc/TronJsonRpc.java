@@ -184,6 +184,16 @@ public interface TronJsonRpc {
       throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
       JsonRpcInternalException;
 
+  @JsonRpcMethod("debug_traceTransaction")
+  @JsonRpcErrors({
+      @JsonRpcError(exception = JsonRpcInvalidRequestException.class, code = -32600, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInternalException.class, code = -32000, data = "{}"),
+  })
+  TraceResult traceTransaction(String txHash, Object traceOptions)
+      throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
+      JsonRpcInternalException;
+
   @JsonRpcMethod("net_peerCount")
   String getPeerCount();
 
