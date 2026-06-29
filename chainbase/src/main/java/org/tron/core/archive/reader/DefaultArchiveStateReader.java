@@ -86,24 +86,27 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
     requireLength(address, ADDRESS_LEN, "address");
     requireLength(slot, SLOT_LEN, "slot");
     // The storage-key version (0 or 1) is per-contract. Instead of reading the historical contract
-    // to derive it (the code plan's approach), probe both versions and take whichever is archived.
-    // A given (address, slot) only ever has one version, so this returns the right value while
-    // staying strictly inside CONTRACT_STORAGE (more latest-isolated than a contract lookup).
-    // Known limitation: a create2 redeploy at the same address that changed the storage version
-    // could leave both versions in history; the probe would prefer the older version 0 -- revisit
-    // with a historical-contract version lookup if that edge matters.
+    // to derive it (the code plan's approach), probe both versions and take whichever is archived,
+    // staying strictly inside CONTRACT_STORAGE (more latest-isolated than a contract lookup). A
+    // PRESENT on either version wins immediately; a version-0 TOMBSTONE does NOT short-circuit
+    // so a create2 redeploy that bumped the version (v0 deleted, v1 written) still returns the live
+    // v1 value rather than rendering the stale v0 tombstone as zero.
+    ArchiveReadResult<byte[]> firstNonMissing = null;
     for (int contractVersion = 0; contractVersion <= 1; contractVersion++) {
       byte[] key = ArchiveStorageKeyCodec.contractStorageKey(address, slot, contractVersion);
       ArchiveReadResult<byte[]> raw = getRaw(ArchiveDomain.CONTRACT_STORAGE, key);
-      if (raw.getStatus() != ArchiveReadResult.Status.MISSING) {
-        if (raw.isPresent() && raw.getValue().length > MAX_STORAGE_VALUE_LEN) {
+      if (raw.isPresent()) {
+        if (raw.getValue().length > MAX_STORAGE_VALUE_LEN) {
           throw new ArchiveReaderException(ArchiveReaderException.Reason.CORRUPT_VALUE,
               "archive storage value exceeds 32 bytes");
         }
         return raw;
       }
+      if (raw.getStatus() != ArchiveReadResult.Status.MISSING && firstNonMissing == null) {
+        firstNonMissing = raw; // remember a tombstone, but keep probing for a PRESENT value
+      }
     }
-    return ArchiveReadResult.missing();
+    return firstNonMissing != null ? firstNonMissing : ArchiveReadResult.missing();
   }
 
   @Override

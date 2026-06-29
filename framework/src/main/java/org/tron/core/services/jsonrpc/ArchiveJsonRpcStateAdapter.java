@@ -25,6 +25,9 @@ public final class ArchiveJsonRpcStateAdapter {
 
   private static final String EMPTY_CODE = "0x";
   private static final String ZERO_WORD = ByteArray.toJsonHex(new byte[32]);
+  // "0x" + 64 hex chars; matches the latest getStorageAt cap so both paths reject oversized keys
+  // before decoding, instead of allocating from an unbounded hex string.
+  private static final int MAX_STORAGE_KEY_HEX_LEN = 66;
 
   private final ArchiveService archiveService;
   private final JsonRpcArchiveStatePointResolver resolver;
@@ -78,6 +81,7 @@ public final class ArchiveJsonRpcStateAdapter {
 
   private ArchiveStateReader openReader(String blockNumOrTag)
       throws JsonRpcInvalidParamsException, JsonRpcInternalException {
+    requireGenesisCoverage();
     ResolvedArchiveStatePoint resolved = resolver.resolveBlockEnd(blockNumOrTag);
     if (resolved.isLatest()) {
       // shouldUseArchive already filters latest; reaching here means a caller skipped that guard.
@@ -87,6 +91,25 @@ public final class ArchiveJsonRpcStateAdapter {
       return readerFactory().open(resolved.getPoint());
     } catch (ArchiveReaderException e) {
       throw toInternal(e);
+    }
+  }
+
+  /**
+   * Historical state reads are only sound when the archive captured from genesis: a MISSING account
+   * / code / slot then unambiguously means "empty", which the readers render as zero. On a midchain
+   * archive (first archived block &gt; genesis) a MISSING value could instead be state last written
+   * before coverage, so returning zero would be a confident wrong answer -- reject instead. Mirrors
+   * the genesis-coverage gate L8 uses for historical eth_call / debug trace.
+   */
+  private void requireGenesisCoverage() throws JsonRpcInternalException {
+    if (!(archiveService instanceof DefaultArchiveService)) {
+      throw new JsonRpcInternalException("archive is not available");
+    }
+    long first = ((DefaultArchiveService) archiveService).getTxNumIndex().getFirstArchivedBlock();
+    if (first < 0 || first > 1) {
+      throw new JsonRpcInternalException(
+          "archive does not cover state from genesis (first archived block " + first
+              + "); historical state reads are unavailable on a mid-chain archive");
     }
   }
 
@@ -102,9 +125,10 @@ public final class ArchiveJsonRpcStateAdapter {
   }
 
   private static byte[] normalizeSlot(String storageIdx) throws JsonRpcInvalidParamsException {
-    if (storageIdx == null) {
-      // Match the latest path (TronJsonRpcImpl.getStorageAt), which rejects a null slot rather
-      // than letting fromHexString(null) -> empty -> DataWord silently read slot 0.
+    if (storageIdx == null || storageIdx.length() > MAX_STORAGE_KEY_HEX_LEN) {
+      // Match the latest path (TronJsonRpcImpl.getStorageAt), which rejects a null/oversized slot
+      // up front rather than letting fromHexString(null) -> empty -> DataWord silently read slot 0,
+      // or decoding an unbounded hex string before DataWord rejects it.
       throw new JsonRpcInvalidParamsException("invalid storage key value");
     }
     try {
