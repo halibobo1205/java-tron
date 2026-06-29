@@ -31,9 +31,17 @@ public class ArchiveCaptureHolderTest {
   public void noEngineSetIsNoOp() {
     ArchiveCaptureHolder.clear();
     assertFalse(ArchiveCaptureHolder.isActive());
+    assertFalse(ArchiveCaptureHolder.capturesStore("account")); // false without an engine
     // must not throw even with garbage input
-    ArchiveCaptureHolder.capturePut("account", new byte[5], new byte[] {(byte) 0xff});
-    ArchiveCaptureHolder.captureDelete("account", new byte[5]);
+    ArchiveCaptureHolder.capturePut("account", new byte[5], null, new byte[] {(byte) 0xff});
+    ArchiveCaptureHolder.captureDelete("account", new byte[5], null);
+  }
+
+  @Test
+  public void capturesStoreTrueOnceEngineSet() {
+    ArchiveCaptureHolder.set(engineWithActiveContext());
+    assertTrue(ArchiveCaptureHolder.capturesStore("account"));    // captured store
+    assertFalse(ArchiveCaptureHolder.capturesStore("block"));     // excluded store
   }
 
   @Test
@@ -42,7 +50,7 @@ public class ArchiveCaptureHolderTest {
     ArchiveCaptureHolder.set(engine);
     assertTrue(ArchiveCaptureHolder.isActive());
     // invalid Account proto bytes -> codec throws -> holder must swallow (block apply unaffected)
-    ArchiveCaptureHolder.capturePut("account", new byte[21], new byte[] {(byte) 0xff, 0x01});
+    ArchiveCaptureHolder.capturePut("account", new byte[21], null, new byte[] {(byte) 0xff, 0x01});
     assertTrue("failed capture must not be recorded", engine.records().isEmpty());
   }
 }

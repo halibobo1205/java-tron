@@ -93,15 +93,27 @@ public abstract class TronStoreWithRevoking<T extends ProtoCapsule> implements I
     }
 
     byte[] value = item.getData();
+    // L4 archive sidecar: when this store is archived, read the pre-put value (Erigon prev-value)
+    // before overwriting it. capturesStore() is false when archive is disabled, so the default path
+    // is just revokingDB.put -- byte-identical to a non-archive node, no extra read.
+    String dbName = getDbName();
+    boolean capture = ArchiveCaptureHolder.capturesStore(dbName);
+    byte[] prev = capture ? revokingDB.getUnchecked(key) : null;
     revokingDB.put(key, value);
-    // L4 archive sidecar (no-op unless enabled + inside block apply; capture failures isolated).
-    ArchiveCaptureHolder.capturePut(getDbName(), key, value);
+    if (capture) {
+      ArchiveCaptureHolder.capturePut(dbName, key, prev, value);
+    }
   }
 
   @Override
   public void delete(byte[] key) {
+    String dbName = getDbName();
+    boolean capture = ArchiveCaptureHolder.capturesStore(dbName);
+    byte[] prev = (capture && key != null) ? revokingDB.getUnchecked(key) : null;
     revokingDB.delete(key);
-    ArchiveCaptureHolder.captureDelete(getDbName(), key);
+    if (capture) {
+      ArchiveCaptureHolder.captureDelete(dbName, key, prev);
+    }
   }
 
   @Override

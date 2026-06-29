@@ -81,6 +81,8 @@ public class ArchiveStateReadIntegrationTest {
       byte[] key, byte[] value) {
     ArchiveTxPosition pos = new ArchiveTxPosition(
         txNum, 1, ArchivePhase.BLOCK_FINALIZE, ArchiveSource.NORMAL, -1, null);
-    temporal.putChange(new ArchiveChangeRecord(pos, domain, key, DomainValue.present(value)));
+    // Genesis-complete create at txNum (prev = tombstone): getAsOf(txNum) falls through to latest.
+    temporal.putChange(new ArchiveChangeRecord(pos, domain, key, DomainValue.tombstone(),
+        DomainValue.present(value)));
   }
 }

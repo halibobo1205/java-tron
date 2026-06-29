@@ -55,29 +55,31 @@ public final class ArchiveCaptureEngine {
     this.context = context;
   }
 
-  public void capturePut(String dbName, byte[] key, byte[] value) {
-    capture(dbName, key, value, false);
+  public void capturePut(String dbName, byte[] key, byte[] prevValue, byte[] value) {
+    capture(dbName, key, prevValue, value, false);
   }
 
-  public void captureDelete(String dbName, byte[] key) {
-    capture(dbName, key, null, true);
+  public void captureDelete(String dbName, byte[] key, byte[] prevValue) {
+    capture(dbName, key, prevValue, null, true);
   }
 
   /**
    * Captures a record for a SEMANTIC domain (e.g. CONTRACT_STORAGE) whose canonical key is built by
    * a caller that has the semantic context (the raw store key is irreversible). Resolves the codec
-   * by domain directly, bypassing the dbName/registry lookup.
+   * by domain directly, bypassing the dbName/registry lookup. {@code prevValue} is the value before
+   * the change (null = the key was absent), feeding the Erigon prev-value history.
    */
-  public void captureSemanticPut(ArchiveDomain domain, byte[] canonicalKey, byte[] value) {
-    captureSemantic(domain, canonicalKey, value, false);
+  public void captureSemanticPut(ArchiveDomain domain, byte[] canonicalKey, byte[] prevValue,
+      byte[] value) {
+    captureSemantic(domain, canonicalKey, prevValue, value, false);
   }
 
-  public void captureSemanticDelete(ArchiveDomain domain, byte[] canonicalKey) {
-    captureSemantic(domain, canonicalKey, null, true);
+  public void captureSemanticDelete(ArchiveDomain domain, byte[] canonicalKey, byte[] prevValue) {
+    captureSemantic(domain, canonicalKey, prevValue, null, true);
   }
 
-  private void captureSemantic(ArchiveDomain domain, byte[] canonicalKey, byte[] value,
-      boolean delete) {
+  private void captureSemantic(ArchiveDomain domain, byte[] canonicalKey, byte[] prevValue,
+      byte[] value, boolean delete) {
     Optional<ArchiveTxPosition> position = context.current();
     if (!position.isPresent()) {
       return;
@@ -87,10 +89,37 @@ public final class ArchiveCaptureEngine {
       return;
     }
     byte[] key = descriptor.getKeyCodec().normalize(canonicalKey);
+    DomainValue prev = prevDomainValue(descriptor, prevValue);
     DomainValue domainValue = delete
         ? descriptor.getValueCodec().normalizeDelete()
         : descriptor.getValueCodec().normalizePut(value);
-    records.add(new ArchiveChangeRecord(position.get(), domain, key, domainValue));
+    records.add(new ArchiveChangeRecord(position.get(), domain, key, prev, domainValue));
+  }
+
+  /** Whether writes to {@code dbName} are archived; lets the Store path skip the prev-value read
+   * (an extra get per write) for non-captured stores. Key-level allowlist nuance (a
+   * DYNAMIC_PROPERTIES NO_ARCHIVE key) is intentionally ignored here -- an over-read of a
+   * non-archived key is dropped in {@link #capture}, a wasted read but never a bug. */
+  public boolean capturesStore(String dbName) {
+    StoreBinding binding = registry.bindingForDbName(dbName);
+    if (!binding.getDomain().isPresent()) {
+      return false;
+    }
+    switch (binding.getRawHookMode()) {
+      case GENERIC_TRON_STORE:
+      case STORE_SPECIFIC:
+      case GENERIC_TRON_STORE_ALLOWLIST:
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private static DomainValue prevDomainValue(ArchiveDomainDescriptor descriptor, byte[] prevValue) {
+    // A null prev means the key did not exist before this change -> tombstone (Erigon creation).
+    return (prevValue == null)
+        ? descriptor.getValueCodec().normalizeDelete()
+        : descriptor.getValueCodec().normalizePut(prevValue);
   }
 
   /**
@@ -126,11 +155,15 @@ public final class ArchiveCaptureEngine {
       }
       byte[] canonicalKey = descriptor.getKeyCodec().normalize(
           Bytes.concat(addressKey, assetId.getBytes(StandardCharsets.US_ASCII)));
+      // prev = old balance (tombstone when 0 = asset absent before); value = new balance.
+      DomainValue prev = (oldBalance == 0)
+          ? descriptor.getValueCodec().normalizeDelete()
+          : descriptor.getValueCodec().normalizePut(Longs.toByteArray(oldBalance));
       DomainValue value = (newBalance == 0)
           ? descriptor.getValueCodec().normalizeDelete()
           : descriptor.getValueCodec().normalizePut(Longs.toByteArray(newBalance));
       records.add(new ArchiveChangeRecord(
-          position.get(), ArchiveDomain.ACCOUNT_ASSET, canonicalKey, value));
+          position.get(), ArchiveDomain.ACCOUNT_ASSET, canonicalKey, prev, value));
     }
   }
 
@@ -145,7 +178,7 @@ public final class ArchiveCaptureEngine {
     }
   }
 
-  private void capture(String dbName, byte[] key, byte[] value, boolean delete) {
+  private void capture(String dbName, byte[] key, byte[] prevValue, byte[] value, boolean delete) {
     Optional<ArchiveTxPosition> position = context.current();
     if (!position.isPresent()) {
       return; // outside block apply / archive disabled
@@ -159,11 +192,12 @@ public final class ArchiveCaptureEngine {
       return; // captured binding with no descriptor: defensive, treat as not captured
     }
     byte[] canonicalKey = descriptor.getKeyCodec().normalize(key);
+    DomainValue prev = prevDomainValue(descriptor, prevValue);
     DomainValue domainValue = delete
         ? descriptor.getValueCodec().normalizeDelete()
         : descriptor.getValueCodec().normalizePut(value);
     records.add(new ArchiveChangeRecord(position.get(), binding.getDomain().get(),
-        canonicalKey, domainValue));
+        canonicalKey, prev, domainValue));
   }
 
   /**

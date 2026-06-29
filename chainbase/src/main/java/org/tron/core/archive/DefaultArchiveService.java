@@ -1,5 +1,10 @@
 package org.tron.core.archive;
 
+import com.google.common.primitives.Bytes;
+import com.google.common.primitives.Ints;
+import com.google.common.primitives.Longs;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import org.tron.core.archive.capture.ArchiveCaptureEngine;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
@@ -15,6 +20,7 @@ import org.tron.core.archive.txnum.ArchiveTxNumIndex;
 import org.tron.core.archive.txnum.InMemoryArchiveTxNumIndex;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
+import org.tron.core.db2.common.WrappedByteArray;
 
 /**
  * Default {@link ArchiveService}: allocates the canonical txNum coordinate, tracks the current
@@ -127,10 +133,29 @@ public final class DefaultArchiveService implements ArchiveService {
     }
     txNumIndex.commitBlock(block.getNum(), block.getTransactions().size());
     // Drain the committed block's captured changes into the temporal store, then clear the buffer.
+    // Collapse multiple captures of the same (domain,key,txNum) within this block into one change:
+    // keep the FIRST prevValue (the value before the tx's first sub-change, so history stores the
+    // true pre-tx value -- Erigon AddPrevValue) and the LAST value (after its last sub-change).
+    Map<WrappedByteArray, ArchiveChangeRecord> merged = new LinkedHashMap<>();
     for (ArchiveChangeRecord record : captureEngine.records()) {
+      WrappedByteArray id = mergeKey(record);
+      ArchiveChangeRecord prior = merged.get(id);
+      merged.put(id, prior == null ? record
+          : new ArchiveChangeRecord(prior.getPosition(), prior.getDomain(),
+              prior.getCanonicalKey(), prior.getPrevValue(), record.getValue()));
+    }
+    for (ArchiveChangeRecord record : merged.values()) {
       temporalStore.putChange(record);
     }
     captureEngine.clear();
+  }
+
+  /** Identity for within-block change collapsing: (domainId, txNum, canonicalKey). */
+  private static WrappedByteArray mergeKey(ArchiveChangeRecord record) {
+    return WrappedByteArray.of(Bytes.concat(
+        Ints.toByteArray(record.getDomain().getId()),
+        Longs.toByteArray(record.getTxNum()),
+        record.getCanonicalKey()));
   }
 
   @Override

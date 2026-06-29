@@ -82,10 +82,11 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
 
   private void put(InMemoryArchiveTemporalStore temporal, long txNum, ArchiveDomain domain,
       byte[] canonicalKey, byte[] valueBytes) {
+    // Genesis-complete create at txNum (prev = tombstone): getAsOf(txNum) falls through to latest.
     temporal.putChange(new ArchiveChangeRecord(
         new ArchiveTxPosition(txNum, 1, ArchivePhase.BLOCK_FINALIZE,
             ArchiveSource.NORMAL, -1, null),
-        domain, canonicalKey, DomainValue.present(valueBytes)));
+        domain, canonicalKey, DomainValue.tombstone(), DomainValue.present(valueBytes)));
   }
 
   // Archives the contract (account/contract/code) at finalize txNum t1 of block 1, commits block 1,
