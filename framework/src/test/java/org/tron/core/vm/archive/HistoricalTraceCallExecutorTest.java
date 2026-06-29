@@ -8,8 +8,10 @@ import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
 import java.util.List;
+import org.junit.Before;
 import org.junit.Test;
 import org.tron.common.BaseMethodTest;
+import org.tron.common.parameter.CommonParameter;
 import org.tron.common.runtime.TvmTestUtils;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.archive.reader.ArchiveReadResult;
@@ -44,6 +46,14 @@ public class HistoricalTraceCallExecutorTest extends BaseMethodTest {
   private static final byte[] SLOAD_CODE = {
       0x60, 0x00, 0x54, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, (byte) 0xf3
   };
+
+  @Before
+  public void generousConstantCallTimeout() {
+    // Per-op trace capture is slower than a plain constant call, so give the constant-call CPU
+    // deadline plenty of headroom. This also makes the test independent of a tiny timeout another
+    // test in the same JVM may have left in the shared CommonParameter singleton.
+    CommonParameter.getInstance().setConstantCallTimeoutMs(60_000);
+  }
 
   private static String word(long v) {
     byte[] w = new byte[32];
