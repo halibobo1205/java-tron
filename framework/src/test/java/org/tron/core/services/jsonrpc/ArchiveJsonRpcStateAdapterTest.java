@@ -6,6 +6,8 @@ import static org.junit.Assert.assertTrue;
 
 import org.junit.After;
 import org.junit.Test;
+import org.tron.core.archive.ArchivePhase;
+import org.tron.core.archive.ArchiveSource;
 import org.tron.core.archive.DefaultArchiveService;
 import org.tron.core.archive.NoopArchiveService;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
@@ -56,6 +58,22 @@ public class ArchiveJsonRpcStateAdapterTest {
         new JsonRpcArchiveStatePointResolver(null, new DefaultArchiveService(true));
     ResolvedArchiveStatePoint resolved = resolver.resolveBlockEnd("latest");
     assertTrue(resolved.isLatest());
+  }
+
+  @Test
+  public void midChainArchiveRejectsHistoricalStateReads() {
+    // An archive that started mid-chain (first archived block > genesis) cannot distinguish a
+    // MISSING value from state last written before coverage, so a historical read must error
+    // rather than render MISSING as a confident wrong zero.
+    DefaultArchiveService svc = new DefaultArchiveService(true);
+    svc.getTxNumIndex().beginBlock(5, ArchiveSource.NORMAL);
+    svc.getTxNumIndex().allocateSystemTx(5, ArchivePhase.BLOCK_PREPARE);
+    svc.getTxNumIndex().allocateSystemTx(5, ArchivePhase.BLOCK_FINALIZE);
+    svc.getTxNumIndex().commitBlock(5, 0); // first archived block = 5 -> mid-chain
+    ArchiveJsonRpcStateAdapter adapter = new ArchiveJsonRpcStateAdapter(null, svc);
+    String addr = "0xabd4b9367799eaa3197fecb144eb71de1e049abc";
+    assertThrows(JsonRpcInternalException.class, () -> adapter.getBalance(addr, "0x5"));
+    assertThrows(JsonRpcInternalException.class, () -> adapter.getCode(addr, "0x5"));
   }
 
   @Test
