@@ -127,6 +127,24 @@ public class RocksDbArchiveTemporalStoreTest {
   }
 
   @Test
+  public void unwindSurvivesRestart() {
+    // created at tx5 (0x0A), 0x0A -> 0x0B at tx8; unwind tx8, then reopen: the restored latest and
+    // the deleted tx8 history entry must persist across a restart (crash-safe atomic batch).
+    store.putChange(change(5, DomainValue.tombstone(), DomainValue.present(new byte[] {0x0A})));
+    store.putChange(change(8, DomainValue.present(new byte[] {0x0A}),
+        DomainValue.present(new byte[] {0x0B})));
+    store.unwind(8);
+    store.close();
+    store = new RocksDbArchiveTemporalStore(dir.toString());
+    assertArrayEquals(new byte[] {0x0A}, store.latest(ArchiveDomain.ACCOUNT, KEY).get().getValue());
+    assertArrayEquals(new byte[] {0x0A},
+        store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 100).get().getValue());
+    // tx8's history is gone after the restart too: as-of 8 falls through to latest (0x0A).
+    assertArrayEquals(new byte[] {0x0A},
+        store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 8).get().getValue());
+  }
+
+  @Test
   public void prefixCollidingKeysDoNotCrossContaminate() {
     // keyA is a strict byte-prefix of keyB in the same domain (the variable-length-key trap).
     ArchiveDomain domain = ArchiveDomain.DYNAMIC_PROPERTIES;
