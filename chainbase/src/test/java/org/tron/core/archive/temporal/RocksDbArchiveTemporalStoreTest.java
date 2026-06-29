@@ -19,6 +19,11 @@ import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
 import org.tron.core.archive.txnum.ArchiveTxPosition;
 
+/**
+ * RocksDB temporal store under the Erigon-v3 prev-value model; must stay observationally identical
+ * to {@link InMemoryArchiveTemporalStore}. A change carries the value before it (-&gt; history) and
+ * after it (-&gt; latest); {@code getAsOf(T)} returns the value at the end of txNum T.
+ */
 public class RocksDbArchiveTemporalStoreTest {
 
   private static final byte[] KEY = {7};
@@ -38,22 +43,24 @@ public class RocksDbArchiveTemporalStoreTest {
     deleteRecursively(dir.toFile());
   }
 
-  private static ArchiveChangeRecord change(long txNum, DomainValue value) {
-    return rec(txNum, ArchiveDomain.ACCOUNT, KEY, value);
+  private static ArchiveChangeRecord change(long txNum, DomainValue prev, DomainValue value) {
+    return rec(txNum, ArchiveDomain.ACCOUNT, KEY, prev, value);
   }
 
   private static ArchiveChangeRecord rec(long txNum, ArchiveDomain domain, byte[] key,
-      DomainValue value) {
+      DomainValue prev, DomainValue value) {
     return new ArchiveChangeRecord(
         new ArchiveTxPosition(txNum, 1, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, null),
-        domain, key, value);
+        domain, key, prev, value);
   }
 
   @Test
   public void getAsOfAndLatestPersistAcrossWrites() {
-    store.putChange(change(5, DomainValue.present(new byte[] {0x0A})));
-    store.putChange(change(8, DomainValue.present(new byte[] {0x0B})));
-    assertFalse(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 4).isPresent());
+    // created at tx5 (absent -> 0x0A), then 0x0A -> 0x0B at tx8.
+    store.putChange(change(5, DomainValue.tombstone(), DomainValue.present(new byte[] {0x0A})));
+    store.putChange(change(8, DomainValue.present(new byte[] {0x0A}),
+        DomainValue.present(new byte[] {0x0B})));
+    assertTrue(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 4).get().isDeleted()); // before creation
     assertArrayEquals(new byte[] {0x0A},
         store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 5).get().getValue());
     assertArrayEquals(new byte[] {0x0A},
@@ -64,9 +71,18 @@ public class RocksDbArchiveTemporalStoreTest {
   }
 
   @Test
+  public void fallToLatestWhenNoChangeAfterQuery() {
+    store.putChange(change(5, DomainValue.tombstone(), DomainValue.present(new byte[] {0x42})));
+    assertArrayEquals(new byte[] {0x42},
+        store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 5).get().getValue());
+    assertArrayEquals(new byte[] {0x42},
+        store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 999).get().getValue());
+  }
+
+  @Test
   public void tombstoneIsPersistedAsDeleted() {
-    store.putChange(change(5, DomainValue.present(new byte[] {1})));
-    store.putChange(change(9, DomainValue.tombstone()));
+    store.putChange(change(5, DomainValue.tombstone(), DomainValue.present(new byte[] {1})));
+    store.putChange(change(9, DomainValue.present(new byte[] {1}), DomainValue.tombstone()));
     assertFalse(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 8).get().isDeleted());
     assertTrue(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 9).get().isDeleted());
     assertTrue(store.latest(ArchiveDomain.ACCOUNT, KEY).get().isDeleted());
@@ -74,10 +90,12 @@ public class RocksDbArchiveTemporalStoreTest {
 
   @Test
   public void reopenRetainsData() {
-    store.putChange(change(5, DomainValue.present(new byte[] {0x42})));
+    store.putChange(change(5, DomainValue.tombstone(), DomainValue.present(new byte[] {0x42})));
     store.close();
     store = new RocksDbArchiveTemporalStore(dir.toString());
     assertArrayEquals(new byte[] {0x42}, store.latest(ArchiveDomain.ACCOUNT, KEY).get().getValue());
+    assertArrayEquals(new byte[] {0x42},
+        store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 100).get().getValue());
   }
 
   @Test
@@ -87,24 +105,25 @@ public class RocksDbArchiveTemporalStoreTest {
   }
 
   @Test
-  public void unwindDropsHistoryAndRestoresLatest() {
-    store.putChange(change(5, DomainValue.present(new byte[] {0x0A})));
-    store.putChange(change(8, DomainValue.present(new byte[] {0x0B})));
-    store.unwind(8); // remove tx8, restore latest to tx5
+  public void unwindRestoresLatestToPreValueOfSmallestDropped() {
+    store.putChange(change(5, DomainValue.tombstone(), DomainValue.present(new byte[] {0x0A})));
+    store.putChange(change(8, DomainValue.present(new byte[] {0x0A}),
+        DomainValue.present(new byte[] {0x0B})));
+    store.unwind(8); // remove tx8, restore latest to the pre-value of tx8 = 0x0A
     assertArrayEquals(new byte[] {0x0A}, store.latest(ArchiveDomain.ACCOUNT, KEY).get().getValue());
     assertArrayEquals(new byte[] {0x0A},
         store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 100).get().getValue());
-    // the tx8 history entry is gone: as-of 8 now resolves to tx5
+    // the tx8 history entry is gone: as-of 8 now falls through to latest (0x0A)
     assertArrayEquals(new byte[] {0x0A},
         store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 8).get().getValue());
   }
 
   @Test
-  public void unwindRemovesLatestWhenNoOlderHistory() {
-    store.putChange(change(8, DomainValue.present(new byte[] {0x0B})));
+  public void unwindCreatedKeyRestoresToTombstone() {
+    store.putChange(change(8, DomainValue.tombstone(), DomainValue.present(new byte[] {0x0B})));
     store.unwind(8);
-    assertFalse(store.latest(ArchiveDomain.ACCOUNT, KEY).isPresent());
-    assertFalse(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 100).isPresent());
+    assertTrue(store.latest(ArchiveDomain.ACCOUNT, KEY).get().isDeleted());
+    assertTrue(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 100).get().isDeleted());
   }
 
   @Test
@@ -113,12 +132,15 @@ public class RocksDbArchiveTemporalStoreTest {
     ArchiveDomain domain = ArchiveDomain.DYNAMIC_PROPERTIES;
     byte[] keyA = "ENERGY_FEE".getBytes(StandardCharsets.US_ASCII);
     byte[] keyB = "ENERGY_FEE_HISTORY".getBytes(StandardCharsets.US_ASCII);
-    store.putChange(rec(10, domain, keyA, DomainValue.present(new byte[] {0x0A})));
-    store.putChange(rec(12, domain, keyB, DomainValue.present(new byte[] {0x0B})));
-    store.putChange(rec(18, domain, keyA, DomainValue.present(new byte[] {0x0C})));
-    // getAsOf for keyA must never resolve to keyB's value.
+    store.putChange(rec(10, domain, keyA, DomainValue.tombstone(),
+        DomainValue.present(new byte[] {0x0A})));
+    store.putChange(rec(12, domain, keyB, DomainValue.tombstone(),
+        DomainValue.present(new byte[] {0x0B})));
+    store.putChange(rec(18, domain, keyA, DomainValue.present(new byte[] {0x0A}),
+        DomainValue.present(new byte[] {0x0C})));
+    // getAsOf for keyA must never resolve to keyB's value: end of tx11 = 0x0A (pre-value of tx18).
     assertArrayEquals(new byte[] {0x0A}, store.getAsOf(domain, keyA, 11).get().getValue());
-    // unwind(15) drops keyA@18; keyA.latest must restore to keyA@10, NOT keyB@12.
+    // unwind(15) drops keyA@18; keyA.latest must restore to keyA@18's pre-value 0x0A, NOT keyB@12.
     store.unwind(15);
     assertArrayEquals(new byte[] {0x0A}, store.latest(domain, keyA).get().getValue());
     assertArrayEquals(new byte[] {0x0B}, store.latest(domain, keyB).get().getValue()); // untouched

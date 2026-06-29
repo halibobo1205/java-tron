@@ -31,9 +31,15 @@ public class ContractStateStore extends TronStoreWithRevoking<ContractStateCapsu
     }
 
     byte[] value = item.getData();
+    // L4 archive: contract-state is STORE_SPECIFIC and bypasses the base put hook. Read the pre-put
+    // value (Erigon prev-value) only when archived; default path is a plain put.
+    String dbName = getDbName();
+    boolean capture = ArchiveCaptureHolder.capturesStore(dbName);
+    byte[] prev = capture ? revokingDB.getUnchecked(key) : null;
     revokingDB.put(key, value);
-    // L4 archive: contract-state is STORE_SPECIFIC and bypasses the base put hook.
-    ArchiveCaptureHolder.capturePut(getDbName(), key, value);
+    if (capture) {
+      ArchiveCaptureHolder.capturePut(dbName, key, prev, value);
+    }
   }
 
 }

@@ -103,6 +103,9 @@ public class Storage {
     rowCache.forEach((DataWord rowKey, StorageRowCapsule row) -> {
       if (row.isDirty()) {
         boolean zero = new DataWord(row.getValue()).isZero();
+        // Read the slot's pre-write value (Erigon prev-value) before mutating the store; gated so a
+        // non-archive node never does this extra read.
+        byte[] prev = archiveActive ? prevSlotValue(row.getRowKey()) : null;
         if (zero) {
           this.store.delete(row.getRowKey());
         } else {
@@ -111,13 +114,20 @@ public class Storage {
         if (archiveActive) {
           byte[] key = Bytes.concat(address, rowKey.getData(), new byte[] {(byte) contractVersion});
           if (zero) {
-            ArchiveCaptureHolder.captureSemanticDelete(ArchiveDomain.CONTRACT_STORAGE, key);
+            ArchiveCaptureHolder.captureSemanticDelete(ArchiveDomain.CONTRACT_STORAGE, key, prev);
           } else {
             ArchiveCaptureHolder.captureSemanticPut(
-                ArchiveDomain.CONTRACT_STORAGE, key, row.getValue());
+                ArchiveDomain.CONTRACT_STORAGE, key, prev, row.getValue());
           }
         }
       }
     });
+  }
+
+  /** The committed value of a storage row before this tx overwrites it, or null if the slot was
+   * absent/zero (a tombstone prev in the archive). */
+  private byte[] prevSlotValue(byte[] rowKey) {
+    StorageRowCapsule old = this.store.get(rowKey);
+    return (old == null || old.getInstance() == null) ? null : old.getValue();
   }
 }

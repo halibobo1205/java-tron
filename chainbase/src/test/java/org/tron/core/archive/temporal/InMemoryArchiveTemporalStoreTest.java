@@ -13,72 +13,99 @@ import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
 import org.tron.core.archive.txnum.ArchiveTxPosition;
 
+/**
+ * Erigon-v3 prev-value model: a change at txNum carries the value BEFORE it (-&gt; history) and the
+ * value AFTER it (-&gt; latest). {@code getAsOf(T)} returns the value at the END of txNum T (the
+ * prior floor-model contract): "first change after T -&gt; its prev-value, else latest".
+ */
 public class InMemoryArchiveTemporalStoreTest {
 
   private final InMemoryArchiveTemporalStore store = new InMemoryArchiveTemporalStore();
   private static final byte[] KEY = "k".getBytes();
 
-  private static ArchiveChangeRecord change(long txNum, byte[] key, DomainValue value) {
+  private static DomainValue tomb() {
+    return DomainValue.tombstone();
+  }
+
+  private static DomainValue val(int b) {
+    return DomainValue.present(new byte[] {(byte) b});
+  }
+
+  private static ArchiveChangeRecord change(long txNum, byte[] key, DomainValue prev,
+      DomainValue value) {
     return new ArchiveChangeRecord(
         new ArchiveTxPosition(txNum, 1, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, null),
-        ArchiveDomain.ACCOUNT, key, value);
+        ArchiveDomain.ACCOUNT, key, prev, value);
+  }
+
+  private byte[] asOf(long txNum) {
+    return store.getAsOf(ArchiveDomain.ACCOUNT, KEY, txNum).get().getValue();
   }
 
   @Test
-  public void getAsOfIsInclusiveFloorByTxNum() {
-    store.putChange(change(5, KEY, DomainValue.present(new byte[] {0x0A})));
-    store.putChange(change(8, KEY, DomainValue.present(new byte[] {0x0B})));
-    assertFalse(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 4).isPresent()); // before first write
-    assertArrayEquals(new byte[] {0x0A},
-        store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 5).get().getValue());
-    assertArrayEquals(new byte[] {0x0A},
-        store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 7).get().getValue());
-    assertArrayEquals(new byte[] {0x0B},
-        store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 8).get().getValue());
-    assertArrayEquals(new byte[] {0x0B},
-        store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 100).get().getValue());
+  public void getAsOfReturnsValueAtEndOfTxNum() {
+    // key created at tx5 (absent -> 0x0A), then 0x0A -> 0x0B at tx8.
+    store.putChange(change(5, KEY, tomb(), val(0x0A)));
+    store.putChange(change(8, KEY, val(0x0A), val(0x0B)));
+    // before the key existed: absent (tombstone), NOT the live/latest value.
+    assertTrue(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 4).get().isDeleted());
+    // value at end of tx5..tx7 is 0x0A; at end of tx8 onward is 0x0B (same as the floor model).
+    assertArrayEquals(new byte[] {0x0A}, asOf(5));
+    assertArrayEquals(new byte[] {0x0A}, asOf(7));
+    assertArrayEquals(new byte[] {0x0B}, asOf(8));
+    assertArrayEquals(new byte[] {0x0B}, asOf(100));
   }
 
   @Test
-  public void latestReturnsHighestTxNum() {
-    store.putChange(change(5, KEY, DomainValue.present(new byte[] {1})));
-    store.putChange(change(8, KEY, DomainValue.present(new byte[] {2})));
+  public void latestReturnsValueAfterLastChange() {
+    store.putChange(change(5, KEY, tomb(), val(1)));
+    store.putChange(change(8, KEY, val(1), val(2)));
     assertArrayEquals(new byte[] {2}, store.latest(ArchiveDomain.ACCOUNT, KEY).get().getValue());
   }
 
   @Test
-  public void tombstoneIsReturnedAsDeleted() {
-    store.putChange(change(5, KEY, DomainValue.present(new byte[] {1})));
-    store.putChange(change(9, KEY, DomainValue.tombstone()));
-    assertFalse(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 8).get().isDeleted());
-    assertTrue(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 9).get().isDeleted());
+  public void fallToLatestWhenNoChangeAfterQuery() {
+    // created at tx5 and never changed again: every query at/after tx5 falls through to latest.
+    store.putChange(change(5, KEY, tomb(), val(0x0A)));
+    assertArrayEquals(new byte[] {0x0A}, asOf(5));
+    assertArrayEquals(new byte[] {0x0A}, asOf(100));
+    assertTrue(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 4).get().isDeleted()); // before creation
+  }
+
+  @Test
+  public void tombstoneFallsThroughAsDeleted() {
+    store.putChange(change(5, KEY, tomb(), val(1)));
+    store.putChange(change(9, KEY, val(1), tomb()));
+    assertFalse(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 8).get().isDeleted()); // value 1
+    assertTrue(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 9).get().isDeleted());  // deleted at tx9
     assertTrue(store.latest(ArchiveDomain.ACCOUNT, KEY).get().isDeleted());
   }
 
   @Test
   public void unknownKeyAndDomainAreIsolated() {
     assertFalse(store.latest(ArchiveDomain.ACCOUNT, "nope".getBytes()).isPresent());
-    store.putChange(change(5, KEY, DomainValue.present(new byte[] {1})));
+    store.putChange(change(5, KEY, tomb(), val(1)));
     assertFalse(store.getAsOf(ArchiveDomain.CODE, KEY, 5).isPresent()); // different domain
   }
 
   @Test
-  public void unwindDropsChangesAtOrAfterTxNumAndRestoresLatest() {
-    store.putChange(change(5, KEY, DomainValue.present(new byte[] {0x0A})));
-    store.putChange(change(8, KEY, DomainValue.present(new byte[] {0x0B})));
-    store.putChange(change(12, KEY, DomainValue.present(new byte[] {0x0C})));
-    store.unwind(8); // drop tx8 and tx12
+  public void unwindRestoresLatestToPreValueOfSmallestDropped() {
+    store.putChange(change(5, KEY, tomb(), val(0x0A)));
+    store.putChange(change(8, KEY, val(0x0A), val(0x0B)));
+    store.putChange(change(12, KEY, val(0x0B), val(0x0C)));
+    store.unwind(8); // drop tx8 and tx12; latest reverts to the pre-value of tx8 = 0x0A
     assertArrayEquals(new byte[] {0x0A}, store.latest(ArchiveDomain.ACCOUNT, KEY).get().getValue());
-    assertArrayEquals(new byte[] {0x0A},
-        store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 100).get().getValue());
+    assertArrayEquals(new byte[] {0x0A}, asOf(100));
     assertEquals(1, store.changeCount());
   }
 
   @Test
-  public void unwindRemovesKeyWhenNoOlderHistoryRemains() {
-    store.putChange(change(8, KEY, DomainValue.present(new byte[] {0x0B})));
+  public void unwindCreatedKeyRestoresToTombstone() {
+    // created at tx8; unwinding tx8 reverts latest to its pre-value (a tombstone = absent again).
+    store.putChange(change(8, KEY, tomb(), val(0x0B)));
     store.unwind(8);
-    assertFalse(store.latest(ArchiveDomain.ACCOUNT, KEY).isPresent());
+    assertTrue(store.latest(ArchiveDomain.ACCOUNT, KEY).get().isDeleted());
+    assertTrue(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 100).get().isDeleted());
     assertEquals(0, store.changeCount());
   }
 }

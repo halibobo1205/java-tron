@@ -1,8 +1,7 @@
 package org.tron.core.archive.temporal;
 
-import com.google.common.primitives.Bytes;
-import com.google.common.primitives.Longs;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import org.rocksdb.Options;
@@ -18,19 +17,19 @@ import org.tron.core.archive.domain.ArchiveDomain;
 import org.tron.core.db2.common.WrappedByteArray;
 
 /**
- * RocksDB-backed {@link ArchiveTemporalStore}. A single column family holds both the latest record
- * and the txNum-versioned history, distinguished by the {@link ArchiveTemporalCodec} family prefix;
- * {@code getAsOf} is a {@code seekForPrev} within a (domain, key) history prefix and {@code latest}
- * a direct get. Single column family + plain KV keeps it compatible with the RocksDB shipped for
- * both architectures (5.15.10 / 9.7.4); decision-5 column-family / BlobDB tuning is a follow-on.
+ * RocksDB-backed {@link ArchiveTemporalStore} for the Erigon-v3 prev-value model. A single column
+ * family holds the latest record, the txNum-versioned history (storing each change's PRE-value) and
+ * the txNum-ordered changeset, distinguished by the {@link ArchiveTemporalCodec} family prefix.
+ * {@code getAsOf} forward-seeks the first history entry after the queried txNum and returns its
+ * pre-value (falling back to latest when none exists); {@code latest} is a direct get. One column
+ * family + plain KV keeps it compatible with the RocksDB shipped for both architectures
+ * (5.15.10 / 9.7.4); decision-5 column-family / BlobDB tuning is a follow-on.
  */
 public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, AutoCloseable {
 
   static {
     RocksDB.loadLibrary();
   }
-
-  private static final byte[] EMPTY = new byte[0];
 
   private final Options options;
   private final RocksDB db;
@@ -49,12 +48,14 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
   public void putChange(ArchiveChangeRecord record) {
     ArchiveDomain domain = record.getDomain();
     byte[] key = record.getCanonicalKey();
-    byte[] value = ArchiveTemporalCodec.encodeValue(record.getValue());
+    byte[] prevValue = ArchiveTemporalCodec.encodeValue(record.getPrevValue());
+    byte[] newValue = ArchiveTemporalCodec.encodeValue(record.getValue());
     try (WriteBatch batch = new WriteBatch(); WriteOptions writeOptions = new WriteOptions()) {
-      batch.put(ArchiveTemporalCodec.latestKey(domain, key), value);
-      batch.put(ArchiveTemporalCodec.historyKey(domain, key, record.getTxNum()), value);
+      // history stores the value BEFORE the change (Erigon prev-value); latest the value AFTER.
+      batch.put(ArchiveTemporalCodec.latestKey(domain, key), newValue);
+      batch.put(ArchiveTemporalCodec.historyKey(domain, key, record.getTxNum()), prevValue);
       // changeset marker (txNum-ordered) so unwind can find this change without a full scan.
-      batch.put(ArchiveTemporalCodec.changesetKey(record.getTxNum(), domain, key), EMPTY);
+      batch.put(ArchiveTemporalCodec.changesetKey(record.getTxNum(), domain, key), new byte[0]);
       db.write(writeOptions, batch);
     } catch (RocksDBException e) {
       throw new ArchiveException("archive temporal putChange failed", e);
@@ -63,15 +64,19 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
 
   @Override
   public Optional<DomainValue> getAsOf(ArchiveDomain domain, byte[] canonicalKey, long txNum) {
-    byte[] prefix = ArchiveTemporalCodec.historyPrefix(domain, canonicalKey);
-    byte[] seek = ArchiveTemporalCodec.historyKey(domain, canonicalKey, txNum);
-    try (RocksIterator it = db.newIterator()) {
-      it.seekForPrev(seek);
-      if (it.isValid() && ArchiveTemporalCodec.startsWith(it.key(), prefix)) {
-        return Optional.of(ArchiveTemporalCodec.decodeValue(it.value()));
+    // The first change strictly after txNum; its pre-value is the value as of txNum (end of txNum).
+    if (txNum != Long.MAX_VALUE) {
+      byte[] prefix = ArchiveTemporalCodec.historyPrefix(domain, canonicalKey);
+      byte[] seek = ArchiveTemporalCodec.historyKey(domain, canonicalKey, txNum + 1);
+      try (RocksIterator it = db.newIterator()) {
+        it.seek(seek);
+        if (it.isValid() && ArchiveTemporalCodec.startsWith(it.key(), prefix)) {
+          return Optional.of(ArchiveTemporalCodec.decodeValue(it.value()));
+        }
       }
-      return Optional.empty();
     }
+    // No change after txNum: the key has not changed since, so its value then == latest.
+    return latest(domain, canonicalKey);
   }
 
   @Override
@@ -88,50 +93,44 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
 
   @Override
   public void unwind(long fromTxNum) {
-    Map<WrappedByteArray, byte[]> affected = new HashMap<>();
     // One atomic batch: delete each reverted change's history + changeset entry, and reset each
-    // affected key's latest to its surviving (txNum < fromTxNum) value -- computed against the
-    // pre-deletion state -- so a crash can never leave latest pointing at a deleted entry.
+    // affected key's latest to the prevValue of its SMALLEST dropped change (= the key's value at
+    // the end of fromTxNum-1), computed against the pre-deletion state so a crash can never leave
+    // latest pointing at a deleted entry.
+    Map<WrappedByteArray, byte[]> affectedPrefix = new LinkedHashMap<>();
+    Map<WrappedByteArray, byte[]> restore = new HashMap<>();
     try (WriteBatch batch = new WriteBatch(); WriteOptions writeOptions = new WriteOptions()) {
       try (RocksIterator it = db.newIterator()) {
         it.seek(ArchiveTemporalCodec.changesetSeekFrom(fromTxNum));
         while (it.isValid() && it.key()[0] == ArchiveTemporalCodec.CHANGESET_PREFIX) {
           byte[] changesetKey = it.key();
-          batch.delete(ArchiveTemporalCodec.historyKeyOfChangeset(changesetKey));
-          batch.delete(changesetKey);
+          byte[] historyKey = ArchiveTemporalCodec.historyKeyOfChangeset(changesetKey);
           byte[] historyPrefix = ArchiveTemporalCodec.historyPrefixOfChangeset(changesetKey);
-          affected.put(WrappedByteArray.of(historyPrefix), historyPrefix);
+          WrappedByteArray prefix = WrappedByteArray.of(historyPrefix);
+          if (!affectedPrefix.containsKey(prefix)) {
+            // ascending changeset scan -> first hit is the smallest dropped txNum for this key.
+            affectedPrefix.put(prefix, historyPrefix);
+            restore.put(prefix, db.get(historyKey)); // its prevValue, read before the delete lands
+          }
+          batch.delete(historyKey);
+          batch.delete(changesetKey);
           it.next();
         }
       }
-      try (RocksIterator it = db.newIterator()) {
-        for (byte[] historyPrefix : affected.values()) {
-          byte[] latestKey = historyPrefix.clone();
-          latestKey[0] = ArchiveTemporalCodec.LATEST_PREFIX;
-          byte[] surviving = survivingLatest(historyPrefix, fromTxNum, it);
-          if (surviving != null) {
-            batch.put(latestKey, surviving);
-          } else {
-            batch.delete(latestKey);
-          }
+      for (Map.Entry<WrappedByteArray, byte[]> e : affectedPrefix.entrySet()) {
+        byte[] latestKey = e.getValue().clone();
+        latestKey[0] = ArchiveTemporalCodec.LATEST_PREFIX;
+        byte[] prevValue = restore.get(e.getKey());
+        if (prevValue == null) {
+          batch.delete(latestKey); // defensive: dropped change had no history entry
+        } else {
+          batch.put(latestKey, prevValue);
         }
       }
       db.write(writeOptions, batch);
     } catch (RocksDBException e) {
       throw new ArchiveException("archive temporal unwind failed", e);
     }
-  }
-
-  /** The value of the largest surviving (txNum &lt; fromTxNum) history entry, or null if none. */
-  private static byte[] survivingLatest(byte[] historyPrefix, long fromTxNum, RocksIterator it) {
-    if (fromTxNum == 0) {
-      return null; // everything is being unwound; no older history survives
-    }
-    it.seekForPrev(Bytes.concat(historyPrefix, Longs.toByteArray(fromTxNum - 1)));
-    if (it.isValid() && ArchiveTemporalCodec.startsWith(it.key(), historyPrefix)) {
-      return it.value();
-    }
-    return null;
   }
 
   @Override

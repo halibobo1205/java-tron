@@ -40,11 +40,13 @@ public class DefaultArchiveStateReaderTest {
         ArchiveStatePoint.blockEnd(1, new byte[] {1}, txNum));
   }
 
+  // Models "key created at txNum with `value`, absent before" (prev = tombstone). getAsOf at/after
+  // txNum falls through to latest = value, exactly as the floor model returned that value.
   private void put(ArchiveDomain domain, byte[] key, DomainValue value, long txNum) {
     store.putChange(new ArchiveChangeRecord(
         new ArchiveTxPosition(txNum, 1, ArchivePhase.BLOCK_FINALIZE,
             ArchiveSource.NORMAL, -1, null),
-        domain, key, value));
+        domain, key, DomainValue.tombstone(), value));
   }
 
   @Test
@@ -88,8 +90,10 @@ public class DefaultArchiveStateReaderTest {
   @Test
   public void noFallbackToLatestAndInclusiveAfter() throws Exception {
     put(ArchiveDomain.ACCOUNT, addr(1), DomainValue.present(account(100)), 5);
-    // at txNum 4 the tx-5 write is not yet visible -> MISSING, NOT the live/latest value
-    assertEquals(Status.MISSING, readerAt(4).getAccount(addr(1)).getStatus());
+    // At txNum 4 the account did not yet exist: the prev-value model reports it as absent
+    // (TOMBSTONE), NOT the live/latest value -- the reader never leaks current state into the gap.
+    // (L6/L8 render TOMBSTONE and MISSING identically, so the observable RPC result is unchanged.)
+    assertEquals(Status.TOMBSTONE, readerAt(4).getAccount(addr(1)).getStatus());
     assertEquals(Status.PRESENT, readerAt(5).getAccount(addr(1)).getStatus());
   }
 

@@ -38,9 +38,15 @@ public class ContractStore extends TronStoreWithRevoking<ContractCapsule> {
       item = new ContractCapsule(item.getInstance().toBuilder().clearAbi().build());
     }
     byte[] value = item.getData();
-    revokingDB.put(key, value);
     // L4 archive: contract is STORE_SPECIFIC (abi already cleared); bypasses the base put hook.
-    ArchiveCaptureHolder.capturePut(getDbName(), key, value);
+    // Read the pre-put value (Erigon prev-value) only when archived; default path is a plain put.
+    String dbName = getDbName();
+    boolean capture = ArchiveCaptureHolder.capturesStore(dbName);
+    byte[] prev = capture ? revokingDB.getUnchecked(key) : null;
+    revokingDB.put(key, value);
+    if (capture) {
+      ArchiveCaptureHolder.capturePut(dbName, key, prev, value);
+    }
   }
 
   /**

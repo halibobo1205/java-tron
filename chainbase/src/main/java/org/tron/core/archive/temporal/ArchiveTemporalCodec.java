@@ -8,16 +8,20 @@ import org.tron.core.archive.domain.ArchiveDomain;
 
 /**
  * On-disk byte layout for a single-column-family temporal store: a 1-byte family prefix
- * distinguishes the latest record from the txNum-versioned history, so {@code getAsOf} is a
- * {@code seekForPrev} within a (domain, key) history prefix. Pure functions, unit-tested without a
- * native RocksDB.
+ * distinguishes the latest record from the txNum-versioned history. Under the Erigon-v3 prev-value
+ * model the history value is the change's PRE-value, so {@code getAsOf} forward-seeks the first
+ * history entry after the queried txNum within a (domain, key) prefix. Pure functions, unit-tested
+ * without a native RocksDB.
  *
  * <ul>
- *   <li>latest:  {@code 0x00 || domainId(2) || canonicalKey}                       -&gt; value</li>
- *   <li>history: {@code 0x01 || domainId(2) || canonicalKey || txNum(8, BE)} -&gt; value</li>
+ *   <li>latest:  {@code 0x00 || domainId(2) || keyLen(2) || canonicalKey} -&gt; value(after)</li>
+ *   <li>history: {@code 0x01 || domainId(2) || keyLen(2) || canonicalKey || txNum(8, BE)}
+ *       -&gt; value(before the change)</li>
+ *   <li>changeset: {@code 0x02 || txNum(8) || domainId(2) || keyLen(2) || canonicalKey}, for
+ *       unwind</li>
  *   <li>value:   {@code deletedFlag(1) || valueBytes} (flag 1 = tombstone)</li>
  * </ul>
- * txNum is big-endian so lexicographic key order matches numeric txNum order (seekForPrev works).
+ * txNum is big-endian so lexicographic key order matches numeric txNum order (forward seek works).
  */
 public final class ArchiveTemporalCodec {
 

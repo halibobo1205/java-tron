@@ -33,25 +33,42 @@ public final class ArchiveCaptureHolder {
     return engine != null;
   }
 
-  public static void capturePut(String dbName, byte[] key, byte[] value) {
+  /**
+   * Whether writes to {@code dbName} are archived. The Store path calls this BEFORE a put/delete so
+   * it can skip the prev-value read (an extra get per write, the Erigon-model cost) for
+   * non-archived stores; returns false when archive is off, so the default path does no extra work.
+   */
+  public static boolean capturesStore(String dbName) {
+    ArchiveCaptureEngine active = engine;
+    if (active == null) {
+      return false;
+    }
+    try {
+      return active.capturesStore(dbName);
+    } catch (Exception e) {
+      return false; // unknown store / lookup failure: do not read prev, do not capture
+    }
+  }
+
+  public static void capturePut(String dbName, byte[] key, byte[] prevValue, byte[] value) {
     ArchiveCaptureEngine active = engine;
     if (active == null) {
       return;
     }
     try {
-      active.capturePut(dbName, key, value);
+      active.capturePut(dbName, key, prevValue, value);
     } catch (Exception e) {
       logger.warn("archive capture(put) failed for store {} (dropped): {}", dbName, e.getMessage());
     }
   }
 
-  public static void captureDelete(String dbName, byte[] key) {
+  public static void captureDelete(String dbName, byte[] key, byte[] prevValue) {
     ArchiveCaptureEngine active = engine;
     if (active == null) {
       return;
     }
     try {
-      active.captureDelete(dbName, key);
+      active.captureDelete(dbName, key, prevValue);
     } catch (Exception e) {
       logger.warn("archive capture(delete) failed for {} (dropped): {}", dbName, e.getMessage());
     }
@@ -70,28 +87,32 @@ public final class ArchiveCaptureHolder {
     }
   }
 
-  /** Capture a SEMANTIC domain put (e.g. CONTRACT_STORAGE); no-op + isolated like capturePut. */
-  public static void captureSemanticPut(ArchiveDomain domain, byte[] canonicalKey, byte[] value) {
+  /** Capture a SEMANTIC domain put (e.g. CONTRACT_STORAGE); no-op + isolated like capturePut.
+   * {@code prevValue} is the slot value before the write (null = absent). */
+  public static void captureSemanticPut(ArchiveDomain domain, byte[] canonicalKey, byte[] prevValue,
+      byte[] value) {
     ArchiveCaptureEngine active = engine;
     if (active == null) {
       return;
     }
     try {
-      active.captureSemanticPut(domain, canonicalKey, value);
+      active.captureSemanticPut(domain, canonicalKey, prevValue, value);
     } catch (Exception e) {
       logger.warn("archive semantic capture(put) failed for {} (dropped): {}",
           domain, e.getMessage());
     }
   }
 
-  /** Capture a SEMANTIC domain delete (e.g. zeroed storage slot); no-op + isolated. */
-  public static void captureSemanticDelete(ArchiveDomain domain, byte[] canonicalKey) {
+  /** Capture a SEMANTIC domain delete (e.g. zeroed storage slot); no-op + isolated.
+   * {@code prevValue} is the slot value before the delete (null = already absent). */
+  public static void captureSemanticDelete(ArchiveDomain domain, byte[] canonicalKey,
+      byte[] prevValue) {
     ArchiveCaptureEngine active = engine;
     if (active == null) {
       return;
     }
     try {
-      active.captureSemanticDelete(domain, canonicalKey);
+      active.captureSemanticDelete(domain, canonicalKey, prevValue);
     } catch (Exception e) {
       logger.warn("archive semantic capture(delete) failed for {} (dropped): {}", domain,
           e.getMessage());
