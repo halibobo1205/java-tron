@@ -4,7 +4,10 @@ import static org.tron.core.Wallet.CONTRACT_VALIDATE_ERROR;
 import static org.tron.core.services.jsonrpc.JsonRpcApiUtil.parseEnergyFee;
 import static org.tron.core.services.jsonrpc.JsonRpcApiUtil.triggerCallContract;
 
+import com.google.protobuf.ByteString;
+import java.util.Collections;
 import java.util.List;
+import java.util.OptionalLong;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.Wallet;
 import org.tron.core.archive.ArchiveService;
@@ -15,6 +18,7 @@ import org.tron.core.archive.reader.ArchiveStateReader;
 import org.tron.core.archive.reader.ArchiveStateReaderFactory;
 import org.tron.core.archive.reader.JsonRpcArchiveStatePointResolver;
 import org.tron.core.archive.reader.ResolvedArchiveStatePoint;
+import org.tron.core.archive.txnum.ArchiveTxNumIndex;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.exception.ContractExeException;
@@ -32,7 +36,10 @@ import org.tron.core.vm.archive.HistoricalTraceCallResult;
 import org.tron.core.vm.archive.HistoricalVmExecutionException;
 import org.tron.core.vm.archive.UnsupportedHistoricalStateException;
 import org.tron.protos.Protocol.Block;
+import org.tron.protos.Protocol.Transaction;
+import org.tron.protos.Protocol.Transaction.Contract;
 import org.tron.protos.Protocol.Transaction.Contract.ContractType;
+import org.tron.protos.Protocol.TransactionInfo;
 import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
 
 /**
@@ -64,6 +71,11 @@ public final class HistoricalTraceSupport {
         && !JsonRpcApiUtil.LATEST_STR.equalsIgnoreCase(blockNumOrTag);
   }
 
+  /** True when archiving is enabled; debug_traceTransaction is archive-only (no block selector). */
+  public boolean isArchiveEnabled() {
+    return archiveService.isEnabled();
+  }
+
   public TraceResult traceCall(byte[] ownerAddress, byte[] contractAddress, long callValue,
       byte[] data, String blockNumOrTag) throws JsonRpcInvalidParamsException,
       JsonRpcInvalidRequestException, JsonRpcInternalException {
@@ -79,6 +91,89 @@ public final class HistoricalTraceSupport {
           + point.getBlockNum());
     }
     BlockCapsule historicalBlock = new BlockCapsule(block);
+    TriggerSmartContract trigger =
+        triggerCallContract(ownerAddress, contractAddress, callValue, data, 0, null);
+    TransactionCapsule trxCap;
+    try {
+      trxCap = wallet.createTransactionCapsule(trigger, ContractType.TriggerSmartContract);
+    } catch (ContractValidateException e) {
+      throw new JsonRpcInvalidRequestException(
+          e.getMessage() == null ? CONTRACT_VALIDATE_ERROR : e.getMessage());
+    }
+    return runTrace(historicalBlock, point, trxCap, "historical debug_traceCall");
+  }
+
+  /**
+   * Historical {@code debug_traceTransaction}: replays the opcode execution of a PAST transaction's
+   * contract call against the ARCHIVED pre-transaction state and renders the Geth/Besu structLogs.
+   *
+   * <p>The pre-tx archive point is {@code getAsOf(t - 1)} where {@code t} is the transaction's own
+   * canonical txNum (from the archive index). {@code getAsOf} is inclusive-after, so {@code t - 1}
+   * already includes the block's prepare-phase writes and every preceding user tx in that block
+   * (L2 assigns ascending txNums: prepare, each user tx, finalize), while excluding the traced tx's
+   * own writes -- so replaying the single tx against it is correct and no preceding tx is re-run.
+   *
+   * <p>The replay reuses the real transaction (so sender/value/data/feeLimit match: the feeLimit
+   * governs the constant-call energy limit, so the trace stops exactly where the real tx did).
+   * Only the contract's opcode execution is traced -- the non-constant fee / account-update
+   * machinery is not replayed (the constant-call / trace path). A non-VM contract type produces no
+   * opcode execution, so an empty-structLogs {@link TraceResult} is returned (Geth-friendly).
+   */
+  public TraceResult traceTransaction(byte[] txId, Object traceOptions)
+      throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
+      JsonRpcInternalException {
+    ByteString txIdBs = ByteString.copyFrom(txId);
+    Transaction tx = wallet.getTransactionById(txIdBs);
+    if (tx == null) {
+      throw new JsonRpcInvalidParamsException("transaction not found");
+    }
+    if (tx.getRawData().getContractCount() == 0) {
+      return emptyTrace();
+    }
+    Contract contract = tx.getRawData().getContract(0);
+    if (contract.getType() != ContractType.TriggerSmartContract) {
+      // Only a TriggerSmartContract produces a TVM opcode trace; other types (transfers, votes,
+      // CreateSmartContract deploys, etc.) have no constant-call execution to replay.
+      return emptyTrace();
+    }
+
+    TransactionInfo info = wallet.getTransactionInfoById(txIdBs);
+    if (info == null) {
+      throw new JsonRpcInternalException("transaction info not found");
+    }
+    long blockNum = info.getBlockNumber();
+
+    OptionalLong txNum = txNumIndex().findTxNumByTxId(txId);
+    if (!txNum.isPresent()) {
+      throw new JsonRpcInternalException("transaction not in archive");
+    }
+    long t = txNum.getAsLong();
+    if (t < 1) {
+      throw new JsonRpcInternalException("transaction has no pre-state archive point");
+    }
+
+    Block block = wallet.getBlockByNum(blockNum);
+    if (block == null) {
+      throw new JsonRpcInternalException("archive history unavailable for block " + blockNum);
+    }
+    BlockCapsule historicalBlock = new BlockCapsule(block);
+    byte[] blockHash = historicalBlock.getBlockId().getBytes();
+    // The pre-tx state is read as-of t - 1 (getAsOf inclusive-after; t is the tx's own txNum whose
+    // writes must NOT be included). The reader reads getAsOf(point.getTxNum()).
+    ArchiveStatePoint point = ArchiveStatePoint.blockEnd(blockNum, blockHash, t - 1);
+    // Reuse the real transaction so feeLimit (hence the energy limit) is preserved.
+    TransactionCapsule trxCap = new TransactionCapsule(tx);
+    return runTrace(historicalBlock, point, trxCap, "historical debug_traceTransaction");
+  }
+
+  /**
+   * Shared core: open the archive reader at {@code point}, build the historical config view at the
+   * block (energy fee resolved from the block timestamp + genesis-complete flag), run the trace
+   * executor with the given {@link TransactionCapsule}, and render the Geth structLogs result.
+   */
+  private TraceResult runTrace(BlockCapsule historicalBlock, ArchiveStatePoint point,
+      TransactionCapsule trxCap, String label)
+      throws JsonRpcInvalidRequestException, JsonRpcInternalException {
     DynamicPropertiesStore latestStore =
         StoreFactory.getInstance().getChainBaseManager().getDynamicPropertiesStore();
     long historicalEnergyFee =
@@ -87,14 +182,10 @@ public final class HistoricalTraceSupport {
       historicalEnergyFee = latestStore.getEnergyFee();
     }
     boolean genesisComplete = isGenesisComplete();
-    TriggerSmartContract trigger =
-        triggerCallContract(ownerAddress, contractAddress, callValue, data, 0, null);
 
     try (ArchiveStateReader reader = readerFactory().open(point)) {
       VmDynamicProperties vmProperties = new HistoricalArchiveVmDynamicProperties(
           latestStore, historicalEnergyFee, reader, genesisComplete);
-      TransactionCapsule trxCap =
-          wallet.createTransactionCapsule(trigger, ContractType.TriggerSmartContract);
       HistoricalTraceCallResult result = new HistoricalTraceCallExecutor()
           .execute(reader, vmProperties, historicalBlock, trxCap);
       return toTraceResult(result);
@@ -104,8 +195,20 @@ public final class HistoricalTraceSupport {
     } catch (ArchiveReaderException | HistoricalVmExecutionException
         | UnsupportedHistoricalStateException | ContractExeException e) {
       throw new JsonRpcInternalException(
-          e.getMessage() == null ? "historical debug_traceCall failed" : e.getMessage());
+          e.getMessage() == null ? label + " failed" : e.getMessage());
     }
+  }
+
+  /** A no-execution trace: empty structLogs, not failed (Geth returns this for a non-VM tx). */
+  private static TraceResult emptyTrace() {
+    return new TraceResult(0L, false, "", Collections.emptyList());
+  }
+
+  private ArchiveTxNumIndex txNumIndex() throws JsonRpcInternalException {
+    if (!(archiveService instanceof DefaultArchiveService)) {
+      throw new JsonRpcInternalException("archive is not available");
+    }
+    return ((DefaultArchiveService) archiveService).getTxNumIndex();
   }
 
   /** Renders the executor outcome as the Geth-shaped struct-log trace result. */

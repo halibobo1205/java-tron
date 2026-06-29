@@ -8,8 +8,10 @@ import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Message;
+import org.junit.Before;
 import org.junit.Test;
 import org.tron.common.BaseMethodTest;
+import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.Wallet;
 import org.tron.core.archive.ArchivePhase;
@@ -45,6 +47,13 @@ public class HistoricalEthCallSupportIntegrationTest extends BaseMethodTest {
 
   @Override
   protected void afterInit() {
+  }
+
+  @Before
+  public void generousConstantCallTimeout() {
+    // Headroom for the constant-call CPU deadline so a tiny timeout left by another test in the
+    // shared CommonParameter singleton cannot fail this historical replay.
+    CommonParameter.getInstance().setConstantCallTimeoutMs(60_000);
   }
 
   private static byte[] addr(int last) {
