@@ -59,6 +59,7 @@ public class ArchiveRepositoryAdapter implements Repository {
   private final ArchiveStateReader reader;
   private final VmDynamicProperties vmProperties;
   private final ArchiveRepositoryAdapter parent;
+  private final boolean genesisComplete;
 
   // Copy-on-write overlay. containsKey decides; a null value marks a deletion at this level.
   private final Map<Key, AccountCapsule> accounts = new HashMap<>();
@@ -68,15 +69,22 @@ public class ArchiveRepositoryAdapter implements Repository {
   private final Set<Key> newContracts = new HashSet<>();
 
   public ArchiveRepositoryAdapter(ArchiveStateReader reader, VmDynamicProperties vmProperties) {
+    this(reader, vmProperties, true);
+  }
+
+  public ArchiveRepositoryAdapter(ArchiveStateReader reader, VmDynamicProperties vmProperties,
+      boolean genesisComplete) {
     this.reader = reader;
     this.vmProperties = vmProperties;
     this.parent = null;
+    this.genesisComplete = genesisComplete;
   }
 
   private ArchiveRepositoryAdapter(ArchiveRepositoryAdapter parent) {
     this.reader = null;
     this.vmProperties = null;
     this.parent = parent;
+    this.genesisComplete = parent.genesisComplete;
   }
 
   @Override
@@ -98,7 +106,7 @@ public class ArchiveRepositoryAdapter implements Repository {
     if (parent != null) {
       return parent.getAccount(address);
     }
-    return present(read(() -> reader.getAccount(address), "account"));
+    return present(read(() -> reader.getAccount(address), "account"), "account");
   }
 
   @Override
@@ -126,7 +134,7 @@ public class ArchiveRepositoryAdapter implements Repository {
     if (parent != null) {
       return parent.getCode(address);
     }
-    return present(read(() -> reader.getCode(address), "code"));
+    return present(read(() -> reader.getCode(address), "code"), "code");
   }
 
   @Override
@@ -139,7 +147,7 @@ public class ArchiveRepositoryAdapter implements Repository {
     if (parent != null) {
       return parent.getContract(address);
     }
-    return present(read(() -> reader.getContract(address), "contract"));
+    return present(read(() -> reader.getContract(address), "contract"), "contract");
   }
 
   @Override
@@ -158,6 +166,7 @@ public class ArchiveRepositoryAdapter implements Repository {
     }
     ArchiveReadResult<byte[]> row = read(() -> reader.getStorage(tronAddress, key.getData()),
         "storage");
+    requireKnown(row, "storage");
     return row.isPresent() ? new DataWord(row.getValue()) : null;
   }
 
@@ -327,6 +336,7 @@ public class ArchiveRepositoryAdapter implements Repository {
     }
     ArchiveReadResult<ContractStateCapsule> state =
         read(() -> reader.getContractState(address), "contract-state");
+    requireKnown(state, "contract-state");
     return state.isPresent()
         ? state.getValue()
         : new ContractStateCapsule(getVmDynamicProperties().getCurrentCycleNumber());
@@ -614,8 +624,16 @@ public class ArchiveRepositoryAdapter implements Repository {
     ArchiveReadResult<T> call() throws ArchiveReaderException;
   }
 
-  private static <T> T present(ArchiveReadResult<T> result) {
+  private <T> T present(ArchiveReadResult<T> result, String what) {
+    requireKnown(result, what);
     return result.isPresent() ? result.getValue() : null;
+  }
+
+  private void requireKnown(ArchiveReadResult<?> result, String what) {
+    if (!genesisComplete && result.getStatus() == ArchiveReadResult.Status.MISSING) {
+      throw new UnsupportedHistoricalStateException(
+          "archive " + what + " is unknown before mid-chain coverage");
+    }
   }
 
   private <T> ArchiveReadResult<T> read(ReaderCall<T> call, String what) {

@@ -82,6 +82,10 @@ public class DefaultArchiveStateReaderTest {
     return Account.newBuilder().setBalance(balance).build().toByteArray();
   }
 
+  private static byte[] contract(int version) {
+    return SmartContract.newBuilder().setVersion(version).build().toByteArray();
+  }
+
   @Test
   public void getAccountResolvesThreeStates() throws Exception {
     put(ArchiveDomain.ACCOUNT, addr(1), DomainValue.present(account(100)), 5);
@@ -123,6 +127,7 @@ public class DefaultArchiveStateReaderTest {
   @Test
   public void getCodeAndStorage() throws Exception {
     put(ArchiveDomain.CODE, addr(1), DomainValue.present(new byte[] {0x60, (byte) 0x80}), 5);
+    put(ArchiveDomain.CONTRACT, addr(1), DomainValue.present(contract(0)), 5);
     byte[] slot = new byte[32];
     slot[31] = 7;
     byte[] word = new byte[32];
@@ -136,9 +141,41 @@ public class DefaultArchiveStateReaderTest {
   }
 
   @Test
+  public void getStorageUsesHistoricalContractVersion() throws Exception {
+    byte[] address = addr(1);
+    byte[] slot = new byte[32];
+    slot[31] = 7;
+    byte[] v0Word = new byte[32];
+    v0Word[31] = 9;
+    byte[] v1Word = new byte[32];
+    v1Word[31] = 10;
+    put(ArchiveDomain.CONTRACT, address, DomainValue.present(contract(1)), 5);
+    put(ArchiveDomain.CONTRACT_STORAGE, Bytes.concat(address, slot, new byte[] {0}),
+        DomainValue.present(v0Word), 5);
+    put(ArchiveDomain.CONTRACT_STORAGE, Bytes.concat(address, slot, new byte[] {1}),
+        DomainValue.present(v1Word), 5);
+
+    assertArrayEquals(v1Word, readerAt(5).getStorage(address, slot).getValue());
+  }
+
+  @Test
+  public void getStorageDoesNotReadStorageForDeletedContract() throws Exception {
+    byte[] address = addr(1);
+    byte[] slot = new byte[32];
+    byte[] word = new byte[32];
+    word[31] = 9;
+    put(ArchiveDomain.CONTRACT, address, DomainValue.present(contract(0)),
+        DomainValue.tombstone(), 5);
+    put(ArchiveDomain.CONTRACT_STORAGE, Bytes.concat(address, slot, new byte[] {0}),
+        DomainValue.present(word), 5);
+
+    assertEquals(Status.TOMBSTONE, readerAt(5).getStorage(address, slot).getStatus());
+  }
+
+  @Test
   public void getContractParsesArchivedContract() throws Exception {
-    byte[] contract = SmartContract.newBuilder()
-        .setBytecode(ByteString.copyFromUtf8("X")).build().toByteArray();
+    byte[] contract = SmartContract.newBuilder().setBytecode(ByteString.copyFromUtf8("X"))
+        .build().toByteArray();
     put(ArchiveDomain.CONTRACT, addr(1), DomainValue.present(contract), 5);
     assertEquals(Status.PRESENT, readerAt(5).getContract(addr(1)).getStatus());
   }

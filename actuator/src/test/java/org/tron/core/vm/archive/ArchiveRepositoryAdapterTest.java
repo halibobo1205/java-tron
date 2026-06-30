@@ -163,6 +163,25 @@ public class ArchiveRepositoryAdapterTest {
   }
 
   @Test
+  public void midChainMissingStateFailsClosed() {
+    ArchiveRepositoryAdapter midChain =
+        new ArchiveRepositoryAdapter(reader, vmProps, false);
+
+    assertThrows(UnsupportedHistoricalStateException.class,
+        () -> midChain.getAccount(ADDR));
+    assertThrows(UnsupportedHistoricalStateException.class,
+        () -> midChain.getCode(ADDR));
+    assertThrows(UnsupportedHistoricalStateException.class,
+        () -> midChain.getContract(ADDR));
+    assertThrows(UnsupportedHistoricalStateException.class,
+        () -> midChain.getContractState(ADDR));
+
+    reader.account = ArchiveReadResult.present(account(1L));
+    assertThrows(UnsupportedHistoricalStateException.class,
+        () -> midChain.getStorageValue(ADDR, new DataWord(new byte[] {5})));
+  }
+
+  @Test
   public void uncoveredDomainsFailFast() {
     assertThrows(UnsupportedHistoricalStateException.class, () -> adapter.getVotes(ADDR));
     assertThrows(UnsupportedHistoricalStateException.class, () -> adapter.getWitness(ADDR));
