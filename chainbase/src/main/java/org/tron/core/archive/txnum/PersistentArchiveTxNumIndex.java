@@ -42,7 +42,12 @@ public final class PersistentArchiveTxNumIndex implements ArchiveTxNumIndex, Aut
 
   @Override
   public ArchiveBlockRange commitBlock(long blockNum, int userTxCount) {
-    ArchiveBlockRange range = inner.commitBlock(blockNum, userTxCount);
+    return commitBlock(blockNum, new byte[0], userTxCount);
+  }
+
+  @Override
+  public ArchiveBlockRange commitBlock(long blockNum, byte[] blockHash, int userTxCount) {
+    ArchiveBlockRange range = inner.commitBlock(blockNum, blockHash, userTxCount);
     List<ArchiveTxPosition> positions = new ArrayList<>();
     for (long txNum = range.getFirstTxNum(); txNum <= range.getLastTxNum(); txNum++) {
       inner.getPosition(txNum).ifPresent(positions::add);
@@ -63,13 +68,22 @@ public final class PersistentArchiveTxNumIndex implements ArchiveTxNumIndex, Aut
 
   @Override
   public void unwindBlock(long blockNum) {
-    ArchiveBlockRange range = store.getRange(blockNum)
-        .orElseThrow(() -> new ArchiveException("cannot unwind block " + blockNum
-            + ": not committed"));
+    ArchiveBlockRange range = getHeadBlockRange(blockNum);
     store.unwindRange(range, range.getFirstTxNum());
     // Re-seed the allocation state from the rewound persistent cursor. Committed lookups are served
     // from the store, so dropping the delegate's recent in-memory maps does not lose queryability.
     inner = new InMemoryArchiveTxNumIndex(range.getFirstTxNum());
+  }
+
+  @Override
+  public ArchiveBlockRange getHeadBlockRange(long blockNum) {
+    ArchiveBlockRange range = store.getRange(blockNum)
+        .orElseThrow(() -> new ArchiveException("cannot unwind block " + blockNum
+            + ": not committed"));
+    if (range.getLastTxNum() != store.getCursor() - 1) {
+      throw new ArchiveException("cannot unwind block " + blockNum + ": not archive head");
+    }
+    return range;
   }
 
   @Override

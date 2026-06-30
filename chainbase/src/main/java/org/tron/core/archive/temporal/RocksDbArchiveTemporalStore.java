@@ -142,15 +142,15 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
 
   @Override
   public void unwind(long fromTxNum) {
-    unwind(fromTxNum, 0L, false);
+    unwind(fromTxNum, Long.MAX_VALUE, 0L, false);
   }
 
   @Override
   public void unwindBlock(ArchiveBlockRange range) {
-    unwind(range.getFirstTxNum(), range.getBlockNum(), true);
+    unwind(range.getFirstTxNum(), range.getLastTxNum(), range.getBlockNum(), true);
   }
 
-  private void unwind(long fromTxNum, long blockNum, boolean deleteBlockMarker) {
+  private void unwind(long fromTxNum, long toTxNum, long blockNum, boolean deleteBlockMarker) {
     // One atomic batch: delete each reverted change's history + changeset entry, and reset each
     // affected key's latest to the prevValue of its SMALLEST dropped change (= the key's value at
     // the end of fromTxNum-1), computed against the pre-deletion state so a crash can never leave
@@ -162,6 +162,10 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
         it.seek(ArchiveTemporalCodec.changesetSeekFrom(fromTxNum));
         while (it.isValid() && it.key()[0] == ArchiveTemporalCodec.CHANGESET_PREFIX) {
           byte[] changesetKey = it.key();
+          long txNum = ArchiveTemporalCodec.txNumOfChangeset(changesetKey);
+          if (txNum > toTxNum) {
+            break;
+          }
           byte[] historyKey = ArchiveTemporalCodec.historyKeyOfChangeset(changesetKey);
           byte[] historyPrefix = ArchiveTemporalCodec.historyPrefixOfChangeset(changesetKey);
           WrappedByteArray prefix = WrappedByteArray.of(historyPrefix);

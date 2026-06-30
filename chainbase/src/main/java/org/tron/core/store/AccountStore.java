@@ -137,7 +137,13 @@ public class AccountStore extends TronStoreWithRevoking<AccountCapsule> {
         accountTraceStore.recordBalanceWithBlock(key, blockId.getNum(), 0);
       }
     }
+    boolean archiveActive = ArchiveCaptureHolder.isActive();
+    byte[] oldArchiveValue = archiveActive
+        ? accountAssetDiffValue(revokingDB.getUnchecked(key)) : null;
     super.delete(key);
+    if (archiveActive) {
+      ArchiveCaptureHolder.captureAccountAsset(key, oldArchiveValue, null);
+    }
   }
 
   /**

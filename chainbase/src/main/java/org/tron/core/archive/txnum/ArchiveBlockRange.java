@@ -1,5 +1,6 @@
 package org.tron.core.archive.txnum;
 
+import java.util.Arrays;
 import org.tron.core.archive.ArchiveSource;
 
 /**
@@ -13,16 +14,24 @@ public final class ArchiveBlockRange {
   private final long lastTxNum;
   private final long prepareTxNum;
   private final long finalizeTxNum;
+  private final byte[] blockHash;
   private final int userTxCount;
   private final ArchiveSource source;
 
   public ArchiveBlockRange(long blockNum, long firstTxNum, long lastTxNum, long prepareTxNum,
       long finalizeTxNum, int userTxCount, ArchiveSource source) {
+    this(blockNum, firstTxNum, lastTxNum, prepareTxNum, finalizeTxNum, new byte[0],
+        userTxCount, source);
+  }
+
+  public ArchiveBlockRange(long blockNum, long firstTxNum, long lastTxNum, long prepareTxNum,
+      long finalizeTxNum, byte[] blockHash, int userTxCount, ArchiveSource source) {
     this.blockNum = blockNum;
     this.firstTxNum = firstTxNum;
     this.lastTxNum = lastTxNum;
     this.prepareTxNum = prepareTxNum;
     this.finalizeTxNum = finalizeTxNum;
+    this.blockHash = blockHash == null ? new byte[0] : Arrays.copyOf(blockHash, blockHash.length);
     this.userTxCount = userTxCount;
     this.source = source;
   }
@@ -45,6 +54,10 @@ public final class ArchiveBlockRange {
 
   public long getFinalizeTxNum() {
     return finalizeTxNum;
+  }
+
+  public byte[] getBlockHash() {
+    return Arrays.copyOf(blockHash, blockHash.length);
   }
 
   public int getUserTxCount() {

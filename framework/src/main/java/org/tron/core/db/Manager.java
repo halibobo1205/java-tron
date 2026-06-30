@@ -1177,7 +1177,9 @@ public class Manager {
             | ValidateScheduleException
             | VMIllegalException
             | ZksnarkException
-            | BadBlockException e) {
+            | BadBlockException
+            | EventBloomException
+            | RuntimeException e) {
           archiveService.abortBlock(item.getBlk());
           logger.warn(e.getMessage(), e);
           exception = e;
@@ -1214,8 +1216,14 @@ public class Manager {
                   | DupTransactionException
                   | TransactionExpirationException
                   | TooBigTransactionException
+                  | TooBigTransactionResultException
                   | ValidateScheduleException
-                  | ZksnarkException e) {
+                  | ReceiptCheckErrException
+                  | VMIllegalException
+                  | ZksnarkException
+                  | BadBlockException
+                  | EventBloomException
+                  | RuntimeException e) {
                 archiveService.abortBlock(khaosBlock.getBlk());
                 logger.warn(e.getMessage(), e);
               }

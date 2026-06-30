@@ -1,6 +1,7 @@
 package org.tron.core.archive.temporal;
 
 import com.google.common.primitives.Bytes;
+import com.google.common.primitives.Ints;
 import com.google.common.primitives.Longs;
 import java.util.Arrays;
 import org.tron.core.archive.codec.DomainValue;
@@ -80,20 +81,40 @@ public final class ArchiveTemporalCodec {
   }
 
   static byte[] encodeBlockCommit(ArchiveBlockRange range) {
+    byte[] blockHash = range.getBlockHash();
     return Bytes.concat(
         Longs.toByteArray(range.getBlockNum()),
         Longs.toByteArray(range.getFirstTxNum()),
         Longs.toByteArray(range.getLastTxNum()),
-        Longs.toByteArray(range.getFinalizeTxNum()));
+        Longs.toByteArray(range.getFinalizeTxNum()),
+        Ints.toByteArray(blockHash.length),
+        blockHash);
   }
 
   static boolean blockCommitMatches(byte[] encoded, ArchiveBlockRange range) {
-    return encoded != null
-        && encoded.length == 32
-        && Longs.fromByteArray(Arrays.copyOfRange(encoded, 0, 8)) == range.getBlockNum()
+    if (encoded == null || encoded.length < 32) {
+      return false;
+    }
+    boolean coreMatches =
+        Longs.fromByteArray(Arrays.copyOfRange(encoded, 0, 8)) == range.getBlockNum()
         && Longs.fromByteArray(Arrays.copyOfRange(encoded, 8, 16)) == range.getFirstTxNum()
         && Longs.fromByteArray(Arrays.copyOfRange(encoded, 16, 24)) == range.getLastTxNum()
         && Longs.fromByteArray(Arrays.copyOfRange(encoded, 24, 32)) == range.getFinalizeTxNum();
+    if (!coreMatches) {
+      return false;
+    }
+    byte[] blockHash = range.getBlockHash();
+    if (encoded.length == 32) {
+      return blockHash.length == 0;
+    }
+    if (encoded.length < 36) {
+      return false;
+    }
+    int blockHashLen = Ints.fromBytes(encoded[32], encoded[33], encoded[34], encoded[35]);
+    if (blockHashLen < 0 || encoded.length != 36 + blockHashLen) {
+      return false;
+    }
+    return Arrays.equals(Arrays.copyOfRange(encoded, 36, 36 + blockHashLen), blockHash);
   }
 
   static long txNumOfChangeset(byte[] changesetKey) {

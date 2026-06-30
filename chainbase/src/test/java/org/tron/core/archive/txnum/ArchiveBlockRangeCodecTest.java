@@ -1,5 +1,6 @@
 package org.tron.core.archive.txnum;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
 
@@ -10,7 +11,9 @@ public class ArchiveBlockRangeCodecTest {
 
   @Test
   public void rangeRoundTrips() {
-    ArchiveBlockRange range = new ArchiveBlockRange(7, 10, 15, 10, 15, 3, ArchiveSource.REPLAY);
+    byte[] blockHash = {1, 2, 3};
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        7, 10, 15, 10, 15, blockHash, 3, ArchiveSource.REPLAY);
     ArchiveBlockRange back =
         ArchiveBlockRangeCodec.decodeRange(ArchiveBlockRangeCodec.encodeRange(range));
     assertEquals(7, back.getBlockNum());
@@ -18,6 +21,7 @@ public class ArchiveBlockRangeCodecTest {
     assertEquals(15, back.getLastTxNum());
     assertEquals(10, back.getPrepareTxNum());
     assertEquals(15, back.getFinalizeTxNum());
+    assertArrayEquals(blockHash, back.getBlockHash());
     assertEquals(3, back.getUserTxCount());
     assertEquals(ArchiveSource.REPLAY, back.getSource());
   }
