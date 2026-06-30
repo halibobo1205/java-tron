@@ -153,7 +153,7 @@ public final class DefaultArchiveService implements ArchiveService {
       }
       List<ArchiveChangeRecord> records = new ArrayList<>(merged.values());
       ArchiveBlockRange range = txNumIndex.commitBlock(
-          block.getNum(), block.getTransactions().size());
+          block.getNum(), block.getBlockId().getBytes(), block.getTransactions().size());
       txNumCommitted = true;
       temporalStore.putBlockChanges(range, records);
     } catch (RuntimeException e) {
@@ -198,8 +198,8 @@ public final class DefaultArchiveService implements ArchiveService {
     }
     // Drop the reverted block's already-persisted changes (txNum >= its first txNum) before the
     // index forgets the range, so the temporal store never retains rolled-back state.
-    txNumIndex.getBlockRange(block.getNum())
-        .ifPresent(temporalStore::unwindBlock);
+    ArchiveBlockRange range = txNumIndex.getHeadBlockRange(block.getNum());
+    temporalStore.unwindBlock(range);
     txNumIndex.unwindBlock(block.getNum());
     captureEngine.clear();
   }

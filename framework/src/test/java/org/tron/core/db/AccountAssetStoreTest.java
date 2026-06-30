@@ -3,6 +3,7 @@ package org.tron.core.db;
 import com.google.common.primitives.Longs;
 import com.google.protobuf.ByteString;
 
+import java.util.List;
 import java.util.Map;
 import javax.annotation.Resource;
 
@@ -18,6 +19,7 @@ import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveSource;
 import org.tron.core.archive.DefaultArchiveService;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
+import org.tron.core.archive.capture.ArchiveChangeRecord;
 import org.tron.core.archive.domain.ArchiveDomain;
 import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
 import org.tron.core.capsule.AccountCapsule;
@@ -170,6 +172,49 @@ public class AccountAssetStoreTest extends BaseTest {
           .filter(r -> r.getDomain() == ArchiveDomain.ACCOUNT_ASSET)
           .count();
       Assert.assertEquals(0L, accountAssetChanges);
+    } finally {
+      archiveService.abortBlock(new BlockCapsule(1, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY));
+      archiveService.close();
+      ArchiveCaptureHolder.clear();
+    }
+  }
+
+  @Test
+  public void archiveAccountDeleteEmitsAssetTombstoneForOptimizedAsset() {
+    chainBaseManager.getDynamicPropertiesStore().setAllowAccountAssetOptimization(1);
+    byte[] address = ByteArray.fromHexString(OWNER_ADDRESS);
+    address[20] = 0x55; // keep this test isolated from OWNER_ADDRESS assets created elsewhere
+    Protocol.Account accountWithAsset = Protocol.Account.newBuilder()
+        .setAddress(ByteString.copyFrom(address))
+        .setAssetOptimized(true)
+        .putAssetV2("30002", 7L)
+        .build();
+    accountAssetStore.putAccount(accountWithAsset);
+    AccountCapsule stripped = new AccountCapsule(Protocol.Account.newBuilder()
+        .setAddress(ByteString.copyFrom(address))
+        .setAssetOptimized(true)
+        .build());
+    accountStore.put(address, stripped);
+
+    DefaultArchiveService archiveService =
+        new DefaultArchiveService(true, new InMemoryArchiveTemporalStore());
+    try {
+      BlockCapsule block = new BlockCapsule(1, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY);
+      archiveService.beginBlock(block, ArchiveSource.NORMAL);
+      archiveService.beginSystemTx(block, ArchivePhase.BLOCK_FINALIZE);
+      accountStore.delete(address);
+      archiveService.endTx();
+
+      List<ArchiveChangeRecord> records = archiveService.getCaptureEngine().records();
+      Assert.assertEquals(1L, records.stream()
+          .filter(r -> r.getDomain() == ArchiveDomain.ACCOUNT_ASSET)
+          .count());
+      ArchiveChangeRecord record = records.stream()
+          .filter(r -> r.getDomain() == ArchiveDomain.ACCOUNT_ASSET)
+          .findFirst()
+          .orElseThrow(AssertionError::new);
+      Assert.assertEquals(7L, Longs.fromByteArray(record.getPrevValue().getValue()));
+      Assert.assertTrue(record.getValue().isDeleted());
     } finally {
       archiveService.abortBlock(new BlockCapsule(1, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY));
       archiveService.close();

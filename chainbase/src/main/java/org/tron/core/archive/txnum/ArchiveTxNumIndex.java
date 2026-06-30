@@ -20,9 +20,15 @@ public interface ArchiveTxNumIndex {
 
   ArchiveBlockRange commitBlock(long blockNum, int userTxCount);
 
+  default ArchiveBlockRange commitBlock(long blockNum, byte[] blockHash, int userTxCount) {
+    return commitBlock(blockNum, userTxCount);
+  }
+
   void abortBlock(long blockNum);
 
   void unwindBlock(long blockNum);
+
+  ArchiveBlockRange getHeadBlockRange(long blockNum);
 
   Optional<ArchiveBlockRange> getBlockRange(long blockNum);
 

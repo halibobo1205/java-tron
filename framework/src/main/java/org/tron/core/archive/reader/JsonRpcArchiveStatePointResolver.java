@@ -1,5 +1,6 @@
 package org.tron.core.archive.reader;
 
+import java.util.Arrays;
 import java.util.Optional;
 import org.tron.core.Wallet;
 import org.tron.core.archive.ArchiveService;
@@ -42,9 +43,19 @@ public final class JsonRpcArchiveStatePointResolver {
     }
     long blockNum = block.getBlockHeader().getRawData().getNumber();
     byte[] blockHash = new BlockCapsule(block).getBlockId().getBytes();
-    Optional<ArchiveBlockRange> range = txNumIndex().getBlockRange(blockNum);
+    ArchiveTxNumIndex index = txNumIndex();
+    Optional<ArchiveBlockRange> range = index.getBlockRange(blockNum);
     if (!range.isPresent()) {
+      long first = index.getFirstArchivedBlock();
+      if (first >= 0 && blockNum < first) {
+        throw new JsonRpcInternalException("archive history unavailable for block " + blockNum
+            + "; lowest supported block is " + first);
+      }
       throw new JsonRpcInternalException("archive history unavailable for block " + blockNum);
+    }
+    byte[] archivedHash = range.get().getBlockHash();
+    if (archivedHash.length > 0 && !Arrays.equals(archivedHash, blockHash)) {
+      throw new JsonRpcInternalException("archive history hash mismatch for block " + blockNum);
     }
     return ResolvedArchiveStatePoint.archive(
         ArchiveStatePoint.blockEnd(blockNum, blockHash, range.get().getFinalizeTxNum()));

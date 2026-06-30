@@ -79,6 +79,10 @@ public final class HistoricalTraceSupport {
   public TraceResult traceCall(byte[] ownerAddress, byte[] contractAddress, long callValue,
       byte[] data, String blockNumOrTag) throws JsonRpcInvalidParamsException,
       JsonRpcInvalidRequestException, JsonRpcInternalException {
+    if (JsonRpcApiUtil.LATEST_STR.equalsIgnoreCase(blockNumOrTag)) {
+      throw new JsonRpcInternalException("historical debug_traceCall invoked for the latest tag");
+    }
+    requireGenesisCoverage();
     ResolvedArchiveStatePoint resolved = resolver.resolveBlockEnd(blockNumOrTag);
     if (resolved.isLatest()) {
       throw new JsonRpcInternalException("historical debug_traceCall invoked for the latest tag");
@@ -122,6 +126,7 @@ public final class HistoricalTraceSupport {
   public TraceResult traceTransaction(byte[] txId, Object traceOptions)
       throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
       JsonRpcInternalException {
+    requireGenesisCoverage();
     ByteString txIdBs = ByteString.copyFrom(txId);
     Transaction tx = wallet.getTransactionById(txIdBs);
     if (tx == null) {
@@ -236,5 +241,16 @@ public final class HistoricalTraceSupport {
     }
     long first = ((DefaultArchiveService) archiveService).getTxNumIndex().getFirstArchivedBlock();
     return first >= 0 && first <= 1;
+  }
+
+  private void requireGenesisCoverage() throws JsonRpcInternalException {
+    if (!isGenesisComplete()) {
+      long first = archiveService instanceof DefaultArchiveService
+          ? ((DefaultArchiveService) archiveService).getTxNumIndex().getFirstArchivedBlock()
+          : -1L;
+      throw new JsonRpcInternalException(
+          "archive does not cover state from genesis (first archived block " + first
+              + "); historical debug trace is unavailable on a mid-chain archive");
+    }
   }
 }

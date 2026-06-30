@@ -101,10 +101,10 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
       for (long txNum = range.getFirstTxNum(); txNum <= range.getLastTxNum(); txNum++) {
         byte[] positionKey = ArchiveBlockRangeCodec.positionKey(txNum);
         byte[] encodedPosition = db.get(positionKey);
-        batch.delete(positionKey);
         if (encodedPosition == null) {
-          continue;
+          throw new ArchiveException("archive tx-position missing for unwind txNum " + txNum);
         }
+        batch.delete(positionKey);
         ArchiveTxPosition position = ArchiveBlockRangeCodec.decodePosition(encodedPosition);
         if (position.getPhase() == ArchivePhase.USER_TX && position.getTxIndex() >= 0) {
           batch.delete(ArchiveBlockRangeCodec.blockIndexKey(
