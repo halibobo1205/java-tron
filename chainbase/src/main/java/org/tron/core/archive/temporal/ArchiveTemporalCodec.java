@@ -4,6 +4,7 @@ import com.google.common.primitives.Bytes;
 import com.google.common.primitives.Ints;
 import com.google.common.primitives.Longs;
 import java.util.Arrays;
+import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
@@ -157,9 +158,14 @@ public final class ArchiveTemporalCodec {
   }
 
   static DomainValue decodeValue(byte[] encoded) {
-    boolean deleted = encoded[0] == 1;
-    if (deleted) {
+    if (encoded == null || encoded.length == 0) {
+      throw new ArchiveException("archive temporal value is empty");
+    }
+    if (encoded[0] == 1) {
       return DomainValue.tombstone();
+    }
+    if (encoded[0] != 0) {
+      throw new ArchiveException("archive temporal value has invalid flag " + encoded[0]);
     }
     return DomainValue.present(Arrays.copyOfRange(encoded, 1, encoded.length));
   }

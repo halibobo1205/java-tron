@@ -250,6 +250,38 @@ public class RocksDbArchiveTemporalStoreTest {
   }
 
   @Test
+  public void latestWithInvalidValueFlagFailsClosed() throws Exception {
+    store.close();
+    try (Options options = new Options().setCreateIfMissing(true);
+        RocksDB db = RocksDB.open(options, dir.toString());
+        WriteBatch batch = new WriteBatch();
+        WriteOptions writeOptions = new WriteOptions()) {
+      batch.put(ArchiveTemporalCodec.latestKey(ArchiveDomain.ACCOUNT, KEY),
+          new byte[] {2, 0x0B});
+      db.write(writeOptions, batch);
+    }
+    store = new RocksDbArchiveTemporalStore(dir.toString());
+
+    assertThrows(ArchiveException.class, () -> store.latest(ArchiveDomain.ACCOUNT, KEY));
+  }
+
+  @Test
+  public void historyWithInvalidValueFlagFailsClosed() throws Exception {
+    store.close();
+    try (Options options = new Options().setCreateIfMissing(true);
+        RocksDB db = RocksDB.open(options, dir.toString());
+        WriteBatch batch = new WriteBatch();
+        WriteOptions writeOptions = new WriteOptions()) {
+      batch.put(ArchiveTemporalCodec.historyKey(ArchiveDomain.ACCOUNT, KEY, 8),
+          new byte[] {2, 0x0B});
+      db.write(writeOptions, batch);
+    }
+    store = new RocksDbArchiveTemporalStore(dir.toString());
+
+    assertThrows(ArchiveException.class, () -> store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 5));
+  }
+
+  @Test
   public void prefixCollidingKeysDoNotCrossContaminate() {
     // keyA is a strict byte-prefix of keyB in the same domain (the variable-length-key trap).
     ArchiveDomain domain = ArchiveDomain.DYNAMIC_PROPERTIES;
