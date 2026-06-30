@@ -10,7 +10,9 @@ import org.tron.core.archive.domain.ReaderPolicy;
 import org.tron.core.archive.temporal.ArchiveTemporalStore;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.ContractCapsule;
+import org.tron.core.capsule.ContractStateCapsule;
 import org.tron.protos.Protocol.Account;
+import org.tron.protos.contract.SmartContractOuterClass.ContractState;
 import org.tron.protos.contract.SmartContractOuterClass.SmartContract;
 
 /**
@@ -71,6 +73,23 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
     } catch (InvalidProtocolBufferException e) {
       throw new ArchiveReaderException(ArchiveReaderException.Reason.CODEC_ERROR,
           "archive CONTRACT value is not a valid SmartContract proto", e);
+    }
+  }
+
+  @Override
+  public ArchiveReadResult<ContractStateCapsule> getContractState(byte[] address)
+      throws ArchiveReaderException {
+    requireLength(address, ADDRESS_LEN, "address");
+    ArchiveReadResult<byte[]> raw = getRaw(ArchiveDomain.CONTRACT_STATE, address);
+    if (!raw.isPresent()) {
+      return retype(raw);
+    }
+    try {
+      return ArchiveReadResult.present(
+          new ContractStateCapsule(ContractState.parseFrom(raw.getValue())));
+    } catch (InvalidProtocolBufferException e) {
+      throw new ArchiveReaderException(ArchiveReaderException.Reason.CODEC_ERROR,
+          "archive CONTRACT_STATE value is not a valid ContractState proto", e);
     }
   }
 
