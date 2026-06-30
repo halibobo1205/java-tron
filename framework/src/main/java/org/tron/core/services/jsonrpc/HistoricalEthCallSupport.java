@@ -39,10 +39,9 @@ import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
  *
  * <p>Account / code / storage are read historically, and the energy price is reconstructed from the
  * live {@code EnergyPriceHistory} (see {@link HistoricalVmDynamicProperties}), so {@code BASEFEE} /
- * {@code GASPRICE} replay at the value in force then. The remaining hard-fork flags are still
- * sourced from the LATEST store as a baseline (they are near-monotonic, so for a recent block
- * latest equals historical); a fully historical flag view, reading the archived dynamic-properties
- * at the block, is a later refinement.
+ * {@code GASPRICE} replay at the value in force then. VM execution parameters are read from the
+ * archive at the target block; mid-chain archives use latest as the baseline only when a dynamic
+ * property is missing because its activation may predate coverage.
  */
 public final class HistoricalEthCallSupport {
 
@@ -68,13 +67,13 @@ public final class HistoricalEthCallSupport {
     if (JsonRpcApiUtil.LATEST_STR.equalsIgnoreCase(blockNumOrTag)) {
       throw new JsonRpcInternalException("historical eth_call invoked for the latest tag");
     }
-    boolean genesisComplete = requireGenesisCoverage();
     ResolvedArchiveStatePoint resolved = resolver.resolveBlockEnd(blockNumOrTag);
     if (resolved.isLatest()) {
       // shouldUseArchive already filters latest; reaching here means a caller skipped that guard.
       throw new JsonRpcInternalException("historical eth_call invoked for the latest tag");
     }
     ArchiveStatePoint point = resolved.getPoint();
+    boolean genesisComplete = isGenesisComplete();
 
     Block block = wallet.getBlockByNum(point.getBlockNum());
     if (block == null) {
@@ -99,7 +98,7 @@ public final class HistoricalEthCallSupport {
       TransactionCapsule trxCap =
           wallet.createTransactionCapsule(trigger, ContractType.TriggerSmartContract);
       HistoricalConstantCallResult result = new HistoricalConstantCallExecutor()
-          .execute(reader, vmProperties, historicalBlock, trxCap);
+          .execute(reader, vmProperties, historicalBlock, trxCap, genesisComplete);
       if (result.isReverted()) {
         // Mirror the latest path: message carries the decoded revert reason, data the raw bytes.
         throw new JsonRpcInternalException(
@@ -146,15 +145,4 @@ public final class HistoricalEthCallSupport {
     return first >= 0 && first <= 1;
   }
 
-  private boolean requireGenesisCoverage() throws JsonRpcInternalException {
-    if (!isGenesisComplete()) {
-      long first = archiveService instanceof DefaultArchiveService
-          ? ((DefaultArchiveService) archiveService).getTxNumIndex().getFirstArchivedBlock()
-          : -1L;
-      throw new JsonRpcInternalException(
-          "archive does not cover state from genesis (first archived block " + first
-              + "); historical eth_call is unavailable on a mid-chain archive");
-    }
-    return true;
-  }
 }
