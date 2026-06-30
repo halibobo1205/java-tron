@@ -142,6 +142,38 @@ public class NoopArchiveServiceTest {
   }
 
   @Test
+  public void factoryRejectsCursorThatDoesNotMatchLastRange() throws IOException {
+    StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
+    config.setEnable(true);
+    Path dir = Files.createTempDirectory("archive-factory-cursor-test");
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        7, 0, 1, 0, 1, 0, ArchiveSource.NORMAL);
+
+    RocksDbArchiveTemporalStore temporal =
+        new RocksDbArchiveTemporalStore(dir.resolve("temporal").toString());
+    try {
+      temporal.putBlockChanges(range, Collections.emptyList());
+    } finally {
+      temporal.close();
+    }
+    RocksDbArchiveBlockRangeStore index =
+        new RocksDbArchiveBlockRangeStore(dir.resolve("index").toString());
+    try {
+      index.commitRange(range, 1); // corrupt: expected cursor is lastTxNum + 1 = 2
+    } finally {
+      index.close();
+    }
+
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> ArchiveServiceFactory.create(config, dir.toString()));
+      assertTrue(ex.getMessage().contains("cursor"));
+    } finally {
+      deleteRecursively(dir.toFile());
+    }
+  }
+
+  @Test
   public void factoryRejectsIndexRangeAfterTemporalUnwindRemovedMarker() throws IOException {
     StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
     config.setEnable(true);
