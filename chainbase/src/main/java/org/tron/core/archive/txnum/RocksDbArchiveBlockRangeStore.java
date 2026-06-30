@@ -196,6 +196,22 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
     }
   }
 
+  public void validateCanonicalHead(long headNum, byte[] headHash) {
+    Optional<ArchiveBlockRange> lastRange = getLastRange();
+    if (!lastRange.isPresent()) {
+      return;
+    }
+    ArchiveBlockRange range = lastRange.get();
+    if (range.getBlockNum() != headNum) {
+      throw new ArchiveException("archive head block " + range.getBlockNum()
+          + " does not match canonical head block " + headNum);
+    }
+    byte[] archiveHash = range.getBlockHash();
+    if (archiveHash.length > 0 && !Arrays.equals(archiveHash, headHash)) {
+      throw new ArchiveException("archive head block hash does not match canonical head hash");
+    }
+  }
+
   public Optional<ArchiveTxPosition> getPosition(long txNum) {
     try {
       byte[] value = db.get(ArchiveBlockRangeCodec.positionKey(txNum));

@@ -41,6 +41,7 @@ public class NoopArchiveServiceTest {
     service.commitBlock(null);
     service.abortBlock(null);
     service.unwindBlock(null);
+    service.validateCanonicalHead(null);
   }
 
   @Test

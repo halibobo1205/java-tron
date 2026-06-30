@@ -15,6 +15,8 @@ public class ArchiveTxNumIndexTest {
 
   private static final byte[] TX_A = new byte[] {1, 2, 3};
   private static final byte[] TX_B = new byte[] {4, 5, 6};
+  private static final byte[] HASH_A = new byte[] {7, 8, 9};
+  private static final byte[] HASH_B = new byte[] {9, 8, 7};
 
   private static long commitTwoUserTxBlock(ArchiveTxNumIndex idx, long blockNum) {
     idx.beginBlock(blockNum, ArchiveSource.NORMAL);
@@ -144,6 +146,24 @@ public class ArchiveTxNumIndexTest {
   }
 
   @Test
+  public void validateCanonicalHeadAllowsEmptyArchive() {
+    ArchiveTxNumIndex idx = new InMemoryArchiveTxNumIndex();
+
+    idx.validateCanonicalHead(99, HASH_A);
+  }
+
+  @Test
+  public void validateCanonicalHeadChecksBlockAndHash() {
+    ArchiveTxNumIndex idx = new InMemoryArchiveTxNumIndex();
+    commitEmptyBlock(idx, 10, HASH_A);
+
+    idx.validateCanonicalHead(10, HASH_A);
+    assertThrows(ArchiveException.class, () -> idx.validateCanonicalHead(9, HASH_A));
+    assertThrows(ArchiveException.class, () -> idx.validateCanonicalHead(11, HASH_A));
+    assertThrows(ArchiveException.class, () -> idx.validateCanonicalHead(10, HASH_B));
+  }
+
+  @Test
   public void unwindNonHeadBlockRejectedWithoutChangingIndex() {
     ArchiveTxNumIndex idx = new InMemoryArchiveTxNumIndex();
     commitTwoUserTxBlock(idx, 1);
@@ -195,9 +215,14 @@ public class ArchiveTxNumIndexTest {
   }
 
   private static ArchiveBlockRange commitEmptyBlock(ArchiveTxNumIndex idx, long blockNum) {
+    return commitEmptyBlock(idx, blockNum, new byte[0]);
+  }
+
+  private static ArchiveBlockRange commitEmptyBlock(ArchiveTxNumIndex idx, long blockNum,
+      byte[] blockHash) {
     idx.beginBlock(blockNum, ArchiveSource.NORMAL);
     idx.allocateSystemTx(blockNum, ArchivePhase.BLOCK_PREPARE);
     idx.allocateSystemTx(blockNum, ArchivePhase.BLOCK_FINALIZE);
-    return idx.commitBlock(blockNum, 0);
+    return idx.commitBlock(blockNum, blockHash, 0);
   }
 }

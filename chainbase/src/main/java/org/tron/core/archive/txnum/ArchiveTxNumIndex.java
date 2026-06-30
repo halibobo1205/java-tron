@@ -28,6 +28,8 @@ public interface ArchiveTxNumIndex {
 
   void unwindBlock(long blockNum);
 
+  void validateCanonicalHead(long headNum, byte[] headHash);
+
   ArchiveBlockRange getHeadBlockRange(long blockNum);
 
   Optional<ArchiveBlockRange> getBlockRange(long blockNum);

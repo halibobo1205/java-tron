@@ -25,6 +25,8 @@ import org.tron.core.archive.ArchiveSource;
 public class PersistentArchiveTxNumIndexTest {
 
   private static final byte[] TX_A = new byte[] {0x01, 0x02, 0x03};
+  private static final byte[] HASH_A = new byte[] {0x04, 0x05, 0x06};
+  private static final byte[] HASH_B = new byte[] {0x06, 0x05, 0x04};
 
   private Path dir;
   private RocksDbArchiveBlockRangeStore store;
@@ -46,10 +48,14 @@ public class PersistentArchiveTxNumIndexTest {
   }
 
   private ArchiveBlockRange pushBlock(long blockNum) {
+    return pushBlock(blockNum, new byte[0]);
+  }
+
+  private ArchiveBlockRange pushBlock(long blockNum, byte[] blockHash) {
     index.beginBlock(blockNum, ArchiveSource.NORMAL);
     index.allocateSystemTx(blockNum, ArchivePhase.BLOCK_PREPARE);
     index.allocateSystemTx(blockNum, ArchivePhase.BLOCK_FINALIZE);
-    return index.commitBlock(blockNum, 0);
+    return index.commitBlock(blockNum, blockHash, 0);
   }
 
   private ArchiveBlockRange pushBlockWithUserTx(long blockNum, byte[] txId) {
@@ -200,6 +206,23 @@ public class PersistentArchiveTxNumIndexTest {
     ArchiveException ex = assertThrows(ArchiveException.class, () -> store.commitRange(gap, 6));
     assertTrue(ex.getMessage().contains("non-contiguous archive txNum range"));
     assertFalse(store.getRange(11).isPresent());
+  }
+
+  @Test
+  public void validateCanonicalHeadAllowsEmptyArchive() {
+    index.validateCanonicalHead(99, HASH_A);
+    store.validateCanonicalHead(99, HASH_A);
+  }
+
+  @Test
+  public void validateCanonicalHeadChecksBlockAndHash() {
+    pushBlock(10, HASH_A);
+
+    index.validateCanonicalHead(10, HASH_A);
+    store.validateCanonicalHead(10, HASH_A);
+    assertThrows(ArchiveException.class, () -> index.validateCanonicalHead(9, HASH_A));
+    assertThrows(ArchiveException.class, () -> index.validateCanonicalHead(11, HASH_A));
+    assertThrows(ArchiveException.class, () -> index.validateCanonicalHead(10, HASH_B));
   }
 
   @Test
