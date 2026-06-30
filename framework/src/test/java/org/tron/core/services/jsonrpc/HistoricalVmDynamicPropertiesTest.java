@@ -38,4 +38,12 @@ public class HistoricalVmDynamicPropertiesTest {
     assertEquals(140L, parseEnergyFee(3000L, history));
     assertEquals(210L, parseEnergyFee(9000L, history));
   }
+
+  @Test
+  public void resolveHistoricalEnergyFeeFallsBackToHistoricalDefault() {
+    // Timestamp 0 is before the first "0:100" strict activation boundary in parseEnergyFee. The
+    // historical path must still use the genesis default, not latestStore.getEnergyFee().
+    assertEquals(100L,
+        HistoricalVmDynamicProperties.resolveHistoricalEnergyFee(0L, "0:100,2000:140"));
+  }
 }

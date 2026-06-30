@@ -23,10 +23,12 @@ public final class DynamicKeyPolicy {
     // --- IN_GLOBAL_ROOT: fee parameters ---
     root("ENERGY_FEE", DynamicKeyClass.FEE_PARAMETER);
     root("TRANSACTION_FEE", DynamicKeyClass.FEE_PARAMETER);
+    root("MAX_FEE_LIMIT", DynamicKeyClass.FEE_PARAMETER);
     root("MAX_CPU_TIME_OF_ONE_TX", DynamicKeyClass.FEE_PARAMETER);
     root("MEMO_FEE", DynamicKeyClass.FEE_PARAMETER);
 
     // --- IN_GLOBAL_ROOT: VM / fork-gate config (changes historical execution) ---
+    root("ALLOW_CREATION_OF_CONTRACTS", DynamicKeyClass.VM_CONFIG);
     root("ALLOW_TVM_TRANSFER_TRC10", DynamicKeyClass.VM_CONFIG);
     root("ALLOW_TVM_CONSTANTINOPLE", DynamicKeyClass.VM_CONFIG);
     root("ALLOW_TVM_SOLIDITY_059", DynamicKeyClass.VM_CONFIG);
@@ -35,14 +37,18 @@ public final class DynamicKeyPolicy {
     root("ALLOW_TVM_VOTE", DynamicKeyClass.VM_CONFIG);
     root("ALLOW_TVM_LONDON", DynamicKeyClass.VM_CONFIG);
     root("ALLOW_TVM_COMPATIBLE_EVM", DynamicKeyClass.VM_CONFIG);
+    root("ALLOW_HIGHER_LIMIT_FOR_MAX_CPU_TIME_OF_ONE_TX", DynamicKeyClass.VM_CONFIG);
     root("ALLOW_OPTIMIZED_RETURN_VALUE_OF_CHAIN_ID", DynamicKeyClass.VM_CONFIG);
+    root("CURRENT_CYCLE_NUMBER", DynamicKeyClass.VM_CONFIG);
     root("ALLOW_DYNAMIC_ENERGY", DynamicKeyClass.VM_CONFIG);
     root("DYNAMIC_ENERGY_THRESHOLD", DynamicKeyClass.VM_CONFIG);
     root("DYNAMIC_ENERGY_INCREASE_FACTOR", DynamicKeyClass.VM_CONFIG);
     root("DYNAMIC_ENERGY_MAX_FACTOR", DynamicKeyClass.VM_CONFIG);
     root("ALLOW_TVM_SHANGHAI", DynamicKeyClass.VM_CONFIG);
+    root("ALLOW_ENERGY_ADJUSTMENT", DynamicKeyClass.VM_CONFIG);
     root("ALLOW_STRICT_MATH", DynamicKeyClass.VM_CONFIG);
     root("ALLOW_TVM_CANCUN", DynamicKeyClass.VM_CONFIG);
+    root("CONSENSUS_LOGIC_OPTIMIZATION", DynamicKeyClass.VM_CONFIG);
     root("ALLOW_TVM_BLOB", DynamicKeyClass.VM_CONFIG);
     root("ALLOW_TVM_SELFDESTRUCT_RESTRICTION", DynamicKeyClass.VM_CONFIG);
     root("ALLOW_TVM_OSAKA", DynamicKeyClass.VM_CONFIG);

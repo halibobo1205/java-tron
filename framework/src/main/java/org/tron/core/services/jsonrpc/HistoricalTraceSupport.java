@@ -1,7 +1,6 @@
 package org.tron.core.services.jsonrpc;
 
 import static org.tron.core.Wallet.CONTRACT_VALIDATE_ERROR;
-import static org.tron.core.services.jsonrpc.JsonRpcApiUtil.parseEnergyFee;
 import static org.tron.core.services.jsonrpc.JsonRpcApiUtil.triggerCallContract;
 
 import com.google.protobuf.ByteString;
@@ -196,11 +195,8 @@ public final class HistoricalTraceSupport {
       throws JsonRpcInvalidRequestException, JsonRpcInternalException {
     DynamicPropertiesStore latestStore =
         StoreFactory.getInstance().getChainBaseManager().getDynamicPropertiesStore();
-    long historicalEnergyFee =
-        parseEnergyFee(historicalBlock.getTimeStamp(), latestStore.getEnergyPriceHistory());
-    if (historicalEnergyFee == -1) {
-      historicalEnergyFee = latestStore.getEnergyFee();
-    }
+    long historicalEnergyFee = HistoricalVmDynamicProperties.resolveHistoricalEnergyFee(
+        historicalBlock.getTimeStamp(), latestStore.getEnergyPriceHistory());
     boolean genesisComplete = isGenesisComplete();
 
     try (ArchiveStateReader reader = readerFactory().open(point)) {
