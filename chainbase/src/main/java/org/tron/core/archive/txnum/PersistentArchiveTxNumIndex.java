@@ -89,6 +89,11 @@ public final class PersistentArchiveTxNumIndex implements ArchiveTxNumIndex, Aut
   }
 
   @Override
+  public void validateCanonicalHead(long headNum, byte[] headHash) {
+    store.validateCanonicalHead(headNum, headHash);
+  }
+
+  @Override
   public Optional<ArchiveBlockRange> getBlockRange(long blockNum) {
     return store.getRange(blockNum);
   }

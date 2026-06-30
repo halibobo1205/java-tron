@@ -205,6 +205,15 @@ public final class DefaultArchiveService implements ArchiveService {
   }
 
   @Override
+  public void validateCanonicalHead(BlockCapsule canonicalHead) {
+    if (!enabled) {
+      return;
+    }
+    txNumIndex.validateCanonicalHead(
+        canonicalHead.getNum(), canonicalHead.getBlockId().getBytes());
+  }
+
+  @Override
   public void close() {
     ArchiveCaptureHolder.clear();
     closeQuietly(temporalStore, "temporal store");

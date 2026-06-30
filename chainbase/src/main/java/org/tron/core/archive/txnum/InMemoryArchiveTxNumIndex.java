@@ -1,6 +1,7 @@
 package org.tron.core.archive.txnum;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -196,6 +197,22 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
       throw new ArchiveException("cannot unwind block " + blockNum + ": not archive head");
     }
     return range;
+  }
+
+  @Override
+  public synchronized void validateCanonicalHead(long headNum, byte[] headHash) {
+    if (lastCommittedBlock < 0) {
+      return;
+    }
+    ArchiveBlockRange range = blockRanges.get(lastCommittedBlock);
+    if (range.getBlockNum() != headNum) {
+      throw new ArchiveException("archive head block " + range.getBlockNum()
+          + " does not match canonical head block " + headNum);
+    }
+    byte[] archiveHash = range.getBlockHash();
+    if (archiveHash.length > 0 && !Arrays.equals(archiveHash, headHash)) {
+      throw new ArchiveException("archive head block hash does not match canonical head hash");
+    }
   }
 
   @Override

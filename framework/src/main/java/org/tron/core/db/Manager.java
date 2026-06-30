@@ -520,8 +520,10 @@ public class Manager {
     chainBaseManager.setMortgageService(mortgageService);
     this.initGenesis();
     try {
-      this.khaosDb.start(chainBaseManager.getBlockById(
-          getDynamicPropertiesStore().getLatestBlockHeaderHash()));
+      BlockCapsule canonicalHead = chainBaseManager.getBlockById(
+          getDynamicPropertiesStore().getLatestBlockHeaderHash());
+      this.khaosDb.start(canonicalHead);
+      archiveService.validateCanonicalHead(canonicalHead);
     } catch (ItemNotFoundException e) {
       logger.error(
           "Can not find Dynamic highest block from DB! \nnumber={} \nhash={}",

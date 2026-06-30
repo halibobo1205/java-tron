@@ -23,6 +23,10 @@ public interface ArchiveService {
 
   void unwindBlock(BlockCapsule block);
 
+  /** Startup guard: fail closed if persisted archive head disagrees with canonical chain head. */
+  default void validateCanonicalHead(BlockCapsule canonicalHead) {
+  }
+
   void beginSystemTx(BlockCapsule block, ArchivePhase phase);
 
   void beginUserTx(BlockCapsule block, int txIndex, TransactionCapsule tx);
