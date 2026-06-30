@@ -5,6 +5,7 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import org.junit.Test;
 import org.tron.common.runtime.vm.DataWord;
@@ -14,6 +15,7 @@ import org.tron.core.archive.reader.ArchiveStatePoint;
 import org.tron.core.archive.reader.ArchiveStateReader;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.ContractCapsule;
+import org.tron.core.capsule.ContractStateCapsule;
 import org.tron.core.store.VmDynamicProperties;
 import org.tron.protos.Protocol;
 
@@ -39,6 +41,7 @@ public class ArchiveRepositoryAdapterTest {
   private static final class FakeReader implements ArchiveStateReader {
     ArchiveReadResult<AccountCapsule> account = ArchiveReadResult.missing();
     ArchiveReadResult<ContractCapsule> contract = ArchiveReadResult.missing();
+    ArchiveReadResult<ContractStateCapsule> contractState = ArchiveReadResult.missing();
     ArchiveReadResult<byte[]> code = ArchiveReadResult.missing();
     ArchiveReadResult<byte[]> storage = ArchiveReadResult.missing();
     ArchiveReaderException accountError;
@@ -56,6 +59,10 @@ public class ArchiveRepositoryAdapterTest {
 
     public ArchiveReadResult<ContractCapsule> getContract(byte[] a) {
       return contract;
+    }
+
+    public ArchiveReadResult<ContractStateCapsule> getContractState(byte[] a) {
+      return contractState;
     }
 
     public ArchiveReadResult<byte[]> getCode(byte[] a) {
@@ -139,6 +146,20 @@ public class ArchiveRepositoryAdapterTest {
   @Test
   public void dynamicPropertiesStoreIsUnsupported() {
     assertThrows(UnsupportedHistoricalStateException.class, adapter::getDynamicPropertiesStore);
+  }
+
+  @Test
+  public void contractStateReadsArchiveAndMissingFallsBackToNeutralCapsule() {
+    ContractStateCapsule archived = new ContractStateCapsule(1L);
+    archived.setEnergyFactor(123L);
+    reader.contractState = ArchiveReadResult.present(archived);
+    assertEquals(123L, adapter.getContractState(ADDR).getEnergyFactor());
+
+    reader.contractState = ArchiveReadResult.missing();
+    when(vmProps.getCurrentCycleNumber()).thenReturn(9L);
+    ContractStateCapsule neutral = adapter.getContractState(ADDR);
+    assertEquals(0L, neutral.getEnergyFactor());
+    assertEquals(9L, neutral.getUpdateCycle());
   }
 
   @Test
