@@ -11,6 +11,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Collections;
 import org.junit.After;
 import org.junit.Test;
 import org.tron.common.utils.Sha256Hash;
@@ -131,6 +132,39 @@ public class NoopArchiveServiceTest {
     } finally {
       index.close();
     }
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> ArchiveServiceFactory.create(config, dir.toString()));
+      assertTrue(ex.getMessage().contains("commit marker missing"));
+    } finally {
+      deleteRecursively(dir.toFile());
+    }
+  }
+
+  @Test
+  public void factoryRejectsIndexRangeAfterTemporalUnwindRemovedMarker() throws IOException {
+    StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
+    config.setEnable(true);
+    Path dir = Files.createTempDirectory("archive-factory-unwind-crash-test");
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        7, 0, 1, 0, 1, 0, ArchiveSource.NORMAL);
+
+    RocksDbArchiveTemporalStore temporal =
+        new RocksDbArchiveTemporalStore(dir.resolve("temporal").toString());
+    try {
+      temporal.putBlockChanges(range, Collections.emptyList());
+      temporal.unwindBlock(range);
+    } finally {
+      temporal.close();
+    }
+    RocksDbArchiveBlockRangeStore index =
+        new RocksDbArchiveBlockRangeStore(dir.resolve("index").toString());
+    try {
+      index.commitRange(range, 2);
+    } finally {
+      index.close();
+    }
+
     try {
       ArchiveException ex = assertThrows(ArchiveException.class,
           () -> ArchiveServiceFactory.create(config, dir.toString()));

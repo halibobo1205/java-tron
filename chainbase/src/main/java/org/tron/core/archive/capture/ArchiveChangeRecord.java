@@ -57,4 +57,10 @@ public final class ArchiveChangeRecord {
   public DomainValue getValue() {
     return value;
   }
+
+  public boolean isSameValue() {
+    return !prevValue.isDeleted()
+        && !value.isDeleted()
+        && Arrays.equals(prevValue.getValue(), value.getValue());
+  }
 }

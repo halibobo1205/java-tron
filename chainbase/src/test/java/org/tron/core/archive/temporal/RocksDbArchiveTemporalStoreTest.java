@@ -14,6 +14,10 @@ import java.util.Collections;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+import org.rocksdb.Options;
+import org.rocksdb.RocksDB;
+import org.rocksdb.WriteBatch;
+import org.rocksdb.WriteOptions;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveSource;
@@ -84,6 +88,14 @@ public class RocksDbArchiveTemporalStoreTest {
   }
 
   @Test
+  public void sameValueWriteDoesNotCreateStateHistory() {
+    store.putChange(change(5, DomainValue.present(new byte[] {1}),
+        DomainValue.present(new byte[] {1})));
+    assertFalse(store.latest(ArchiveDomain.ACCOUNT, KEY).isPresent());
+    assertFalse(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 5).isPresent());
+  }
+
+  @Test
   public void midChainFirstCapturedChangeServesPrevValueBeforeCoverage() {
     // The key existed before archive coverage as 0x30; the first captured change moves it to 0x31.
     store.putChange(change(6, DomainValue.present(new byte[] {0x30}),
@@ -135,6 +147,17 @@ public class RocksDbArchiveTemporalStoreTest {
   }
 
   @Test
+  public void unwindBlockDeletesCommitMarker() {
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        3, 10, 11, 10, 11, 0, ArchiveSource.NORMAL);
+    store.putBlockChanges(range, Collections.emptyList());
+    store.validateCommittedBlock(range);
+
+    store.unwindBlock(range);
+    assertThrows(ArchiveException.class, () -> store.validateCommittedBlock(range));
+  }
+
+  @Test
   public void unknownKeyIsEmpty() {
     assertFalse(store.latest(ArchiveDomain.ACCOUNT, new byte[] {99}).isPresent());
     assertFalse(store.getAsOf(ArchiveDomain.ACCOUNT, new byte[] {99}, 5).isPresent());
@@ -178,6 +201,25 @@ public class RocksDbArchiveTemporalStoreTest {
     // tx8's history is gone after the restart too: as-of 8 falls through to latest (0x0A).
     assertArrayEquals(new byte[] {0x0A},
         store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 8).get().getValue());
+  }
+
+  @Test
+  public void unwindFailsClosedWhenHistoryRowIsMissing() throws Exception {
+    store.close();
+    try (Options options = new Options().setCreateIfMissing(true);
+        RocksDB db = RocksDB.open(options, dir.toString());
+        WriteBatch batch = new WriteBatch();
+        WriteOptions writeOptions = new WriteOptions()) {
+      batch.put(ArchiveTemporalCodec.latestKey(ArchiveDomain.ACCOUNT, KEY),
+          ArchiveTemporalCodec.encodeValue(DomainValue.present(new byte[] {0x0B})));
+      batch.put(ArchiveTemporalCodec.changesetKey(8, ArchiveDomain.ACCOUNT, KEY), new byte[0]);
+      db.write(writeOptions, batch);
+    }
+    store = new RocksDbArchiveTemporalStore(dir.toString());
+
+    assertThrows(ArchiveException.class, () -> store.unwind(8));
+    assertArrayEquals(new byte[] {0x0B}, store.latest(ArchiveDomain.ACCOUNT, KEY)
+        .get().getValue());
   }
 
   @Test

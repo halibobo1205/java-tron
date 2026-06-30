@@ -151,6 +151,31 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
+  public void sameValueWritesKeepTxNumRangeButSkipTemporalHistory() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    DefaultArchiveService service =
+        new DefaultArchiveService(true, index, context, temporal);
+
+    byte[] addr = new byte[21];
+    addr[0] = 0x41;
+    BlockCapsule b = block(5);
+    service.beginBlock(b, ArchiveSource.NORMAL);
+    service.beginSystemTx(b, ArchivePhase.BLOCK_PREPARE);
+    service.getCaptureEngine().capturePut("account", addr, account(10), account(10));
+    service.endTx();
+    service.beginSystemTx(b, ArchivePhase.BLOCK_FINALIZE);
+    service.endTx();
+
+    service.commitBlock(b);
+
+    assertTrue(index.getBlockRange(5).isPresent());
+    assertEquals(0, temporal.changeCount());
+    assertFalse(temporal.latest(ArchiveDomain.ACCOUNT, addr).isPresent());
+  }
+
+  @Test
   public void abortClearsContextAndDiscardsPending() {
     InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
     ArchiveExecutionContext context = new ArchiveExecutionContext();
