@@ -105,6 +105,19 @@ public class ArchiveTxNumIndexTest {
   }
 
   @Test
+  public void unwindNonHeadBlockRejectedWithoutChangingIndex() {
+    ArchiveTxNumIndex idx = new InMemoryArchiveTxNumIndex();
+    commitTwoUserTxBlock(idx, 1);
+    commitTwoUserTxBlock(idx, 2);
+
+    ArchiveException ex = assertThrows(ArchiveException.class, () -> idx.unwindBlock(1));
+    assertTrue(ex.getMessage().contains("not archive head"));
+    assertTrue(idx.getBlockRange(1).isPresent());
+    assertTrue(idx.getBlockRange(2).isPresent());
+    assertEquals(5, idx.findTxNumByTxId(TX_A).getAsLong());
+  }
+
+  @Test
   public void duplicateBeginBlockRejected() {
     ArchiveTxNumIndex idx = new InMemoryArchiveTxNumIndex();
     idx.beginBlock(1, ArchiveSource.NORMAL);

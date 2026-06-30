@@ -66,6 +66,10 @@ public final class HistoricalEthCallSupport {
   public String call(byte[] ownerAddress, byte[] contractAddress, long callValue, byte[] data,
       String blockNumOrTag) throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
       JsonRpcInternalException {
+    if (JsonRpcApiUtil.LATEST_STR.equalsIgnoreCase(blockNumOrTag)) {
+      throw new JsonRpcInternalException("historical eth_call invoked for the latest tag");
+    }
+    boolean genesisComplete = requireGenesisCoverage();
     ResolvedArchiveStatePoint resolved = resolver.resolveBlockEnd(blockNumOrTag);
     if (resolved.isLatest()) {
       // shouldUseArchive already filters latest; reaching here means a caller skipped that guard.
@@ -88,7 +92,6 @@ public final class HistoricalEthCallSupport {
     if (historicalEnergyFee == -1) {
       historicalEnergyFee = latestStore.getEnergyFee();
     }
-    boolean genesisComplete = isGenesisComplete();
     TriggerSmartContract trigger =
         triggerCallContract(ownerAddress, contractAddress, callValue, data, 0, null);
 
@@ -145,5 +148,17 @@ public final class HistoricalEthCallSupport {
     }
     long first = ((DefaultArchiveService) archiveService).getTxNumIndex().getFirstArchivedBlock();
     return first >= 0 && first <= 1;
+  }
+
+  private boolean requireGenesisCoverage() throws JsonRpcInternalException {
+    if (!isGenesisComplete()) {
+      long first = archiveService instanceof DefaultArchiveService
+          ? ((DefaultArchiveService) archiveService).getTxNumIndex().getFirstArchivedBlock()
+          : -1L;
+      throw new JsonRpcInternalException(
+          "archive does not cover state from genesis (first archived block " + first
+              + "); historical eth_call is unavailable on a mid-chain archive");
+    }
+    return true;
   }
 }

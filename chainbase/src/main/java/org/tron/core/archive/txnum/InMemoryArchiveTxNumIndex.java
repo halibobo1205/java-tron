@@ -89,6 +89,12 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
 
   @Override
   public synchronized ArchiveBlockRange commitBlock(long blockNum, int userTxCount) {
+    return commitBlock(blockNum, new byte[0], userTxCount);
+  }
+
+  @Override
+  public synchronized ArchiveBlockRange commitBlock(long blockNum, byte[] blockHash,
+      int userTxCount) {
     requirePending(blockNum);
     long prepareTxNum = -1;
     long finalizeTxNum = -1;
@@ -120,7 +126,8 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
     long firstTxNum = committedNextTxNum;
     long lastTxNum = workingNextTxNum - 1;
     ArchiveBlockRange range = new ArchiveBlockRange(
-        blockNum, firstTxNum, lastTxNum, prepareTxNum, finalizeTxNum, userTxCount, pendingSource);
+        blockNum, firstTxNum, lastTxNum, prepareTxNum, finalizeTxNum, blockHash, userTxCount,
+        pendingSource);
     blockRanges.put(blockNum, range);
     if (firstArchivedBlock < 0 || blockNum < firstArchivedBlock) {
       firstArchivedBlock = blockNum;
@@ -153,15 +160,15 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
 
   @Override
   public synchronized void unwindBlock(long blockNum) {
-    ArchiveBlockRange range = blockRanges.remove(blockNum);
-    if (range == null) {
-      throw new ArchiveException("cannot unwind block " + blockNum + ": not committed");
+    ArchiveBlockRange range = getHeadBlockRange(blockNum);
+    for (long txNum = range.getFirstTxNum(); txNum <= range.getLastTxNum(); txNum++) {
+      if (!positionsByTxNum.containsKey(txNum)) {
+        throw new ArchiveException("archive tx-position missing for unwind txNum " + txNum);
+      }
     }
+    blockRanges.remove(blockNum);
     for (long txNum = range.getFirstTxNum(); txNum <= range.getLastTxNum(); txNum++) {
       ArchiveTxPosition position = positionsByTxNum.remove(txNum);
-      if (position == null) {
-        continue;
-      }
       if (position.getTxIndex() >= 0) {
         txNumByBlockAndIndex.remove(blockIndexKey(blockNum, position.getTxIndex()));
       }
@@ -172,6 +179,18 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
     }
     committedNextTxNum = range.getFirstTxNum();
     workingNextTxNum = committedNextTxNum;
+  }
+
+  @Override
+  public synchronized ArchiveBlockRange getHeadBlockRange(long blockNum) {
+    ArchiveBlockRange range = blockRanges.get(blockNum);
+    if (range == null) {
+      throw new ArchiveException("cannot unwind block " + blockNum + ": not committed");
+    }
+    if (range.getLastTxNum() != committedNextTxNum - 1) {
+      throw new ArchiveException("cannot unwind block " + blockNum + ": not archive head");
+    }
+    return range;
   }
 
   @Override

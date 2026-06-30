@@ -93,6 +93,10 @@ public class RocksDbArchiveTemporalStoreTest {
         DomainValue.present(new byte[] {1})));
     assertFalse(store.latest(ArchiveDomain.ACCOUNT, KEY).isPresent());
     assertFalse(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 5).isPresent());
+
+    store.putChange(change(6, DomainValue.tombstone(), DomainValue.tombstone()));
+    assertFalse(store.latest(ArchiveDomain.ACCOUNT, KEY).isPresent());
+    assertFalse(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 6).isPresent());
   }
 
   @Test
@@ -133,7 +137,7 @@ public class RocksDbArchiveTemporalStoreTest {
   @Test
   public void blockCommitMarkerSurvivesRestartAndValidatesRange() {
     ArchiveBlockRange range = new ArchiveBlockRange(
-        3, 10, 11, 10, 11, 0, ArchiveSource.NORMAL);
+        3, 10, 11, 10, 11, new byte[] {0x03}, 0, ArchiveSource.NORMAL);
     store.putBlockChanges(range, Collections.emptyList());
     store.validateCommittedBlock(range);
 
@@ -142,8 +146,12 @@ public class RocksDbArchiveTemporalStoreTest {
     store.validateCommittedBlock(range);
 
     ArchiveBlockRange mismatched = new ArchiveBlockRange(
-        3, 10, 12, 10, 11, 0, ArchiveSource.NORMAL);
+        3, 10, 12, 10, 11, new byte[] {0x03}, 0, ArchiveSource.NORMAL);
     assertThrows(ArchiveException.class, () -> store.validateCommittedBlock(mismatched));
+
+    ArchiveBlockRange mismatchedHash = new ArchiveBlockRange(
+        3, 10, 11, 10, 11, new byte[] {0x04}, 0, ArchiveSource.NORMAL);
+    assertThrows(ArchiveException.class, () -> store.validateCommittedBlock(mismatchedHash));
   }
 
   @Test
@@ -155,6 +163,25 @@ public class RocksDbArchiveTemporalStoreTest {
 
     store.unwindBlock(range);
     assertThrows(ArchiveException.class, () -> store.validateCommittedBlock(range));
+  }
+
+  @Test
+  public void unwindBlockStopsAtRangeEnd() {
+    byte[] laterKey = {8};
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        3, 10, 10, 10, 10, 0, ArchiveSource.NORMAL);
+    store.putBlockChanges(range, Collections.singletonList(
+        change(10, DomainValue.tombstone(), DomainValue.present(new byte[] {0x0A}))));
+    store.putChange(rec(12, ArchiveDomain.ACCOUNT, laterKey, DomainValue.tombstone(),
+        DomainValue.present(new byte[] {0x0C})));
+
+    store.unwindBlock(range);
+
+    assertTrue(store.latest(ArchiveDomain.ACCOUNT, KEY).get().isDeleted());
+    assertArrayEquals(new byte[] {0x0C},
+        store.latest(ArchiveDomain.ACCOUNT, laterKey).get().getValue());
+    assertArrayEquals(new byte[] {0x0C},
+        store.getAsOf(ArchiveDomain.ACCOUNT, laterKey, 100).get().getValue());
   }
 
   @Test

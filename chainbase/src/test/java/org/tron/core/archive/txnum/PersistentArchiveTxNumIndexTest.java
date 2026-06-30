@@ -3,15 +3,18 @@ package org.tron.core.archive.txnum;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Collections;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveSource;
 
@@ -76,6 +79,31 @@ public class PersistentArchiveTxNumIndexTest {
     // Cursor rewound: re-pushing block 2 reuses the freed txNums.
     ArchiveBlockRange r2b = pushBlock(2);
     assertEquals(r1.getLastTxNum() + 1, r2b.getFirstTxNum());
+  }
+
+  @Test
+  public void unwindNonHeadBlockRejectedWithoutRewindingCursor() {
+    pushBlock(1);
+    ArchiveBlockRange r2 = pushBlock(2);
+
+    assertThrows(ArchiveException.class, () -> index.unwindBlock(1));
+    assertTrue(index.getBlockRange(1).isPresent());
+    assertTrue(index.getBlockRange(2).isPresent());
+    ArchiveBlockRange r3 = pushBlock(3);
+    assertEquals(r2.getLastTxNum() + 1, r3.getFirstTxNum());
+  }
+
+  @Test
+  public void unwindWithMissingPositionRowFailsClosed() {
+    ArchiveBlockRange corruptRange = new ArchiveBlockRange(
+        1, 0, 1, 0, 1, 0, ArchiveSource.NORMAL);
+    store.commitRange(corruptRange, 2, Collections.emptyList());
+    index.close();
+    store = new RocksDbArchiveBlockRangeStore(dir.toString());
+    index = new PersistentArchiveTxNumIndex(store);
+
+    assertThrows(ArchiveException.class, () -> index.unwindBlock(1));
+    assertTrue(index.getBlockRange(1).isPresent());
   }
 
   @Test

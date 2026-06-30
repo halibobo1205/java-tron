@@ -59,8 +59,7 @@ public final class ArchiveChangeRecord {
   }
 
   public boolean isSameValue() {
-    return !prevValue.isDeleted()
-        && !value.isDeleted()
+    return prevValue.isDeleted() == value.isDeleted()
         && Arrays.equals(prevValue.getValue(), value.getValue());
   }
 }

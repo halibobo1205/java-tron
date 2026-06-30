@@ -69,6 +69,11 @@ public class InMemoryArchiveTemporalStoreTest {
     assertFalse(store.latest(ArchiveDomain.ACCOUNT, KEY).isPresent());
     assertFalse(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 5).isPresent());
     assertEquals(0, store.changeCount());
+
+    store.putChange(change(6, KEY, tomb(), tomb()));
+    assertFalse(store.latest(ArchiveDomain.ACCOUNT, KEY).isPresent());
+    assertFalse(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 6).isPresent());
+    assertEquals(0, store.changeCount());
   }
 
   @Test

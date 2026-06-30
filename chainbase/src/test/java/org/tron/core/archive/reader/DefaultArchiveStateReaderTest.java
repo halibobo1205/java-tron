@@ -83,7 +83,8 @@ public class DefaultArchiveStateReaderTest {
   @Test
   public void getAccountResolvesThreeStates() throws Exception {
     put(ArchiveDomain.ACCOUNT, addr(1), DomainValue.present(account(100)), 5);
-    put(ArchiveDomain.ACCOUNT, addr(2), DomainValue.tombstone(), 5);
+    put(ArchiveDomain.ACCOUNT, addr(2), DomainValue.present(account(1)),
+        DomainValue.tombstone(), 5);
     ArchiveStateReader reader = readerAt(5);
     ArchiveReadResult<AccountCapsule> present = reader.getAccount(addr(1));
     assertEquals(Status.PRESENT, present.getStatus());

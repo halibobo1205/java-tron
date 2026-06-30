@@ -18,7 +18,7 @@ import org.tron.core.archive.ArchiveSource;
  *   <li>block-index key: {@code 0x04 || blockNum(8, BE) || txIndex(4, BE)} -&gt; txNum</li>
  *   <li>txId key: {@code 0x05 || txId} -&gt; txNum</li>
  *   <li>range value: 5 longs (blockNum, firstTxNum, lastTxNum, prepareTxNum, finalizeTxNum)
- *       || userTxCount(int) || source(1 byte ordinal) = 45 bytes</li>
+ *       || userTxCount(int) || source(1 byte ordinal) || blockHashLen(int) || blockHash</li>
  * </ul>
  */
 public final class ArchiveBlockRangeCodec {
@@ -63,7 +63,9 @@ public final class ArchiveBlockRangeCodec {
         Longs.toByteArray(range.getPrepareTxNum()),
         Longs.toByteArray(range.getFinalizeTxNum()),
         Ints.toByteArray(range.getUserTxCount()),
-        new byte[] {(byte) range.getSource().ordinal()});
+        new byte[] {(byte) range.getSource().ordinal()},
+        Ints.toByteArray(range.getBlockHash().length),
+        range.getBlockHash());
   }
 
   static ArchiveBlockRange decodeRange(byte[] bytes) {
@@ -75,8 +77,13 @@ public final class ArchiveBlockRangeCodec {
     long finalizeTxNum = longAt(bytes, 32);
     int userTxCount = Ints.fromBytes(bytes[40], bytes[41], bytes[42], bytes[43]);
     ArchiveSource source = ArchiveSource.values()[bytes[44]];
+    byte[] blockHash = new byte[0];
+    if (bytes.length > 45) {
+      int blockHashLen = Ints.fromBytes(bytes[45], bytes[46], bytes[47], bytes[48]);
+      blockHash = Arrays.copyOfRange(bytes, 49, 49 + blockHashLen);
+    }
     return new ArchiveBlockRange(blockNum, firstTxNum, lastTxNum, prepareTxNum, finalizeTxNum,
-        userTxCount, source);
+        blockHash, userTxCount, source);
   }
 
   static byte[] encodePosition(ArchiveTxPosition position) {
