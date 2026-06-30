@@ -43,10 +43,15 @@ public class DefaultArchiveStateReaderTest {
   // Models "key created at txNum with `value`, absent before" (prev = tombstone). getAsOf at/after
   // txNum falls through to latest = value, exactly as the floor model returned that value.
   private void put(ArchiveDomain domain, byte[] key, DomainValue value, long txNum) {
+    put(domain, key, DomainValue.tombstone(), value, txNum);
+  }
+
+  private void put(ArchiveDomain domain, byte[] key, DomainValue prev, DomainValue value,
+      long txNum) {
     store.putChange(new ArchiveChangeRecord(
         new ArchiveTxPosition(txNum, 1, ArchivePhase.BLOCK_FINALIZE,
             ArchiveSource.NORMAL, -1, null),
-        domain, key, DomainValue.tombstone(), value));
+        domain, key, prev, value));
   }
 
   @Test
@@ -95,6 +100,21 @@ public class DefaultArchiveStateReaderTest {
     // (L6/L8 render TOMBSTONE and MISSING identically, so the observable RPC result is unchanged.)
     assertEquals(Status.TOMBSTONE, readerAt(4).getAccount(addr(1)).getStatus());
     assertEquals(Status.PRESENT, readerAt(5).getAccount(addr(1)).getStatus());
+  }
+
+  @Test
+  public void midChainReaderUsesCapturedPrevButLeavesUncapturedKeysMissing() throws Exception {
+    byte[] existing = "MID_CHAIN_EXISTING".getBytes(StandardCharsets.US_ASCII);
+    byte[] gap = "MID_CHAIN_GAP".getBytes(StandardCharsets.US_ASCII);
+    put(ArchiveDomain.DYNAMIC_PROPERTIES, existing,
+        DomainValue.present(new byte[] {0x30}), DomainValue.present(new byte[] {0x31}), 6);
+
+    ArchiveReadResult<byte[]> beforeFirstCapture = readerAt(5).getDynamicProperty(existing);
+    assertEquals(Status.PRESENT, beforeFirstCapture.getStatus());
+    assertArrayEquals(new byte[] {0x30}, beforeFirstCapture.getValue());
+    assertArrayEquals(new byte[] {0x31}, readerAt(6).getDynamicProperty(existing).getValue());
+    assertArrayEquals(new byte[] {0x31}, readerAt(100).getDynamicProperty(existing).getValue());
+    assertEquals(Status.MISSING, readerAt(5).getDynamicProperty(gap).getStatus());
   }
 
   @Test
