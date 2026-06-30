@@ -97,6 +97,9 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
 
   private static void putChange(WriteBatch batch, ArchiveChangeRecord record)
       throws RocksDBException {
+    if (record.isSameValue()) {
+      return;
+    }
     ArchiveDomain domain = record.getDomain();
     byte[] key = record.getCanonicalKey();
     byte[] prevValue = ArchiveTemporalCodec.encodeValue(record.getPrevValue());
@@ -139,6 +142,15 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
 
   @Override
   public void unwind(long fromTxNum) {
+    unwind(fromTxNum, 0L, false);
+  }
+
+  @Override
+  public void unwindBlock(ArchiveBlockRange range) {
+    unwind(range.getFirstTxNum(), range.getBlockNum(), true);
+  }
+
+  private void unwind(long fromTxNum, long blockNum, boolean deleteBlockMarker) {
     // One atomic batch: delete each reverted change's history + changeset entry, and reset each
     // affected key's latest to the prevValue of its SMALLEST dropped change (= the key's value at
     // the end of fromTxNum-1), computed against the pre-deletion state so a crash can never leave
@@ -156,7 +168,12 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
           if (!affectedPrefix.containsKey(prefix)) {
             // ascending changeset scan -> first hit is the smallest dropped txNum for this key.
             affectedPrefix.put(prefix, historyPrefix);
-            restore.put(prefix, db.get(historyKey)); // its prevValue, read before the delete lands
+            byte[] prevValue = db.get(historyKey);
+            if (prevValue == null) {
+              throw new ArchiveException("archive temporal history missing for unwind txNum "
+                  + ArchiveTemporalCodec.txNumOfChangeset(changesetKey));
+            }
+            restore.put(prefix, prevValue); // its prevValue, read before the delete lands
           }
           batch.delete(historyKey);
           batch.delete(changesetKey);
@@ -166,12 +183,10 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
       for (Map.Entry<WrappedByteArray, byte[]> e : affectedPrefix.entrySet()) {
         byte[] latestKey = e.getValue().clone();
         latestKey[0] = ArchiveTemporalCodec.LATEST_PREFIX;
-        byte[] prevValue = restore.get(e.getKey());
-        if (prevValue == null) {
-          batch.delete(latestKey); // defensive: dropped change had no history entry
-        } else {
-          batch.put(latestKey, prevValue);
-        }
+        batch.put(latestKey, restore.get(e.getKey()));
+      }
+      if (deleteBlockMarker) {
+        batch.delete(ArchiveTemporalCodec.blockCommitKey(blockNum));
       }
       db.write(writeOptions, batch);
     } catch (RocksDBException e) {
