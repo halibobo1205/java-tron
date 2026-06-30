@@ -21,6 +21,7 @@ public final class PersistentArchiveTxNumIndex implements ArchiveTxNumIndex, Aut
 
   public PersistentArchiveTxNumIndex(RocksDbArchiveBlockRangeStore store) {
     this.store = store;
+    store.validateCursorConsistentWithLastRange();
     // Resume txNum allocation from the persisted cursor so new blocks never collide with old ones.
     this.inner = new InMemoryArchiveTxNumIndex(store.getCursor());
   }

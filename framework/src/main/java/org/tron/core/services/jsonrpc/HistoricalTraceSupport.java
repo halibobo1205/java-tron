@@ -5,11 +5,14 @@ import static org.tron.core.services.jsonrpc.JsonRpcApiUtil.parseEnergyFee;
 import static org.tron.core.services.jsonrpc.JsonRpcApiUtil.triggerCallContract;
 
 import com.google.protobuf.ByteString;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 import java.util.OptionalLong;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.Wallet;
+import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveService;
 import org.tron.core.archive.DefaultArchiveService;
 import org.tron.core.archive.reader.ArchiveReaderException;
@@ -19,6 +22,7 @@ import org.tron.core.archive.reader.ArchiveStateReaderFactory;
 import org.tron.core.archive.reader.JsonRpcArchiveStatePointResolver;
 import org.tron.core.archive.reader.ResolvedArchiveStatePoint;
 import org.tron.core.archive.txnum.ArchiveTxNumIndex;
+import org.tron.core.archive.txnum.ArchiveTxPosition;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.exception.ContractExeException;
@@ -148,13 +152,24 @@ public final class HistoricalTraceSupport {
     }
     long blockNum = info.getBlockNumber();
 
-    OptionalLong txNum = txNumIndex().findTxNumByTxId(txId);
+    ArchiveTxNumIndex index = txNumIndex();
+    OptionalLong txNum = index.findTxNumByTxId(txId);
     if (!txNum.isPresent()) {
       throw new JsonRpcInternalException("transaction not in archive");
     }
     long t = txNum.getAsLong();
     if (t < 1) {
       throw new JsonRpcInternalException("transaction has no pre-state archive point");
+    }
+    Optional<ArchiveTxPosition> position = index.getPosition(t);
+    if (!position.isPresent()) {
+      throw new JsonRpcInternalException("archive tx-position missing for transaction");
+    }
+    ArchiveTxPosition archivePosition = position.get();
+    if (archivePosition.getPhase() != ArchivePhase.USER_TX
+        || archivePosition.getBlockNum() != blockNum
+        || !Arrays.equals(archivePosition.getTxId(), txId)) {
+      throw new JsonRpcInternalException("archive transaction position mismatch");
     }
 
     Block block = wallet.getBlockByNum(blockNum);

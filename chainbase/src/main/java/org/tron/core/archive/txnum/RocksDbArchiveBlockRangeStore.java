@@ -104,8 +104,11 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
         if (encodedPosition == null) {
           throw new ArchiveException("archive tx-position missing for unwind txNum " + txNum);
         }
-        batch.delete(positionKey);
         ArchiveTxPosition position = ArchiveBlockRangeCodec.decodePosition(encodedPosition);
+        if (position.getTxNum() != txNum || position.getBlockNum() != range.getBlockNum()) {
+          throw new ArchiveException("archive tx-position mismatch for unwind txNum " + txNum);
+        }
+        batch.delete(positionKey);
         if (position.getPhase() == ArchivePhase.USER_TX && position.getTxIndex() >= 0) {
           batch.delete(ArchiveBlockRangeCodec.blockIndexKey(
               position.getBlockNum(), position.getTxIndex()));
@@ -118,6 +121,28 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
       db.write(writeOptions, batch);
     } catch (RocksDBException e) {
       throw new ArchiveException("archive block-range unwind failed", e);
+    }
+  }
+
+  /** Fail closed if the persisted cursor and highest committed range disagree. */
+  public void validateCursorConsistentWithLastRange() {
+    Optional<ArchiveBlockRange> lastRange = getLastRange();
+    long cursor = getCursor();
+    if (!lastRange.isPresent()) {
+      if (cursor != 0L) {
+        throw new ArchiveException("archive txNum cursor " + cursor
+            + " exists without a committed block range");
+      }
+      return;
+    }
+    long expectedCursor = lastRange.get().getLastTxNum() + 1;
+    if (cursor != expectedCursor) {
+      throw new ArchiveException("archive txNum cursor " + cursor
+          + " does not match last committed range cursor " + expectedCursor);
+    }
+    long firstBlock = getFirstArchivedBlock();
+    if (firstBlock == NO_FIRST_BLOCK || firstBlock > lastRange.get().getBlockNum()) {
+      throw new ArchiveException("archive first-block marker is inconsistent with committed range");
     }
   }
 

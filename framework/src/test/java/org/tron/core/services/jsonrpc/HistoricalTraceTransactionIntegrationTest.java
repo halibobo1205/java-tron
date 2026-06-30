@@ -117,6 +117,15 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
     return svc;
   }
 
+  private DefaultArchiveService genesisCompleteEmptyArchive() {
+    DefaultArchiveService svc = new DefaultArchiveService(true, new InMemoryArchiveTemporalStore());
+    svc.getTxNumIndex().beginBlock(1, ArchiveSource.NORMAL);
+    svc.getTxNumIndex().allocateSystemTx(1, ArchivePhase.BLOCK_PREPARE);
+    svc.getTxNumIndex().allocateSystemTx(1, ArchivePhase.BLOCK_FINALIZE);
+    svc.getTxNumIndex().commitBlock(1, 0);
+    return svc;
+  }
+
   @Test
   public void traceTransactionReplaysContractAgainstArchivedPreState() throws Exception {
     byte[] contract = addr(0x11);
@@ -173,7 +182,7 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
     byte[] txId = trxCap.getTransactionId().getBytes();
 
     // The archive index has no record of this tx (findTxNumByTxId empty), but the tx + info exist.
-    DefaultArchiveService svc = new DefaultArchiveService(true, new InMemoryArchiveTemporalStore());
+    DefaultArchiveService svc = genesisCompleteEmptyArchive();
     Wallet wallet = mock(Wallet.class);
     when(wallet.getTransactionById(ByteString.copyFrom(txId))).thenReturn(tx);
     when(wallet.getTransactionInfoById(ByteString.copyFrom(txId)))
@@ -186,10 +195,36 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
   }
 
   @Test
+  public void traceTransactionRejectsArchivePositionBlockMismatch() throws Exception {
+    byte[] contract = addr(0x11);
+    byte[] caller = addr(0x22);
+
+    TriggerSmartContract trigger =
+        TvmTestUtils.buildTriggerSmartContract(caller, contract, new byte[0], 0L);
+    TransactionCapsule trxCap =
+        new TransactionCapsule(trigger, ContractType.TriggerSmartContract);
+    Transaction tx = trxCap.getInstance();
+    byte[] txId = trxCap.getTransactionId().getBytes();
+
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    DefaultArchiveService svc = buildArchive(temporal, contract, txId);
+
+    Wallet wallet = mock(Wallet.class);
+    when(wallet.getTransactionById(ByteString.copyFrom(txId))).thenReturn(tx);
+    when(wallet.getTransactionInfoById(ByteString.copyFrom(txId)))
+        .thenReturn(TransactionInfo.newBuilder().setBlockNumber(3L).build());
+
+    HistoricalTraceSupport support = new HistoricalTraceSupport(wallet, svc);
+    JsonRpcInternalException ex = assertThrows(JsonRpcInternalException.class,
+        () -> support.traceTransaction(txId, null));
+    assertEquals("archive transaction position mismatch", ex.getMessage());
+  }
+
+  @Test
   public void traceTransactionNotFoundThrowsInvalidParams() {
     byte[] txId = new byte[32];
     txId[31] = 0x7;
-    DefaultArchiveService svc = new DefaultArchiveService(true, new InMemoryArchiveTemporalStore());
+    DefaultArchiveService svc = genesisCompleteEmptyArchive();
     Wallet wallet = mock(Wallet.class);
     when(wallet.getTransactionById(ByteString.copyFrom(txId))).thenReturn(null);
 

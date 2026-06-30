@@ -10,6 +10,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.Collections;
 import org.junit.After;
 import org.junit.Before;
@@ -104,6 +105,22 @@ public class PersistentArchiveTxNumIndexTest {
 
     assertThrows(ArchiveException.class, () -> index.unwindBlock(1));
     assertTrue(index.getBlockRange(1).isPresent());
+  }
+
+  @Test
+  public void unwindWithMismatchedPositionRowFailsClosed() {
+    ArchiveBlockRange corruptRange = new ArchiveBlockRange(
+        1, 0, 1, 0, 1, 0, ArchiveSource.NORMAL);
+    store.commitRange(corruptRange, 2, Arrays.asList(
+        new ArchiveTxPosition(0, 99, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, TX_A),
+        new ArchiveTxPosition(1, 1, ArchivePhase.BLOCK_FINALIZE, ArchiveSource.NORMAL, -1, null)));
+    index.close();
+    store = new RocksDbArchiveBlockRangeStore(dir.toString());
+    index = new PersistentArchiveTxNumIndex(store);
+
+    assertThrows(ArchiveException.class, () -> index.unwindBlock(1));
+    assertTrue(index.getBlockRange(1).isPresent());
+    assertTrue(index.findTxNumByTxId(TX_A).isPresent());
   }
 
   @Test

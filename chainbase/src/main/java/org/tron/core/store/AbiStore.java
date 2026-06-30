@@ -1,14 +1,14 @@
 package org.tron.core.store;
 
 import com.google.common.collect.Streams;
+import java.util.Objects;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.capsule.AbiCapsule;
 import org.tron.core.db.TronStoreWithRevoking;
-
-import java.util.Objects;
 
 @Slf4j(topic = "DB")
 @Component
@@ -29,7 +29,13 @@ public class AbiStore extends TronStoreWithRevoking<AbiCapsule> {
       return;
     }
 
+    String dbName = getDbName();
+    boolean capture = ArchiveCaptureHolder.capturesStore(dbName);
+    byte[] prev = capture ? revokingDB.getUnchecked(key) : null;
     revokingDB.put(key, value);
+    if (capture) {
+      ArchiveCaptureHolder.capturePut(dbName, key, prev, value);
+    }
   }
 
   public long getTotalABIs() {
