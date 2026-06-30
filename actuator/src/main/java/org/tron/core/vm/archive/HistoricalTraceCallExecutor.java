@@ -38,7 +38,14 @@ public final class HistoricalTraceCallExecutor {
   public HistoricalTraceCallResult execute(ArchiveStateReader reader,
       VmDynamicProperties vmProperties, BlockCapsule block, TransactionCapsule trxCap)
       throws ContractValidateException, ContractExeException {
-    ArchiveRepositoryAdapter root = new ArchiveRepositoryAdapter(reader, vmProperties);
+    return execute(reader, vmProperties, block, trxCap, true);
+  }
+
+  public HistoricalTraceCallResult execute(ArchiveStateReader reader,
+      VmDynamicProperties vmProperties, BlockCapsule block, TransactionCapsule trxCap,
+      boolean genesisComplete) throws ContractValidateException, ContractExeException {
+    ArchiveRepositoryAdapter root =
+        new ArchiveRepositoryAdapter(reader, vmProperties, genesisComplete);
     TransactionContext context =
         new TransactionContext(block, trxCap, StoreFactory.getInstance(), true, false);
     VMActuator vmActuator = new VMActuator(true);

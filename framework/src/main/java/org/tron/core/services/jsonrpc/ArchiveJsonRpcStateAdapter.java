@@ -6,6 +6,7 @@ import org.tron.core.Wallet;
 import org.tron.core.archive.ArchiveService;
 import org.tron.core.archive.DefaultArchiveService;
 import org.tron.core.archive.reader.ArchiveReadResult;
+import org.tron.core.archive.reader.ArchiveReadResult.Status;
 import org.tron.core.archive.reader.ArchiveReaderException;
 import org.tron.core.archive.reader.ArchiveStateReader;
 import org.tron.core.archive.reader.ArchiveStateReaderFactory;
@@ -48,6 +49,7 @@ public final class ArchiveJsonRpcStateAdapter {
     byte[] address21 = JsonRpcApiUtil.addressCompatibleToByteArray(address);
     try (ArchiveStateReader reader = openReader(blockNumOrTag)) {
       ArchiveReadResult<AccountCapsule> account = reader.getAccount(address21);
+      requireKnown(account, "account");
       return account.isPresent()
           ? ByteArray.toJsonHex(account.getValue().getBalance())
           : ByteArray.toJsonHex(0L); // missing account = zero balance, not an archive gap
@@ -61,6 +63,7 @@ public final class ArchiveJsonRpcStateAdapter {
     byte[] address21 = JsonRpcApiUtil.addressCompatibleToByteArray(address);
     try (ArchiveStateReader reader = openReader(blockNumOrTag)) {
       ArchiveReadResult<byte[]> code = reader.getCode(address21);
+      requireKnown(code, "code");
       return code.isPresent() ? ByteArray.toJsonHex(code.getValue()) : EMPTY_CODE;
     } catch (ArchiveReaderException e) {
       throw toInternal(e);
@@ -73,6 +76,7 @@ public final class ArchiveJsonRpcStateAdapter {
     byte[] slot32 = normalizeSlot(storageIdx);
     try (ArchiveStateReader reader = openReader(blockNumOrTag)) {
       ArchiveReadResult<byte[]> value = reader.getStorage(address21, slot32);
+      requireKnown(value, "storage");
       return value.isPresent() ? ByteArray.toJsonHex(leftPad32(value.getValue())) : ZERO_WORD;
     } catch (ArchiveReaderException e) {
       throw toInternal(e);
@@ -81,7 +85,6 @@ public final class ArchiveJsonRpcStateAdapter {
 
   private ArchiveStateReader openReader(String blockNumOrTag)
       throws JsonRpcInvalidParamsException, JsonRpcInternalException {
-    requireGenesisCoverage();
     ResolvedArchiveStatePoint resolved = resolver.resolveBlockEnd(blockNumOrTag);
     if (resolved.isLatest()) {
       // shouldUseArchive already filters latest; reaching here means a caller skipped that guard.
@@ -94,23 +97,20 @@ public final class ArchiveJsonRpcStateAdapter {
     }
   }
 
-  /**
-   * Historical state reads are only sound when the archive captured from genesis: a MISSING account
-   * / code / slot then unambiguously means "empty", which the readers render as zero. On a midchain
-   * archive (first archived block &gt; genesis) a MISSING value could instead be state last written
-   * before coverage, so returning zero would be a confident wrong answer -- reject instead. Mirrors
-   * the genesis-coverage gate L8 uses for historical eth_call / debug trace.
-   */
-  private void requireGenesisCoverage() throws JsonRpcInternalException {
+  private void requireKnown(ArchiveReadResult<?> result, String what)
+      throws JsonRpcInternalException {
+    if (!isGenesisComplete() && result.getStatus() == Status.MISSING) {
+      throw new JsonRpcInternalException(
+          "archive " + what + " is unknown before mid-chain coverage");
+    }
+  }
+
+  private boolean isGenesisComplete() {
     if (!(archiveService instanceof DefaultArchiveService)) {
-      throw new JsonRpcInternalException("archive is not available");
+      return false;
     }
     long first = ((DefaultArchiveService) archiveService).getTxNumIndex().getFirstArchivedBlock();
-    if (first < 0 || first > 1) {
-      throw new JsonRpcInternalException(
-          "archive does not cover state from genesis (first archived block " + first
-              + "); historical state reads are unavailable on a mid-chain archive");
-    }
+    return first >= 0 && first <= 1;
   }
 
   private ArchiveStateReaderFactory readerFactory() throws JsonRpcInternalException {
