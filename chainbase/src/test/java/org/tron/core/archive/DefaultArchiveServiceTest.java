@@ -53,6 +53,7 @@ public class DefaultArchiveServiceTest {
     assertFalse(index.getBlockRange(5).isPresent());
     service.endTx();
     service.commitBlock(b);
+    service.validateCanonicalHead(null);
     assertFalse(index.getBlockRange(5).isPresent());
   }
 
@@ -231,6 +232,24 @@ public class DefaultArchiveServiceTest {
 
     assertThrows(ArchiveException.class, () -> service.commitBlock(b));
     assertFalse(index.getBlockRange(5).isPresent());
+  }
+
+  @Test
+  public void enabledServiceValidatesCanonicalHead() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    DefaultArchiveService service = new DefaultArchiveService(true, index, context);
+
+    BlockCapsule b = block(5);
+    service.beginBlock(b, ArchiveSource.NORMAL);
+    service.beginSystemTx(b, ArchivePhase.BLOCK_PREPARE);
+    service.endTx();
+    service.beginSystemTx(b, ArchivePhase.BLOCK_FINALIZE);
+    service.endTx();
+    service.commitBlock(b);
+
+    service.validateCanonicalHead(b);
+    assertThrows(ArchiveException.class, () -> service.validateCanonicalHead(block(6)));
   }
 
   @Test
