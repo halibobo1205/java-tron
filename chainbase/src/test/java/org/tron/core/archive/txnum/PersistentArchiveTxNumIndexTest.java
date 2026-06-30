@@ -1,7 +1,7 @@
 package org.tron.core.archive.txnum;
 
-import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertArrayEquals;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
@@ -15,6 +15,9 @@ import java.util.Collections;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+import org.rocksdb.Options;
+import org.rocksdb.RocksDB;
+import org.rocksdb.RocksDBException;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveSource;
@@ -36,7 +39,9 @@ public class PersistentArchiveTxNumIndexTest {
 
   @After
   public void tearDown() {
-    index.close();
+    if (index != null) {
+      index.close();
+    }
     deleteRecursively(dir.toFile());
   }
 
@@ -144,6 +149,82 @@ public class PersistentArchiveTxNumIndexTest {
   }
 
   @Test
+  public void unwindBackToEmptyClearsFirstArchivedBlockMarker() {
+    pushBlock(7);
+    index.unwindBlock(7);
+    assertEquals(RocksDbArchiveBlockRangeStore.NO_FIRST_BLOCK, index.getFirstArchivedBlock());
+
+    ArchiveBlockRange range = pushBlock(9);
+    assertEquals(0, range.getFirstTxNum());
+    assertEquals(9, index.getFirstArchivedBlock());
+  }
+
+  @Test
+  public void firstBlockMayStartMidChainButNextCommitMustBeContiguous() {
+    pushBlock(10);
+
+    index.beginBlock(12, ArchiveSource.NORMAL);
+    index.allocateSystemTx(12, ArchivePhase.BLOCK_PREPARE);
+    index.allocateSystemTx(12, ArchivePhase.BLOCK_FINALIZE);
+
+    ArchiveException ex = assertThrows(ArchiveException.class, () -> index.commitBlock(12, 0));
+    assertTrue(ex.getMessage().contains("non-contiguous archive block range"));
+    assertFalse(index.getBlockRange(12).isPresent());
+    index.abortBlock(12);
+
+    ArchiveBlockRange range11 = pushBlock(11);
+    assertEquals(2, range11.getFirstTxNum());
+  }
+
+  @Test
+  public void storeRejectsDirectNonContiguousCommit() {
+    ArchiveBlockRange first = new ArchiveBlockRange(
+        10, 0, 1, 0, 1, 0, ArchiveSource.NORMAL);
+    store.commitRange(first, 2);
+    ArchiveBlockRange gap = new ArchiveBlockRange(
+        12, 2, 3, 2, 3, 0, ArchiveSource.NORMAL);
+
+    ArchiveException ex = assertThrows(ArchiveException.class, () -> store.commitRange(gap, 4));
+    assertTrue(ex.getMessage().contains("non-contiguous archive block range"));
+    assertFalse(store.getRange(12).isPresent());
+  }
+
+  @Test
+  public void storeRejectsDirectNonContiguousTxNumCommit() {
+    ArchiveBlockRange first = new ArchiveBlockRange(
+        10, 0, 1, 0, 1, 0, ArchiveSource.NORMAL);
+    store.commitRange(first, 2);
+    ArchiveBlockRange gap = new ArchiveBlockRange(
+        11, 4, 5, 4, 5, 0, ArchiveSource.NORMAL);
+
+    ArchiveException ex = assertThrows(ArchiveException.class, () -> store.commitRange(gap, 6));
+    assertTrue(ex.getMessage().contains("non-contiguous archive txNum range"));
+    assertFalse(store.getRange(11).isPresent());
+  }
+
+  @Test
+  public void restartWithGappedRangesFailsClosed() throws Exception {
+    pushBlock(1);
+    index.close();
+    index = null;
+    store = null;
+
+    ArchiveBlockRange gap = new ArchiveBlockRange(
+        3, 2, 3, 2, 3, 0, ArchiveSource.NORMAL);
+    putRawRange(gap, 4);
+
+    RocksDbArchiveBlockRangeStore reopenedStore =
+        new RocksDbArchiveBlockRangeStore(dir.toString());
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> new PersistentArchiveTxNumIndex(reopenedStore));
+      assertTrue(ex.getMessage().contains("non-contiguous archive block range"));
+    } finally {
+      reopenedStore.close();
+    }
+  }
+
+  @Test
   public void txPositionAndTxIdLookupSurviveRestart() {
     ArchiveBlockRange range = pushBlockWithUserTx(10, TX_A);
     long userTxNum = range.getPrepareTxNum() + 1;
@@ -189,5 +270,15 @@ public class PersistentArchiveTxNumIndexTest {
       }
     }
     f.delete();
+  }
+
+  private void putRawRange(ArchiveBlockRange range, long cursor) throws RocksDBException {
+    RocksDB.loadLibrary();
+    try (Options options = new Options().setCreateIfMissing(false);
+        RocksDB rawDb = RocksDB.open(options, dir.toString())) {
+      rawDb.put(ArchiveBlockRangeCodec.rangeKey(range.getBlockNum()),
+          ArchiveBlockRangeCodec.encodeRange(range));
+      rawDb.put(ArchiveBlockRangeCodec.CURSOR_KEY, ArchiveBlockRangeCodec.encodeCursor(cursor));
+    }
   }
 }

@@ -72,6 +72,33 @@ public class ArchiveTxNumIndexTest {
   }
 
   @Test
+  public void firstBlockMayStartMidChainButNextCommitMustBeContiguous() {
+    ArchiveTxNumIndex idx = new InMemoryArchiveTxNumIndex();
+    commitTwoUserTxBlock(idx, 10);
+
+    idx.beginBlock(12, ArchiveSource.NORMAL);
+    idx.allocateSystemTx(12, ArchivePhase.BLOCK_PREPARE);
+    idx.allocateSystemTx(12, ArchivePhase.BLOCK_FINALIZE);
+
+    ArchiveException ex = assertThrows(ArchiveException.class, () -> idx.commitBlock(12, 0));
+    assertTrue(ex.getMessage().contains("non-contiguous archive block range"));
+    assertFalse(idx.getBlockRange(12).isPresent());
+  }
+
+  @Test
+  public void duplicateCommittedBlockRejected() {
+    ArchiveTxNumIndex idx = new InMemoryArchiveTxNumIndex();
+    commitTwoUserTxBlock(idx, 10);
+
+    idx.beginBlock(10, ArchiveSource.NORMAL);
+    idx.allocateSystemTx(10, ArchivePhase.BLOCK_PREPARE);
+    idx.allocateSystemTx(10, ArchivePhase.BLOCK_FINALIZE);
+
+    ArchiveException ex = assertThrows(ArchiveException.class, () -> idx.commitBlock(10, 0));
+    assertTrue(ex.getMessage().contains("already committed"));
+  }
+
+  @Test
   public void abortDiscardsPendingAndReusesTxNums() {
     ArchiveTxNumIndex idx = new InMemoryArchiveTxNumIndex();
     idx.beginBlock(1, ArchiveSource.NORMAL);
@@ -102,6 +129,18 @@ public class ArchiveTxNumIndexTest {
     // Re-applying block 2 reuses the freed txNums.
     idx.beginBlock(2, ArchiveSource.REPLAY);
     assertEquals(4, idx.allocateSystemTx(2, ArchivePhase.BLOCK_PREPARE).getTxNum());
+  }
+
+  @Test
+  public void unwindBackToEmptyClearsFirstArchivedBlock() {
+    ArchiveTxNumIndex idx = new InMemoryArchiveTxNumIndex();
+    commitTwoUserTxBlock(idx, 7);
+    idx.unwindBlock(7);
+    assertEquals(-1L, idx.getFirstArchivedBlock());
+
+    ArchiveBlockRange range = commitEmptyBlock(idx, 9);
+    assertEquals(0, range.getFirstTxNum());
+    assertEquals(9, idx.getFirstArchivedBlock());
   }
 
   @Test
@@ -153,5 +192,12 @@ public class ArchiveTxNumIndexTest {
   public void unwindUncommittedBlockRejected() {
     ArchiveTxNumIndex idx = new InMemoryArchiveTxNumIndex();
     assertThrows(ArchiveException.class, () -> idx.unwindBlock(99));
+  }
+
+  private static ArchiveBlockRange commitEmptyBlock(ArchiveTxNumIndex idx, long blockNum) {
+    idx.beginBlock(blockNum, ArchiveSource.NORMAL);
+    idx.allocateSystemTx(blockNum, ArchivePhase.BLOCK_PREPARE);
+    idx.allocateSystemTx(blockNum, ArchivePhase.BLOCK_FINALIZE);
+    return idx.commitBlock(blockNum, 0);
   }
 }

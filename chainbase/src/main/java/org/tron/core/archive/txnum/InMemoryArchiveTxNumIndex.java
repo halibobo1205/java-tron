@@ -25,6 +25,7 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
   // its own restart-surviving floor, so this in-memory value is the coverage floor only when the
   // in-memory index is used standalone (no persistence).
   private long firstArchivedBlock = -1L;
+  private long lastCommittedBlock = -1L;
 
   // null when no block is pending; only one block may be pending at a time.
   private Long pendingBlockNum;
@@ -128,7 +129,9 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
     ArchiveBlockRange range = new ArchiveBlockRange(
         blockNum, firstTxNum, lastTxNum, prepareTxNum, finalizeTxNum, blockHash, userTxCount,
         pendingSource);
+    validateAppendOnlyCommit(range);
     blockRanges.put(blockNum, range);
+    lastCommittedBlock = blockNum;
     if (firstArchivedBlock < 0 || blockNum < firstArchivedBlock) {
       firstArchivedBlock = blockNum;
     }
@@ -179,6 +182,8 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
     }
     committedNextTxNum = range.getFirstTxNum();
     workingNextTxNum = committedNextTxNum;
+    lastCommittedBlock = findLastCommittedBlock();
+    firstArchivedBlock = findFirstCommittedBlock();
   }
 
   @Override
@@ -237,6 +242,41 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
     pendingBlockNum = null;
     pendingSource = null;
     pendingPositions.clear();
+  }
+
+  private void validateAppendOnlyCommit(ArchiveBlockRange range) {
+    long blockNum = range.getBlockNum();
+    if (blockRanges.containsKey(blockNum)) {
+      throw new ArchiveException("archive block range already committed for block " + blockNum);
+    }
+    if (lastCommittedBlock >= 0 && blockNum != lastCommittedBlock + 1) {
+      throw new ArchiveException("non-contiguous archive block range: expected block "
+          + (lastCommittedBlock + 1) + " after " + lastCommittedBlock + " but got " + blockNum);
+    }
+    if (range.getFirstTxNum() != committedNextTxNum) {
+      throw new ArchiveException("non-contiguous archive txNum range: expected first txNum "
+          + committedNextTxNum + " but got " + range.getFirstTxNum());
+    }
+  }
+
+  private long findLastCommittedBlock() {
+    long last = -1L;
+    for (Long blockNum : blockRanges.keySet()) {
+      if (blockNum > last) {
+        last = blockNum;
+      }
+    }
+    return last;
+  }
+
+  private long findFirstCommittedBlock() {
+    long first = -1L;
+    for (Long blockNum : blockRanges.keySet()) {
+      if (first < 0 || blockNum < first) {
+        first = blockNum;
+      }
+    }
+    return first;
   }
 
   private static String blockIndexKey(long blockNum, int txIndex) {

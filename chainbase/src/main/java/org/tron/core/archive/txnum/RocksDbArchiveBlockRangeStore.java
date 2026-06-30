@@ -1,5 +1,6 @@
 package org.tron.core.archive.txnum;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
@@ -29,7 +30,7 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
 
   private final Options options;
   private final RocksDB db;
-  // Cached lowest-committed-block so commitRange does not read on every block; -1 = not yet known.
+  // Cached lowest currently committed block so commitRange does not read on every block.
   private volatile long firstArchivedBlock;
 
   public RocksDbArchiveBlockRangeStore(String path) {
@@ -52,13 +53,14 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
   /** Atomically persist a committed block's range, tx positions, and committed cursor. */
   public void commitRange(ArchiveBlockRange range, long committedNextTxNum,
       List<ArchiveTxPosition> positions) {
+    validateAppendOnlyCommit(range, committedNextTxNum);
     try (WriteBatch batch = new WriteBatch(); WriteOptions writeOptions = new WriteOptions()) {
       batch.put(ArchiveBlockRangeCodec.rangeKey(range.getBlockNum()),
           ArchiveBlockRangeCodec.encodeRange(range));
       batch.put(ArchiveBlockRangeCodec.CURSOR_KEY,
           ArchiveBlockRangeCodec.encodeCursor(committedNextTxNum));
-      // Record the lowest committed block exactly once; never overwrite on resume (blocks commit in
-      // ascending order, so the first commit ever carries the floor of archive coverage).
+      // Record the lowest committed block for this coverage run. Blocks commit in ascending order,
+      // so the first commit carries the floor until unwind removes the archive entirely.
       boolean recordFirstBlock = firstArchivedBlock == NO_FIRST_BLOCK;
       if (recordFirstBlock) {
         batch.put(ArchiveBlockRangeCodec.FIRST_BLOCK_KEY,
@@ -98,6 +100,10 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
       batch.delete(ArchiveBlockRangeCodec.rangeKey(range.getBlockNum()));
       batch.put(ArchiveBlockRangeCodec.CURSOR_KEY,
           ArchiveBlockRangeCodec.encodeCursor(committedNextTxNum));
+      boolean removeFirstBlock = range.getBlockNum() == firstArchivedBlock;
+      if (removeFirstBlock) {
+        batch.delete(ArchiveBlockRangeCodec.FIRST_BLOCK_KEY);
+      }
       for (long txNum = range.getFirstTxNum(); txNum <= range.getLastTxNum(); txNum++) {
         byte[] positionKey = ArchiveBlockRangeCodec.positionKey(txNum);
         byte[] encodedPosition = db.get(positionKey);
@@ -119,6 +125,9 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
         }
       }
       db.write(writeOptions, batch);
+      if (removeFirstBlock) {
+        firstArchivedBlock = NO_FIRST_BLOCK;
+      }
     } catch (RocksDBException e) {
       throw new ArchiveException("archive block-range unwind failed", e);
     }
@@ -143,6 +152,26 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
     long firstBlock = getFirstArchivedBlock();
     if (firstBlock == NO_FIRST_BLOCK || firstBlock > lastRange.get().getBlockNum()) {
       throw new ArchiveException("archive first-block marker is inconsistent with committed range");
+    }
+  }
+
+  /** Fail closed if persisted block ranges contain holes or txNum discontinuities. */
+  public void validateContiguousCoverage() {
+    try (RocksIterator it = db.newIterator()) {
+      ArchiveBlockRange previous = null;
+      it.seek(new byte[] {ArchiveBlockRangeCodec.RANGE_PREFIX});
+      while (it.isValid() && it.key()[0] == ArchiveBlockRangeCodec.RANGE_PREFIX) {
+        ArchiveBlockRange current = ArchiveBlockRangeCodec.decodeRange(it.value());
+        validateRangeKeyMatchesValue(it.key(), current);
+        validateRangeShape(current);
+        if (previous == null) {
+          validateFirstRange(current);
+        } else {
+          validateAdjacentRanges(previous, current);
+        }
+        previous = current;
+        it.next();
+      }
     }
   }
 
@@ -207,6 +236,91 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
       return (value == null) ? 0L : ArchiveBlockRangeCodec.decodeCursor(value);
     } catch (RocksDBException e) {
       throw new ArchiveException("archive block-range cursor read failed", e);
+    }
+  }
+
+  private void validateAppendOnlyCommit(ArchiveBlockRange range, long committedNextTxNum) {
+    validateRangeShape(range);
+    long expectedCommittedNextTxNum = range.getLastTxNum() + 1;
+    if (committedNextTxNum != expectedCommittedNextTxNum) {
+      throw new ArchiveException("archive txNum cursor " + committedNextTxNum
+          + " does not match committed range cursor " + expectedCommittedNextTxNum);
+    }
+    if (getRange(range.getBlockNum()).isPresent()) {
+      throw new ArchiveException(
+          "archive block range already committed for block " + range.getBlockNum());
+    }
+    Optional<ArchiveBlockRange> lastRange = getLastRange();
+    long cursor = getCursor();
+    if (!lastRange.isPresent()) {
+      if (cursor != 0L) {
+        throw new ArchiveException("archive txNum cursor " + cursor
+            + " exists without a committed block range");
+      }
+      if (range.getFirstTxNum() != 0L) {
+        throw new ArchiveException("first archive block range must start at txNum 0 but got "
+            + range.getFirstTxNum());
+      }
+      return;
+    }
+    validateAdjacentRanges(lastRange.get(), range);
+    if (cursor != range.getFirstTxNum()) {
+      throw new ArchiveException("archive txNum cursor " + cursor
+          + " does not match next range first txNum " + range.getFirstTxNum());
+    }
+  }
+
+  private void validateFirstRange(ArchiveBlockRange range) {
+    long firstBlock = getFirstArchivedBlock();
+    if (firstBlock == NO_FIRST_BLOCK) {
+      throw new ArchiveException("archive first-block marker missing for committed range");
+    }
+    if (firstBlock != range.getBlockNum()) {
+      throw new ArchiveException("archive first-block marker " + firstBlock
+          + " does not match first committed range block " + range.getBlockNum());
+    }
+    if (range.getFirstTxNum() != 0L) {
+      throw new ArchiveException("first archive block range must start at txNum 0 but got "
+          + range.getFirstTxNum());
+    }
+  }
+
+  private void validateAdjacentRanges(ArchiveBlockRange previous, ArchiveBlockRange current) {
+    long expectedBlock = previous.getBlockNum() + 1;
+    if (current.getBlockNum() != expectedBlock) {
+      throw new ArchiveException("non-contiguous archive block range: expected block "
+          + expectedBlock + " after " + previous.getBlockNum() + " but got "
+          + current.getBlockNum());
+    }
+    long expectedFirstTxNum = previous.getLastTxNum() + 1;
+    if (current.getFirstTxNum() != expectedFirstTxNum) {
+      throw new ArchiveException("non-contiguous archive txNum range: expected first txNum "
+          + expectedFirstTxNum + " but got " + current.getFirstTxNum());
+    }
+  }
+
+  private void validateRangeShape(ArchiveBlockRange range) {
+    if (range.getFirstTxNum() > range.getLastTxNum()) {
+      throw new ArchiveException("archive block range has inverted txNum bounds for block "
+          + range.getBlockNum());
+    }
+    if (range.getPrepareTxNum() < range.getFirstTxNum()
+        || range.getPrepareTxNum() > range.getLastTxNum()) {
+      throw new ArchiveException("archive prepare txNum is outside block range for block "
+          + range.getBlockNum());
+    }
+    if (range.getFinalizeTxNum() < range.getFirstTxNum()
+        || range.getFinalizeTxNum() > range.getLastTxNum()) {
+      throw new ArchiveException("archive finalize txNum is outside block range for block "
+          + range.getBlockNum());
+    }
+  }
+
+  private void validateRangeKeyMatchesValue(byte[] key, ArchiveBlockRange range) {
+    byte[] expectedKey = ArchiveBlockRangeCodec.rangeKey(range.getBlockNum());
+    if (!Arrays.equals(key, expectedKey)) {
+      throw new ArchiveException("archive block range key does not match encoded block "
+          + range.getBlockNum());
     }
   }
 
