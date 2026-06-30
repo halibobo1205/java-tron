@@ -18,6 +18,7 @@ import org.tron.core.archive.reader.ArchiveStateReader;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.ContractCapsule;
+import org.tron.core.capsule.ContractStateCapsule;
 import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.store.VmDynamicProperties;
 import org.tron.protos.Protocol.Account;
@@ -149,6 +150,7 @@ public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
   private static final class FakeReader implements ArchiveStateReader {
     ArchiveReadResult<AccountCapsule> account = ArchiveReadResult.missing();
     ArchiveReadResult<ContractCapsule> contract = ArchiveReadResult.missing();
+    ArchiveReadResult<ContractStateCapsule> contractState = ArchiveReadResult.missing();
     ArchiveReadResult<byte[]> code = ArchiveReadResult.missing();
     ArchiveReadResult<byte[]> storage = ArchiveReadResult.missing();
 
@@ -162,6 +164,10 @@ public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
 
     public ArchiveReadResult<ContractCapsule> getContract(byte[] address) {
       return contract;
+    }
+
+    public ArchiveReadResult<ContractStateCapsule> getContractState(byte[] address) {
+      return contractState;
     }
 
     public ArchiveReadResult<byte[]> getCode(byte[] address) {

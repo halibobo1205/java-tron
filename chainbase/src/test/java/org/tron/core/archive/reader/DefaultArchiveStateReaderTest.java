@@ -21,7 +21,9 @@ import org.tron.core.archive.reader.ArchiveReadResult.Status;
 import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
 import org.tron.core.archive.txnum.ArchiveTxPosition;
 import org.tron.core.capsule.AccountCapsule;
+import org.tron.core.capsule.ContractStateCapsule;
 import org.tron.protos.Protocol.Account;
+import org.tron.protos.contract.SmartContractOuterClass.ContractState;
 import org.tron.protos.contract.SmartContractOuterClass.SmartContract;
 
 public class DefaultArchiveStateReaderTest {
@@ -139,6 +141,23 @@ public class DefaultArchiveStateReaderTest {
         .setBytecode(ByteString.copyFromUtf8("X")).build().toByteArray();
     put(ArchiveDomain.CONTRACT, addr(1), DomainValue.present(contract), 5);
     assertEquals(Status.PRESENT, readerAt(5).getContract(addr(1)).getStatus());
+  }
+
+  @Test
+  public void getContractStateParsesArchivedState() throws Exception {
+    byte[] state = ContractState.newBuilder()
+        .setEnergyFactor(123L)
+        .setUpdateCycle(7L)
+        .build()
+        .toByteArray();
+    put(ArchiveDomain.CONTRACT_STATE, addr(1), DomainValue.present(state), 5);
+
+    ArchiveReadResult<ContractStateCapsule> result = readerAt(5).getContractState(addr(1));
+
+    assertEquals(Status.PRESENT, result.getStatus());
+    assertEquals(123L, result.getValue().getEnergyFactor());
+    assertEquals(7L, result.getValue().getUpdateCycle());
+    assertEquals(Status.MISSING, readerAt(5).getContractState(addr(2)).getStatus());
   }
 
   @Test

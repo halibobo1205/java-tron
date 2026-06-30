@@ -14,6 +14,7 @@ import org.tron.core.archive.reader.ArchiveStatePoint;
 import org.tron.core.archive.reader.ArchiveStateReader;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.ContractCapsule;
+import org.tron.core.capsule.ContractStateCapsule;
 import org.tron.core.store.VmDynamicProperties;
 
 /**
@@ -123,6 +124,10 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
     }
 
     public ArchiveReadResult<ContractCapsule> getContract(byte[] address) {
+      return ArchiveReadResult.missing();
+    }
+
+    public ArchiveReadResult<ContractStateCapsule> getContractState(byte[] address) {
       return ArchiveReadResult.missing();
     }
 

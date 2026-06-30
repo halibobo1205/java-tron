@@ -2,6 +2,7 @@ package org.tron.core.archive.reader;
 
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.ContractCapsule;
+import org.tron.core.capsule.ContractStateCapsule;
 
 /**
  * Reads historical state from the archive at a fixed {@link ArchiveStatePoint}. Each method answers
@@ -18,6 +19,9 @@ public interface ArchiveStateReader extends AutoCloseable {
   ArchiveReadResult<AccountCapsule> getAccount(byte[] address) throws ArchiveReaderException;
 
   ArchiveReadResult<ContractCapsule> getContract(byte[] address) throws ArchiveReaderException;
+
+  ArchiveReadResult<ContractStateCapsule> getContractState(byte[] address)
+      throws ArchiveReaderException;
 
   ArchiveReadResult<byte[]> getCode(byte[] address) throws ArchiveReaderException;
 
