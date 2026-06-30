@@ -6,6 +6,7 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
+import com.google.common.primitives.Longs;
 import com.google.protobuf.ByteString;
 import java.io.File;
 import java.io.IOException;
@@ -14,6 +15,9 @@ import java.nio.file.Path;
 import java.util.Collections;
 import org.junit.After;
 import org.junit.Test;
+import org.rocksdb.Options;
+import org.rocksdb.RocksDB;
+import org.rocksdb.RocksDBException;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.archive.temporal.RocksDbArchiveTemporalStore;
@@ -159,10 +163,11 @@ public class NoopArchiveServiceTest {
     RocksDbArchiveBlockRangeStore index =
         new RocksDbArchiveBlockRangeStore(dir.resolve("index").toString());
     try {
-      index.commitRange(range, 1); // corrupt: expected cursor is lastTxNum + 1 = 2
+      index.commitRange(range, 2);
     } finally {
       index.close();
     }
+    overwriteArchiveCursor(dir.resolve("index"), 1); // corrupt: expected lastTxNum + 1 = 2
 
     try {
       ArchiveException ex = assertThrows(ArchiveException.class,
@@ -220,5 +225,15 @@ public class NoopArchiveServiceTest {
       }
     }
     f.delete();
+  }
+
+  private static void overwriteArchiveCursor(Path indexDir, long cursor) {
+    RocksDB.loadLibrary();
+    try (Options options = new Options().setCreateIfMissing(false);
+        RocksDB rawDb = RocksDB.open(options, indexDir.toString())) {
+      rawDb.put(new byte[] {0x01}, Longs.toByteArray(cursor));
+    } catch (RocksDBException e) {
+      throw new ArchiveException("failed to overwrite archive cursor for test", e);
+    }
   }
 }
