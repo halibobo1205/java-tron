@@ -70,4 +70,13 @@ public interface ArchiveTemporalStore {
    * the store never retains rolled-back state.
    */
   void unwind(long fromTxNum);
+
+  /**
+   * Drop a committed block from the temporal store. Persistent stores may also delete the block's
+   * commit marker in the same batch so startup can reject a crash that happened before the txNum
+   * index finished unwinding the same block.
+   */
+  default void unwindBlock(ArchiveBlockRange range) {
+    unwind(range.getFirstTxNum());
+  }
 }

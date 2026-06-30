@@ -64,6 +64,14 @@ public class InMemoryArchiveTemporalStoreTest {
   }
 
   @Test
+  public void sameValueWriteDoesNotCreateStateHistory() {
+    store.putChange(change(5, KEY, val(1), val(1)));
+    assertFalse(store.latest(ArchiveDomain.ACCOUNT, KEY).isPresent());
+    assertFalse(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 5).isPresent());
+    assertEquals(0, store.changeCount());
+  }
+
+  @Test
   public void fallToLatestWhenNoChangeAfterQuery() {
     // created at tx5 and never changed again: every query at/after tx5 falls through to latest.
     store.putChange(change(5, KEY, tomb(), val(0x0A)));

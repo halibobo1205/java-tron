@@ -37,6 +37,9 @@ public final class InMemoryArchiveTemporalStore implements ArchiveTemporalStore 
 
   @Override
   public void putChange(ArchiveChangeRecord record) {
+    if (record.isSameValue()) {
+      return;
+    }
     Map<WrappedByteArray, KeyState> domainMap =
         byDomain.computeIfAbsent(record.getDomain(), d -> new HashMap<>());
     KeyState state = domainMap.computeIfAbsent(
