@@ -21,6 +21,8 @@ import org.tron.core.store.VmDynamicProperties;
  */
 class HistoricalVmDynamicProperties implements VmDynamicProperties {
 
+  private static final long DEFAULT_ENERGY_FEE = 100L;
+
   private final VmDynamicProperties latest;
   private final long energyFee;
 
@@ -32,6 +34,11 @@ class HistoricalVmDynamicProperties implements VmDynamicProperties {
   @Override
   public long getEnergyFee() {
     return energyFee;
+  }
+
+  static long resolveHistoricalEnergyFee(long timestamp, String energyPriceHistory) {
+    long historicalEnergyFee = JsonRpcApiUtil.parseEnergyFee(timestamp, energyPriceHistory);
+    return historicalEnergyFee == -1 ? DEFAULT_ENERGY_FEE : historicalEnergyFee;
   }
 
   // ---- Everything below is the latest-store baseline (documented above). ----
