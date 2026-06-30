@@ -80,6 +80,22 @@ public class RocksDbArchiveTemporalStoreTest {
   }
 
   @Test
+  public void midChainFirstCapturedChangeServesPrevValueBeforeCoverage() {
+    // The key existed before archive coverage as 0x30; the first captured change moves it to 0x31.
+    store.putChange(change(6, DomainValue.present(new byte[] {0x30}),
+        DomainValue.present(new byte[] {0x31})));
+    assertArrayEquals(new byte[] {0x30},
+        store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 0).get().getValue());
+    assertArrayEquals(new byte[] {0x30},
+        store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 5).get().getValue());
+    assertArrayEquals(new byte[] {0x31},
+        store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 6).get().getValue());
+    assertArrayEquals(new byte[] {0x31},
+        store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 100).get().getValue());
+    assertFalse(store.getAsOf(ArchiveDomain.ACCOUNT, new byte[] {99}, 5).isPresent());
+  }
+
+  @Test
   public void tombstoneIsPersistedAsDeleted() {
     store.putChange(change(5, DomainValue.tombstone(), DomainValue.present(new byte[] {1})));
     store.putChange(change(9, DomainValue.present(new byte[] {1}), DomainValue.tombstone()));
