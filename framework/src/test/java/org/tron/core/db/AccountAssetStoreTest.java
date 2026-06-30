@@ -12,9 +12,17 @@ import org.junit.Test;
 import org.tron.common.BaseTest;
 import org.tron.common.TestConstants;
 import org.tron.common.utils.ByteArray;
+import org.tron.common.utils.Sha256Hash;
 import org.tron.core.Wallet;
+import org.tron.core.archive.ArchivePhase;
+import org.tron.core.archive.ArchiveSource;
+import org.tron.core.archive.DefaultArchiveService;
+import org.tron.core.archive.capture.ArchiveCaptureHolder;
+import org.tron.core.archive.domain.ArchiveDomain;
+import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.AssetIssueCapsule;
+import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.config.args.Args;
 import org.tron.core.store.AccountAssetStore;
 import org.tron.core.store.AccountStore;
@@ -129,6 +137,44 @@ public class AccountAssetStoreTest extends BaseTest {
 
     Long assetV2 = accountCapsule.getAssetV2(String.valueOf(assetKey2));
     Assert.assertEquals(assetValue1, assetV2);
+  }
+
+  @Test
+  public void archiveAccountAssetDoesNotEmitForImportedUnchangedOptimizedAsset() {
+    chainBaseManager.getDynamicPropertiesStore().setAllowAccountAssetOptimization(1);
+    byte[] address = ByteArray.fromHexString(OWNER_ADDRESS);
+    Protocol.Account accountWithAsset = Protocol.Account.newBuilder()
+        .setAddress(ByteString.copyFrom(address))
+        .setAssetOptimized(true)
+        .putAssetV2("30001", 5L)
+        .build();
+    accountAssetStore.putAccount(accountWithAsset);
+    AccountCapsule stripped = new AccountCapsule(Protocol.Account.newBuilder()
+        .setAddress(ByteString.copyFrom(address))
+        .setAssetOptimized(true)
+        .build());
+    accountStore.put(address, stripped);
+
+    DefaultArchiveService archiveService =
+        new DefaultArchiveService(true, new InMemoryArchiveTemporalStore());
+    try {
+      BlockCapsule block = new BlockCapsule(1, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY);
+      archiveService.beginBlock(block, ArchiveSource.NORMAL);
+      archiveService.beginSystemTx(block, ArchivePhase.BLOCK_FINALIZE);
+      AccountCapsule imported = new AccountCapsule(accountWithAsset);
+      imported.setAccountName("name-only-update".getBytes());
+      accountStore.put(address, imported);
+      archiveService.endTx();
+
+      long accountAssetChanges = archiveService.getCaptureEngine().records().stream()
+          .filter(r -> r.getDomain() == ArchiveDomain.ACCOUNT_ASSET)
+          .count();
+      Assert.assertEquals(0L, accountAssetChanges);
+    } finally {
+      archiveService.abortBlock(new BlockCapsule(1, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY));
+      archiveService.close();
+      ArchiveCaptureHolder.clear();
+    }
   }
 
 }

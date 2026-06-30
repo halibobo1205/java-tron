@@ -1,17 +1,22 @@
 package org.tron.core.archive.txnum;
 
+import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
+import java.util.OptionalLong;
 import org.rocksdb.Options;
 import org.rocksdb.RocksDB;
 import org.rocksdb.RocksDBException;
+import org.rocksdb.RocksIterator;
 import org.rocksdb.WriteBatch;
 import org.rocksdb.WriteOptions;
 import org.tron.core.archive.ArchiveException;
+import org.tron.core.archive.ArchivePhase;
 
 /**
- * RocksDB-backed persistence for committed block ranges + the committed-txNum cursor, so the
- * block-to-txNum mapping survives restart (the historical-read resolver needs it for old blocks).
- * Commit/unwind write the range and cursor in one atomic batch.
+ * RocksDB-backed persistence for committed block ranges, committed-txNum cursor, and per-tx lookup
+ * indexes, so block/txId/txNum mapping survives restart. Commit/unwind write every affected index
+ * row in one atomic batch.
  */
 public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
 
@@ -40,8 +45,13 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
     }
   }
 
-  /** Atomically persist a committed block's range and advance the persisted cursor. */
   public void commitRange(ArchiveBlockRange range, long committedNextTxNum) {
+    commitRange(range, committedNextTxNum, Collections.emptyList());
+  }
+
+  /** Atomically persist a committed block's range, tx positions, and committed cursor. */
+  public void commitRange(ArchiveBlockRange range, long committedNextTxNum,
+      List<ArchiveTxPosition> positions) {
     try (WriteBatch batch = new WriteBatch(); WriteOptions writeOptions = new WriteOptions()) {
       batch.put(ArchiveBlockRangeCodec.rangeKey(range.getBlockNum()),
           ArchiveBlockRangeCodec.encodeRange(range));
@@ -53,6 +63,20 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
       if (recordFirstBlock) {
         batch.put(ArchiveBlockRangeCodec.FIRST_BLOCK_KEY,
             ArchiveBlockRangeCodec.encodeFirstBlock(range.getBlockNum()));
+      }
+      for (ArchiveTxPosition position : positions) {
+        batch.put(ArchiveBlockRangeCodec.positionKey(position.getTxNum()),
+            ArchiveBlockRangeCodec.encodePosition(position));
+        if (position.getPhase() == ArchivePhase.USER_TX && position.getTxIndex() >= 0) {
+          batch.put(ArchiveBlockRangeCodec.blockIndexKey(
+              position.getBlockNum(), position.getTxIndex()),
+              ArchiveBlockRangeCodec.encodeCursor(position.getTxNum()));
+        }
+        byte[] txId = position.getTxId();
+        if (txId.length > 0) {
+          batch.put(ArchiveBlockRangeCodec.txIdKey(txId),
+              ArchiveBlockRangeCodec.encodeCursor(position.getTxNum()));
+        }
       }
       db.write(writeOptions, batch);
       if (recordFirstBlock) {
@@ -68,12 +92,29 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
     return firstArchivedBlock;
   }
 
-  /** Atomically drop a reverted block's range and rewind the persisted cursor. */
-  public void unwindRange(long blockNum, long committedNextTxNum) {
+  /** Atomically drop a reverted block's range/index rows and rewind the persisted cursor. */
+  public void unwindRange(ArchiveBlockRange range, long committedNextTxNum) {
     try (WriteBatch batch = new WriteBatch(); WriteOptions writeOptions = new WriteOptions()) {
-      batch.delete(ArchiveBlockRangeCodec.rangeKey(blockNum));
+      batch.delete(ArchiveBlockRangeCodec.rangeKey(range.getBlockNum()));
       batch.put(ArchiveBlockRangeCodec.CURSOR_KEY,
           ArchiveBlockRangeCodec.encodeCursor(committedNextTxNum));
+      for (long txNum = range.getFirstTxNum(); txNum <= range.getLastTxNum(); txNum++) {
+        byte[] positionKey = ArchiveBlockRangeCodec.positionKey(txNum);
+        byte[] encodedPosition = db.get(positionKey);
+        batch.delete(positionKey);
+        if (encodedPosition == null) {
+          continue;
+        }
+        ArchiveTxPosition position = ArchiveBlockRangeCodec.decodePosition(encodedPosition);
+        if (position.getPhase() == ArchivePhase.USER_TX && position.getTxIndex() >= 0) {
+          batch.delete(ArchiveBlockRangeCodec.blockIndexKey(
+              position.getBlockNum(), position.getTxIndex()));
+        }
+        byte[] txId = position.getTxId();
+        if (txId.length > 0) {
+          batch.delete(ArchiveBlockRangeCodec.txIdKey(txId));
+        }
+      }
       db.write(writeOptions, batch);
     } catch (RocksDBException e) {
       throw new ArchiveException("archive block-range unwind failed", e);
@@ -87,6 +128,50 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
           : Optional.of(ArchiveBlockRangeCodec.decodeRange(value));
     } catch (RocksDBException e) {
       throw new ArchiveException("archive block-range read failed", e);
+    }
+  }
+
+  public Optional<ArchiveBlockRange> getLastRange() {
+    try (RocksIterator it = db.newIterator()) {
+      it.seek(ArchiveBlockRangeCodec.CURSOR_KEY);
+      it.prev();
+      if (!it.isValid() || it.key()[0] != ArchiveBlockRangeCodec.RANGE_PREFIX) {
+        return Optional.empty();
+      }
+      return Optional.of(ArchiveBlockRangeCodec.decodeRange(it.value()));
+    }
+  }
+
+  public Optional<ArchiveTxPosition> getPosition(long txNum) {
+    try {
+      byte[] value = db.get(ArchiveBlockRangeCodec.positionKey(txNum));
+      return (value == null) ? Optional.empty()
+          : Optional.of(ArchiveBlockRangeCodec.decodePosition(value));
+    } catch (RocksDBException e) {
+      throw new ArchiveException("archive tx-position read failed", e);
+    }
+  }
+
+  public OptionalLong findTxNumByBlockAndIndex(long blockNum, int txIndex) {
+    try {
+      byte[] value = db.get(ArchiveBlockRangeCodec.blockIndexKey(blockNum, txIndex));
+      return (value == null) ? OptionalLong.empty()
+          : OptionalLong.of(ArchiveBlockRangeCodec.decodeCursor(value));
+    } catch (RocksDBException e) {
+      throw new ArchiveException("archive block/index txNum read failed", e);
+    }
+  }
+
+  public OptionalLong findTxNumByTxId(byte[] txId) {
+    if (txId == null || txId.length == 0) {
+      return OptionalLong.empty();
+    }
+    try {
+      byte[] value = db.get(ArchiveBlockRangeCodec.txIdKey(txId));
+      return (value == null) ? OptionalLong.empty()
+          : OptionalLong.of(ArchiveBlockRangeCodec.decodeCursor(value));
+    } catch (RocksDBException e) {
+      throw new ArchiveException("archive txId txNum read failed", e);
     }
   }
 

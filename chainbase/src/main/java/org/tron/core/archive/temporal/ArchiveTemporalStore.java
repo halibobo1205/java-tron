@@ -1,9 +1,11 @@
 package org.tron.core.archive.temporal;
 
+import java.util.List;
 import java.util.Optional;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
+import org.tron.core.archive.txnum.ArchiveBlockRange;
 
 /**
  * Temporal (Erigon-v3) store of domain state changes keyed by txNum. Each captured
@@ -19,6 +21,25 @@ public interface ArchiveTemporalStore {
 
   /** Record a domain change at its txNum (prevValue -> history, value -> latest). */
   void putChange(ArchiveChangeRecord record);
+
+  /** Record a batch of domain changes atomically when the implementation supports it. */
+  default void putChanges(List<ArchiveChangeRecord> records) {
+    for (ArchiveChangeRecord record : records) {
+      putChange(record);
+    }
+  }
+
+  /**
+   * Record all changes for a committed block. Persistent stores may write a per-block commit marker
+   * with the same batch so startup can reject an index range whose temporal rows never landed.
+   */
+  default void putBlockChanges(ArchiveBlockRange range, List<ArchiveChangeRecord> records) {
+    putChanges(records);
+  }
+
+  /** Validate that a persistent temporal store has durably applied {@code range}. */
+  default void validateCommittedBlock(ArchiveBlockRange range) {
+  }
 
   /**
    * The value of {@code (domain, key)} as of {@code txNum} (inclusive-after): the value set by the

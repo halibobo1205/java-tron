@@ -9,8 +9,8 @@ import org.tron.core.archive.domain.ArchiveDomain;
  * {@code ArchiveExecutionContextHolder}. When no engine is set (archive disabled) every call is a
  * cheap no-op.
  *
- * <p>Critically, capture failures are swallowed here: archive is a non-consensus sidecar,
- * so a bad value / codec error must NEVER propagate into block apply and break consensus.
+ * <p>Capture failures are isolated from the Store write path, but recorded on the active engine.
+ * The archive commit path fails closed rather than publishing a partial historical sidecar.
  */
 public final class ArchiveCaptureHolder {
 
@@ -33,6 +33,15 @@ public final class ArchiveCaptureHolder {
     return engine != null;
   }
 
+  public static void recordFailure(String operation, Exception cause) {
+    ArchiveCaptureEngine active = engine;
+    if (active == null) {
+      return;
+    }
+    active.recordFailure(operation, cause);
+    logger.warn("archive capture helper failed during {}: {}", operation, cause.getMessage());
+  }
+
   /**
    * Whether writes to {@code dbName} are archived. The Store path calls this BEFORE a put/delete so
    * it can skip the prev-value read (an extra get per write, the Erigon-model cost) for
@@ -46,6 +55,7 @@ public final class ArchiveCaptureHolder {
     try {
       return active.capturesStore(dbName);
     } catch (Exception e) {
+      active.recordFailure("capturesStore(" + dbName + ")", e);
       return false; // unknown store / lookup failure: do not read prev, do not capture
     }
   }
@@ -58,6 +68,7 @@ public final class ArchiveCaptureHolder {
     try {
       active.capturePut(dbName, key, prevValue, value);
     } catch (Exception e) {
+      active.recordFailure("capturePut(" + dbName + ")", e);
       logger.warn("archive capture(put) failed for store {} (dropped): {}", dbName, e.getMessage());
     }
   }
@@ -70,6 +81,7 @@ public final class ArchiveCaptureHolder {
     try {
       active.captureDelete(dbName, key, prevValue);
     } catch (Exception e) {
+      active.recordFailure("captureDelete(" + dbName + ")", e);
       logger.warn("archive capture(delete) failed for {} (dropped): {}", dbName, e.getMessage());
     }
   }
@@ -83,6 +95,7 @@ public final class ArchiveCaptureHolder {
     try {
       active.captureAccountAsset(addressKey, oldAccount, newAccount);
     } catch (Exception e) {
+      active.recordFailure("captureAccountAsset", e);
       logger.warn("archive account-asset capture failed (dropped): {}", e.getMessage());
     }
   }
@@ -98,6 +111,7 @@ public final class ArchiveCaptureHolder {
     try {
       active.captureSemanticPut(domain, canonicalKey, prevValue, value);
     } catch (Exception e) {
+      active.recordFailure("captureSemanticPut(" + domain + ")", e);
       logger.warn("archive semantic capture(put) failed for {} (dropped): {}",
           domain, e.getMessage());
     }
@@ -114,6 +128,7 @@ public final class ArchiveCaptureHolder {
     try {
       active.captureSemanticDelete(domain, canonicalKey, prevValue);
     } catch (Exception e) {
+      active.recordFailure("captureSemanticDelete(" + domain + ")", e);
       logger.warn("archive semantic capture(delete) failed for {} (dropped): {}", domain,
           e.getMessage());
     }

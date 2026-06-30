@@ -1080,7 +1080,6 @@ public class Manager {
           .put(ByteArray.fromLong(block.getNum()), block.getResult());
     }
 
-    updateFork(block);
     if (System.currentTimeMillis() - block.getTimeStamp() >= 60_000) {
       revokingStore.setMaxFlushCount(maxFlushCount);
       if (Args.getInstance().getShutdownBlockTime() != null
@@ -1967,6 +1966,7 @@ public class Manager {
     updateRecentBlock(block);
     updateRecentTransaction(block);
     updateDynamicProperties(block);
+    updateFork(block);
 
     chainBaseManager.getBalanceTraceStore().resetCurrentBlockTrace();
 

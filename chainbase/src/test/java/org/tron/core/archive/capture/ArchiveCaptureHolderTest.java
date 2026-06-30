@@ -45,12 +45,14 @@ public class ArchiveCaptureHolderTest {
   }
 
   @Test
-  public void captureFailureIsSwallowedNotPropagated() {
+  public void captureFailureIsRecordedForFailClosedCommit() {
     ArchiveCaptureEngine engine = engineWithActiveContext();
     ArchiveCaptureHolder.set(engine);
     assertTrue(ArchiveCaptureHolder.isActive());
-    // invalid Account proto bytes -> codec throws -> holder must swallow (block apply unaffected)
+    // Invalid Account proto bytes do not propagate into the store path, but they mark the archive
+    // engine failed so DefaultArchiveService.commitBlock can refuse to publish partial history.
     ArchiveCaptureHolder.capturePut("account", new byte[21], null, new byte[] {(byte) 0xff, 0x01});
     assertTrue("failed capture must not be recorded", engine.records().isEmpty());
+    assertTrue("failed capture must be visible to commitBlock", engine.failure().isPresent());
   }
 }
