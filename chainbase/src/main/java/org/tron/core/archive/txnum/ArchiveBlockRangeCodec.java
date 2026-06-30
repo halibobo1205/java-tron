@@ -3,6 +3,8 @@ package org.tron.core.archive.txnum;
 import com.google.common.primitives.Bytes;
 import com.google.common.primitives.Ints;
 import com.google.common.primitives.Longs;
+import java.util.Arrays;
+import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveSource;
 
 /**
@@ -12,6 +14,9 @@ import org.tron.core.archive.ArchiveSource;
  * <ul>
  *   <li>range key: {@code 0x00 || blockNum(8, BE)} -&gt; encoded {@link ArchiveBlockRange}</li>
  *   <li>cursor key: {@code 0x01} -&gt; committedNextTxNum(8, big-endian)</li>
+ *   <li>position key: {@code 0x03 || txNum(8, BE)} -&gt; encoded {@link ArchiveTxPosition}</li>
+ *   <li>block-index key: {@code 0x04 || blockNum(8, BE) || txIndex(4, BE)} -&gt; txNum</li>
+ *   <li>txId key: {@code 0x05 || txId} -&gt; txNum</li>
  *   <li>range value: 5 longs (blockNum, firstTxNum, lastTxNum, prepareTxNum, finalizeTxNum)
  *       || userTxCount(int) || source(1 byte ordinal) = 45 bytes</li>
  * </ul>
@@ -26,12 +31,28 @@ public final class ArchiveBlockRangeCodec {
   // (where a MISSING dynamic-property is unambiguously the in-memory default) from a mid-chain one.
   static final byte FIRST_BLOCK_PREFIX = 0x02;
   static final byte[] FIRST_BLOCK_KEY = {FIRST_BLOCK_PREFIX};
+  static final byte POSITION_PREFIX = 0x03;
+  static final byte BLOCK_INDEX_PREFIX = 0x04;
+  static final byte TX_ID_PREFIX = 0x05;
 
   private ArchiveBlockRangeCodec() {
   }
 
   static byte[] rangeKey(long blockNum) {
     return Bytes.concat(new byte[] {RANGE_PREFIX}, Longs.toByteArray(blockNum));
+  }
+
+  static byte[] positionKey(long txNum) {
+    return Bytes.concat(new byte[] {POSITION_PREFIX}, Longs.toByteArray(txNum));
+  }
+
+  static byte[] blockIndexKey(long blockNum, int txIndex) {
+    return Bytes.concat(new byte[] {BLOCK_INDEX_PREFIX}, Longs.toByteArray(blockNum),
+        Ints.toByteArray(txIndex));
+  }
+
+  static byte[] txIdKey(byte[] txId) {
+    return Bytes.concat(new byte[] {TX_ID_PREFIX}, txId);
   }
 
   static byte[] encodeRange(ArchiveBlockRange range) {
@@ -56,6 +77,29 @@ public final class ArchiveBlockRangeCodec {
     ArchiveSource source = ArchiveSource.values()[bytes[44]];
     return new ArchiveBlockRange(blockNum, firstTxNum, lastTxNum, prepareTxNum, finalizeTxNum,
         userTxCount, source);
+  }
+
+  static byte[] encodePosition(ArchiveTxPosition position) {
+    byte[] txId = position.getTxId();
+    return Bytes.concat(
+        Longs.toByteArray(position.getTxNum()),
+        Longs.toByteArray(position.getBlockNum()),
+        new byte[] {(byte) position.getPhase().ordinal()},
+        new byte[] {(byte) position.getSource().ordinal()},
+        Ints.toByteArray(position.getTxIndex()),
+        Ints.toByteArray(txId.length),
+        txId);
+  }
+
+  static ArchiveTxPosition decodePosition(byte[] bytes) {
+    long txNum = longAt(bytes, 0);
+    long blockNum = longAt(bytes, 8);
+    ArchivePhase phase = ArchivePhase.values()[bytes[16]];
+    ArchiveSource source = ArchiveSource.values()[bytes[17]];
+    int txIndex = Ints.fromBytes(bytes[18], bytes[19], bytes[20], bytes[21]);
+    int txIdLen = Ints.fromBytes(bytes[22], bytes[23], bytes[24], bytes[25]);
+    byte[] txId = Arrays.copyOfRange(bytes, 26, 26 + txIdLen);
+    return new ArchiveTxPosition(txNum, blockNum, phase, source, txIndex, txId);
   }
 
   static byte[] encodeCursor(long committedNextTxNum) {

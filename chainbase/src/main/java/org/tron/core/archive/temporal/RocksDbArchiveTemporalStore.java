@@ -2,6 +2,7 @@ package org.tron.core.archive.temporal;
 
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.rocksdb.Options;
@@ -14,6 +15,7 @@ import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
+import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.db2.common.WrappedByteArray;
 
 /**
@@ -46,20 +48,64 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
 
   @Override
   public void putChange(ArchiveChangeRecord record) {
-    ArchiveDomain domain = record.getDomain();
-    byte[] key = record.getCanonicalKey();
-    byte[] prevValue = ArchiveTemporalCodec.encodeValue(record.getPrevValue());
-    byte[] newValue = ArchiveTemporalCodec.encodeValue(record.getValue());
     try (WriteBatch batch = new WriteBatch(); WriteOptions writeOptions = new WriteOptions()) {
-      // history stores the value BEFORE the change (Erigon prev-value); latest the value AFTER.
-      batch.put(ArchiveTemporalCodec.latestKey(domain, key), newValue);
-      batch.put(ArchiveTemporalCodec.historyKey(domain, key, record.getTxNum()), prevValue);
-      // changeset marker (txNum-ordered) so unwind can find this change without a full scan.
-      batch.put(ArchiveTemporalCodec.changesetKey(record.getTxNum(), domain, key), new byte[0]);
+      putChange(batch, record);
       db.write(writeOptions, batch);
     } catch (RocksDBException e) {
       throw new ArchiveException("archive temporal putChange failed", e);
     }
+  }
+
+  @Override
+  public void putChanges(List<ArchiveChangeRecord> records) {
+    try (WriteBatch batch = new WriteBatch(); WriteOptions writeOptions = new WriteOptions()) {
+      for (ArchiveChangeRecord record : records) {
+        putChange(batch, record);
+      }
+      db.write(writeOptions, batch);
+    } catch (RocksDBException e) {
+      throw new ArchiveException("archive temporal putChanges failed", e);
+    }
+  }
+
+  @Override
+  public void putBlockChanges(ArchiveBlockRange range, List<ArchiveChangeRecord> records) {
+    try (WriteBatch batch = new WriteBatch(); WriteOptions writeOptions = new WriteOptions()) {
+      for (ArchiveChangeRecord record : records) {
+        putChange(batch, record);
+      }
+      batch.put(ArchiveTemporalCodec.blockCommitKey(range.getBlockNum()),
+          ArchiveTemporalCodec.encodeBlockCommit(range));
+      db.write(writeOptions, batch);
+    } catch (RocksDBException e) {
+      throw new ArchiveException("archive temporal putBlockChanges failed", e);
+    }
+  }
+
+  @Override
+  public void validateCommittedBlock(ArchiveBlockRange range) {
+    try {
+      byte[] marker = db.get(ArchiveTemporalCodec.blockCommitKey(range.getBlockNum()));
+      if (!ArchiveTemporalCodec.blockCommitMatches(marker, range)) {
+        throw new ArchiveException("archive temporal commit marker missing for block "
+            + range.getBlockNum());
+      }
+    } catch (RocksDBException e) {
+      throw new ArchiveException("archive temporal commit marker read failed", e);
+    }
+  }
+
+  private static void putChange(WriteBatch batch, ArchiveChangeRecord record)
+      throws RocksDBException {
+    ArchiveDomain domain = record.getDomain();
+    byte[] key = record.getCanonicalKey();
+    byte[] prevValue = ArchiveTemporalCodec.encodeValue(record.getPrevValue());
+    byte[] newValue = ArchiveTemporalCodec.encodeValue(record.getValue());
+    // history stores the value BEFORE the change (Erigon prev-value); latest the value AFTER.
+    batch.put(ArchiveTemporalCodec.latestKey(domain, key), newValue);
+    batch.put(ArchiveTemporalCodec.historyKey(domain, key, record.getTxNum()), prevValue);
+    // changeset marker (txNum-ordered) so unwind can find this change without a full scan.
+    batch.put(ArchiveTemporalCodec.changesetKey(record.getTxNum(), domain, key), new byte[0]);
   }
 
   @Override

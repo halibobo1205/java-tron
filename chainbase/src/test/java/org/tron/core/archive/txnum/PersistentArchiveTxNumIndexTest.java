@@ -1,6 +1,7 @@
 package org.tron.core.archive.txnum;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -15,6 +16,8 @@ import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveSource;
 
 public class PersistentArchiveTxNumIndexTest {
+
+  private static final byte[] TX_A = new byte[] {0x01, 0x02, 0x03};
 
   private Path dir;
   private RocksDbArchiveBlockRangeStore store;
@@ -38,6 +41,14 @@ public class PersistentArchiveTxNumIndexTest {
     index.allocateSystemTx(blockNum, ArchivePhase.BLOCK_PREPARE);
     index.allocateSystemTx(blockNum, ArchivePhase.BLOCK_FINALIZE);
     return index.commitBlock(blockNum, 0);
+  }
+
+  private ArchiveBlockRange pushBlockWithUserTx(long blockNum, byte[] txId) {
+    index.beginBlock(blockNum, ArchiveSource.NORMAL);
+    index.allocateSystemTx(blockNum, ArchivePhase.BLOCK_PREPARE);
+    index.allocateUserTx(blockNum, 0, txId);
+    index.allocateSystemTx(blockNum, ArchivePhase.BLOCK_FINALIZE);
+    return index.commitBlock(blockNum, 1);
   }
 
   @Test
@@ -85,6 +96,44 @@ public class PersistentArchiveTxNumIndexTest {
     assertEquals(7, index.getFirstArchivedBlock());
     pushBlock(9);
     assertEquals(7, index.getFirstArchivedBlock());
+  }
+
+  @Test
+  public void txPositionAndTxIdLookupSurviveRestart() {
+    ArchiveBlockRange range = pushBlockWithUserTx(10, TX_A);
+    long userTxNum = range.getPrepareTxNum() + 1;
+    assertEquals(userTxNum, index.findTxNumByTxId(TX_A).getAsLong());
+    assertEquals(userTxNum, index.findTxNumByBlockAndIndex(10, 0).getAsLong());
+
+    index.close();
+    store = new RocksDbArchiveBlockRangeStore(dir.toString());
+    index = new PersistentArchiveTxNumIndex(store);
+
+    assertEquals(userTxNum, index.findTxNumByTxId(TX_A).getAsLong());
+    assertEquals(userTxNum, index.findTxNumByBlockAndIndex(10, 0).getAsLong());
+    ArchiveTxPosition position = index.getPosition(userTxNum).get();
+    assertEquals(10, position.getBlockNum());
+    assertEquals(ArchivePhase.USER_TX, position.getPhase());
+    assertEquals(0, position.getTxIndex());
+    assertArrayEquals(TX_A, position.getTxId());
+  }
+
+  @Test
+  public void unwindAfterRestartRemovesPersistedTxIndexes() {
+    ArchiveBlockRange range = pushBlockWithUserTx(10, TX_A);
+    long userTxNum = range.getPrepareTxNum() + 1;
+
+    index.close();
+    store = new RocksDbArchiveBlockRangeStore(dir.toString());
+    index = new PersistentArchiveTxNumIndex(store);
+
+    index.unwindBlock(10);
+    assertFalse(index.getBlockRange(10).isPresent());
+    assertFalse(index.getPosition(userTxNum).isPresent());
+    assertFalse(index.findTxNumByTxId(TX_A).isPresent());
+    assertFalse(index.findTxNumByBlockAndIndex(10, 0).isPresent());
+    ArchiveBlockRange recommitted = pushBlock(10);
+    assertEquals(range.getFirstTxNum(), recommitted.getFirstTxNum());
   }
 
   private static void deleteRecursively(File f) {

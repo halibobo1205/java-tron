@@ -3,6 +3,7 @@ package org.tron.core.archive.temporal;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
 import java.util.Optional;
@@ -44,6 +45,13 @@ public final class InMemoryArchiveTemporalStore implements ArchiveTemporalStore 
     // within-tx collapsing to first-prev/last-new is the drain's job (DefaultArchiveService).
     state.history.put(record.getTxNum(), record.getPrevValue());
     state.latest = record.getValue();
+  }
+
+  @Override
+  public void putChanges(List<ArchiveChangeRecord> records) {
+    for (ArchiveChangeRecord record : records) {
+      putChange(record);
+    }
   }
 
   @Override

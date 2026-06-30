@@ -2,6 +2,7 @@ package org.tron.core.archive.temporal;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import java.io.File;
@@ -9,14 +10,17 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Collections;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveSource;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
+import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.archive.txnum.ArchiveTxPosition;
 
 /**
@@ -112,6 +116,22 @@ public class RocksDbArchiveTemporalStoreTest {
     assertArrayEquals(new byte[] {0x42}, store.latest(ArchiveDomain.ACCOUNT, KEY).get().getValue());
     assertArrayEquals(new byte[] {0x42},
         store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 100).get().getValue());
+  }
+
+  @Test
+  public void blockCommitMarkerSurvivesRestartAndValidatesRange() {
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        3, 10, 11, 10, 11, 0, ArchiveSource.NORMAL);
+    store.putBlockChanges(range, Collections.emptyList());
+    store.validateCommittedBlock(range);
+
+    store.close();
+    store = new RocksDbArchiveTemporalStore(dir.toString());
+    store.validateCommittedBlock(range);
+
+    ArchiveBlockRange mismatched = new ArchiveBlockRange(
+        3, 10, 12, 10, 11, 0, ArchiveSource.NORMAL);
+    assertThrows(ArchiveException.class, () -> store.validateCommittedBlock(mismatched));
   }
 
   @Test
