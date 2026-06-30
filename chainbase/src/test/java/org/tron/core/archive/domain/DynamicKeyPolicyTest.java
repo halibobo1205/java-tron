@@ -16,6 +16,7 @@ public class DynamicKeyPolicyTest {
   @Test
   public void vmAndFeeConfigKeysAreRooted() {
     assertEquals(RootPolicy.IN_GLOBAL_ROOT, decide("ENERGY_FEE").getRootPolicy());
+    assertEquals(RootPolicy.IN_GLOBAL_ROOT, decide("MAX_FEE_LIMIT").getRootPolicy());
     DynamicKeyDecision cancun = decide("ALLOW_TVM_CANCUN");
     assertEquals(RootPolicy.IN_GLOBAL_ROOT, cancun.getRootPolicy());
     assertEquals(DynamicKeyClass.VM_CONFIG, cancun.getKeyClass());
@@ -24,10 +25,23 @@ public class DynamicKeyPolicyTest {
 
   @Test
   public void executionAffectingGovernanceKeysAreRooted() {
-    // FreezeV2 / shielded / multi-sign gate VM execution (opcode validity, precompiles, ADDRESS /
-    // ORIGIN bytes), so they are VM_CONFIG (rooted + readable), not left as unknown.
+    // VM enablement, fork gates, energy knobs, arithmetic/resource flags and call-visible
+    // precompile/address behaviour are rooted + readable, not left as unknown.
     for (String key : new String[] {
-        "UNFREEZE_DELAY_DAYS", "ALLOW_SHIELDED_TRC20_TRANSACTION", "ALLOW_MULTI_SIGN"}) {
+        "ALLOW_CREATION_OF_CONTRACTS",
+        "ALLOW_HIGHER_LIMIT_FOR_MAX_CPU_TIME_OF_ONE_TX",
+        "CURRENT_CYCLE_NUMBER",
+        "ALLOW_DYNAMIC_ENERGY",
+        "DYNAMIC_ENERGY_THRESHOLD",
+        "DYNAMIC_ENERGY_INCREASE_FACTOR",
+        "DYNAMIC_ENERGY_MAX_FACTOR",
+        "ALLOW_ENERGY_ADJUSTMENT",
+        "ALLOW_STRICT_MATH",
+        "CONSENSUS_LOGIC_OPTIMIZATION",
+        "ALLOW_HARDEN_RESOURCE_CALCULATION",
+        "UNFREEZE_DELAY_DAYS",
+        "ALLOW_SHIELDED_TRC20_TRANSACTION",
+        "ALLOW_MULTI_SIGN"}) {
       DynamicKeyDecision d = decide(key);
       assertEquals(RootPolicy.IN_GLOBAL_ROOT, d.getRootPolicy());
       assertEquals(DynamicKeyClass.VM_CONFIG, d.getKeyClass());

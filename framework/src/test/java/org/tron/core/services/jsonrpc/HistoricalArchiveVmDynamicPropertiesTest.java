@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 import org.junit.Test;
+import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.archive.reader.ArchiveReadResult;
 import org.tron.core.archive.reader.ArchiveStatePoint;
@@ -68,17 +69,91 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
   }
 
   @Test
-  public void energyFeeIsHistoricalAndUnreconstructedParamsDelegate() throws Exception {
+  public void energyFeeIsHistoricalAndExecutionParamsReconstruct() throws Exception {
     FakeReader reader = new FakeReader();
+    reader.put("CURRENT_CYCLE_NUMBER", 7L);
+    reader.put("ALLOW_CREATION_OF_CONTRACTS", 0L);
+    reader.put("MAX_FEE_LIMIT", 100L);
+    reader.put("MAX_CPU_TIME_OF_ONE_TX", 25L);
+    reader.put("ALLOW_HIGHER_LIMIT_FOR_MAX_CPU_TIME_OF_ONE_TX", 0L);
+    reader.put("ALLOW_DYNAMIC_ENERGY", 0L);
+    reader.put("DYNAMIC_ENERGY_THRESHOLD", 11L);
+    reader.put("DYNAMIC_ENERGY_INCREASE_FACTOR", 12L);
+    reader.put("DYNAMIC_ENERGY_MAX_FACTOR", 13L);
+    reader.put("ALLOW_ENERGY_ADJUSTMENT", 0L);
+    reader.put("ALLOW_STRICT_MATH", 0L);
+    reader.put("CONSENSUS_LOGIC_OPTIMIZATION", 0L);
+    reader.put("ALLOW_HARDEN_RESOURCE_CALCULATION", 0L);
     VmDynamicProperties latest = mock(VmDynamicProperties.class);
+    when(latest.getCurrentCycleNumber()).thenReturn(99L);
+    when(latest.supportVM()).thenReturn(true);
+    when(latest.getMaxFeeLimit()).thenReturn(1_000L);
+    when(latest.getMaxCpuTimeOfOneTx()).thenReturn(50L);
+    when(latest.getAllowHigherLimitForMaxCpuTimeOfOneTx()).thenReturn(1L);
+    when(latest.getAllowDynamicEnergy()).thenReturn(1L);
+    when(latest.getDynamicEnergyThreshold()).thenReturn(21L);
+    when(latest.getDynamicEnergyIncreaseFactor()).thenReturn(22L);
+    when(latest.getDynamicEnergyMaxFactor()).thenReturn(23L);
+    when(latest.getAllowEnergyAdjustment()).thenReturn(1L);
     when(latest.getAllowStrictMath()).thenReturn(1L);
+    when(latest.getConsensusLogicOptimization()).thenReturn(1L);
+    when(latest.getAllowHardenResourceCalculation()).thenReturn(1L);
 
     HistoricalArchiveVmDynamicProperties view =
         new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true);
 
     assertEquals(ENERGY_FEE, view.getEnergyFee());      // inherited historical fee
-    // strict-math does not change a constant-call result, so it is NOT reconstructed -> latest.
-    assertEquals(1L, view.getAllowStrictMath());
+    assertEquals(FakeReader.BLOCK_NUM, view.getLatestBlockHeaderNumber());
+    assertEquals(7L, view.getCurrentCycleNumber());
+    assertEquals(false, view.supportVM());
+    assertEquals(100L, view.getMaxFeeLimit());
+    assertEquals(25L, view.getMaxCpuTimeOfOneTx());
+    assertEquals(0L, view.getAllowHigherLimitForMaxCpuTimeOfOneTx());
+    assertEquals(0L, view.getAllowDynamicEnergy());
+    assertEquals(11L, view.getDynamicEnergyThreshold());
+    assertEquals(12L, view.getDynamicEnergyIncreaseFactor());
+    assertEquals(13L, view.getDynamicEnergyMaxFactor());
+    assertEquals(0L, view.getAllowEnergyAdjustment());
+    assertEquals(0L, view.getAllowStrictMath());
+    assertEquals(0L, view.getConsensusLogicOptimization());
+    assertEquals(0L, view.getAllowHardenResourceCalculation());
+  }
+
+  @Test
+  public void missingExecutionParamsUseDefaultsOrLatestByCoverage() throws Exception {
+    FakeReader reader = new FakeReader();
+    VmDynamicProperties latest = mock(VmDynamicProperties.class);
+    when(latest.supportVM()).thenReturn(true);
+    when(latest.getMaxFeeLimit()).thenReturn(123L);
+    when(latest.getAllowStrictMath()).thenReturn(1L);
+
+    HistoricalArchiveVmDynamicProperties genesisComplete =
+        new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true);
+    CommonParameter p = CommonParameter.getInstance();
+    assertEquals(p.getAllowCreationOfContracts() == 1L, genesisComplete.supportVM());
+    assertEquals(1_000_000_000L, genesisComplete.getMaxFeeLimit());
+    assertEquals(p.getAllowStrictMath(), genesisComplete.getAllowStrictMath());
+
+    HistoricalArchiveVmDynamicProperties midChain =
+        new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, false);
+    assertEquals(true, midChain.supportVM());
+    assertEquals(123L, midChain.getMaxFeeLimit());
+    assertEquals(1L, midChain.getAllowStrictMath());
+  }
+
+  @Test
+  public void genesisCompleteMissingValuesDoNotReadLatest() throws Exception {
+    FakeReader reader = new FakeReader();
+    VmDynamicProperties latest = mock(VmDynamicProperties.class, invocation -> {
+      throw new AssertionError("latest must not be read for genesis-complete archive defaults");
+    });
+
+    HistoricalArchiveVmDynamicProperties view =
+        new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true);
+
+    assertEquals(FakeReader.BLOCK_NUM, view.getLatestBlockHeaderNumber());
+    assertEquals(1_000_000_000L, view.getMaxFeeLimit());
+    assertEquals(ENERGY_FEE, view.getEnergyFee());
   }
 
   @Test
@@ -104,7 +179,10 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
 
   /** Serves configured DYNAMIC_PROPERTIES values by key; everything else MISSING. */
   private static final class FakeReader implements ArchiveStateReader {
+    private static final long BLOCK_NUM = 123L;
+
     private final Map<String, byte[]> props = new HashMap<>();
+    private final ArchiveStatePoint point = ArchiveStatePoint.blockEnd(BLOCK_NUM, new byte[32], 0);
 
     void put(String key, long value) {
       props.put(key, ByteArray.fromLong(value));
@@ -116,7 +194,7 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
     }
 
     public ArchiveStatePoint getPoint() {
-      return null;
+      return point;
     }
 
     public ArchiveReadResult<AccountCapsule> getAccount(byte[] address) {

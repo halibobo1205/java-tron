@@ -1,6 +1,7 @@
 package org.tron.core.services.jsonrpc;
 
 import java.nio.charset.StandardCharsets;
+import java.util.function.LongSupplier;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.archive.reader.ArchiveReadResult;
@@ -9,13 +10,11 @@ import org.tron.core.archive.reader.ArchiveStateReader;
 import org.tron.core.store.VmDynamicProperties;
 
 /**
- * Archive-backed historical {@link VmDynamicProperties}: reconstructs the hard-fork flags that can
- * change an {@code eth_call} RESULT from the DYNAMIC_PROPERTIES history at the target block, rather
- * than the latest values. These are the 12 opcode-availability flags, the 2 CHAINID-value flags,
- * plus FreezeV2 (FREEZEBALANCEV2 / DELEGATERESOURCE opcode validity), shielded-TRC20 (precompile
- * presence) and multi-sign (ADDRESS / ORIGIN return bytes) -- 17 in all. Energy price and every
- * other parameter keep {@link HistoricalVmDynamicProperties}'s behaviour (historical fee via
- * {@code EnergyPriceHistory}, latest baseline for the rest).
+ * Archive-backed historical {@link VmDynamicProperties}: reconstructs the VM execution parameters
+ * from DYNAMIC_PROPERTIES history at the target block, rather than the latest values. This covers
+ * opcode/fork gates, CHAINID behaviour, VM enablement, fee/CPU limits, dynamic-energy knobs, and
+ * VM arithmetic/resource flags. Energy price keeps {@link HistoricalVmDynamicProperties}'s
+ * historical {@code EnergyPriceHistory} behaviour.
  *
  * <p>Each flag is read once at construction (reader open) via {@code getDynamicProperty}:
  * <ul>
@@ -27,14 +26,18 @@ import org.tron.core.store.VmDynamicProperties;
  *       correct for the long-activated flags that dominate that case.</li>
  * </ul>
  *
- * <p>Only proposals ever write these keys (the constructor's default seed is not part of block
- * application, so it is never captured), which is what makes MISSING-means-default exact under
- * genesis coverage. All 17 keys are rooted VM_CONFIG in {@code DynamicKeyPolicy}. The energy/math
- * flags (dynamic-energy, strict-math) are intentionally NOT reconstructed -- they do not change a
- * read-only result (energy is discarded, the Maths wrappers are integer-domain identical).
+ * <p>Only proposals or dynamic-property maintenance writes these keys (the constructor's default
+ * seed is not part of block application, so it is never captured), which is what makes
+ * MISSING-means-default exact under genesis coverage. Execution-affecting keys are explicitly
+ * rooted in {@code DynamicKeyPolicy}.
  */
 final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProperties {
 
+  private final long latestBlockHeaderNumber;
+  private final long currentCycleNumber;
+  private final long allowCreationOfContracts;
+  private final long maxFeeLimit;
+  private final long maxCpuTimeOfOneTx;
   private final long allowTvmTransferTrc10;
   private final long allowTvmConstantinople;
   private final long allowTvmSolidity059;
@@ -55,52 +58,91 @@ final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProp
   private final long unfreezeDelayDays;
   private final long allowShieldedTRC20Transaction;
   private final long allowMultiSign;
+  private final long allowHigherLimitForMaxCpuTimeOfOneTx;
+  private final long allowDynamicEnergy;
+  private final long dynamicEnergyThreshold;
+  private final long dynamicEnergyIncreaseFactor;
+  private final long dynamicEnergyMaxFactor;
+  private final long allowEnergyAdjustment;
+  private final long allowStrictMath;
+  private final long consensusLogicOptimization;
+  private final long allowHardenResourceCalculation;
 
   HistoricalArchiveVmDynamicProperties(VmDynamicProperties latest, long energyFee,
       ArchiveStateReader reader, boolean genesisComplete) throws ArchiveReaderException {
     super(latest, energyFee);
     CommonParameter p = CommonParameter.getInstance();
+    this.latestBlockHeaderNumber = reader.getPoint().getBlockNum();
+    this.currentCycleNumber = resolve(reader, "CURRENT_CYCLE_NUMBER", genesisComplete,
+        0L, latest::getCurrentCycleNumber);
+    this.allowCreationOfContracts = resolve(reader, "ALLOW_CREATION_OF_CONTRACTS",
+        genesisComplete, p.getAllowCreationOfContracts(), () -> latest.supportVM() ? 1L : 0L);
+    this.maxFeeLimit = resolve(reader, "MAX_FEE_LIMIT", genesisComplete,
+        1_000_000_000L, latest::getMaxFeeLimit);
+    this.maxCpuTimeOfOneTx = resolve(reader, "MAX_CPU_TIME_OF_ONE_TX", genesisComplete,
+        50L, latest::getMaxCpuTimeOfOneTx);
     this.allowTvmTransferTrc10 = resolve(reader, "ALLOW_TVM_TRANSFER_TRC10", genesisComplete,
-        p.getAllowTvmTransferTrc10(), latest.getAllowTvmTransferTrc10());
+        p.getAllowTvmTransferTrc10(), latest::getAllowTvmTransferTrc10);
     this.allowTvmConstantinople = resolve(reader, "ALLOW_TVM_CONSTANTINOPLE", genesisComplete,
-        p.getAllowTvmConstantinople(), latest.getAllowTvmConstantinople());
+        p.getAllowTvmConstantinople(), latest::getAllowTvmConstantinople);
     this.allowTvmSolidity059 = resolve(reader, "ALLOW_TVM_SOLIDITY_059", genesisComplete,
-        p.getAllowTvmSolidity059(), latest.getAllowTvmSolidity059());
+        p.getAllowTvmSolidity059(), latest::getAllowTvmSolidity059);
     this.allowTvmIstanbul = resolve(reader, "ALLOW_TVM_ISTANBUL", genesisComplete,
-        p.getAllowTvmIstanbul(), latest.getAllowTvmIstanbul());
+        p.getAllowTvmIstanbul(), latest::getAllowTvmIstanbul);
     this.allowTvmFreeze = resolve(reader, "ALLOW_TVM_FREEZE", genesisComplete,
-        p.getAllowTvmFreeze(), latest.getAllowTvmFreeze());
+        p.getAllowTvmFreeze(), latest::getAllowTvmFreeze);
     this.allowTvmVote = resolve(reader, "ALLOW_TVM_VOTE", genesisComplete,
-        p.getAllowTvmVote(), latest.getAllowTvmVote());
+        p.getAllowTvmVote(), latest::getAllowTvmVote);
     this.allowTvmLondon = resolve(reader, "ALLOW_TVM_LONDON", genesisComplete,
-        p.getAllowTvmLondon(), latest.getAllowTvmLondon());
+        p.getAllowTvmLondon(), latest::getAllowTvmLondon);
     this.allowTvmShangHai = resolve(reader, "ALLOW_TVM_SHANGHAI", genesisComplete,
-        p.getAllowTvmShangHai(), latest.getAllowTvmShangHai());
+        p.getAllowTvmShangHai(), latest::getAllowTvmShangHai);
     this.allowTvmCancun = resolve(reader, "ALLOW_TVM_CANCUN", genesisComplete,
-        p.getAllowTvmCancun(), latest.getAllowTvmCancun());
+        p.getAllowTvmCancun(), latest::getAllowTvmCancun);
     this.allowTvmBlob = resolve(reader, "ALLOW_TVM_BLOB", genesisComplete,
-        p.getAllowTvmBlob(), latest.getAllowTvmBlob());
+        p.getAllowTvmBlob(), latest::getAllowTvmBlob);
     // Osaka and selfdestruct-restriction default to a hard-coded 0L in their live getters.
     this.allowTvmOsaka = resolve(reader, "ALLOW_TVM_OSAKA", genesisComplete,
-        0L, latest.getAllowTvmOsaka());
+        0L, latest::getAllowTvmOsaka);
     this.allowTvmSelfdestructRestriction = resolve(reader, "ALLOW_TVM_SELFDESTRUCT_RESTRICTION",
-        genesisComplete, 0L, latest.getAllowTvmSelfdestructRestriction());
+        genesisComplete, 0L, latest::getAllowTvmSelfdestructRestriction);
     this.allowTvmCompatibleEvm = resolve(reader, "ALLOW_TVM_COMPATIBLE_EVM", genesisComplete,
-        p.getAllowTvmCompatibleEvm(), latest.getAllowTvmCompatibleEvm());
+        p.getAllowTvmCompatibleEvm(), latest::getAllowTvmCompatibleEvm);
     this.allowOptimizedReturnValueOfChainId = resolve(reader,
         "ALLOW_OPTIMIZED_RETURN_VALUE_OF_CHAIN_ID", genesisComplete,
-        p.getAllowOptimizedReturnValueOfChainId(), latest.getAllowOptimizedReturnValueOfChainId());
+        p.getAllowOptimizedReturnValueOfChainId(), latest::getAllowOptimizedReturnValueOfChainId);
     this.unfreezeDelayDays = resolve(reader, "UNFREEZE_DELAY_DAYS", genesisComplete,
-        p.getUnfreezeDelayDays(), latest.supportUnfreezeDelay() ? 1L : 0L);
+        p.getUnfreezeDelayDays(), () -> latest.supportUnfreezeDelay() ? 1L : 0L);
     this.allowShieldedTRC20Transaction = resolve(reader, "ALLOW_SHIELDED_TRC20_TRANSACTION",
         genesisComplete, p.getAllowShieldedTRC20Transaction(),
-        latest.getAllowShieldedTRC20Transaction());
+        latest::getAllowShieldedTRC20Transaction);
     this.allowMultiSign = resolve(reader, "ALLOW_MULTI_SIGN", genesisComplete,
-        p.getAllowMultiSign(), latest.getAllowMultiSign());
+        p.getAllowMultiSign(), latest::getAllowMultiSign);
+    this.allowHigherLimitForMaxCpuTimeOfOneTx = resolve(reader,
+        "ALLOW_HIGHER_LIMIT_FOR_MAX_CPU_TIME_OF_ONE_TX", genesisComplete,
+        p.getAllowHigherLimitForMaxCpuTimeOfOneTx(),
+        latest::getAllowHigherLimitForMaxCpuTimeOfOneTx);
+    this.allowDynamicEnergy = resolve(reader, "ALLOW_DYNAMIC_ENERGY", genesisComplete,
+        p.getAllowDynamicEnergy(), latest::getAllowDynamicEnergy);
+    this.dynamicEnergyThreshold = resolve(reader, "DYNAMIC_ENERGY_THRESHOLD", genesisComplete,
+        p.getDynamicEnergyThreshold(), latest::getDynamicEnergyThreshold);
+    this.dynamicEnergyIncreaseFactor = resolve(reader, "DYNAMIC_ENERGY_INCREASE_FACTOR",
+        genesisComplete, p.getDynamicEnergyIncreaseFactor(),
+        latest::getDynamicEnergyIncreaseFactor);
+    this.dynamicEnergyMaxFactor = resolve(reader, "DYNAMIC_ENERGY_MAX_FACTOR", genesisComplete,
+        p.getDynamicEnergyMaxFactor(), latest::getDynamicEnergyMaxFactor);
+    this.allowEnergyAdjustment = resolve(reader, "ALLOW_ENERGY_ADJUSTMENT", genesisComplete,
+        p.getAllowEnergyAdjustment(), latest::getAllowEnergyAdjustment);
+    this.allowStrictMath = resolve(reader, "ALLOW_STRICT_MATH", genesisComplete,
+        p.getAllowStrictMath(), latest::getAllowStrictMath);
+    this.consensusLogicOptimization = resolve(reader, "CONSENSUS_LOGIC_OPTIMIZATION",
+        genesisComplete, p.getConsensusLogicOptimization(), latest::getConsensusLogicOptimization);
+    this.allowHardenResourceCalculation = resolve(reader, "ALLOW_HARDEN_RESOURCE_CALCULATION",
+        genesisComplete, 0L, latest::getAllowHardenResourceCalculation);
   }
 
   private static long resolve(ArchiveStateReader reader, String key, boolean genesisComplete,
-      long inMemoryDefault, long latestValue) throws ArchiveReaderException {
+      long inMemoryDefault, LongSupplier latestValue) throws ArchiveReaderException {
     byte[] canonicalKey = key.getBytes(StandardCharsets.US_ASCII);
     ArchiveReadResult<byte[]> r = reader.getDynamicProperty(canonicalKey);
     if (r.isPresent()) {
@@ -108,7 +150,32 @@ final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProp
       return ByteArray.toLong(r.getValue());
     }
     // MISSING or TOMBSTONE (flags are never tombstoned): no captured change as of this block.
-    return genesisComplete ? inMemoryDefault : latestValue;
+    return genesisComplete ? inMemoryDefault : latestValue.getAsLong();
+  }
+
+  @Override
+  public long getLatestBlockHeaderNumber() {
+    return latestBlockHeaderNumber;
+  }
+
+  @Override
+  public long getCurrentCycleNumber() {
+    return currentCycleNumber;
+  }
+
+  @Override
+  public boolean supportVM() {
+    return allowCreationOfContracts == 1L;
+  }
+
+  @Override
+  public long getMaxFeeLimit() {
+    return maxFeeLimit;
+  }
+
+  @Override
+  public long getMaxCpuTimeOfOneTx() {
+    return maxCpuTimeOfOneTx;
   }
 
   @Override
@@ -195,5 +262,50 @@ final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProp
   @Override
   public long getAllowMultiSign() {
     return allowMultiSign;
+  }
+
+  @Override
+  public long getAllowHigherLimitForMaxCpuTimeOfOneTx() {
+    return allowHigherLimitForMaxCpuTimeOfOneTx;
+  }
+
+  @Override
+  public long getAllowDynamicEnergy() {
+    return allowDynamicEnergy;
+  }
+
+  @Override
+  public long getDynamicEnergyThreshold() {
+    return dynamicEnergyThreshold;
+  }
+
+  @Override
+  public long getDynamicEnergyIncreaseFactor() {
+    return dynamicEnergyIncreaseFactor;
+  }
+
+  @Override
+  public long getDynamicEnergyMaxFactor() {
+    return dynamicEnergyMaxFactor;
+  }
+
+  @Override
+  public long getAllowEnergyAdjustment() {
+    return allowEnergyAdjustment;
+  }
+
+  @Override
+  public long getAllowStrictMath() {
+    return allowStrictMath;
+  }
+
+  @Override
+  public long getConsensusLogicOptimization() {
+    return consensusLogicOptimization;
+  }
+
+  @Override
+  public long getAllowHardenResourceCalculation() {
+    return allowHardenResourceCalculation;
   }
 }

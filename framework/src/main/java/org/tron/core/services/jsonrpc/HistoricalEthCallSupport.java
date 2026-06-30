@@ -1,7 +1,6 @@
 package org.tron.core.services.jsonrpc;
 
 import static org.tron.core.Wallet.CONTRACT_VALIDATE_ERROR;
-import static org.tron.core.services.jsonrpc.JsonRpcApiUtil.parseEnergyFee;
 import static org.tron.core.services.jsonrpc.JsonRpcApiUtil.triggerCallContract;
 
 import org.tron.common.utils.ByteArray;
@@ -87,11 +86,8 @@ public final class HistoricalEthCallSupport {
         StoreFactory.getInstance().getChainBaseManager().getDynamicPropertiesStore();
     // Energy price has a complete, time-keyed history in the live store, so we replay BASEFEE /
     // GASPRICE with the value in force at the target block rather than the current price.
-    long historicalEnergyFee =
-        parseEnergyFee(historicalBlock.getTimeStamp(), latestStore.getEnergyPriceHistory());
-    if (historicalEnergyFee == -1) {
-      historicalEnergyFee = latestStore.getEnergyFee();
-    }
+    long historicalEnergyFee = HistoricalVmDynamicProperties.resolveHistoricalEnergyFee(
+        historicalBlock.getTimeStamp(), latestStore.getEnergyPriceHistory());
     TriggerSmartContract trigger =
         triggerCallContract(ownerAddress, contractAddress, callValue, data, 0, null);
 
