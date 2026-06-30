@@ -73,6 +73,17 @@ public class InMemoryArchiveTemporalStoreTest {
   }
 
   @Test
+  public void midChainFirstCapturedChangeServesPrevValueBeforeCoverage() {
+    // The key existed before archive coverage as 0x30; the first captured change moves it to 0x31.
+    store.putChange(change(6, KEY, val(0x30), val(0x31)));
+    assertArrayEquals(new byte[] {0x30}, asOf(0));
+    assertArrayEquals(new byte[] {0x30}, asOf(5));
+    assertArrayEquals(new byte[] {0x31}, asOf(6));
+    assertArrayEquals(new byte[] {0x31}, asOf(100));
+    assertFalse(store.getAsOf(ArchiveDomain.ACCOUNT, "gap".getBytes(), 5).isPresent());
+  }
+
+  @Test
   public void tombstoneFallsThroughAsDeleted() {
     store.putChange(change(5, KEY, tomb(), val(1)));
     store.putChange(change(9, KEY, val(1), tomb()));
