@@ -36,8 +36,8 @@ import org.tron.protos.Protocol.Account;
  *
  * <p>Not thread-safe: the buffer is written only by the single block-apply thread (the only thread
  * with a non-empty execution context). {@link #capturePut}/{@link #captureDelete} may throw on
- * encode failure; the store-facing {@link ArchiveCaptureHolder} isolates those so block apply is
- * never affected.
+ * encode failure; the store-facing {@link ArchiveCaptureHolder} records those failures so block
+ * commit can fail-stop instead of publishing an incomplete archive.
  */
 public final class ArchiveCaptureEngine {
 
@@ -46,6 +46,7 @@ public final class ArchiveCaptureEngine {
   private final DynamicKeyPolicy dynamicKeyPolicy;
   private final ArchiveExecutionContext context;
   private final List<ArchiveChangeRecord> records = new ArrayList<>();
+  private ArchiveException failure;
 
   public ArchiveCaptureEngine(ArchiveDomainRegistry registry, ArchiveDomainCatalog catalog,
       DynamicKeyPolicy dynamicKeyPolicy, ArchiveExecutionContext context) {
@@ -126,9 +127,9 @@ public final class ArchiveCaptureEngine {
    * Derives ACCOUNT_ASSET (TRC10) records from an account write by value-diffing the old vs new
    * {@code assetV2} maps (decision 2). Only assetIds whose balance actually changed are emitted
    * (a balance == new value, or a tombstone when it drops to 0) -- value-diff, not map-presence, so
-   * lazily-imported but unchanged assets are skipped. Both regimes use one diff;
-   * in the optimized regime a read-induced lazy import against an already-flushed (asset-stripped)
-   * old value may emit a redundant but value-correct record, which is harmless.
+   * lazily-imported but unchanged assets are skipped. In the optimized regime the AccountStore hook
+   * passes asset-imported old/new account bytes so stripped root-account rows do not masquerade as
+   * tombstone-to-balance changes.
    */
   public void captureAccountAsset(byte[] addressKey, byte[] oldAccount, byte[] newAccount) {
     Optional<ArchiveTxPosition> position = context.current();
@@ -230,7 +231,18 @@ public final class ArchiveCaptureEngine {
     return Collections.unmodifiableList(records);
   }
 
+  public Optional<ArchiveException> failure() {
+    return Optional.ofNullable(failure);
+  }
+
+  public void recordFailure(String operation, Exception cause) {
+    if (failure == null) {
+      failure = new ArchiveException("archive capture failed during " + operation, cause);
+    }
+  }
+
   public void clear() {
     records.clear();
+    failure = null;
   }
 }

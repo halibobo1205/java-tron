@@ -1,7 +1,6 @@
 package org.tron.core.archive;
 
 import java.nio.file.Paths;
-import org.tron.core.archive.temporal.ArchiveTemporalStore;
 import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
 import org.tron.core.archive.temporal.RocksDbArchiveTemporalStore;
 import org.tron.core.archive.txnum.PersistentArchiveTxNumIndex;
@@ -31,14 +30,38 @@ public final class ArchiveServiceFactory {
     if (config == null || !config.isEnable()) {
       return NoopArchiveService.INSTANCE;
     }
+    if (config.getTxnum() == null || !config.getTxnum().isEnable()) {
+      throw new ArchiveException(
+          "storage.archive.txnum.enable must be true when archive is enabled");
+    }
+    if (config.getTemporal() == null || !config.getTemporal().isEnable()) {
+      throw new ArchiveException(
+          "storage.archive.temporal.enable must be true when archive is enabled");
+    }
     if (archiveDir != null && config.getTemporal().isEnable()) {
-      ArchiveTemporalStore temporalStore = new RocksDbArchiveTemporalStore(
+      RocksDbArchiveTemporalStore temporalStore = new RocksDbArchiveTemporalStore(
           Paths.get(archiveDir, "temporal").toString());
-      PersistentArchiveTxNumIndex txNumIndex = new PersistentArchiveTxNumIndex(
-          new RocksDbArchiveBlockRangeStore(Paths.get(archiveDir, "index").toString()));
-      return new DefaultArchiveService(true, txNumIndex,
-          ArchiveExecutionContextHolder.get(), temporalStore);
+      RocksDbArchiveBlockRangeStore blockRangeStore =
+          new RocksDbArchiveBlockRangeStore(Paths.get(archiveDir, "index").toString());
+      try {
+        blockRangeStore.getLastRange().ifPresent(temporalStore::validateCommittedBlock);
+        PersistentArchiveTxNumIndex txNumIndex = new PersistentArchiveTxNumIndex(blockRangeStore);
+        return new DefaultArchiveService(true, txNumIndex,
+            ArchiveExecutionContextHolder.get(), temporalStore);
+      } catch (RuntimeException e) {
+        closeOnFailure(temporalStore, e);
+        closeOnFailure(blockRangeStore, e);
+        throw e;
+      }
     }
     return new DefaultArchiveService(true, new InMemoryArchiveTemporalStore());
+  }
+
+  private static void closeOnFailure(AutoCloseable resource, RuntimeException failure) {
+    try {
+      resource.close();
+    } catch (Exception closeFailure) {
+      failure.addSuppressed(closeFailure);
+    }
   }
 }

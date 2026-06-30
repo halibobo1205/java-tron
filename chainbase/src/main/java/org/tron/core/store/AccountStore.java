@@ -42,6 +42,9 @@ public class AccountStore extends TronStoreWithRevoking<AccountCapsule> {
   private DynamicPropertiesStore dynamicPropertiesStore;
 
   @Autowired
+  private AccountAssetStore accountAssetStore;
+
+  @Autowired
   private AccountStore(@Value("account") String dbName) {
     super(dbName);
   }
@@ -88,11 +91,36 @@ public class AccountStore extends TronStoreWithRevoking<AccountCapsule> {
     // L4c: read the pre-put account so ACCOUNT_ASSET can value-diff assetV2 (gated to avoid the
     // extra read + serialize when archive is off).
     boolean archiveActive = ArchiveCaptureHolder.isActive();
-    byte[] oldArchiveValue = archiveActive ? revokingDB.getUnchecked(key) : null;
+    byte[] oldArchiveValue = archiveActive
+        ? accountAssetDiffValue(revokingDB.getUnchecked(key)) : null;
+    byte[] newArchiveValue = archiveActive ? accountAssetDiffValue(item.getData()) : null;
     super.put(key, item);
     accountStateCallBackUtils.accountCallBack(key, item);
     if (archiveActive) {
-      ArchiveCaptureHolder.captureAccountAsset(key, oldArchiveValue, item.getData());
+      ArchiveCaptureHolder.captureAccountAsset(key, oldArchiveValue, newArchiveValue);
+    }
+  }
+
+  private byte[] accountAssetDiffValue(byte[] accountBytes) {
+    if (accountBytes == null || accountBytes.length == 0) {
+      return accountBytes;
+    }
+    try {
+      if (!dynamicPropertiesStore.supportAllowAccountAssetOptimization()) {
+        return accountBytes;
+      }
+      AccountCapsule account = new AccountCapsule(accountBytes);
+      if (!account.getAssetOptimized()) {
+        return accountBytes;
+      }
+      return account.getInstance().toBuilder()
+          .clearAssetV2()
+          .putAllAssetV2(accountAssetStore.getAllAssets(account.getInstance()))
+          .build()
+          .toByteArray();
+    } catch (Exception e) {
+      ArchiveCaptureHolder.recordFailure("account-asset importAllAsset", e);
+      return accountBytes;
     }
   }
 

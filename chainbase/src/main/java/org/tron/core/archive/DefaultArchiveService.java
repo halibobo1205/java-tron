@@ -3,7 +3,9 @@ package org.tron.core.archive;
 import com.google.common.primitives.Bytes;
 import com.google.common.primitives.Ints;
 import com.google.common.primitives.Longs;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import org.tron.core.archive.capture.ArchiveCaptureEngine;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
@@ -16,6 +18,7 @@ import org.tron.core.archive.reader.ArchiveStateReaderFactory;
 import org.tron.core.archive.reader.DefaultArchiveStateReaderFactory;
 import org.tron.core.archive.temporal.ArchiveTemporalStore;
 import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
+import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.archive.txnum.ArchiveTxNumIndex;
 import org.tron.core.archive.txnum.InMemoryArchiveTxNumIndex;
 import org.tron.core.capsule.BlockCapsule;
@@ -131,23 +134,43 @@ public final class DefaultArchiveService implements ArchiveService {
     if (!enabled) {
       return;
     }
-    txNumIndex.commitBlock(block.getNum(), block.getTransactions().size());
-    // Drain the committed block's captured changes into the temporal store, then clear the buffer.
-    // Collapse multiple captures of the same (domain,key,txNum) within this block into one change:
-    // keep the FIRST prevValue (the value before the tx's first sub-change, so history stores the
-    // true pre-tx value -- Erigon AddPrevValue) and the LAST value (after its last sub-change).
-    Map<WrappedByteArray, ArchiveChangeRecord> merged = new LinkedHashMap<>();
-    for (ArchiveChangeRecord record : captureEngine.records()) {
-      WrappedByteArray id = mergeKey(record);
-      ArchiveChangeRecord prior = merged.get(id);
-      merged.put(id, prior == null ? record
-          : new ArchiveChangeRecord(prior.getPosition(), prior.getDomain(),
-              prior.getCanonicalKey(), prior.getPrevValue(), record.getValue()));
+    boolean txNumCommitted = false;
+    try {
+      if (captureEngine.failure().isPresent()) {
+        throw captureEngine.failure().get();
+      }
+      // Drain captured changes into the temporal store, then clear the buffer.
+      // Collapse repeated (domain,key,txNum) captures within this block into one change:
+      // keep the FIRST prevValue (the value before the tx's first sub-change, so history stores the
+      // true pre-tx value -- Erigon AddPrevValue) and the LAST value (after its last sub-change).
+      Map<WrappedByteArray, ArchiveChangeRecord> merged = new LinkedHashMap<>();
+      for (ArchiveChangeRecord record : captureEngine.records()) {
+        WrappedByteArray id = mergeKey(record);
+        ArchiveChangeRecord prior = merged.get(id);
+        merged.put(id, prior == null ? record
+            : new ArchiveChangeRecord(prior.getPosition(), prior.getDomain(),
+                prior.getCanonicalKey(), prior.getPrevValue(), record.getValue()));
+      }
+      List<ArchiveChangeRecord> records = new ArrayList<>(merged.values());
+      ArchiveBlockRange range = txNumIndex.commitBlock(
+          block.getNum(), block.getTransactions().size());
+      txNumCommitted = true;
+      temporalStore.putBlockChanges(range, records);
+    } catch (RuntimeException e) {
+      try {
+        if (txNumCommitted) {
+          txNumIndex.unwindBlock(block.getNum());
+        } else {
+          txNumIndex.abortBlock(block.getNum());
+        }
+      } catch (RuntimeException cleanupFailure) {
+        e.addSuppressed(cleanupFailure);
+      }
+      throw e;
+    } finally {
+      executionContext.clear();
+      captureEngine.clear();
     }
-    for (ArchiveChangeRecord record : merged.values()) {
-      temporalStore.putChange(record);
-    }
-    captureEngine.clear();
   }
 
   /** Identity for within-block change collapsing: (domainId, txNum, canonicalKey). */

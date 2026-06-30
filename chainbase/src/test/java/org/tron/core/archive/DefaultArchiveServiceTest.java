@@ -3,14 +3,20 @@ package org.tron.core.archive;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import com.google.protobuf.ByteString;
+import java.util.List;
+import java.util.Optional;
 import org.junit.After;
 import org.junit.Test;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
+import org.tron.core.archive.capture.ArchiveChangeRecord;
+import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
+import org.tron.core.archive.temporal.ArchiveTemporalStore;
 import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.archive.txnum.ArchiveTxPosition;
@@ -158,5 +164,104 @@ public class DefaultArchiveServiceTest {
     service.abortBlock(b);
     assertFalse(context.current().isPresent());
     assertFalse(index.getBlockRange(5).isPresent());
+  }
+
+  @Test
+  public void commitFailsClosedWhenCaptureFailureWasRecorded() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    DefaultArchiveService service =
+        new DefaultArchiveService(true, index, context, temporal);
+
+    BlockCapsule b = block(5);
+    service.beginBlock(b, ArchiveSource.NORMAL);
+    service.beginSystemTx(b, ArchivePhase.BLOCK_PREPARE);
+    service.endTx();
+    service.beginSystemTx(b, ArchivePhase.BLOCK_FINALIZE);
+    ArchiveCaptureHolder.capturePut("account", new byte[21], null, new byte[] {(byte) 0xff});
+    service.endTx();
+
+    assertThrows(ArchiveException.class, () -> service.commitBlock(b));
+    assertFalse(index.getBlockRange(5).isPresent());
+    assertEquals(0, temporal.changeCount());
+  }
+
+  @Test
+  public void temporalBatchFailureUnwindsCommittedIndex() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    DefaultArchiveService service =
+        new DefaultArchiveService(true, index, context, new FailingTemporalStore());
+
+    byte[] addr = new byte[21];
+    addr[0] = 0x41;
+    BlockCapsule b = block(5);
+    service.beginBlock(b, ArchiveSource.NORMAL);
+    service.beginSystemTx(b, ArchivePhase.BLOCK_PREPARE);
+    service.getCaptureEngine().capturePut("account", addr, account(1), account(2));
+    service.endTx();
+    service.beginSystemTx(b, ArchivePhase.BLOCK_FINALIZE);
+    service.endTx();
+
+    assertThrows(ArchiveException.class, () -> service.commitBlock(b));
+    assertFalse(index.getBlockRange(5).isPresent());
+  }
+
+  @Test
+  public void txNumCommitFailureClearsPendingContextAndCaptureBuffer() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    DefaultArchiveService service =
+        new DefaultArchiveService(true, index, context, temporal);
+
+    byte[] addr = new byte[21];
+    addr[0] = 0x41;
+    BlockCapsule b = block(5);
+    service.beginBlock(b, ArchiveSource.NORMAL);
+    service.beginSystemTx(b, ArchivePhase.BLOCK_PREPARE);
+    service.getCaptureEngine().capturePut("account", addr, null, account(1));
+
+    ArchiveException ex = assertThrows(ArchiveException.class, () -> service.commitBlock(b));
+    assertTrue(ex.getMessage().contains("requires both prepare and finalize"));
+    assertFalse(context.current().isPresent());
+    assertTrue(service.getCaptureEngine().records().isEmpty());
+    assertFalse(index.getBlockRange(5).isPresent());
+    assertEquals(0, temporal.changeCount());
+
+    // The failed pending block was aborted, so the next block can start cleanly.
+    BlockCapsule next = block(6);
+    service.beginBlock(next, ArchiveSource.NORMAL);
+    service.beginSystemTx(next, ArchivePhase.BLOCK_PREPARE);
+    service.endTx();
+    service.abortBlock(next);
+  }
+
+  private static final class FailingTemporalStore implements ArchiveTemporalStore {
+
+    @Override
+    public void putChange(ArchiveChangeRecord record) {
+      throw new ArchiveException("boom");
+    }
+
+    @Override
+    public void putChanges(List<ArchiveChangeRecord> records) {
+      throw new ArchiveException("boom");
+    }
+
+    @Override
+    public Optional<DomainValue> getAsOf(ArchiveDomain domain, byte[] canonicalKey, long txNum) {
+      return Optional.empty();
+    }
+
+    @Override
+    public Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey) {
+      return Optional.empty();
+    }
+
+    @Override
+    public void unwind(long fromTxNum) {
+    }
   }
 }

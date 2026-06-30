@@ -5,6 +5,7 @@ import com.google.common.primitives.Longs;
 import java.util.Arrays;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
+import org.tron.core.archive.txnum.ArchiveBlockRange;
 
 /**
  * On-disk byte layout for a single-column-family temporal store: a 1-byte family prefix
@@ -19,6 +20,8 @@ import org.tron.core.archive.domain.ArchiveDomain;
  *       -&gt; value(before the change)</li>
  *   <li>changeset: {@code 0x02 || txNum(8) || domainId(2) || keyLen(2) || canonicalKey}, for
  *       unwind</li>
+ *   <li>block-commit: {@code 0x03 || blockNum(8, BE)} -&gt; range marker, for startup
+ *       validation</li>
  *   <li>value:   {@code deletedFlag(1) || valueBytes} (flag 1 = tombstone)</li>
  * </ul>
  * txNum is big-endian so lexicographic key order matches numeric txNum order (forward seek works).
@@ -29,6 +32,7 @@ public final class ArchiveTemporalCodec {
   static final byte HISTORY_PREFIX = 0x01;
   // changeset: 0x02 || txNum(8) || domainId(2) || canonicalKey -> ordered by txNum, for unwind.
   static final byte CHANGESET_PREFIX = 0x02;
+  static final byte BLOCK_COMMIT_PREFIX = 0x03;
 
   private ArchiveTemporalCodec() {
   }
@@ -69,6 +73,27 @@ public final class ArchiveTemporalCodec {
   /** Seek target for unwind: the first changeset entry at txNum == fromTxNum. */
   static byte[] changesetSeekFrom(long fromTxNum) {
     return Bytes.concat(new byte[] {CHANGESET_PREFIX}, Longs.toByteArray(fromTxNum));
+  }
+
+  static byte[] blockCommitKey(long blockNum) {
+    return Bytes.concat(new byte[] {BLOCK_COMMIT_PREFIX}, Longs.toByteArray(blockNum));
+  }
+
+  static byte[] encodeBlockCommit(ArchiveBlockRange range) {
+    return Bytes.concat(
+        Longs.toByteArray(range.getBlockNum()),
+        Longs.toByteArray(range.getFirstTxNum()),
+        Longs.toByteArray(range.getLastTxNum()),
+        Longs.toByteArray(range.getFinalizeTxNum()));
+  }
+
+  static boolean blockCommitMatches(byte[] encoded, ArchiveBlockRange range) {
+    return encoded != null
+        && encoded.length == 32
+        && Longs.fromByteArray(Arrays.copyOfRange(encoded, 0, 8)) == range.getBlockNum()
+        && Longs.fromByteArray(Arrays.copyOfRange(encoded, 8, 16)) == range.getFirstTxNum()
+        && Longs.fromByteArray(Arrays.copyOfRange(encoded, 16, 24)) == range.getLastTxNum()
+        && Longs.fromByteArray(Arrays.copyOfRange(encoded, 24, 32)) == range.getFinalizeTxNum();
   }
 
   static long txNumOfChangeset(byte[] changesetKey) {
