@@ -38,11 +38,46 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
 
   public RocksDbArchiveTemporalStore(String path) {
     this.options = new Options().setCreateIfMissing(true);
+    RocksDB opened = null;
     try {
-      this.db = RocksDB.open(options, path);
+      opened = RocksDB.open(options, path);
+      validateOrInstallManifest(opened);
+      this.db = opened;
     } catch (RocksDBException e) {
+      closeQuietly(opened);
       options.close();
       throw new ArchiveException("failed to open archive temporal store at " + path, e);
+    } catch (RuntimeException e) {
+      closeQuietly(opened);
+      options.close();
+      throw e;
+    }
+  }
+
+  private static void validateOrInstallManifest(RocksDB db) throws RocksDBException {
+    byte[] manifest = db.get(ArchiveTemporalCodec.manifestKey());
+    if (manifest != null) {
+      if (!ArchiveTemporalCodec.manifestMatches(manifest)) {
+        throw new ArchiveException("archive temporal manifest mismatch");
+      }
+      return;
+    }
+    if (!isEmpty(db)) {
+      throw new ArchiveException("archive temporal store is non-empty but missing manifest");
+    }
+    db.put(ArchiveTemporalCodec.manifestKey(), ArchiveTemporalCodec.manifestValue());
+  }
+
+  private static boolean isEmpty(RocksDB db) {
+    try (RocksIterator it = db.newIterator()) {
+      it.seekToFirst();
+      return !it.isValid();
+    }
+  }
+
+  private static void closeQuietly(RocksDB db) {
+    if (db != null) {
+      db.close();
     }
   }
 

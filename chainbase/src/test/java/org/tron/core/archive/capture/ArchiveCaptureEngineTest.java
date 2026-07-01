@@ -3,6 +3,7 @@ package org.tron.core.archive.capture;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import com.google.common.primitives.Bytes;
@@ -11,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import org.junit.Before;
 import org.junit.Test;
 import org.tron.core.archive.ArchiveExecutionContext;
+import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveSource;
 import org.tron.core.archive.domain.ArchiveDomain;
@@ -79,13 +81,35 @@ public class ArchiveCaptureEngineTest {
   }
 
   @Test
-  public void noCaptureForUnknownSemanticExcluded() {
+  public void noCaptureForSemanticExcluded() {
     enterTx(1);
-    engine.capturePut("no-such-store", new byte[21], null, account(1)); // unknown
     engine.capturePut("account-asset", new byte[8], null, new byte[8]); // semantic IGNORE_RAW
     engine.capturePut("storage-row", new byte[8], null, new byte[32]);  // semantic-only
     engine.capturePut("block", new byte[4], null, new byte[4]);         // excluded
+    engine.capturePut("accountTrie", new byte[4], null, new byte[4]);   // derived excluded
+    engine.capturePut("checkpoint/account", new byte[4], null, new byte[4]); // prefix excluded
     assertTrue(engine.records().isEmpty());
+  }
+
+  @Test
+  public void unknownStoreWriteFailsClosedInsideCaptureContext() {
+    enterTx(1);
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> engine.capturePut("no-such-store", new byte[21], null, account(1)));
+
+    assertEquals("archive store dbName is not classified: no-such-store", ex.getMessage());
+    assertTrue(engine.records().isEmpty());
+  }
+
+  @Test
+  public void unknownStoreLookupFailsClosedInsideCaptureContext() {
+    enterTx(1);
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> engine.capturesStore("no-such-store"));
+
+    assertEquals("archive store dbName is not classified: no-such-store", ex.getMessage());
   }
 
   @Test
@@ -116,7 +140,8 @@ public class ArchiveCaptureEngineTest {
     assertTrue(engine.capturesStore("properties")); // GENERIC_TRON_STORE_ALLOWLIST
     assertFalse(engine.capturesStore("storage-row")); // SEMANTIC_ONLY (captured by semantic hook)
     assertFalse(engine.capturesStore("block"));       // excluded
-    assertFalse(engine.capturesStore("no-such-store")); // unknown
+    assertFalse(engine.capturesStore("accountTrie")); // derived excluded
+    assertFalse(engine.capturesStore("checkpoint/account")); // prefix excluded
   }
 
   @Test
