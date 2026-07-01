@@ -69,6 +69,28 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
   }
 
   @Test
+  public void malformedFlagValueFailsClosed() {
+    FakeReader reader = new FakeReader();
+    reader.putRaw("ALLOW_TVM_OSAKA", new byte[] {1});
+    VmDynamicProperties latest = mock(VmDynamicProperties.class);
+
+    ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
+        () -> new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true));
+    assertEquals(ArchiveReaderException.Reason.CORRUPT_VALUE, e.getReason());
+  }
+
+  @Test
+  public void tombstonedFlagValueFailsClosed() {
+    FakeReader reader = new FakeReader();
+    reader.putTombstone("ALLOW_TVM_OSAKA");
+    VmDynamicProperties latest = mock(VmDynamicProperties.class);
+
+    ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
+        () -> new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true));
+    assertEquals(ArchiveReaderException.Reason.CORRUPT_VALUE, e.getReason());
+  }
+
+  @Test
   public void energyFeeIsHistoricalAndExecutionParamsReconstruct() throws Exception {
     FakeReader reader = new FakeReader();
     reader.put("CURRENT_CYCLE_NUMBER", 7L);
@@ -177,16 +199,24 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
   private static final class FakeReader implements ArchiveStateReader {
     private static final long BLOCK_NUM = 123L;
 
-    private final Map<String, byte[]> props = new HashMap<>();
+    private final Map<String, ArchiveReadResult<byte[]>> props = new HashMap<>();
     private final ArchiveStatePoint point = ArchiveStatePoint.blockEnd(BLOCK_NUM, new byte[32], 0);
 
     void put(String key, long value) {
-      props.put(key, ByteArray.fromLong(value));
+      putRaw(key, ByteArray.fromLong(value));
+    }
+
+    void putRaw(String key, byte[] value) {
+      props.put(key, ArchiveReadResult.present(value));
+    }
+
+    void putTombstone(String key) {
+      props.put(key, ArchiveReadResult.tombstone());
     }
 
     public ArchiveReadResult<byte[]> getDynamicProperty(byte[] key) {
-      byte[] value = props.get(new String(key, StandardCharsets.US_ASCII));
-      return value == null ? ArchiveReadResult.missing() : ArchiveReadResult.present(value);
+      ArchiveReadResult<byte[]> value = props.get(new String(key, StandardCharsets.US_ASCII));
+      return value == null ? ArchiveReadResult.missing() : value;
     }
 
     public ArchiveStatePoint getPoint() {

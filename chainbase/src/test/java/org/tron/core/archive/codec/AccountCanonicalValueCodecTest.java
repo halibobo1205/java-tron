@@ -8,6 +8,7 @@ import static org.junit.Assert.assertTrue;
 
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.UnknownFieldSet;
 import org.junit.Test;
 import org.tron.core.archive.ArchiveException;
 import org.tron.protos.Protocol.Account;
@@ -58,6 +59,20 @@ public class AccountCanonicalValueCodecTest {
   }
 
   @Test
+  public void unknownFieldsDoNotAffectCanonicalBytes() {
+    Account base = Account.newBuilder().setBalance(42).build();
+    Account withUnknown = base.toBuilder()
+        .setUnknownFields(unknownFields())
+        .build();
+
+    assertArrayEquals(
+        codec.normalizePut(base.toByteArray()).getValue(),
+        codec.normalizePut(withUnknown.toByteArray()).getValue());
+    assertThrows(ArchiveException.class,
+        () -> codec.validate(DomainValue.present(withUnknown.toByteArray())));
+  }
+
+  @Test
   public void mapFieldsSerializeDeterministicallyRegardlessOfInsertionOrder() {
     // latest_asset_operation_time is a non-stripped map field; insertion order must not matter.
     Account a = Account.newBuilder().setBalance(1)
@@ -93,5 +108,11 @@ public class AccountCanonicalValueCodecTest {
   public void rejectsNullAndNonProtoInput() {
     assertThrows(ArchiveException.class, () -> codec.normalizePut(null));
     assertThrows(ArchiveException.class, () -> codec.normalizePut(new byte[] {(byte) 0xff, 0x01}));
+  }
+
+  private static UnknownFieldSet unknownFields() {
+    return UnknownFieldSet.newBuilder()
+        .addField(12345, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
+        .build();
   }
 }

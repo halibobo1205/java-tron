@@ -2,8 +2,10 @@ package org.tron.core.archive.codec;
 
 import com.google.protobuf.CodedOutputStream;
 import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.UnknownFieldSet;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.Arrays;
 import org.tron.core.archive.ArchiveException;
 import org.tron.protos.Protocol.Account;
 
@@ -57,6 +59,9 @@ public final class AccountCanonicalValueCodec implements CanonicalValueCodec {
       throw new ArchiveException(
           codecId() + ": canonical account must have asset/assetV2/asset_optimized stripped");
     }
+    if (!Arrays.equals(value.getValue(), canonicalize(account))) {
+      throw new ArchiveException(codecId() + ": value is not in canonical form");
+    }
   }
 
   private Account parse(byte[] bytes) {
@@ -72,6 +77,7 @@ public final class AccountCanonicalValueCodec implements CanonicalValueCodec {
         .clearAsset()
         .clearAssetV2()
         .clearAssetOptimized()
+        .setUnknownFields(UnknownFieldSet.getDefaultInstance())
         .build();
     ByteArrayOutputStream out = new ByteArrayOutputStream(stripped.getSerializedSize());
     CodedOutputStream cos = CodedOutputStream.newInstance(out);

@@ -216,6 +216,17 @@ public class PersistentArchiveTxNumIndexTest {
   }
 
   @Test
+  public void storeRejectsRangeWhoseSpanDoesNotMatchUserTxCount() {
+    ArchiveBlockRange corruptRange = new ArchiveBlockRange(
+        1, 0, 1, 0, 1, 1, ArchiveSource.NORMAL);
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> store.commitRange(corruptRange, 2));
+    assertTrue(ex.getMessage().contains("txNum span"));
+    assertFalse(store.getRange(1).isPresent());
+  }
+
+  @Test
   public void validateCanonicalHeadAllowsEmptyArchive() {
     index.validateCanonicalHead(99, HASH_A);
     store.validateCanonicalHead(99, HASH_A);
@@ -249,6 +260,27 @@ public class PersistentArchiveTxNumIndexTest {
       ArchiveException ex = assertThrows(ArchiveException.class,
           () -> new PersistentArchiveTxNumIndex(reopenedStore));
       assertTrue(ex.getMessage().contains("non-contiguous archive block range"));
+    } finally {
+      reopenedStore.close();
+    }
+  }
+
+  @Test
+  public void restartWithCorruptRangeShapeFailsClosed() throws Exception {
+    index.close();
+    index = null;
+    store = null;
+
+    ArchiveBlockRange corruptRange = new ArchiveBlockRange(
+        1, 0, 1, 0, 1, 1, ArchiveSource.NORMAL);
+    putRawRange(corruptRange, 2, 1);
+
+    RocksDbArchiveBlockRangeStore reopenedStore =
+        new RocksDbArchiveBlockRangeStore(dir.toString());
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> new PersistentArchiveTxNumIndex(reopenedStore));
+      assertTrue(ex.getMessage().contains("txNum span"));
     } finally {
       reopenedStore.close();
     }
@@ -303,12 +335,21 @@ public class PersistentArchiveTxNumIndexTest {
   }
 
   private void putRawRange(ArchiveBlockRange range, long cursor) throws RocksDBException {
+    putRawRange(range, cursor, null);
+  }
+
+  private void putRawRange(ArchiveBlockRange range, long cursor, Integer firstBlock)
+      throws RocksDBException {
     RocksDB.loadLibrary();
     try (Options options = new Options().setCreateIfMissing(false);
         RocksDB rawDb = RocksDB.open(options, dir.toString())) {
       rawDb.put(ArchiveBlockRangeCodec.rangeKey(range.getBlockNum()),
           ArchiveBlockRangeCodec.encodeRange(range));
       rawDb.put(ArchiveBlockRangeCodec.CURSOR_KEY, ArchiveBlockRangeCodec.encodeCursor(cursor));
+      if (firstBlock != null) {
+        rawDb.put(ArchiveBlockRangeCodec.FIRST_BLOCK_KEY,
+            ArchiveBlockRangeCodec.encodeFirstBlock(firstBlock));
+      }
     }
   }
 }

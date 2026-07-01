@@ -384,14 +384,22 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
       throw new ArchiveException("archive block range has inverted txNum bounds for block "
           + range.getBlockNum());
     }
-    if (range.getPrepareTxNum() < range.getFirstTxNum()
-        || range.getPrepareTxNum() > range.getLastTxNum()) {
-      throw new ArchiveException("archive prepare txNum is outside block range for block "
+    if (range.getUserTxCount() < 0) {
+      throw new ArchiveException("archive user tx count is negative for block "
           + range.getBlockNum());
     }
-    if (range.getFinalizeTxNum() < range.getFirstTxNum()
-        || range.getFinalizeTxNum() > range.getLastTxNum()) {
-      throw new ArchiveException("archive finalize txNum is outside block range for block "
+    if (range.getPrepareTxNum() != range.getFirstTxNum()) {
+      throw new ArchiveException("archive prepare txNum must be first for block "
+          + range.getBlockNum());
+    }
+    if (range.getFinalizeTxNum() != range.getLastTxNum()) {
+      throw new ArchiveException("archive finalize txNum must be last for block "
+          + range.getBlockNum());
+    }
+    long expectedSpan = (long) range.getUserTxCount() + 2L;
+    long actualSpan = range.getLastTxNum() - range.getFirstTxNum() + 1L;
+    if (actualSpan != expectedSpan) {
+      throw new ArchiveException("archive txNum span does not match user tx count for block "
           + range.getBlockNum());
     }
   }

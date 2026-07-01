@@ -7,6 +7,7 @@ import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import com.google.protobuf.ByteString;
+import com.google.protobuf.UnknownFieldSet;
 import org.junit.Test;
 import org.tron.core.archive.ArchiveException;
 import org.tron.protos.contract.SmartContractOuterClass.SmartContract;
@@ -60,6 +61,22 @@ public class ContractCanonicalValueCodecTest {
   }
 
   @Test
+  public void unknownFieldsDoNotAffectCanonicalBytes() {
+    SmartContract base = SmartContract.newBuilder()
+        .setBytecode(ByteString.copyFromUtf8("CC"))
+        .build();
+    SmartContract withUnknown = base.toBuilder()
+        .setUnknownFields(unknownFields())
+        .build();
+
+    assertArrayEquals(
+        codec.normalizePut(base.toByteArray()).getValue(),
+        codec.normalizePut(withUnknown.toByteArray()).getValue());
+    assertThrows(ArchiveException.class,
+        () -> codec.validate(DomainValue.present(withUnknown.toByteArray())));
+  }
+
+  @Test
   public void validateRejectsContractStillCarryingAbi() {
     SmartContract withAbi = SmartContract.newBuilder().setAbi(abiWith("x")).build();
     DomainValue notCanonical = DomainValue.present(withAbi.toByteArray());
@@ -71,5 +88,11 @@ public class ContractCanonicalValueCodecTest {
     assertTrue(codec.normalizeDelete().isDeleted());
     assertThrows(ArchiveException.class, () -> codec.normalizePut(null));
     assertThrows(ArchiveException.class, () -> codec.normalizePut(new byte[] {(byte) 0xff, 0x01}));
+  }
+
+  private static UnknownFieldSet unknownFields() {
+    return UnknownFieldSet.newBuilder()
+        .addField(12345, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
+        .build();
   }
 }
