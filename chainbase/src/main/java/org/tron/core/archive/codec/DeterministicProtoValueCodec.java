@@ -4,6 +4,7 @@ import com.google.protobuf.CodedOutputStream;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
 import com.google.protobuf.Parser;
+import com.google.protobuf.UnknownFieldSet;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.Arrays;
@@ -11,7 +12,7 @@ import org.tron.core.archive.ArchiveException;
 
 /**
  * Canonicalizing value codec for a protobuf-valued domain that needs cross-node-reproducible bytes
- * (decision 4) but NO field stripping. Parses with the supplied parser and re-serializes with
+ * (decision 4). Parses with the supplied parser, clears unknown fields, and re-serializes with
  * {@link CodedOutputStream#useDeterministicSerialization()} so any map field is written in
  * sorted-key order instead of Java's non-deterministic map iteration order.
  *
@@ -70,11 +71,14 @@ public final class DeterministicProtoValueCodec implements CanonicalValueCodec {
   }
 
   private byte[] canonicalize(Message message) {
+    Message canonical = message.toBuilder()
+        .setUnknownFields(UnknownFieldSet.getDefaultInstance())
+        .build();
     ByteArrayOutputStream out = new ByteArrayOutputStream(message.getSerializedSize());
     CodedOutputStream cos = CodedOutputStream.newInstance(out);
     cos.useDeterministicSerialization();
     try {
-      message.writeTo(cos);
+      canonical.writeTo(cos);
       cos.flush();
     } catch (IOException e) {
       throw new ArchiveException(codecId + ": serialization failed", e);

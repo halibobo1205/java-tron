@@ -3,6 +3,7 @@ package org.tron.core.services.jsonrpc;
 import static org.tron.core.Wallet.CONTRACT_VALIDATE_ERROR;
 import static org.tron.core.services.http.Util.setTransactionExtraData;
 import static org.tron.core.services.http.Util.setTransactionPermissionId;
+import static org.tron.core.services.jsonrpc.JsonRpcApiUtil.BLOCK_NUM_ERROR;
 import static org.tron.core.services.jsonrpc.JsonRpcApiUtil.FINALIZED_STR;
 import static org.tron.core.services.jsonrpc.JsonRpcApiUtil.HASH_REGEX;
 import static org.tron.core.services.jsonrpc.JsonRpcApiUtil.LATEST_STR;
@@ -26,7 +27,6 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -1025,47 +1025,7 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
       throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
       JsonRpcInternalException {
 
-    String blockNumOrTag;
-    if (blockParamObj instanceof HashMap) {
-      HashMap<String, String> paramMap;
-      paramMap = (HashMap<String, String>) blockParamObj;
-
-      if (paramMap.containsKey("blockNumber")) {
-        try {
-          blockNumOrTag = paramMap.get("blockNumber");
-        } catch (ClassCastException e) {
-          throw new JsonRpcInvalidParamsException(JSON_ERROR);
-        }
-
-        long blockNumber = parseBlockNumber(blockNumOrTag);
-
-        if (wallet.getBlockByNum(blockNumber) == null) {
-          throw new JsonRpcInternalException(NO_BLOCK_HEADER);
-        }
-
-      } else if (paramMap.containsKey("blockHash")) {
-        try {
-          blockNumOrTag = paramMap.get("blockHash");
-        } catch (ClassCastException e) {
-          throw new JsonRpcInvalidParamsException(JSON_ERROR);
-        }
-
-        Block objectFormBlock = getBlockByJsonHash(blockNumOrTag);
-        if (objectFormBlock == null) {
-          throw new JsonRpcInternalException(NO_BLOCK_HEADER_BY_HASH);
-        }
-        // Resolve the hash to its block number so a historical call keys on the right block; the
-        // object form must NOT be collapsed to latest (that would return the wrong state).
-        blockNumOrTag =
-            ByteArray.toJsonHex(objectFormBlock.getBlockHeader().getRawData().getNumber());
-      } else {
-        throw new JsonRpcInvalidRequestException(JSON_ERROR);
-      }
-    } else if (blockParamObj instanceof String) {
-      blockNumOrTag = (String) blockParamObj;
-    } else {
-      throw new JsonRpcInvalidRequestException(JSON_ERROR);
-    }
+    String blockNumOrTag = resolveBlockParam(blockParamObj);
 
     if (historicalEthCallSupport != null
         && historicalEthCallSupport.shouldUseArchive(blockNumOrTag)) {
@@ -1075,11 +1035,6 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
           transactionCall.parseValue(),
           ByteArray.fromHexString(transactionCall.resolveData()),
           blockNumOrTag);
-    }
-    if (blockParamObj instanceof HashMap) {
-      // Archive is not serving this object-form request (disabled): keep the pre-L8 behaviour of
-      // running it against latest, so default nodes are unchanged.
-      blockNumOrTag = LATEST_STR;
     }
     requireLatestBlockTag(blockNumOrTag);
 
@@ -1127,31 +1082,70 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
 
   /**
    * Normalises the JSON-RPC block parameter (string tag, or the object form with blockNumber /
-   * blockHash) to a block-number-or-tag string, mirroring how {@link #getCall} reads it.
+   * blockHash) to a block-number-or-tag string.
    */
   private String resolveBlockParam(Object blockParamObj) throws JsonRpcInvalidParamsException,
       JsonRpcInvalidRequestException, JsonRpcInternalException {
     if (blockParamObj instanceof String) {
       return (String) blockParamObj;
     }
-    if (blockParamObj instanceof HashMap) {
-      HashMap<String, String> paramMap = (HashMap<String, String>) blockParamObj;
-      if (paramMap.containsKey("blockNumber")) {
-        String blockNumOrTag = paramMap.get("blockNumber");
-        if (wallet.getBlockByNum(parseBlockNumber(blockNumOrTag)) == null) {
+    if (blockParamObj instanceof Map) {
+      Map<?, ?> paramMap = (Map<?, ?>) blockParamObj;
+      boolean hasBlockNumber = paramMap.containsKey("blockNumber");
+      boolean hasBlockHash = paramMap.containsKey("blockHash");
+      if (hasBlockNumber == hasBlockHash) {
+        throw new JsonRpcInvalidRequestException(JSON_ERROR);
+      }
+      if (hasBlockNumber) {
+        if (paramMap.containsKey("requireCanonical")) {
+          throw new JsonRpcInvalidParamsException(JSON_ERROR);
+        }
+        String blockNumOrTag = getObjectBlockParamString(paramMap, "blockNumber");
+        if (wallet.getBlockByNum(parseObjectBlockNumber(blockNumOrTag)) == null) {
           throw new JsonRpcInternalException(NO_BLOCK_HEADER);
         }
         return blockNumOrTag;
       }
-      if (paramMap.containsKey("blockHash")) {
-        Block objectFormBlock = getBlockByJsonHash(paramMap.get("blockHash"));
-        if (objectFormBlock == null) {
-          throw new JsonRpcInternalException(NO_BLOCK_HEADER_BY_HASH);
-        }
-        return ByteArray.toJsonHex(objectFormBlock.getBlockHeader().getRawData().getNumber());
+      validateRequireCanonical(paramMap);
+      String blockHash = getObjectBlockParamString(paramMap, "blockHash");
+      Block objectFormBlock = getBlockByJsonHash(blockHash);
+      if (objectFormBlock == null || !isCanonicalBlock(objectFormBlock)) {
+        throw new JsonRpcInternalException(NO_BLOCK_HEADER_BY_HASH);
       }
+      return ByteArray.toJsonHex(objectFormBlock.getBlockHeader().getRawData().getNumber());
     }
     throw new JsonRpcInvalidRequestException(JSON_ERROR);
+  }
+
+  private String getObjectBlockParamString(Map<?, ?> paramMap, String key)
+      throws JsonRpcInvalidParamsException {
+    Object value = paramMap.get(key);
+    if (!(value instanceof String)) {
+      throw new JsonRpcInvalidParamsException(JSON_ERROR);
+    }
+    return (String) value;
+  }
+
+  private long parseObjectBlockNumber(String blockNum) throws JsonRpcInvalidParamsException {
+    if (blockNum == null || !blockNum.startsWith("0x")) {
+      throw new JsonRpcInvalidParamsException(BLOCK_NUM_ERROR);
+    }
+    return parseBlockNumber(blockNum);
+  }
+
+  private void validateRequireCanonical(Map<?, ?> paramMap)
+      throws JsonRpcInvalidParamsException {
+    Object requireCanonical = paramMap.get("requireCanonical");
+    if (requireCanonical != null && !(requireCanonical instanceof Boolean)) {
+      throw new JsonRpcInvalidParamsException(JSON_ERROR);
+    }
+  }
+
+  private boolean isCanonicalBlock(Block block) {
+    long blockNumber = block.getBlockHeader().getRawData().getNumber();
+    Block canonicalBlock = wallet.getBlockByNum(blockNumber);
+    return canonicalBlock != null
+        && JsonRpcApiUtil.getBlockID(canonicalBlock).equals(JsonRpcApiUtil.getBlockID(block));
   }
 
   @Override

@@ -5,6 +5,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
+import com.google.protobuf.UnknownFieldSet;
 import org.junit.Test;
 import org.tron.core.archive.ArchiveException;
 import org.tron.protos.Protocol.Account;
@@ -38,6 +39,20 @@ public class DeterministicProtoValueCodecTest {
   }
 
   @Test
+  public void unknownFieldsDoNotAffectCanonicalBytes() {
+    Account base = Account.newBuilder().setBalance(7).build();
+    Account withUnknown = base.toBuilder()
+        .setUnknownFields(unknownFields())
+        .build();
+
+    assertArrayEquals(
+        codec.normalizePut(base.toByteArray()).getValue(),
+        codec.normalizePut(withUnknown.toByteArray()).getValue());
+    assertThrows(ArchiveException.class,
+        () -> codec.validate(DomainValue.present(withUnknown.toByteArray())));
+  }
+
+  @Test
   public void tombstoneIsDeleteAndValidates() {
     DomainValue tombstone = codec.normalizeDelete();
     assertTrue(tombstone.isDeleted());
@@ -48,5 +63,11 @@ public class DeterministicProtoValueCodecTest {
   public void rejectsNullAndNonProtoInput() {
     assertThrows(ArchiveException.class, () -> codec.normalizePut(null));
     assertThrows(ArchiveException.class, () -> codec.normalizePut(new byte[] {(byte) 0xff, 0x01}));
+  }
+
+  private static UnknownFieldSet unknownFields() {
+    return UnknownFieldSet.newBuilder()
+        .addField(12345, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
+        .build();
   }
 }
