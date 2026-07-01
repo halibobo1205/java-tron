@@ -2,8 +2,10 @@ package org.tron.core.archive.codec;
 
 import com.google.protobuf.CodedOutputStream;
 import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.UnknownFieldSet;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.Arrays;
 import org.tron.core.archive.ArchiveException;
 import org.tron.protos.contract.SmartContractOuterClass.SmartContract;
 
@@ -43,8 +45,12 @@ public final class ContractCanonicalValueCodec implements CanonicalValueCodec {
     if (value.isDeleted()) {
       return;
     }
-    if (parse(value.getValue()).hasAbi()) {
+    SmartContract contract = parse(value.getValue());
+    if (contract.hasAbi()) {
       throw new ArchiveException(codecId() + ": canonical contract must have abi stripped");
+    }
+    if (!Arrays.equals(value.getValue(), canonicalize(contract))) {
+      throw new ArchiveException(codecId() + ": value is not in canonical form");
     }
   }
 
@@ -57,7 +63,10 @@ public final class ContractCanonicalValueCodec implements CanonicalValueCodec {
   }
 
   private byte[] canonicalize(SmartContract contract) {
-    SmartContract stripped = contract.toBuilder().clearAbi().build();
+    SmartContract stripped = contract.toBuilder()
+        .clearAbi()
+        .setUnknownFields(UnknownFieldSet.getDefaultInstance())
+        .build();
     ByteArrayOutputStream out = new ByteArrayOutputStream(stripped.getSerializedSize());
     CodedOutputStream cos = CodedOutputStream.newInstance(out);
     cos.useDeterministicSerialization();

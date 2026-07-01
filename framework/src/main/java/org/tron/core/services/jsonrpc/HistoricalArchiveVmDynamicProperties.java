@@ -5,6 +5,7 @@ import java.util.function.LongSupplier;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.archive.reader.ArchiveReadResult;
+import org.tron.core.archive.reader.ArchiveReadResult.Status;
 import org.tron.core.archive.reader.ArchiveReaderException;
 import org.tron.core.archive.reader.ArchiveStateReader;
 import org.tron.core.store.VmDynamicProperties;
@@ -147,9 +148,18 @@ final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProp
     ArchiveReadResult<byte[]> r = reader.getDynamicProperty(canonicalKey);
     if (r.isPresent()) {
       // Stored as ByteArray.fromLong (8 bytes), same encoding the live getter decodes.
-      return ByteArray.toLong(r.getValue());
+      byte[] value = r.getValue();
+      if (value.length != Long.BYTES) {
+        throw new ArchiveReaderException(ArchiveReaderException.Reason.CORRUPT_VALUE,
+            "archive dynamic property " + key + " has invalid length " + value.length);
+      }
+      return ByteArray.toLong(value);
     }
-    // MISSING or TOMBSTONE (flags are never tombstoned): no captured change as of this block.
+    if (r.getStatus() == Status.TOMBSTONE) {
+      throw new ArchiveReaderException(ArchiveReaderException.Reason.CORRUPT_VALUE,
+          "archive dynamic property " + key + " is tombstoned");
+    }
+    // MISSING: no captured change as of this block.
     if (genesisComplete) {
       return inMemoryDefault;
     }
