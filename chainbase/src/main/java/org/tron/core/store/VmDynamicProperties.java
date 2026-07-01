@@ -19,9 +19,25 @@ public interface VmDynamicProperties {
 
   long getCurrentCycleNumber();
 
+  long getTotalNetLimit();
+
+  long getTotalNetWeight();
+
+  long getTotalEnergyCurrentLimit();
+
+  long getTotalEnergyWeight();
+
+  long getTotalTronPowerWeight();
+
   boolean supportVM();
 
   boolean supportUnfreezeDelay();
+
+  long getUnfreezeDelayDays();
+
+  long getAllowNewResourceModel();
+
+  boolean supportAllowNewResourceModel();
 
   long getEnergyFee();
 

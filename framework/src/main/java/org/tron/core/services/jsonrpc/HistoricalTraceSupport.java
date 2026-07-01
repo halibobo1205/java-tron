@@ -270,7 +270,7 @@ public final class HistoricalTraceSupport {
       return false;
     }
     long first = ((DefaultArchiveService) archiveService).getTxNumIndex().getFirstArchivedBlock();
-    return first >= 0 && first <= 1;
+    return first == 0;
   }
 
 }

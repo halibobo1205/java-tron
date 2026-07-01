@@ -54,6 +54,31 @@ class HistoricalVmDynamicProperties implements VmDynamicProperties {
   }
 
   @Override
+  public long getTotalNetLimit() {
+    return latest.getTotalNetLimit();
+  }
+
+  @Override
+  public long getTotalNetWeight() {
+    return latest.getTotalNetWeight();
+  }
+
+  @Override
+  public long getTotalEnergyCurrentLimit() {
+    return latest.getTotalEnergyCurrentLimit();
+  }
+
+  @Override
+  public long getTotalEnergyWeight() {
+    return latest.getTotalEnergyWeight();
+  }
+
+  @Override
+  public long getTotalTronPowerWeight() {
+    return latest.getTotalTronPowerWeight();
+  }
+
+  @Override
   public boolean supportVM() {
     return latest.supportVM();
   }
@@ -61,6 +86,21 @@ class HistoricalVmDynamicProperties implements VmDynamicProperties {
   @Override
   public boolean supportUnfreezeDelay() {
     return latest.supportUnfreezeDelay();
+  }
+
+  @Override
+  public long getUnfreezeDelayDays() {
+    return latest.getUnfreezeDelayDays();
+  }
+
+  @Override
+  public long getAllowNewResourceModel() {
+    return latest.getAllowNewResourceModel();
+  }
+
+  @Override
+  public boolean supportAllowNewResourceModel() {
+    return latest.supportAllowNewResourceModel();
   }
 
   @Override

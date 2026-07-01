@@ -21,6 +21,11 @@ public class DynamicKeyPolicyTest {
     assertEquals(RootPolicy.IN_GLOBAL_ROOT, cancun.getRootPolicy());
     assertEquals(DynamicKeyClass.VM_CONFIG, cancun.getKeyClass());
     assertEquals(ReaderPolicy.HISTORICAL_VM, cancun.getReaderPolicy());
+
+    DynamicKeyDecision totalNetLimit = decide("TOTAL_NET_LIMIT");
+    assertEquals(RootPolicy.IN_GLOBAL_ROOT, totalNetLimit.getRootPolicy());
+    assertEquals(DynamicKeyClass.RESOURCE_PARAMETER, totalNetLimit.getKeyClass());
+    assertEquals(ReaderPolicy.HISTORICAL_VM, totalNetLimit.getReaderPolicy());
   }
 
   @Test
@@ -39,12 +44,28 @@ public class DynamicKeyPolicyTest {
         "ALLOW_STRICT_MATH",
         "CONSENSUS_LOGIC_OPTIMIZATION",
         "ALLOW_HARDEN_RESOURCE_CALCULATION",
+        "ALLOW_NEW_RESOURCE_MODEL",
         "UNFREEZE_DELAY_DAYS",
         "ALLOW_SHIELDED_TRC20_TRANSACTION",
         "ALLOW_MULTI_SIGN"}) {
       DynamicKeyDecision d = decide(key);
       assertEquals(RootPolicy.IN_GLOBAL_ROOT, d.getRootPolicy());
       assertEquals(DynamicKeyClass.VM_CONFIG, d.getKeyClass());
+      assertEquals(ReaderPolicy.HISTORICAL_VM, d.getReaderPolicy());
+    }
+  }
+
+  @Test
+  public void callVisibleResourceTotalsAreRooted() {
+    for (String key : new String[] {
+        "TOTAL_NET_LIMIT",
+        "TOTAL_ENERGY_CURRENT_LIMIT",
+        "TOTAL_NET_WEIGHT",
+        "TOTAL_ENERGY_WEIGHT",
+        "TOTAL_TRON_POWER_WEIGHT"}) {
+      DynamicKeyDecision d = decide(key);
+      assertEquals(RootPolicy.IN_GLOBAL_ROOT, d.getRootPolicy());
+      assertEquals(DynamicKeyClass.RESOURCE_PARAMETER, d.getKeyClass());
       assertEquals(ReaderPolicy.HISTORICAL_VM, d.getReaderPolicy());
     }
   }
@@ -60,6 +81,9 @@ public class DynamicKeyPolicyTest {
     DynamicKeyDecision done = decide("ABI_MOVE_DONE");
     assertEquals(RootPolicy.EXCLUDED, done.getRootPolicy());
     assertEquals(DynamicKeyClass.MIGRATION_MARKER, done.getKeyClass());
+    DynamicKeyDecision stateFlag = decide("state_flag");
+    assertEquals(RootPolicy.EXCLUDED, stateFlag.getRootPolicy());
+    assertEquals(HistoryPolicy.NO_ARCHIVE, stateFlag.getHistoryPolicy());
     assertEquals(RootPolicy.EXCLUDED, decide("TOTAL_STORAGE_POOL").getRootPolicy());
   }
 

@@ -110,7 +110,7 @@ public final class ArchiveJsonRpcStateAdapter {
       return false;
     }
     long first = ((DefaultArchiveService) archiveService).getTxNumIndex().getFirstArchivedBlock();
-    return first >= 0 && first <= 1;
+    return first == 0;
   }
 
   private ArchiveStateReaderFactory readerFactory() throws JsonRpcInternalException {

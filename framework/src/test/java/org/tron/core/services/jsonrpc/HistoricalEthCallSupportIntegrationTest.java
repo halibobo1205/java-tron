@@ -65,7 +65,7 @@ public class HistoricalEthCallSupportIntegrationTest extends BaseMethodTest {
 
   private void put(InMemoryArchiveTemporalStore temporal, long txNum, ArchiveDomain domain,
       byte[] canonicalKey, byte[] valueBytes) {
-    // Genesis-complete create at txNum (prev = tombstone): getAsOf(txNum) falls through to latest.
+    // Archive create at txNum (prev = tombstone): getAsOf(txNum) falls through to latest.
     temporal.putChange(new ArchiveChangeRecord(
         new ArchiveTxPosition(txNum, 1, ArchivePhase.BLOCK_FINALIZE,
             ArchiveSource.NORMAL, -1, null),
@@ -77,7 +77,13 @@ public class HistoricalEthCallSupportIntegrationTest extends BaseMethodTest {
     InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
     DefaultArchiveService svc = new DefaultArchiveService(true, temporal);
 
-    // Index block 1 so the resolver maps "0x1" -> its finalize txNum (genesis-complete: first 1).
+    // Block 0 proves genesis-complete coverage; block 1 holds the archived contract snapshot.
+    svc.getTxNumIndex().beginBlock(0, ArchiveSource.NORMAL);
+    svc.getTxNumIndex().allocateSystemTx(0, ArchivePhase.BLOCK_PREPARE);
+    svc.getTxNumIndex().allocateSystemTx(0, ArchivePhase.BLOCK_FINALIZE);
+    svc.getTxNumIndex().commitBlock(0, 0);
+
+    // Index block 1 so the resolver maps "0x1" -> its finalize txNum.
     svc.getTxNumIndex().beginBlock(1, ArchiveSource.NORMAL);
     svc.getTxNumIndex().allocateSystemTx(1, ArchivePhase.BLOCK_PREPARE);
     svc.getTxNumIndex().allocateSystemTx(1, ArchivePhase.BLOCK_FINALIZE);
