@@ -303,6 +303,32 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
   }
 
   @Test
+  public void traceTransactionRejectsArchivedCreateSmartContractAsUnsupported() throws Exception {
+    Transaction tx = Transaction.newBuilder()
+        .setRawData(Transaction.raw.newBuilder()
+            .addContract(Transaction.Contract.newBuilder()
+                .setType(ContractType.CreateSmartContract))
+            .build())
+        .build();
+    byte[] txId = new TransactionCapsule(tx).getTransactionId().getBytes();
+    DefaultArchiveService svc = buildArchive(new InMemoryArchiveTemporalStore(), addr(0x11), txId);
+    Wallet wallet = mock(Wallet.class);
+    when(wallet.getTransactionById(ByteString.copyFrom(txId))).thenReturn(tx);
+    when(wallet.getTransactionInfoById(ByteString.copyFrom(txId)))
+        .thenReturn(TransactionInfo.newBuilder().setBlockNumber(2L).build());
+    BlockCapsule block = new BlockCapsule(2L, Sha256Hash.ZERO_HASH, 1000L,
+        ByteString.copyFrom(new byte[21]));
+    when(wallet.getBlockByNum(2L)).thenReturn(block.getInstance());
+
+    HistoricalTraceSupport support = new HistoricalTraceSupport(wallet, svc);
+    JsonRpcInternalException ex = assertThrows(JsonRpcInternalException.class,
+        () -> support.traceTransaction(txId, null));
+
+    assertEquals("historical debug_traceTransaction does not support CreateSmartContract",
+        ex.getMessage());
+  }
+
+  @Test
   public void traceTransactionNotFoundThrowsInvalidParams() {
     byte[] txId = new byte[32];
     txId[31] = 0x7;
