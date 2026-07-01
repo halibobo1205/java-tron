@@ -36,6 +36,11 @@ final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProp
 
   private final long latestBlockHeaderNumber;
   private final long currentCycleNumber;
+  private final long totalNetLimit;
+  private final long totalNetWeight;
+  private final long totalEnergyCurrentLimit;
+  private final long totalEnergyWeight;
+  private final long totalTronPowerWeight;
   private final long allowCreationOfContracts;
   private final long maxFeeLimit;
   private final long maxCpuTimeOfOneTx;
@@ -57,6 +62,7 @@ final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProp
   // precompile presence, ADDRESS / ORIGIN bytes), so they are rooted VM_CONFIG and reconstructed
   // at the target block exactly like the other flags.
   private final long unfreezeDelayDays;
+  private final long allowNewResourceModel;
   private final long allowShieldedTRC20Transaction;
   private final long allowMultiSign;
   private final long allowHigherLimitForMaxCpuTimeOfOneTx;
@@ -76,6 +82,16 @@ final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProp
     this.latestBlockHeaderNumber = reader.getPoint().getBlockNum();
     this.currentCycleNumber = resolve(reader, "CURRENT_CYCLE_NUMBER", genesisComplete,
         0L, latest::getCurrentCycleNumber);
+    this.totalNetLimit = resolve(reader, "TOTAL_NET_LIMIT", genesisComplete,
+        43_200_000_000L, latest::getTotalNetLimit);
+    this.totalNetWeight = resolve(reader, "TOTAL_NET_WEIGHT", genesisComplete,
+        0L, latest::getTotalNetWeight);
+    this.totalEnergyCurrentLimit = resolve(reader, "TOTAL_ENERGY_CURRENT_LIMIT", genesisComplete,
+        50_000_000_000L, latest::getTotalEnergyCurrentLimit);
+    this.totalEnergyWeight = resolve(reader, "TOTAL_ENERGY_WEIGHT", genesisComplete,
+        0L, latest::getTotalEnergyWeight);
+    this.totalTronPowerWeight = resolve(reader, "TOTAL_TRON_POWER_WEIGHT", genesisComplete,
+        0L, latest::getTotalTronPowerWeight);
     this.allowCreationOfContracts = resolve(reader, "ALLOW_CREATION_OF_CONTRACTS",
         genesisComplete, p.getAllowCreationOfContracts(), () -> latest.supportVM() ? 1L : 0L);
     this.maxFeeLimit = resolve(reader, "MAX_FEE_LIMIT", genesisComplete,
@@ -114,6 +130,8 @@ final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProp
         p.getAllowOptimizedReturnValueOfChainId(), latest::getAllowOptimizedReturnValueOfChainId);
     this.unfreezeDelayDays = resolve(reader, "UNFREEZE_DELAY_DAYS", genesisComplete,
         p.getUnfreezeDelayDays(), () -> latest.supportUnfreezeDelay() ? 1L : 0L);
+    this.allowNewResourceModel = resolve(reader, "ALLOW_NEW_RESOURCE_MODEL", genesisComplete,
+        p.getAllowNewResourceModel(), latest::getAllowNewResourceModel);
     this.allowShieldedTRC20Transaction = resolve(reader, "ALLOW_SHIELDED_TRC20_TRANSACTION",
         genesisComplete, p.getAllowShieldedTRC20Transaction(),
         latest::getAllowShieldedTRC20Transaction);
@@ -175,6 +193,31 @@ final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProp
   @Override
   public long getCurrentCycleNumber() {
     return currentCycleNumber;
+  }
+
+  @Override
+  public long getTotalNetLimit() {
+    return totalNetLimit;
+  }
+
+  @Override
+  public long getTotalNetWeight() {
+    return totalNetWeight;
+  }
+
+  @Override
+  public long getTotalEnergyCurrentLimit() {
+    return totalEnergyCurrentLimit;
+  }
+
+  @Override
+  public long getTotalEnergyWeight() {
+    return totalEnergyWeight;
+  }
+
+  @Override
+  public long getTotalTronPowerWeight() {
+    return totalTronPowerWeight;
   }
 
   @Override
@@ -266,6 +309,21 @@ final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProp
   public boolean supportUnfreezeDelay() {
     // allowTvmFreezeV2 = unfreezeDelayDays > 0; gates FREEZEBALANCEV2 / DELEGATERESOURCE opcodes.
     return unfreezeDelayDays > 0;
+  }
+
+  @Override
+  public long getUnfreezeDelayDays() {
+    return unfreezeDelayDays;
+  }
+
+  @Override
+  public long getAllowNewResourceModel() {
+    return allowNewResourceModel;
+  }
+
+  @Override
+  public boolean supportAllowNewResourceModel() {
+    return allowNewResourceModel == 1L;
   }
 
   @Override

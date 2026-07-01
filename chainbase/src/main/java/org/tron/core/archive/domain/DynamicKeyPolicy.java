@@ -26,6 +26,11 @@ public final class DynamicKeyPolicy {
     root("MAX_FEE_LIMIT", DynamicKeyClass.FEE_PARAMETER);
     root("MAX_CPU_TIME_OF_ONE_TX", DynamicKeyClass.FEE_PARAMETER);
     root("MEMO_FEE", DynamicKeyClass.FEE_PARAMETER);
+    root("TOTAL_NET_LIMIT", DynamicKeyClass.RESOURCE_PARAMETER);
+    root("TOTAL_ENERGY_CURRENT_LIMIT", DynamicKeyClass.RESOURCE_PARAMETER);
+    root("TOTAL_NET_WEIGHT", DynamicKeyClass.RESOURCE_PARAMETER);
+    root("TOTAL_ENERGY_WEIGHT", DynamicKeyClass.RESOURCE_PARAMETER);
+    root("TOTAL_TRON_POWER_WEIGHT", DynamicKeyClass.RESOURCE_PARAMETER);
 
     // --- IN_GLOBAL_ROOT: VM / fork-gate config (changes historical execution) ---
     root("ALLOW_CREATION_OF_CONTRACTS", DynamicKeyClass.VM_CONFIG);
@@ -55,6 +60,7 @@ public final class DynamicKeyPolicy {
     root("ALLOW_TVM_PRAGUE", DynamicKeyClass.VM_CONFIG);
     root("ALLOW_HARDEN_RESOURCE_CALCULATION", DynamicKeyClass.VM_CONFIG);
     root("ALLOW_HARDEN_EXCHANGE_CALCULATION", DynamicKeyClass.VM_CONFIG);
+    root("ALLOW_NEW_RESOURCE_MODEL", DynamicKeyClass.VM_CONFIG);
     // These also change historical execution: UNFREEZE_DELAY_DAYS gates the FreezeV2 opcodes
     // (FREEZEBALANCEV2 / DELEGATERESOURCE), shielded-TRC20 gates the verify* precompiles, and
     // multi-sign changes ADDRESS / ORIGIN return bytes -- so they belong in the VM_CONFIG root.
@@ -77,6 +83,7 @@ public final class DynamicKeyPolicy {
     excluded("BANDWIDTH_PRICE_HISTORY_DONE", DynamicKeyClass.MIGRATION_MARKER);
     excluded("TURKISH_KEY_MIGRATION_DONE", DynamicKeyClass.MIGRATION_MARKER);
     excluded("BLOCK_HASH_HISTORY_INSTALLED", DynamicKeyClass.MIGRATION_MARKER);
+    excluded("state_flag", DynamicKeyClass.INDEX_CURSOR);
     excluded("TOTAL_TRANSACTION_COST", DynamicKeyClass.STATISTIC);
     excluded("TOTAL_CREATE_ACCOUNT_COST", DynamicKeyClass.STATISTIC);
     excluded("TOTAL_CREATE_WITNESS_FEE", DynamicKeyClass.STATISTIC);

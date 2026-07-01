@@ -33,11 +33,43 @@ public class ConfigLoaderVmPropertiesTest {
       return v;
     }
 
+    public long getTotalNetLimit() {
+      return v;
+    }
+
+    public long getTotalNetWeight() {
+      return v;
+    }
+
+    public long getTotalEnergyCurrentLimit() {
+      return v;
+    }
+
+    public long getTotalEnergyWeight() {
+      return v;
+    }
+
+    public long getTotalTronPowerWeight() {
+      return v;
+    }
+
     public boolean supportVM() {
       return b;
     }
 
     public boolean supportUnfreezeDelay() {
+      return b;
+    }
+
+    public long getUnfreezeDelayDays() {
+      return v;
+    }
+
+    public long getAllowNewResourceModel() {
+      return v;
+    }
+
+    public boolean supportAllowNewResourceModel() {
       return b;
     }
 

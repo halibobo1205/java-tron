@@ -1962,8 +1962,8 @@ public class PrecompiledContracts {
       if (accountCapsule == null) {
         tronPower = 0;
       } else {
-        if (getDeposit().getDynamicPropertiesStore().supportUnfreezeDelay()
-            && getDeposit().getDynamicPropertiesStore().supportAllowNewResourceModel()) {
+        if (getDeposit().getVmDynamicProperties().supportUnfreezeDelay()
+            && getDeposit().getVmDynamicProperties().supportAllowNewResourceModel()) {
           tronPower = accountCapsule.getAllTronPower();
         } else {
           tronPower = accountCapsule.getTronPower();

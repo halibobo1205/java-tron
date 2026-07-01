@@ -18,6 +18,7 @@ import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.ContractCapsule;
 import org.tron.core.capsule.ContractStateCapsule;
 import org.tron.core.store.VmDynamicProperties;
+import org.tron.core.vm.ChainParameterEnum;
 import org.tron.protos.Protocol;
 
 /**
@@ -158,6 +159,24 @@ public class ArchiveRepositoryAdapterTest {
   @Test
   public void vmDynamicPropertiesIsTheInjectedHistoricalView() {
     assertSame(vmProps, adapter.getVmDynamicProperties());
+  }
+
+  @Test
+  public void chainParameterReadsUseHistoricalVmDynamicProperties() {
+    when(vmProps.getTotalNetLimit()).thenReturn(101L);
+    when(vmProps.getTotalNetWeight()).thenReturn(102L);
+    when(vmProps.getTotalEnergyCurrentLimit()).thenReturn(103L);
+    when(vmProps.getTotalEnergyWeight()).thenReturn(104L);
+    when(vmProps.getUnfreezeDelayDays()).thenReturn(105L);
+
+    assertEquals(101L, ChainParameterEnum.TOTAL_NET_LIMIT.getAction().apply(adapter).longValue());
+    assertEquals(102L, ChainParameterEnum.TOTAL_NET_WEIGHT.getAction().apply(adapter).longValue());
+    assertEquals(103L,
+        ChainParameterEnum.TOTAL_ENERGY_CURRENT_LIMIT.getAction().apply(adapter).longValue());
+    assertEquals(104L,
+        ChainParameterEnum.TOTAL_ENERGY_WEIGHT.getAction().apply(adapter).longValue());
+    assertEquals(105L,
+        ChainParameterEnum.UNFREEZE_DELAY_DAYS.getAction().apply(adapter).longValue());
   }
 
   @Test

@@ -132,7 +132,7 @@ public final class HistoricalEthCallSupport {
   }
 
   /**
-   * True when the archive covers from genesis, so a MISSING dynamic-property flag is the in-memory
+   * True when the archive covers block 0, so a MISSING dynamic-property flag is the in-memory
    * default rather than an un-captured pre-coverage change. A mid-chain archive (or an empty index)
    * returns false, and missing execution-affecting flags fail closed instead of using latest.
    */
@@ -141,7 +141,7 @@ public final class HistoricalEthCallSupport {
       return false;
     }
     long first = ((DefaultArchiveService) archiveService).getTxNumIndex().getFirstArchivedBlock();
-    return first >= 0 && first <= 1;
+    return first == 0;
   }
 
 }
