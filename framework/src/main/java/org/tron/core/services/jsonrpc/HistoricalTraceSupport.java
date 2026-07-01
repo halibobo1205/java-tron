@@ -134,10 +134,12 @@ public final class HistoricalTraceSupport {
     if (tx == null) {
       throw new JsonRpcInvalidParamsException("transaction not found");
     }
+    ContractType contractType = null;
     boolean traceable = false;
     if (tx.getRawData().getContractCount() > 0) {
       Contract contract = tx.getRawData().getContract(0);
-      traceable = contract.getType() == ContractType.TriggerSmartContract;
+      contractType = contract.getType();
+      traceable = contractType == ContractType.TriggerSmartContract;
     }
 
     TransactionInfo info = wallet.getTransactionInfoById(txIdBs);
@@ -189,11 +191,15 @@ public final class HistoricalTraceSupport {
     if (archivedHash.length > 0 && !Arrays.equals(archivedHash, blockHash)) {
       throw new JsonRpcInternalException("archive history hash mismatch for block " + blockNum);
     }
+    if (contractType == ContractType.CreateSmartContract) {
+      throw new JsonRpcInternalException(
+          "historical debug_traceTransaction does not support CreateSmartContract");
+    }
     if (!traceable) {
       // Only a TriggerSmartContract produces a TVM opcode trace; other types (transfers, votes,
-      // CreateSmartContract deploys, etc.) have no constant-call execution to replay. Still do the
-      // archive/canonical validation first so a pre-archive or forked transaction cannot be
-      // reported as a successful empty trace.
+      // etc.) have no constant-call execution to replay. Still do the archive/canonical validation
+      // first so a pre-archive or forked transaction cannot be reported as a successful empty
+      // trace.
       return emptyTrace();
     }
     // The pre-tx state is read as-of t - 1 (getAsOf inclusive-after; t is the tx's own txNum whose
