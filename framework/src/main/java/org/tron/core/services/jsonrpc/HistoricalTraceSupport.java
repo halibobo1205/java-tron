@@ -188,7 +188,9 @@ public final class HistoricalTraceSupport {
     BlockCapsule historicalBlock = new BlockCapsule(block);
     byte[] blockHash = historicalBlock.getBlockId().getBytes();
     byte[] archivedHash = blockRange.getBlockHash();
-    if (archivedHash.length > 0 && !Arrays.equals(archivedHash, blockHash)) {
+    requireBlockHash(archivedHash, "archive history", blockNum);
+    requireBlockHash(blockHash, "canonical block", blockNum);
+    if (!Arrays.equals(archivedHash, blockHash)) {
       throw new JsonRpcInternalException("archive history hash mismatch for block " + blockNum);
     }
     if (contractType == ContractType.CreateSmartContract) {
@@ -208,6 +210,13 @@ public final class HistoricalTraceSupport {
     // Reuse the real transaction so feeLimit (hence the energy limit) is preserved.
     TransactionCapsule trxCap = new TransactionCapsule(tx);
     return runTrace(historicalBlock, point, trxCap, "historical debug_traceTransaction");
+  }
+
+  private static void requireBlockHash(byte[] blockHash, String source, long blockNum)
+      throws JsonRpcInternalException {
+    if (blockHash == null || blockHash.length != ArchiveBlockRange.BLOCK_HASH_LENGTH) {
+      throw new JsonRpcInternalException(source + " has invalid block hash for block " + blockNum);
+    }
   }
 
   /**

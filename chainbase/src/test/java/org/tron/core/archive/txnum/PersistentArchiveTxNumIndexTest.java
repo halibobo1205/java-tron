@@ -25,8 +25,8 @@ import org.tron.core.archive.ArchiveSource;
 public class PersistentArchiveTxNumIndexTest {
 
   private static final byte[] TX_A = new byte[] {0x01, 0x02, 0x03};
-  private static final byte[] HASH_A = new byte[] {0x04, 0x05, 0x06};
-  private static final byte[] HASH_B = new byte[] {0x06, 0x05, 0x04};
+  private static final byte[] HASH_A = blockHash(4);
+  private static final byte[] HASH_B = blockHash(6);
 
   private Path dir;
   private RocksDbArchiveBlockRangeStore store;
@@ -48,7 +48,7 @@ public class PersistentArchiveTxNumIndexTest {
   }
 
   private ArchiveBlockRange pushBlock(long blockNum) {
-    return pushBlock(blockNum, new byte[0]);
+    return pushBlock(blockNum, blockHash(blockNum));
   }
 
   private ArchiveBlockRange pushBlock(long blockNum, byte[] blockHash) {
@@ -63,7 +63,7 @@ public class PersistentArchiveTxNumIndexTest {
     index.allocateSystemTx(blockNum, ArchivePhase.BLOCK_PREPARE);
     index.allocateUserTx(blockNum, 0, txId);
     index.allocateSystemTx(blockNum, ArchivePhase.BLOCK_FINALIZE);
-    return index.commitBlock(blockNum, 1);
+    return index.commitBlock(blockNum, blockHash(blockNum), 1);
   }
 
   @Test
@@ -108,7 +108,7 @@ public class PersistentArchiveTxNumIndexTest {
   @Test
   public void restartWithMissingPositionRowFailsClosed() {
     ArchiveBlockRange corruptRange = new ArchiveBlockRange(
-        1, 0, 1, 0, 1, 0, ArchiveSource.NORMAL);
+        1, 0, 1, 0, 1, blockHash(1), 0, ArchiveSource.NORMAL);
     store.commitRange(corruptRange, 2, Collections.emptyList());
     index.close();
     index = null;
@@ -125,7 +125,7 @@ public class PersistentArchiveTxNumIndexTest {
   @Test
   public void restartWithMismatchedPositionRowFailsClosed() {
     ArchiveBlockRange corruptRange = new ArchiveBlockRange(
-        1, 0, 1, 0, 1, 0, ArchiveSource.NORMAL);
+        1, 0, 1, 0, 1, blockHash(1), 0, ArchiveSource.NORMAL);
     store.commitRange(corruptRange, 2, Arrays.asList(
         new ArchiveTxPosition(0, 99, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, TX_A),
         new ArchiveTxPosition(1, 1, ArchivePhase.BLOCK_FINALIZE, ArchiveSource.NORMAL, -1, null)));
@@ -192,10 +192,10 @@ public class PersistentArchiveTxNumIndexTest {
   @Test
   public void storeRejectsDirectNonContiguousCommit() {
     ArchiveBlockRange first = new ArchiveBlockRange(
-        10, 0, 1, 0, 1, 0, ArchiveSource.NORMAL);
+        10, 0, 1, 0, 1, blockHash(10), 0, ArchiveSource.NORMAL);
     store.commitRange(first, 2);
     ArchiveBlockRange gap = new ArchiveBlockRange(
-        12, 2, 3, 2, 3, 0, ArchiveSource.NORMAL);
+        12, 2, 3, 2, 3, blockHash(12), 0, ArchiveSource.NORMAL);
 
     ArchiveException ex = assertThrows(ArchiveException.class, () -> store.commitRange(gap, 4));
     assertTrue(ex.getMessage().contains("non-contiguous archive block range"));
@@ -205,10 +205,10 @@ public class PersistentArchiveTxNumIndexTest {
   @Test
   public void storeRejectsDirectNonContiguousTxNumCommit() {
     ArchiveBlockRange first = new ArchiveBlockRange(
-        10, 0, 1, 0, 1, 0, ArchiveSource.NORMAL);
+        10, 0, 1, 0, 1, blockHash(10), 0, ArchiveSource.NORMAL);
     store.commitRange(first, 2);
     ArchiveBlockRange gap = new ArchiveBlockRange(
-        11, 4, 5, 4, 5, 0, ArchiveSource.NORMAL);
+        11, 4, 5, 4, 5, blockHash(11), 0, ArchiveSource.NORMAL);
 
     ArchiveException ex = assertThrows(ArchiveException.class, () -> store.commitRange(gap, 6));
     assertTrue(ex.getMessage().contains("non-contiguous archive txNum range"));
@@ -218,11 +218,22 @@ public class PersistentArchiveTxNumIndexTest {
   @Test
   public void storeRejectsRangeWhoseSpanDoesNotMatchUserTxCount() {
     ArchiveBlockRange corruptRange = new ArchiveBlockRange(
-        1, 0, 1, 0, 1, 1, ArchiveSource.NORMAL);
+        1, 0, 1, 0, 1, blockHash(1), 1, ArchiveSource.NORMAL);
 
     ArchiveException ex = assertThrows(ArchiveException.class,
         () -> store.commitRange(corruptRange, 2));
     assertTrue(ex.getMessage().contains("txNum span"));
+    assertFalse(store.getRange(1).isPresent());
+  }
+
+  @Test
+  public void storeRejectsRangeWithoutBlockHash() {
+    ArchiveBlockRange corruptRange = new ArchiveBlockRange(
+        1, 0, 1, 0, 1, 0, ArchiveSource.NORMAL);
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> store.commitRange(corruptRange, 2));
+    assertTrue(ex.getMessage().contains("32-byte block hash"));
     assertFalse(store.getRange(1).isPresent());
   }
 
@@ -251,7 +262,7 @@ public class PersistentArchiveTxNumIndexTest {
     store = null;
 
     ArchiveBlockRange gap = new ArchiveBlockRange(
-        3, 2, 3, 2, 3, 0, ArchiveSource.NORMAL);
+        3, 2, 3, 2, 3, blockHash(3), 0, ArchiveSource.NORMAL);
     putRawRange(gap, 4);
 
     RocksDbArchiveBlockRangeStore reopenedStore =
@@ -272,7 +283,7 @@ public class PersistentArchiveTxNumIndexTest {
     store = null;
 
     ArchiveBlockRange corruptRange = new ArchiveBlockRange(
-        1, 0, 1, 0, 1, 1, ArchiveSource.NORMAL);
+        1, 0, 1, 0, 1, blockHash(1), 1, ArchiveSource.NORMAL);
     putRawRange(corruptRange, 2, 1);
 
     RocksDbArchiveBlockRangeStore reopenedStore =
@@ -351,5 +362,11 @@ public class PersistentArchiveTxNumIndexTest {
             ArchiveBlockRangeCodec.encodeFirstBlock(firstBlock));
       }
     }
+  }
+
+  private static byte[] blockHash(long seed) {
+    byte[] hash = new byte[ArchiveBlockRange.BLOCK_HASH_LENGTH];
+    hash[ArchiveBlockRange.BLOCK_HASH_LENGTH - 1] = (byte) seed;
+    return hash;
   }
 }

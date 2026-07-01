@@ -69,11 +69,16 @@ public class HistoricalEthCallSupportTest {
     svc.getTxNumIndex().beginBlock(5, ArchiveSource.NORMAL);
     svc.getTxNumIndex().allocateSystemTx(5, ArchivePhase.BLOCK_PREPARE);
     svc.getTxNumIndex().allocateSystemTx(5, ArchivePhase.BLOCK_FINALIZE);
-    svc.getTxNumIndex().commitBlock(5, 0);
+    svc.getTxNumIndex().commitBlock(5, blockHash(5), 0);
     return svc;
   }
 
   private static Block block(long num) {
     return new BlockCapsule(num, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY).getInstance();
+  }
+
+  private static byte[] blockHash(long num) {
+    return new BlockCapsule(num, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY)
+        .getBlockId().getBytes();
   }
 }

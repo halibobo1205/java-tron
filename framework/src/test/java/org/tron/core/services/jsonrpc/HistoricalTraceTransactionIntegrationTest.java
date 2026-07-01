@@ -80,6 +80,21 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
     return org.bouncycastle.util.encoders.Hex.toHexString(w);
   }
 
+  private static byte[] blockHash(long blockNum) {
+    return blockCapsule(blockNum).getBlockId().getBytes();
+  }
+
+  private static byte[] mismatchedBlockHash(long blockNum) {
+    byte[] hash = java.util.Arrays.copyOf(blockHash(blockNum), ArchiveBlockRange.BLOCK_HASH_LENGTH);
+    hash[ArchiveBlockRange.BLOCK_HASH_LENGTH - 1] ^= 0x01;
+    return hash;
+  }
+
+  private static BlockCapsule blockCapsule(long blockNum) {
+    return new BlockCapsule(blockNum, Sha256Hash.ZERO_HASH, 1000L,
+        ByteString.copyFrom(new byte[21]));
+  }
+
   private void put(InMemoryArchiveTemporalStore temporal, long txNum, ArchiveDomain domain,
       byte[] canonicalKey, byte[] valueBytes) {
     // Archive create at txNum (prev = tombstone): getAsOf(txNum) falls through to latest.
@@ -93,7 +108,7 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
   // then opens block 2, allocates prepare + the traced user tx, and commits. Returns the service.
   private DefaultArchiveService buildArchive(InMemoryArchiveTemporalStore temporal, byte[] contract,
       byte[] txId) {
-    return buildArchive(temporal, contract, txId, new byte[0]);
+    return buildArchive(temporal, contract, txId, blockHash(2));
   }
 
   private DefaultArchiveService buildArchive(InMemoryArchiveTemporalStore temporal, byte[] contract,
@@ -104,7 +119,7 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
     svc.getTxNumIndex().beginBlock(0, ArchiveSource.NORMAL);
     svc.getTxNumIndex().allocateSystemTx(0, ArchivePhase.BLOCK_PREPARE);
     svc.getTxNumIndex().allocateSystemTx(0, ArchivePhase.BLOCK_FINALIZE);
-    svc.getTxNumIndex().commitBlock(0, 0);
+    svc.getTxNumIndex().commitBlock(0, blockHash(0), 0);
 
     // Block 1: archive the contract at the finalize txNum (getAsOf inclusive-after finds it).
     svc.getTxNumIndex().beginBlock(1, ArchiveSource.NORMAL);
@@ -117,7 +132,7 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
         SmartContract.newBuilder().setContractAddress(ByteString.copyFrom(contract)).build()
             .toByteArray());
     put(temporal, t1, ArchiveDomain.CODE, contract, ADD_CODE);
-    svc.getTxNumIndex().commitBlock(1, 0);
+    svc.getTxNumIndex().commitBlock(1, blockHash(1), 0);
 
     // Block 2: prepare, then the traced user tx (txNum t), then finalize.
     svc.getTxNumIndex().beginBlock(2, ArchiveSource.NORMAL);
@@ -133,7 +148,7 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
     svc.getTxNumIndex().beginBlock(0, ArchiveSource.NORMAL);
     svc.getTxNumIndex().allocateSystemTx(0, ArchivePhase.BLOCK_PREPARE);
     svc.getTxNumIndex().allocateSystemTx(0, ArchivePhase.BLOCK_FINALIZE);
-    svc.getTxNumIndex().commitBlock(0, 0);
+    svc.getTxNumIndex().commitBlock(0, blockHash(0), 0);
     return svc;
   }
 
@@ -158,8 +173,7 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
     when(wallet.getTransactionById(ByteString.copyFrom(txId))).thenReturn(tx);
     when(wallet.getTransactionInfoById(ByteString.copyFrom(txId)))
         .thenReturn(TransactionInfo.newBuilder().setBlockNumber(2L).build());
-    BlockCapsule block = new BlockCapsule(2L, Sha256Hash.ZERO_HASH, 1000L,
-        ByteString.copyFrom(new byte[21]));
+    BlockCapsule block = blockCapsule(2);
     when(wallet.getBlockByNum(2L)).thenReturn(block.getInstance());
 
     HistoricalTraceSupport support = new HistoricalTraceSupport(wallet, svc);
@@ -244,14 +258,13 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
     byte[] txId = trxCap.getTransactionId().getBytes();
 
     InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
-    DefaultArchiveService svc = buildArchive(temporal, contract, txId, new byte[] {7});
+    DefaultArchiveService svc = buildArchive(temporal, contract, txId, mismatchedBlockHash(2));
 
     Wallet wallet = mock(Wallet.class);
     when(wallet.getTransactionById(ByteString.copyFrom(txId))).thenReturn(tx);
     when(wallet.getTransactionInfoById(ByteString.copyFrom(txId)))
         .thenReturn(TransactionInfo.newBuilder().setBlockNumber(2L).build());
-    BlockCapsule block = new BlockCapsule(2L, Sha256Hash.ZERO_HASH, 1000L,
-        ByteString.copyFrom(new byte[21]));
+    BlockCapsule block = blockCapsule(2);
     when(wallet.getBlockByNum(2L)).thenReturn(block.getInstance());
 
     HistoricalTraceSupport support = new HistoricalTraceSupport(wallet, svc);
@@ -289,8 +302,7 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
     when(wallet.getTransactionById(ByteString.copyFrom(txId))).thenReturn(tx);
     when(wallet.getTransactionInfoById(ByteString.copyFrom(txId)))
         .thenReturn(TransactionInfo.newBuilder().setBlockNumber(2L).build());
-    BlockCapsule block = new BlockCapsule(2L, Sha256Hash.ZERO_HASH, 1000L,
-        ByteString.copyFrom(new byte[21]));
+    BlockCapsule block = blockCapsule(2);
     when(wallet.getBlockByNum(2L)).thenReturn(block.getInstance());
 
     HistoricalTraceSupport support = new HistoricalTraceSupport(wallet, svc);
@@ -316,8 +328,7 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
     when(wallet.getTransactionById(ByteString.copyFrom(txId))).thenReturn(tx);
     when(wallet.getTransactionInfoById(ByteString.copyFrom(txId)))
         .thenReturn(TransactionInfo.newBuilder().setBlockNumber(2L).build());
-    BlockCapsule block = new BlockCapsule(2L, Sha256Hash.ZERO_HASH, 1000L,
-        ByteString.copyFrom(new byte[21]));
+    BlockCapsule block = blockCapsule(2);
     when(wallet.getBlockByNum(2L)).thenReturn(block.getInstance());
 
     HistoricalTraceSupport support = new HistoricalTraceSupport(wallet, svc);
