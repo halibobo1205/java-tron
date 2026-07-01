@@ -147,6 +147,39 @@ public class NoopArchiveServiceTest {
   }
 
   @Test
+  public void factoryRejectsEarlierIndexRangeWithoutTemporalCommitMarker() throws IOException {
+    StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
+    config.setEnable(true);
+    Path dir = Files.createTempDirectory("archive-factory-early-marker-test");
+    ArchiveBlockRange first = new ArchiveBlockRange(
+        7, 0, 1, 0, 1, 0, ArchiveSource.NORMAL);
+    ArchiveBlockRange last = new ArchiveBlockRange(
+        8, 2, 3, 2, 3, 0, ArchiveSource.NORMAL);
+    RocksDbArchiveTemporalStore temporal =
+        new RocksDbArchiveTemporalStore(dir.resolve("temporal").toString());
+    try {
+      temporal.putBlockChanges(last, Collections.emptyList());
+    } finally {
+      temporal.close();
+    }
+    RocksDbArchiveBlockRangeStore index =
+        new RocksDbArchiveBlockRangeStore(dir.resolve("index").toString());
+    try {
+      index.commitRange(first, 2);
+      index.commitRange(last, 4);
+    } finally {
+      index.close();
+    }
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> ArchiveServiceFactory.create(config, dir.toString()));
+      assertTrue(ex.getMessage().contains("commit marker missing for block 7"));
+    } finally {
+      deleteRecursively(dir.toFile());
+    }
+  }
+
+  @Test
   public void factoryRejectsCursorThatDoesNotMatchLastRange() throws IOException {
     StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
     config.setEnable(true);

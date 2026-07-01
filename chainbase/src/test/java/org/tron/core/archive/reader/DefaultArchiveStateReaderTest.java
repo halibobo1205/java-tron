@@ -100,6 +100,32 @@ public class DefaultArchiveStateReaderTest {
   }
 
   @Test
+  public void getAccountAssetReadsTrc10Balance() throws Exception {
+    byte[] address = addr(1);
+    byte[] assetId = "1000001".getBytes(StandardCharsets.US_ASCII);
+    put(ArchiveDomain.ACCOUNT_ASSET, Bytes.concat(address, assetId),
+        DomainValue.present(ByteArray.fromLong(88L)), 5);
+
+    ArchiveReadResult<byte[]> balance = readerAt(5).getAccountAsset(address, assetId);
+
+    assertEquals(Status.PRESENT, balance.getStatus());
+    assertEquals(88L, ByteArray.toLong(balance.getValue()));
+    assertEquals(Status.MISSING, readerAt(5).getAccountAsset(addr(2), assetId).getStatus());
+  }
+
+  @Test
+  public void corruptAccountAssetLengthThrows() {
+    byte[] address = addr(1);
+    byte[] assetId = "1000001".getBytes(StandardCharsets.US_ASCII);
+    put(ArchiveDomain.ACCOUNT_ASSET, Bytes.concat(address, assetId),
+        DomainValue.present(new byte[] {1}), 5);
+
+    ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
+        () -> readerAt(5).getAccountAsset(address, assetId));
+    assertEquals(ArchiveReaderException.Reason.CORRUPT_VALUE, e.getReason());
+  }
+
+  @Test
   public void noFallbackToLatestAndInclusiveAfter() throws Exception {
     put(ArchiveDomain.ACCOUNT, addr(1), DomainValue.present(account(100)), 5);
     // At txNum 4 the account did not yet exist: the prev-value model reports it as absent

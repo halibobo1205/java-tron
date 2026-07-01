@@ -23,6 +23,7 @@ public final class PersistentArchiveTxNumIndex implements ArchiveTxNumIndex, Aut
     this.store = store;
     store.validateCursorConsistentWithLastRange();
     store.validateContiguousCoverage();
+    store.validatePositionCoverage();
     // Resume txNum allocation from the persisted cursor so new blocks never collide with old ones.
     this.inner = new InMemoryArchiveTxNumIndex(store.getCursor());
   }

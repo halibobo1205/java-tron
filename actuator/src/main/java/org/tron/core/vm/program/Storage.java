@@ -2,7 +2,6 @@ package org.tron.core.vm.program;
 
 import static java.lang.System.arraycopy;
 
-import com.google.common.primitives.Bytes;
 import java.util.HashMap;
 import java.util.Map;
 import lombok.Getter;
@@ -12,6 +11,7 @@ import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.utils.ByteUtil;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.archive.domain.ArchiveDomain;
+import org.tron.core.archive.reader.ArchiveStorageKeyCodec;
 import org.tron.core.capsule.StorageRowCapsule;
 import org.tron.core.store.StorageRowStore;
 
@@ -112,7 +112,8 @@ public class Storage {
           this.store.put(row.getRowKey(), row);
         }
         if (archiveActive) {
-          byte[] key = Bytes.concat(address, rowKey.getData(), new byte[] {(byte) contractVersion});
+          byte[] key = ArchiveStorageKeyCodec.contractStorageKey(
+              address, rowKey.getData(), contractVersion);
           if (zero) {
             ArchiveCaptureHolder.captureSemanticDelete(ArchiveDomain.CONTRACT_STORAGE, key, prev);
           } else {

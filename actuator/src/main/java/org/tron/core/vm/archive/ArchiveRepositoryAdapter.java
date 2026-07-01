@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Set;
 import org.apache.commons.lang3.tuple.Pair;
 import org.tron.common.runtime.vm.DataWord;
+import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.ByteUtil;
 import org.tron.core.archive.reader.ArchiveReadResult;
 import org.tron.core.archive.reader.ArchiveReaderException;
@@ -65,6 +66,7 @@ public class ArchiveRepositoryAdapter implements Repository {
   private final Map<Key, AccountCapsule> accounts = new HashMap<>();
   private final Map<Key, byte[]> codes = new HashMap<>();
   private final Map<Key, ContractCapsule> contracts = new HashMap<>();
+  private final Map<Key, ContractStateCapsule> contractStates = new HashMap<>();
   private final Map<Key, Map<DataWord, DataWord>> storage = new HashMap<>();
   private final Set<Key> newContracts = new HashSet<>();
 
@@ -121,7 +123,17 @@ public class ArchiveRepositoryAdapter implements Repository {
     if (account == null) {
       return 0L;
     }
-    return account.getAssetV2(new String(ByteUtil.stripLeadingZeroes(tokenId)));
+    byte[] tokenIdWithoutLeadingZero = ByteUtil.stripLeadingZeroes(tokenId);
+    if (tokenIdWithoutLeadingZero == null || tokenIdWithoutLeadingZero.length == 0) {
+      return 0L;
+    }
+    if (parent != null) {
+      return parent.getTokenBalance(address, tokenId);
+    }
+    ArchiveReadResult<byte[]> row = read(
+        () -> reader.getAccountAsset(address, tokenIdWithoutLeadingZero), "account-asset");
+    requireKnown(row, "account-asset");
+    return row.isPresent() ? ByteArray.toLong(row.getValue()) : 0L;
   }
 
   @Override
@@ -265,6 +277,7 @@ public class ArchiveRepositoryAdapter implements Repository {
         parent.updateContract(key.getData(), contract);
       }
     });
+    contractStates.forEach((key, state) -> parent.updateContractState(key.getData(), state));
     newContracts.forEach(key -> parent.putNewContract(key.getData()));
     storage.forEach((addrKey, slots) ->
         slots.forEach((slot, value) -> parent.putStorageValue(addrKey.getData(), slot, value)));
@@ -331,6 +344,11 @@ public class ArchiveRepositoryAdapter implements Repository {
 
   @Override
   public ContractStateCapsule getContractState(byte[] address) {
+    Key key = Key.create(address);
+    if (contractStates.containsKey(key)) {
+      ContractStateCapsule state = contractStates.get(key);
+      return state == null ? null : new ContractStateCapsule(state.getData());
+    }
     if (parent != null) {
       return parent.getContractState(address);
     }
@@ -338,13 +356,13 @@ public class ArchiveRepositoryAdapter implements Repository {
         read(() -> reader.getContractState(address), "contract-state");
     requireKnown(state, "contract-state");
     return state.isPresent()
-        ? state.getValue()
+        ? new ContractStateCapsule(state.getValue().getData())
         : new ContractStateCapsule(getVmDynamicProperties().getCurrentCycleNumber());
   }
 
   @Override
   public void updateContractState(byte[] address, ContractStateCapsule contractStateCapsule) {
-    // The dynamic-energy factor write is discarded on the read-only historical path.
+    contractStates.put(Key.create(address), contractStateCapsule);
   }
 
   @Override

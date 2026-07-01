@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 
 import org.junit.Test;
 import org.tron.common.runtime.vm.DataWord;
+import org.tron.common.utils.ByteArray;
 import org.tron.core.archive.reader.ArchiveReadResult;
 import org.tron.core.archive.reader.ArchiveReaderException;
 import org.tron.core.archive.reader.ArchiveStatePoint;
@@ -40,6 +41,7 @@ public class ArchiveRepositoryAdapterTest {
   /** Reader whose results each test sets directly; the address argument is ignored. */
   private static final class FakeReader implements ArchiveStateReader {
     ArchiveReadResult<AccountCapsule> account = ArchiveReadResult.missing();
+    ArchiveReadResult<byte[]> accountAsset = ArchiveReadResult.missing();
     ArchiveReadResult<ContractCapsule> contract = ArchiveReadResult.missing();
     ArchiveReadResult<ContractStateCapsule> contractState = ArchiveReadResult.missing();
     ArchiveReadResult<byte[]> code = ArchiveReadResult.missing();
@@ -55,6 +57,10 @@ public class ArchiveRepositoryAdapterTest {
         throw accountError;
       }
       return account;
+    }
+
+    public ArchiveReadResult<byte[]> getAccountAsset(byte[] a, byte[] assetId) {
+      return accountAsset;
     }
 
     public ArchiveReadResult<ContractCapsule> getContract(byte[] a) {
@@ -139,6 +145,17 @@ public class ArchiveRepositoryAdapterTest {
   }
 
   @Test
+  public void tokenBalanceReadsAccountAssetDomain() {
+    reader.account = ArchiveReadResult.present(account(1L));
+    reader.accountAsset = ArchiveReadResult.present(ByteArray.fromLong(77L));
+
+    assertEquals(77L, adapter.getTokenBalance(ADDR, new byte[] {0, 0, '1', '0', '0'}));
+
+    reader.accountAsset = ArchiveReadResult.missing();
+    assertEquals(0L, adapter.getTokenBalance(ADDR, new byte[] {'1', '0', '0'}));
+  }
+
+  @Test
   public void vmDynamicPropertiesIsTheInjectedHistoricalView() {
     assertSame(vmProps, adapter.getVmDynamicProperties());
   }
@@ -163,6 +180,25 @@ public class ArchiveRepositoryAdapterTest {
   }
 
   @Test
+  public void contractStateOverlayMergesFromChildToParent() {
+    ContractStateCapsule archived = new ContractStateCapsule(1L);
+    archived.setEnergyFactor(10L);
+    reader.contractState = ArchiveReadResult.present(archived);
+
+    ArchiveRepositoryAdapter child = (ArchiveRepositoryAdapter) adapter.newRepositoryChild();
+    ContractStateCapsule updated = child.getContractState(ADDR);
+    updated.setEnergyFactor(99L);
+    child.updateContractState(ADDR, updated);
+
+    assertEquals(10L, adapter.getContractState(ADDR).getEnergyFactor());
+    assertEquals(99L, child.getContractState(ADDR).getEnergyFactor());
+
+    child.commit();
+
+    assertEquals(99L, adapter.getContractState(ADDR).getEnergyFactor());
+  }
+
+  @Test
   public void midChainMissingStateFailsClosed() {
     ArchiveRepositoryAdapter midChain =
         new ArchiveRepositoryAdapter(reader, vmProps, false);
@@ -179,6 +215,8 @@ public class ArchiveRepositoryAdapterTest {
     reader.account = ArchiveReadResult.present(account(1L));
     assertThrows(UnsupportedHistoricalStateException.class,
         () -> midChain.getStorageValue(ADDR, new DataWord(new byte[] {5})));
+    assertThrows(UnsupportedHistoricalStateException.class,
+        () -> midChain.getTokenBalance(ADDR, new byte[] {5}));
   }
 
   @Test

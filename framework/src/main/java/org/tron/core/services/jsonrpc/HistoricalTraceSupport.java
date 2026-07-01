@@ -20,6 +20,7 @@ import org.tron.core.archive.reader.ArchiveStateReader;
 import org.tron.core.archive.reader.ArchiveStateReaderFactory;
 import org.tron.core.archive.reader.JsonRpcArchiveStatePointResolver;
 import org.tron.core.archive.reader.ResolvedArchiveStatePoint;
+import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.archive.txnum.ArchiveTxNumIndex;
 import org.tron.core.archive.txnum.ArchiveTxPosition;
 import org.tron.core.capsule.BlockCapsule;
@@ -133,14 +134,10 @@ public final class HistoricalTraceSupport {
     if (tx == null) {
       throw new JsonRpcInvalidParamsException("transaction not found");
     }
-    if (tx.getRawData().getContractCount() == 0) {
-      return emptyTrace();
-    }
-    Contract contract = tx.getRawData().getContract(0);
-    if (contract.getType() != ContractType.TriggerSmartContract) {
-      // Only a TriggerSmartContract produces a TVM opcode trace; other types (transfers, votes,
-      // CreateSmartContract deploys, etc.) have no constant-call execution to replay.
-      return emptyTrace();
+    boolean traceable = false;
+    if (tx.getRawData().getContractCount() > 0) {
+      Contract contract = tx.getRawData().getContract(0);
+      traceable = contract.getType() == ContractType.TriggerSmartContract;
     }
 
     TransactionInfo info = wallet.getTransactionInfoById(txIdBs);
@@ -168,6 +165,19 @@ public final class HistoricalTraceSupport {
         || !Arrays.equals(archivePosition.getTxId(), txId)) {
       throw new JsonRpcInternalException("archive transaction position mismatch");
     }
+    Optional<ArchiveBlockRange> range = index.getBlockRange(blockNum);
+    if (!range.isPresent()) {
+      long first = index.getFirstArchivedBlock();
+      if (first >= 0 && blockNum < first) {
+        throw new JsonRpcInternalException("archive history unavailable for block " + blockNum
+            + "; lowest supported block is " + first);
+      }
+      throw new JsonRpcInternalException("archive history unavailable for block " + blockNum);
+    }
+    ArchiveBlockRange blockRange = range.get();
+    if (t < blockRange.getFirstTxNum() || t > blockRange.getLastTxNum()) {
+      throw new JsonRpcInternalException("archive transaction range mismatch");
+    }
 
     Block block = wallet.getBlockByNum(blockNum);
     if (block == null) {
@@ -175,6 +185,17 @@ public final class HistoricalTraceSupport {
     }
     BlockCapsule historicalBlock = new BlockCapsule(block);
     byte[] blockHash = historicalBlock.getBlockId().getBytes();
+    byte[] archivedHash = blockRange.getBlockHash();
+    if (archivedHash.length > 0 && !Arrays.equals(archivedHash, blockHash)) {
+      throw new JsonRpcInternalException("archive history hash mismatch for block " + blockNum);
+    }
+    if (!traceable) {
+      // Only a TriggerSmartContract produces a TVM opcode trace; other types (transfers, votes,
+      // CreateSmartContract deploys, etc.) have no constant-call execution to replay. Still do the
+      // archive/canonical validation first so a pre-archive or forked transaction cannot be
+      // reported as a successful empty trace.
+      return emptyTrace();
+    }
     // The pre-tx state is read as-of t - 1 (getAsOf inclusive-after; t is the tx's own txNum whose
     // writes must NOT be included). The reader reads getAsOf(point.getTxNum()).
     ArchiveStatePoint point = ArchiveStatePoint.blockEnd(blockNum, blockHash, t - 1);

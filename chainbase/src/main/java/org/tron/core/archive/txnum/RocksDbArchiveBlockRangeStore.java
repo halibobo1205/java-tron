@@ -5,6 +5,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.function.Consumer;
 import org.rocksdb.Options;
 import org.rocksdb.RocksDB;
 import org.rocksdb.RocksDBException;
@@ -171,6 +172,69 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
         }
         previous = current;
         it.next();
+      }
+    }
+  }
+
+  /** Fail closed if any committed range is missing its txNum position/index rows. */
+  public void validatePositionCoverage() {
+    validateCommittedRanges(range -> {
+      for (long txNum = range.getFirstTxNum(); txNum <= range.getLastTxNum(); txNum++) {
+        validatePosition(range, txNum);
+      }
+    });
+  }
+
+  /** Iterate every persisted committed range in block order, failing on corrupt range rows. */
+  public void validateCommittedRanges(Consumer<ArchiveBlockRange> validator) {
+    try (RocksIterator it = db.newIterator()) {
+      it.seek(new byte[] {ArchiveBlockRangeCodec.RANGE_PREFIX});
+      while (it.isValid() && it.key()[0] == ArchiveBlockRangeCodec.RANGE_PREFIX) {
+        ArchiveBlockRange current = ArchiveBlockRangeCodec.decodeRange(it.value());
+        validateRangeKeyMatchesValue(it.key(), current);
+        validateRangeShape(current);
+        validator.accept(current);
+        it.next();
+      }
+    }
+  }
+
+  private void validatePosition(ArchiveBlockRange range, long txNum) {
+    Optional<ArchiveTxPosition> stored = getPosition(txNum);
+    if (!stored.isPresent()) {
+      throw new ArchiveException("archive tx-position missing for committed txNum " + txNum);
+    }
+    ArchiveTxPosition position = stored.get();
+    if (position.getTxNum() != txNum || position.getBlockNum() != range.getBlockNum()
+        || position.getSource() != range.getSource()) {
+      throw new ArchiveException("archive tx-position mismatch for committed txNum " + txNum);
+    }
+    if (position.getPhase() == ArchivePhase.BLOCK_PREPARE) {
+      if (txNum != range.getPrepareTxNum() || position.getTxIndex() != -1) {
+        throw new ArchiveException("archive prepare tx-position mismatch for txNum " + txNum);
+      }
+      return;
+    }
+    if (position.getPhase() == ArchivePhase.BLOCK_FINALIZE) {
+      if (txNum != range.getFinalizeTxNum() || position.getTxIndex() != -1) {
+        throw new ArchiveException("archive finalize tx-position mismatch for txNum " + txNum);
+      }
+      return;
+    }
+    if (position.getPhase() != ArchivePhase.USER_TX || position.getTxIndex() < 0
+        || position.getTxIndex() >= range.getUserTxCount()) {
+      throw new ArchiveException("archive user tx-position mismatch for txNum " + txNum);
+    }
+    OptionalLong byBlockIndex = findTxNumByBlockAndIndex(
+        position.getBlockNum(), position.getTxIndex());
+    if (!byBlockIndex.isPresent() || byBlockIndex.getAsLong() != txNum) {
+      throw new ArchiveException("archive block-index missing for committed txNum " + txNum);
+    }
+    byte[] txId = position.getTxId();
+    if (txId.length > 0) {
+      OptionalLong byTxId = findTxNumByTxId(txId);
+      if (!byTxId.isPresent() || byTxId.getAsLong() != txNum) {
+        throw new ArchiveException("archive txId index missing for committed txNum " + txNum);
       }
     }
   }

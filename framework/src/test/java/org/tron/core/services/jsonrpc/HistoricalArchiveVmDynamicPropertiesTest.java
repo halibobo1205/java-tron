@@ -1,6 +1,7 @@
 package org.tron.core.services.jsonrpc;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -11,6 +12,7 @@ import org.junit.Test;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.archive.reader.ArchiveReadResult;
+import org.tron.core.archive.reader.ArchiveReaderException;
 import org.tron.core.archive.reader.ArchiveStatePoint;
 import org.tron.core.archive.reader.ArchiveStateReader;
 import org.tron.core.capsule.AccountCapsule;
@@ -21,7 +23,7 @@ import org.tron.core.store.VmDynamicProperties;
 /**
  * The archive-backed config view reconstructs the result-affecting hard-fork flags at the target
  * block: an archived (proposal-written) value wins; a MISSING value is the in-memory default when
- * the archive covers genesis, and degrades to the latest baseline only for a mid-chain archive.
+ * the archive covers genesis, and fails closed for a mid-chain archive.
  */
 public class HistoricalArchiveVmDynamicPropertiesTest {
 
@@ -55,17 +57,15 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
   }
 
   @Test
-  public void missingFlagFallsBackToLatestWhenMidChain() throws Exception {
-    // A mid-chain archive cannot prove a pre-coverage activation did not happen, so MISSING
-    // degrades to the latest baseline (correct for the long-activated flags that dominate it).
+  public void missingFlagFailsClosedWhenMidChain() {
+    // A mid-chain archive cannot prove whether a missing key changed before coverage or after the
+    // queried block, so it must not use latest as a historical value.
     FakeReader reader = new FakeReader();                // MISSING
     VmDynamicProperties latest = mock(VmDynamicProperties.class);
     when(latest.getAllowTvmOsaka()).thenReturn(1L);
 
-    HistoricalArchiveVmDynamicProperties view =
-        new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, false);
-
-    assertEquals(1L, view.getAllowTvmOsaka());
+    assertThrows(ArchiveReaderException.class,
+        () -> new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, false));
   }
 
   @Test
@@ -134,11 +134,8 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
     assertEquals(1_000_000_000L, genesisComplete.getMaxFeeLimit());
     assertEquals(p.getAllowStrictMath(), genesisComplete.getAllowStrictMath());
 
-    HistoricalArchiveVmDynamicProperties midChain =
-        new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, false);
-    assertEquals(true, midChain.supportVM());
-    assertEquals(123L, midChain.getMaxFeeLimit());
-    assertEquals(1L, midChain.getAllowStrictMath());
+    assertThrows(ArchiveReaderException.class,
+        () -> new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, false));
   }
 
   @Test
@@ -168,13 +165,12 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
         new HistoricalArchiveVmDynamicProperties(latestOff, ENERGY_FEE, present, true)
             .supportUnfreezeDelay());
 
-    // Absent on a mid-chain archive -> latest fallback (cannot prove a pre-coverage activation).
+    // Absent on a mid-chain archive is unsafe: it may be a pre-coverage activation or a future one.
     FakeReader missing = new FakeReader();
     VmDynamicProperties latestOn = mock(VmDynamicProperties.class);
     when(latestOn.supportUnfreezeDelay()).thenReturn(true);
-    assertEquals(true,
-        new HistoricalArchiveVmDynamicProperties(latestOn, ENERGY_FEE, missing, false)
-            .supportUnfreezeDelay());
+    assertThrows(ArchiveReaderException.class,
+        () -> new HistoricalArchiveVmDynamicProperties(latestOn, ENERGY_FEE, missing, false));
   }
 
   /** Serves configured DYNAMIC_PROPERTIES values by key; everything else MISSING. */
@@ -198,6 +194,10 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
     }
 
     public ArchiveReadResult<AccountCapsule> getAccount(byte[] address) {
+      return ArchiveReadResult.missing();
+    }
+
+    public ArchiveReadResult<byte[]> getAccountAsset(byte[] address, byte[] assetId) {
       return ArchiveReadResult.missing();
     }
 
