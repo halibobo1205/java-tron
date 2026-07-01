@@ -46,6 +46,7 @@ import org.tron.core.vm.OperationRegistry;
 import org.tron.core.vm.VM;
 import org.tron.core.vm.VMConstant;
 import org.tron.core.vm.VMUtils;
+import org.tron.core.vm.archive.UnsupportedHistoricalStateException;
 import org.tron.core.vm.config.ConfigLoader;
 import org.tron.core.vm.config.VMConfig;
 import org.tron.core.vm.program.Program;
@@ -312,6 +313,9 @@ public class VMActuator implements Actuator2 {
       result.setRuntimeError(result.getException().getMessage());
       logger.info("timeout: {}", result.getException().getMessage());
     } catch (Throwable e) {
+      if (injectedRootRepository != null && e instanceof UnsupportedHistoricalStateException) {
+        throw (UnsupportedHistoricalStateException) e;
+      }
       if (!(e instanceof TransferException)) {
         program.spendAllEnergy();
       }
