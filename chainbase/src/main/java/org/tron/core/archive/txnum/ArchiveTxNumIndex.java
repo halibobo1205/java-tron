@@ -41,8 +41,8 @@ public interface ArchiveTxNumIndex {
   OptionalLong findTxNumByTxId(byte[] txId);
 
   /**
-   * The lowest block this index has ever covered, or a negative sentinel if it is empty. A value of
-   * {@code <= 1} means coverage from genesis, which is what lets a historical read treat a MISSING
+   * The lowest block this index has ever covered, or a negative sentinel if it is empty. Only
+   * {@code 0} proves coverage from genesis, which is what lets a historical read treat a MISSING
    * dynamic-property as the in-memory default rather than an un-captured pre-coverage change.
    */
   long getFirstArchivedBlock();

@@ -82,7 +82,7 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
 
   private void put(InMemoryArchiveTemporalStore temporal, long txNum, ArchiveDomain domain,
       byte[] canonicalKey, byte[] valueBytes) {
-    // Genesis-complete create at txNum (prev = tombstone): getAsOf(txNum) falls through to latest.
+    // Archive create at txNum (prev = tombstone): getAsOf(txNum) falls through to latest.
     temporal.putChange(new ArchiveChangeRecord(
         new ArchiveTxPosition(txNum, 1, ArchivePhase.BLOCK_FINALIZE,
             ArchiveSource.NORMAL, -1, null),
@@ -99,6 +99,12 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
   private DefaultArchiveService buildArchive(InMemoryArchiveTemporalStore temporal, byte[] contract,
       byte[] txId, byte[] block2Hash) {
     DefaultArchiveService svc = new DefaultArchiveService(true, temporal);
+
+    // Block 0 proves genesis-complete coverage for default dynamic properties.
+    svc.getTxNumIndex().beginBlock(0, ArchiveSource.NORMAL);
+    svc.getTxNumIndex().allocateSystemTx(0, ArchivePhase.BLOCK_PREPARE);
+    svc.getTxNumIndex().allocateSystemTx(0, ArchivePhase.BLOCK_FINALIZE);
+    svc.getTxNumIndex().commitBlock(0, 0);
 
     // Block 1: archive the contract at the finalize txNum (getAsOf inclusive-after finds it).
     svc.getTxNumIndex().beginBlock(1, ArchiveSource.NORMAL);
@@ -124,10 +130,10 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
 
   private DefaultArchiveService genesisCompleteEmptyArchive() {
     DefaultArchiveService svc = new DefaultArchiveService(true, new InMemoryArchiveTemporalStore());
-    svc.getTxNumIndex().beginBlock(1, ArchiveSource.NORMAL);
-    svc.getTxNumIndex().allocateSystemTx(1, ArchivePhase.BLOCK_PREPARE);
-    svc.getTxNumIndex().allocateSystemTx(1, ArchivePhase.BLOCK_FINALIZE);
-    svc.getTxNumIndex().commitBlock(1, 0);
+    svc.getTxNumIndex().beginBlock(0, ArchiveSource.NORMAL);
+    svc.getTxNumIndex().allocateSystemTx(0, ArchivePhase.BLOCK_PREPARE);
+    svc.getTxNumIndex().allocateSystemTx(0, ArchivePhase.BLOCK_FINALIZE);
+    svc.getTxNumIndex().commitBlock(0, 0);
     return svc;
   }
 

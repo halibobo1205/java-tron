@@ -451,17 +451,17 @@ public class ArchiveRepositoryAdapter implements Repository {
 
   @Override
   public long getTotalNetWeight() {
-    throw unsupported("total-net-weight reads");
+    return getVmDynamicProperties().getTotalNetWeight();
   }
 
   @Override
   public long getTotalEnergyWeight() {
-    throw unsupported("total-energy-weight reads");
+    return getVmDynamicProperties().getTotalEnergyWeight();
   }
 
   @Override
   public long getTotalTronPowerWeight() {
-    throw unsupported("total-tron-power-weight reads");
+    return getVmDynamicProperties().getTotalTronPowerWeight();
   }
 
   @Override

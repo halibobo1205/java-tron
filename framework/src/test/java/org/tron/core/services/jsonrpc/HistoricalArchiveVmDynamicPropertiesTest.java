@@ -94,6 +94,11 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
   public void energyFeeIsHistoricalAndExecutionParamsReconstruct() throws Exception {
     FakeReader reader = new FakeReader();
     reader.put("CURRENT_CYCLE_NUMBER", 7L);
+    reader.put("TOTAL_NET_LIMIT", 101L);
+    reader.put("TOTAL_NET_WEIGHT", 102L);
+    reader.put("TOTAL_ENERGY_CURRENT_LIMIT", 103L);
+    reader.put("TOTAL_ENERGY_WEIGHT", 104L);
+    reader.put("TOTAL_TRON_POWER_WEIGHT", 105L);
     reader.put("ALLOW_CREATION_OF_CONTRACTS", 0L);
     reader.put("MAX_FEE_LIMIT", 100L);
     reader.put("MAX_CPU_TIME_OF_ONE_TX", 25L);
@@ -106,8 +111,14 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
     reader.put("ALLOW_STRICT_MATH", 0L);
     reader.put("CONSENSUS_LOGIC_OPTIMIZATION", 0L);
     reader.put("ALLOW_HARDEN_RESOURCE_CALCULATION", 0L);
+    reader.put("ALLOW_NEW_RESOURCE_MODEL", 1L);
     VmDynamicProperties latest = mock(VmDynamicProperties.class);
     when(latest.getCurrentCycleNumber()).thenReturn(99L);
+    when(latest.getTotalNetLimit()).thenReturn(201L);
+    when(latest.getTotalNetWeight()).thenReturn(202L);
+    when(latest.getTotalEnergyCurrentLimit()).thenReturn(203L);
+    when(latest.getTotalEnergyWeight()).thenReturn(204L);
+    when(latest.getTotalTronPowerWeight()).thenReturn(205L);
     when(latest.supportVM()).thenReturn(true);
     when(latest.getMaxFeeLimit()).thenReturn(1_000L);
     when(latest.getMaxCpuTimeOfOneTx()).thenReturn(50L);
@@ -120,6 +131,7 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
     when(latest.getAllowStrictMath()).thenReturn(1L);
     when(latest.getConsensusLogicOptimization()).thenReturn(1L);
     when(latest.getAllowHardenResourceCalculation()).thenReturn(1L);
+    when(latest.getAllowNewResourceModel()).thenReturn(0L);
 
     HistoricalArchiveVmDynamicProperties view =
         new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true);
@@ -127,6 +139,11 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
     assertEquals(ENERGY_FEE, view.getEnergyFee());      // inherited historical fee
     assertEquals(FakeReader.BLOCK_NUM, view.getLatestBlockHeaderNumber());
     assertEquals(7L, view.getCurrentCycleNumber());
+    assertEquals(101L, view.getTotalNetLimit());
+    assertEquals(102L, view.getTotalNetWeight());
+    assertEquals(103L, view.getTotalEnergyCurrentLimit());
+    assertEquals(104L, view.getTotalEnergyWeight());
+    assertEquals(105L, view.getTotalTronPowerWeight());
     assertEquals(false, view.supportVM());
     assertEquals(100L, view.getMaxFeeLimit());
     assertEquals(25L, view.getMaxCpuTimeOfOneTx());
@@ -139,6 +156,8 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
     assertEquals(0L, view.getAllowStrictMath());
     assertEquals(0L, view.getConsensusLogicOptimization());
     assertEquals(0L, view.getAllowHardenResourceCalculation());
+    assertEquals(1L, view.getAllowNewResourceModel());
+    assertEquals(true, view.supportAllowNewResourceModel());
   }
 
   @Test
@@ -153,6 +172,11 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
         new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true);
     CommonParameter p = CommonParameter.getInstance();
     assertEquals(p.getAllowCreationOfContracts() == 1L, genesisComplete.supportVM());
+    assertEquals(43_200_000_000L, genesisComplete.getTotalNetLimit());
+    assertEquals(0L, genesisComplete.getTotalNetWeight());
+    assertEquals(50_000_000_000L, genesisComplete.getTotalEnergyCurrentLimit());
+    assertEquals(0L, genesisComplete.getTotalEnergyWeight());
+    assertEquals(0L, genesisComplete.getTotalTronPowerWeight());
     assertEquals(1_000_000_000L, genesisComplete.getMaxFeeLimit());
     assertEquals(p.getAllowStrictMath(), genesisComplete.getAllowStrictMath());
 
