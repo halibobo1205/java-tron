@@ -210,7 +210,9 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
           + " does not match canonical head block " + headNum);
     }
     byte[] archiveHash = range.getBlockHash();
-    if (archiveHash.length > 0 && !Arrays.equals(archiveHash, headHash)) {
+    ArchiveBlockRangeCodec.requireBlockHash(archiveHash, "archive head block");
+    ArchiveBlockRangeCodec.requireBlockHash(headHash, "canonical head block");
+    if (!Arrays.equals(archiveHash, headHash)) {
       throw new ArchiveException("archive head block hash does not match canonical head hash");
     }
   }

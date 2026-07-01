@@ -9,6 +9,8 @@ import org.tron.core.archive.ArchiveSource;
  */
 public final class ArchiveBlockRange {
 
+  public static final int BLOCK_HASH_LENGTH = 32;
+
   private final long blockNum;
   private final long firstTxNum;
   private final long lastTxNum;

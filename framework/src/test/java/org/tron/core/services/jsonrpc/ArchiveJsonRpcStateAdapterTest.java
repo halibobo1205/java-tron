@@ -73,7 +73,7 @@ public class ArchiveJsonRpcStateAdapterTest {
     svc.getTxNumIndex().beginBlock(5, ArchiveSource.NORMAL);
     svc.getTxNumIndex().allocateSystemTx(5, ArchivePhase.BLOCK_PREPARE);
     svc.getTxNumIndex().allocateSystemTx(5, ArchivePhase.BLOCK_FINALIZE);
-    svc.getTxNumIndex().commitBlock(5, 0); // first archived block = 5 -> mid-chain
+    svc.getTxNumIndex().commitBlock(5, blockHash(5), 0); // first archived block = 5 -> mid-chain
     Wallet wallet = mock(Wallet.class);
     when(wallet.getBlockByNum(5)).thenReturn(block(5));
     ArchiveJsonRpcStateAdapter adapter = new ArchiveJsonRpcStateAdapter(wallet, svc);
@@ -96,7 +96,7 @@ public class ArchiveJsonRpcStateAdapterTest {
     svc.getTxNumIndex().beginBlock(5, ArchiveSource.NORMAL);
     svc.getTxNumIndex().allocateSystemTx(5, ArchivePhase.BLOCK_PREPARE);
     svc.getTxNumIndex().allocateSystemTx(5, ArchivePhase.BLOCK_FINALIZE);
-    svc.getTxNumIndex().commitBlock(5, 0);
+    svc.getTxNumIndex().commitBlock(5, blockHash(5), 0);
     Wallet wallet = mock(Wallet.class);
     when(wallet.getBlockByNum(4)).thenReturn(block(4));
     ArchiveJsonRpcStateAdapter adapter = new ArchiveJsonRpcStateAdapter(wallet, svc);
@@ -119,5 +119,10 @@ public class ArchiveJsonRpcStateAdapterTest {
 
   private static Block block(long num) {
     return new BlockCapsule(num, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY).getInstance();
+  }
+
+  private static byte[] blockHash(long num) {
+    return new BlockCapsule(num, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY)
+        .getBlockId().getBytes();
   }
 }

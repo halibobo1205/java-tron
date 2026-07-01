@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.Collections;
 import org.junit.After;
 import org.junit.Before;
@@ -173,7 +174,7 @@ public class RocksDbArchiveTemporalStoreTest {
   @Test
   public void blockCommitMarkerSurvivesRestartAndValidatesRange() {
     ArchiveBlockRange range = new ArchiveBlockRange(
-        3, 10, 11, 10, 11, new byte[] {0x03}, 0, ArchiveSource.NORMAL);
+        3, 10, 11, 10, 11, blockHash(3), 0, ArchiveSource.NORMAL);
     store.putBlockChanges(range, Collections.emptyList());
     store.validateCommittedBlock(range);
 
@@ -182,18 +183,37 @@ public class RocksDbArchiveTemporalStoreTest {
     store.validateCommittedBlock(range);
 
     ArchiveBlockRange mismatched = new ArchiveBlockRange(
-        3, 10, 12, 10, 11, new byte[] {0x03}, 0, ArchiveSource.NORMAL);
+        3, 10, 12, 10, 11, blockHash(3), 0, ArchiveSource.NORMAL);
     assertThrows(ArchiveException.class, () -> store.validateCommittedBlock(mismatched));
 
     ArchiveBlockRange mismatchedHash = new ArchiveBlockRange(
-        3, 10, 11, 10, 11, new byte[] {0x04}, 0, ArchiveSource.NORMAL);
+        3, 10, 11, 10, 11, blockHash(4), 0, ArchiveSource.NORMAL);
     assertThrows(ArchiveException.class, () -> store.validateCommittedBlock(mismatchedHash));
+  }
+
+  @Test
+  public void legacyBlockCommitMarkerWithoutHashFailsClosed() throws Exception {
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        3, 10, 11, 10, 11, blockHash(3), 0, ArchiveSource.NORMAL);
+    byte[] legacyMarker = Arrays.copyOf(ArchiveTemporalCodec.encodeBlockCommit(range), 32);
+    store.close();
+    store = null;
+    try (Options options = new Options().setCreateIfMissing(true);
+        RocksDB db = RocksDB.open(options, dir.toString());
+        WriteBatch batch = new WriteBatch();
+        WriteOptions writeOptions = new WriteOptions()) {
+      batch.put(ArchiveTemporalCodec.blockCommitKey(range.getBlockNum()), legacyMarker);
+      db.write(writeOptions, batch);
+    }
+    store = new RocksDbArchiveTemporalStore(dir.toString());
+
+    assertThrows(ArchiveException.class, () -> store.validateCommittedBlock(range));
   }
 
   @Test
   public void unwindBlockDeletesCommitMarker() {
     ArchiveBlockRange range = new ArchiveBlockRange(
-        3, 10, 11, 10, 11, 0, ArchiveSource.NORMAL);
+        3, 10, 11, 10, 11, blockHash(3), 0, ArchiveSource.NORMAL);
     store.putBlockChanges(range, Collections.emptyList());
     store.validateCommittedBlock(range);
 
@@ -205,7 +225,7 @@ public class RocksDbArchiveTemporalStoreTest {
   public void unwindBlockStopsAtRangeEnd() {
     byte[] laterKey = {8};
     ArchiveBlockRange range = new ArchiveBlockRange(
-        3, 10, 10, 10, 10, 0, ArchiveSource.NORMAL);
+        3, 10, 10, 10, 10, blockHash(3), 0, ArchiveSource.NORMAL);
     store.putBlockChanges(range, Collections.singletonList(
         change(10, DomainValue.tombstone(), DomainValue.present(new byte[] {0x0A}))));
     store.putChange(rec(12, ArchiveDomain.ACCOUNT, laterKey, DomainValue.tombstone(),
@@ -345,5 +365,11 @@ public class RocksDbArchiveTemporalStoreTest {
       }
     }
     f.delete();
+  }
+
+  private static byte[] blockHash(int seed) {
+    byte[] hash = new byte[ArchiveBlockRange.BLOCK_HASH_LENGTH];
+    hash[ArchiveBlockRange.BLOCK_HASH_LENGTH - 1] = (byte) seed;
+    return hash;
   }
 }
