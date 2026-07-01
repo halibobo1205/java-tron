@@ -70,6 +70,10 @@ public class ArchiveDomainRegistryTest {
     assertEquals(RootPolicy.HISTORY_ONLY, registry.bindingForDbName("abi").getRootPolicy());
     // reward-vi is excluded (one-time immutable).
     assertEquals(StoreBindingKind.EXCLUDED, registry.bindingForDbName("reward-vi").getKind());
+    // accountTrie is derived account-state-root backing data; checkpoint v2 uses per-db paths.
+    assertEquals(StoreBindingKind.EXCLUDED, registry.bindingForDbName("accountTrie").getKind());
+    assertEquals(StoreBindingKind.EXCLUDED,
+        registry.bindingForDbName("checkpoint/account").getKind());
   }
 
   @Test
@@ -85,7 +89,7 @@ public class ArchiveDomainRegistryTest {
   @Test
   public void everyKnownStoreIsClassifiedAndConsistent() {
     List<StoreBinding> all = registry.allStoreBindings();
-    assertEquals(46, all.size());
+    assertEquals(48, all.size());
     String previousDbName = "";
     for (StoreBinding b : all) {
       assertTrue("bindings must be sorted by dbName", b.getDbName().compareTo(previousDbName) > 0);

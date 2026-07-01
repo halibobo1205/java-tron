@@ -31,8 +31,10 @@ import org.tron.protos.Protocol.Account;
  * encodes the canonical key/value via the descriptor, appending an {@link ArchiveChangeRecord}.
  *
  * <p>Writes outside a capture context (archive disabled, or not inside block apply) and writes to
- * store-specific / semantic / excluded / unknown stores are no-ops here. STORE_SPECIFIC/SEMANTIC
- * domains are captured by dedicated hooks (L4b/L4c), not this generic path.
+ * store-specific / semantic / excluded stores are no-ops here. UNKNOWN stores fail closed inside a
+ * capture context, because a newly introduced state store that is not classified by the archive
+ * schema must not be silently omitted. STORE_SPECIFIC/SEMANTIC domains are captured by dedicated
+ * hooks (L4b/L4c), not this generic path.
  *
  * <p>Not thread-safe: the buffer is written only by the single block-apply thread (the only thread
  * with a non-empty execution context). {@link #capturePut}/{@link #captureDelete} may throw on
@@ -103,6 +105,7 @@ public final class ArchiveCaptureEngine {
    * non-archived key is dropped in {@link #capture}, a wasted read but never a bug. */
   public boolean capturesStore(String dbName) {
     StoreBinding binding = registry.bindingForDbName(dbName);
+    requireKnownStore(binding);
     if (!binding.getDomain().isPresent()) {
       return false;
     }
@@ -185,6 +188,7 @@ public final class ArchiveCaptureEngine {
       return; // outside block apply / archive disabled
     }
     StoreBinding binding = registry.bindingForDbName(dbName);
+    requireKnownStore(binding);
     if (!isRawCaptured(binding, key)) {
       return;
     }
@@ -223,6 +227,12 @@ public final class ArchiveCaptureEngine {
       default:
         // SEMANTIC_ONLY / IGNORE_RAW are captured by semantic hooks, not the raw path.
         return false;
+    }
+  }
+
+  private void requireKnownStore(StoreBinding binding) {
+    if (!binding.isKnown() && context.current().isPresent()) {
+      throw new ArchiveException("archive store dbName is not classified: " + binding.getDbName());
     }
   }
 

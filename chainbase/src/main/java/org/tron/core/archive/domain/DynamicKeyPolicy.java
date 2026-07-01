@@ -8,12 +8,12 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Key-level policy for the DYNAMIC_PROPERTIES domain. Only VM/fee config keys changing historical
- * execution enter the global root; header cursors and price history are kept history-only; one-time
- * migration markers and aggregate statistics are excluded. Unknown keys default to
- * {@code EXCLUDED} root + {@code FULL_HISTORY} (keep history, don't root) so a future
- * execution-affecting key is never silently lost to history - but it never enters the root until
- * explicitly classified and the registry checksum updated.
+ * Key-level policy for the DYNAMIC_PROPERTIES domain. VM, fee, resource, validation and governance
+ * parameters that can change historical execution or transaction validity enter the global root;
+ * header cursors and price history are kept history-only; one-time migration markers and aggregate
+ * statistics are excluded. Unknown keys default to {@code EXCLUDED} root + {@code FULL_HISTORY}
+ * (keep history, don't root) so a future execution-affecting key is never silently lost to history
+ * - but it never enters the root until explicitly classified and the registry checksum updated.
  */
 public final class DynamicKeyPolicy {
 
@@ -26,11 +26,57 @@ public final class DynamicKeyPolicy {
     root("MAX_FEE_LIMIT", DynamicKeyClass.FEE_PARAMETER);
     root("MAX_CPU_TIME_OF_ONE_TX", DynamicKeyClass.FEE_PARAMETER);
     root("MEMO_FEE", DynamicKeyClass.FEE_PARAMETER);
+    root("CREATE_ACCOUNT_FEE", DynamicKeyClass.FEE_PARAMETER);
+    root("CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", DynamicKeyClass.FEE_PARAMETER);
+    root("ASSET_ISSUE_FEE", DynamicKeyClass.FEE_PARAMETER);
+    root("UPDATE_ACCOUNT_PERMISSION_FEE", DynamicKeyClass.FEE_PARAMETER);
+    root("MULTI_SIGN_FEE", DynamicKeyClass.FEE_PARAMETER);
+    root("EXCHANGE_CREATE_FEE", DynamicKeyClass.FEE_PARAMETER);
+    root("MARKET_SELL_FEE", DynamicKeyClass.FEE_PARAMETER);
+    root("MARKET_CANCEL_FEE", DynamicKeyClass.FEE_PARAMETER);
+
+    // --- IN_GLOBAL_ROOT: resource / validation parameters ---
+    root("CREATE_NEW_ACCOUNT_BANDWIDTH_RATE", DynamicKeyClass.RESOURCE_PARAMETER);
+    root("FREE_NET_LIMIT", DynamicKeyClass.RESOURCE_PARAMETER);
+    root("TOTAL_ENERGY_LIMIT", DynamicKeyClass.RESOURCE_PARAMETER);
     root("TOTAL_NET_LIMIT", DynamicKeyClass.RESOURCE_PARAMETER);
     root("TOTAL_ENERGY_CURRENT_LIMIT", DynamicKeyClass.RESOURCE_PARAMETER);
+    root("TOTAL_ENERGY_TARGET_LIMIT", DynamicKeyClass.RESOURCE_PARAMETER);
+    root("ADAPTIVE_RESOURCE_LIMIT_TARGET_RATIO", DynamicKeyClass.RESOURCE_PARAMETER);
+    root("ADAPTIVE_RESOURCE_LIMIT_MULTIPLIER", DynamicKeyClass.RESOURCE_PARAMETER);
     root("TOTAL_NET_WEIGHT", DynamicKeyClass.RESOURCE_PARAMETER);
     root("TOTAL_ENERGY_WEIGHT", DynamicKeyClass.RESOURCE_PARAMETER);
     root("TOTAL_TRON_POWER_WEIGHT", DynamicKeyClass.RESOURCE_PARAMETER);
+    root("EXCHANGE_BALANCE_LIMIT", DynamicKeyClass.RESOURCE_PARAMETER);
+    root("MAX_DELEGATE_LOCK_PERIOD", DynamicKeyClass.RESOURCE_PARAMETER);
+    root("MAX_CREATE_ACCOUNT_TX_SIZE", DynamicKeyClass.RESOURCE_PARAMETER);
+
+    // --- IN_GLOBAL_ROOT: governance / protocol validation knobs ---
+    root("MAINTENANCE_TIME_INTERVAL", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("ACCOUNT_UPGRADE_COST", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("WITNESS_PAY_PER_BLOCK", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("WITNESS_127_PAY_PER_BLOCK", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("WITNESS_STANDBY_ALLOWANCE", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("REMOVE_THE_POWER_OF_THE_GR", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("ALLOW_UPDATE_ACCOUNT_NAME", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("ALLOW_SAME_TOKEN_NAME", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("ALLOW_DELEGATE_RESOURCE", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("ALLOW_ADAPTIVE_ENERGY", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("ALLOW_PROTO_FILTER_NUM", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("ALLOW_ACCOUNT_STATE_ROOT", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("CHANGE_DELEGATION", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("FORBID_TRANSFER_TO_CONTRACT", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("ALLOW_PBFT", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("ALLOW_MARKET_TRANSACTION", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("ALLOW_TRANSACTION_FEE_POOL", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("ALLOW_BLACKHOLE_OPTIMIZATION", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("ALLOW_ACCOUNT_ASSET_OPTIMIZATION", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("ALLOW_ASSET_OPTIMIZATION", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("ALLOW_NEW_REWARD", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("ALLOW_DELEGATE_OPTIMIZATION", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("ALLOW_CANCEL_ALL_UNFREEZE_V2", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("ALLOW_OLD_REWARD_OPT", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("PROPOSAL_EXPIRE_TIME", DynamicKeyClass.GOVERNANCE_PARAMETER);
 
     // --- IN_GLOBAL_ROOT: VM / fork-gate config (changes historical execution) ---
     root("ALLOW_CREATION_OF_CONTRACTS", DynamicKeyClass.VM_CONFIG);

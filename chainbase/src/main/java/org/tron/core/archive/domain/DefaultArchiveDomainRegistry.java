@@ -22,6 +22,8 @@ import org.tron.core.archive.ArchiveException;
  */
 public final class DefaultArchiveDomainRegistry implements ArchiveDomainRegistry {
 
+  private static final String CHECKPOINT_PREFIX = "checkpoint/";
+
   private final Map<String, StoreBinding> byDbName = new LinkedHashMap<>();
 
   public DefaultArchiveDomainRegistry() {
@@ -73,6 +75,7 @@ public final class DefaultArchiveDomainRegistry implements ArchiveDomainRegistry
     excluded("section-bloom", "log bloom filter, derived from receipts");
     excluded("account-trace", "legacy balance-history-lookup data, superseded by archive");
     excluded("balance-trace", "legacy balance-history-lookup data, superseded by archive");
+    excluded("accountTrie", "derived account-state trie backing db, rebuildable from account");
     excluded("transactionHistoryStore", "transaction info/receipts, not state");
     excluded("transactionRetStore", "transaction results/receipts, not state");
     excluded("tree-block-index", "block index, chain data");
@@ -89,6 +92,7 @@ public final class DefaultArchiveDomainRegistry implements ArchiveDomainRegistry
     excluded("common-database", "operational metadata");
     excluded("pbft-sign-data", "PBFT consensus signatures, not state");
     excluded("tmp", "tmp checkpoint, operational");
+    excluded("checkpoint/*", "checkpoint v2 per-db snapshot backing stores, operational");
     excluded("zkProof", "zk proof cache, operational");
   }
 
@@ -113,6 +117,9 @@ public final class DefaultArchiveDomainRegistry implements ArchiveDomainRegistry
 
   @Override
   public StoreBinding bindingForDbName(String dbName) {
+    if (dbName != null && dbName.startsWith(CHECKPOINT_PREFIX)) {
+      return byDbName.get("checkpoint/*");
+    }
     StoreBinding binding = byDbName.get(dbName);
     return (binding != null) ? binding : StoreBinding.unknown(dbName);
   }

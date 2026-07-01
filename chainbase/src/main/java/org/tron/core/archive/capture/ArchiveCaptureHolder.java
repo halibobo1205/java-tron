@@ -56,7 +56,8 @@ public final class ArchiveCaptureHolder {
       return active.capturesStore(dbName);
     } catch (Exception e) {
       active.recordFailure("capturesStore(" + dbName + ")", e);
-      return false; // unknown store / lookup failure: do not read prev, do not capture
+      // The commit path will fail closed from the recorded failure; skip the extra prev read here.
+      return false;
     }
   }
 

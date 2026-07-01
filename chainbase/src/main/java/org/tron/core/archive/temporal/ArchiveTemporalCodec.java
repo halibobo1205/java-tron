@@ -3,6 +3,7 @@ package org.tron.core.archive.temporal;
 import com.google.common.primitives.Bytes;
 import com.google.common.primitives.Ints;
 import com.google.common.primitives.Longs;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.codec.DomainValue;
@@ -35,6 +36,11 @@ public final class ArchiveTemporalCodec {
   // changeset: 0x02 || txNum(8) || domainId(2) || canonicalKey -> ordered by txNum, for unwind.
   static final byte CHANGESET_PREFIX = 0x02;
   static final byte BLOCK_COMMIT_PREFIX = 0x03;
+  static final byte META_PREFIX = 0x7f;
+  private static final byte[] MANIFEST_KEY = new byte[] {META_PREFIX, 'm', 'a', 'n', 'i'};
+  private static final byte[] MANIFEST_VALUE =
+      "tron-archive-temporal|schema=2|model=prev-value-v1|block-hash=range-marker"
+          .getBytes(StandardCharsets.US_ASCII);
 
   private ArchiveTemporalCodec() {
   }
@@ -79,6 +85,18 @@ public final class ArchiveTemporalCodec {
 
   static byte[] blockCommitKey(long blockNum) {
     return Bytes.concat(new byte[] {BLOCK_COMMIT_PREFIX}, Longs.toByteArray(blockNum));
+  }
+
+  static byte[] manifestKey() {
+    return Arrays.copyOf(MANIFEST_KEY, MANIFEST_KEY.length);
+  }
+
+  static byte[] manifestValue() {
+    return Arrays.copyOf(MANIFEST_VALUE, MANIFEST_VALUE.length);
+  }
+
+  static boolean manifestMatches(byte[] value) {
+    return Arrays.equals(MANIFEST_VALUE, value);
   }
 
   static byte[] encodeBlockCommit(ArchiveBlockRange range) {
