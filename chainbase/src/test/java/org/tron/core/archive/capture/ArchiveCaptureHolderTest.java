@@ -45,6 +45,17 @@ public class ArchiveCaptureHolderTest {
   }
 
   @Test
+  public void unknownStoreLookupIsRecordedForFailClosedCommit() {
+    ArchiveCaptureEngine engine = engineWithActiveContext();
+    ArchiveCaptureHolder.set(engine);
+
+    assertFalse(ArchiveCaptureHolder.capturesStore("no-such-store"));
+
+    assertTrue("unknown store must be visible to commitBlock", engine.failure().isPresent());
+    assertTrue(engine.failure().get().getMessage().contains("capturesStore(no-such-store)"));
+  }
+
+  @Test
   public void captureFailureIsRecordedForFailClosedCommit() {
     ArchiveCaptureEngine engine = engineWithActiveContext();
     ArchiveCaptureHolder.set(engine);

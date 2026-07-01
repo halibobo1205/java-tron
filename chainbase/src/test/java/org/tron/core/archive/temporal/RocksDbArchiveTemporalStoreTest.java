@@ -47,7 +47,9 @@ public class RocksDbArchiveTemporalStoreTest {
 
   @After
   public void tearDown() {
-    store.close();
+    if (store != null) {
+      store.close();
+    }
     deleteRecursively(dir.toFile());
   }
 
@@ -132,6 +134,40 @@ public class RocksDbArchiveTemporalStoreTest {
     assertArrayEquals(new byte[] {0x42}, store.latest(ArchiveDomain.ACCOUNT, KEY).get().getValue());
     assertArrayEquals(new byte[] {0x42},
         store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 100).get().getValue());
+  }
+
+  @Test
+  public void nonEmptyStoreWithoutManifestIsRejected() throws Exception {
+    store.close();
+    store = null;
+    deleteRecursively(dir.toFile());
+    Files.createDirectories(dir);
+    try (Options options = new Options().setCreateIfMissing(true);
+        RocksDB db = RocksDB.open(options, dir.toString());
+        WriteBatch batch = new WriteBatch();
+        WriteOptions writeOptions = new WriteOptions()) {
+      batch.put(ArchiveTemporalCodec.latestKey(ArchiveDomain.ACCOUNT, KEY),
+          ArchiveTemporalCodec.encodeValue(DomainValue.present(new byte[] {0x42})));
+      db.write(writeOptions, batch);
+    }
+
+    assertThrows(ArchiveException.class, () -> new RocksDbArchiveTemporalStore(dir.toString()));
+  }
+
+  @Test
+  public void manifestMismatchIsRejected() throws Exception {
+    store.close();
+    store = null;
+    try (Options options = new Options().setCreateIfMissing(true);
+        RocksDB db = RocksDB.open(options, dir.toString());
+        WriteBatch batch = new WriteBatch();
+        WriteOptions writeOptions = new WriteOptions()) {
+      batch.put(ArchiveTemporalCodec.manifestKey(), "old-new-value-model".getBytes(
+          StandardCharsets.US_ASCII));
+      db.write(writeOptions, batch);
+    }
+
+    assertThrows(ArchiveException.class, () -> new RocksDbArchiveTemporalStore(dir.toString()));
   }
 
   @Test
