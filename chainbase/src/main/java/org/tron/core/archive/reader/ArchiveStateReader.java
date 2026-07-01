@@ -18,6 +18,9 @@ public interface ArchiveStateReader extends AutoCloseable {
 
   ArchiveReadResult<AccountCapsule> getAccount(byte[] address) throws ArchiveReaderException;
 
+  ArchiveReadResult<byte[]> getAccountAsset(byte[] address, byte[] assetId)
+      throws ArchiveReaderException;
+
   ArchiveReadResult<ContractCapsule> getContract(byte[] address) throws ArchiveReaderException;
 
   ArchiveReadResult<ContractStateCapsule> getContractState(byte[] address)

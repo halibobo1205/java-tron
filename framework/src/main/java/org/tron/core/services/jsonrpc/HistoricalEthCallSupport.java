@@ -40,8 +40,8 @@ import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
  * <p>Account / code / storage are read historically, and the energy price is reconstructed from the
  * live {@code EnergyPriceHistory} (see {@link HistoricalVmDynamicProperties}), so {@code BASEFEE} /
  * {@code GASPRICE} replay at the value in force then. VM execution parameters are read from the
- * archive at the target block; mid-chain archives use latest as the baseline only when a dynamic
- * property is missing because its activation may predate coverage.
+ * archive at the target block; mid-chain archives fail closed when an execution-affecting dynamic
+ * property is missing because latest cannot be used as a historical value.
  */
 public final class HistoricalEthCallSupport {
 
@@ -134,8 +134,7 @@ public final class HistoricalEthCallSupport {
   /**
    * True when the archive covers from genesis, so a MISSING dynamic-property flag is the in-memory
    * default rather than an un-captured pre-coverage change. A mid-chain archive (or an empty index)
-   * returns false, and the flag reconstruction degrades to the latest baseline instead of risking a
-   * silently-wrong default.
+   * returns false, and missing execution-affecting flags fail closed instead of using latest.
    */
   private boolean isGenesisComplete() {
     if (!(archiveService instanceof DefaultArchiveService)) {

@@ -44,7 +44,7 @@ public final class ArchiveServiceFactory {
       RocksDbArchiveBlockRangeStore blockRangeStore =
           new RocksDbArchiveBlockRangeStore(Paths.get(archiveDir, "index").toString());
       try {
-        blockRangeStore.getLastRange().ifPresent(temporalStore::validateCommittedBlock);
+        blockRangeStore.validateCommittedRanges(temporalStore::validateCommittedBlock);
         PersistentArchiveTxNumIndex txNumIndex = new PersistentArchiveTxNumIndex(blockRangeStore);
         return new DefaultArchiveService(true, txNumIndex,
             ArchiveExecutionContextHolder.get(), temporalStore);

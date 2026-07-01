@@ -106,32 +106,39 @@ public class PersistentArchiveTxNumIndexTest {
   }
 
   @Test
-  public void unwindWithMissingPositionRowFailsClosed() {
+  public void restartWithMissingPositionRowFailsClosed() {
     ArchiveBlockRange corruptRange = new ArchiveBlockRange(
         1, 0, 1, 0, 1, 0, ArchiveSource.NORMAL);
     store.commitRange(corruptRange, 2, Collections.emptyList());
     index.close();
+    index = null;
     store = new RocksDbArchiveBlockRangeStore(dir.toString());
-    index = new PersistentArchiveTxNumIndex(store);
-
-    assertThrows(ArchiveException.class, () -> index.unwindBlock(1));
-    assertTrue(index.getBlockRange(1).isPresent());
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> new PersistentArchiveTxNumIndex(store));
+      assertTrue(ex.getMessage().contains("tx-position missing"));
+    } finally {
+      store.close();
+    }
   }
 
   @Test
-  public void unwindWithMismatchedPositionRowFailsClosed() {
+  public void restartWithMismatchedPositionRowFailsClosed() {
     ArchiveBlockRange corruptRange = new ArchiveBlockRange(
         1, 0, 1, 0, 1, 0, ArchiveSource.NORMAL);
     store.commitRange(corruptRange, 2, Arrays.asList(
         new ArchiveTxPosition(0, 99, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, TX_A),
         new ArchiveTxPosition(1, 1, ArchivePhase.BLOCK_FINALIZE, ArchiveSource.NORMAL, -1, null)));
     index.close();
+    index = null;
     store = new RocksDbArchiveBlockRangeStore(dir.toString());
-    index = new PersistentArchiveTxNumIndex(store);
-
-    assertThrows(ArchiveException.class, () -> index.unwindBlock(1));
-    assertTrue(index.getBlockRange(1).isPresent());
-    assertTrue(index.findTxNumByTxId(TX_A).isPresent());
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> new PersistentArchiveTxNumIndex(store));
+      assertTrue(ex.getMessage().contains("tx-position mismatch"));
+    } finally {
+      store.close();
+    }
   }
 
   @Test

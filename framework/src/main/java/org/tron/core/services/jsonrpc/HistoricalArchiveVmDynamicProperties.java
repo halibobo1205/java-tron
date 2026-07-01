@@ -21,9 +21,9 @@ import org.tron.core.store.VmDynamicProperties;
  *   <li>PRESENT -- the value explicitly written by a proposal as of this block;</li>
  *   <li>MISSING -- no proposal change captured by this block. For a genesis-complete archive that
  *       is unambiguously the in-memory default (which mirrors the live getter's own default, so the
- *       reconstruction matches what the chain computed). For a mid-chain archive the change may
- *       predate coverage, so we fall back to the latest value -- the documented baseline, which is
- *       correct for the long-activated flags that dominate that case.</li>
+ *       reconstruction matches what the chain computed). For a mid-chain archive it is unknown:
+ *       the key may have changed before coverage or after the queried block, so execution fails
+ *       closed rather than using latest as a historical value.</li>
  * </ul>
  *
  * <p>Only proposals or dynamic-property maintenance writes these keys (the constructor's default
@@ -150,7 +150,11 @@ final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProp
       return ByteArray.toLong(r.getValue());
     }
     // MISSING or TOMBSTONE (flags are never tombstoned): no captured change as of this block.
-    return genesisComplete ? inMemoryDefault : latestValue.getAsLong();
+    if (genesisComplete) {
+      return inMemoryDefault;
+    }
+    throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
+        "archive dynamic property " + key + " is unknown before mid-chain coverage");
   }
 
   @Override

@@ -1,5 +1,6 @@
 package org.tron.core.archive.reader;
 
+import com.google.common.primitives.Bytes;
 import com.google.protobuf.InvalidProtocolBufferException;
 import java.util.Optional;
 import org.tron.core.archive.codec.DomainValue;
@@ -57,6 +58,22 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
       throw new ArchiveReaderException(ArchiveReaderException.Reason.CODEC_ERROR,
           "archive ACCOUNT value is not a valid Account proto", e);
     }
+  }
+
+  @Override
+  public ArchiveReadResult<byte[]> getAccountAsset(byte[] address, byte[] assetId)
+      throws ArchiveReaderException {
+    requireLength(address, ADDRESS_LEN, "address");
+    if (assetId == null || assetId.length == 0) {
+      return ArchiveReadResult.missing();
+    }
+    ArchiveReadResult<byte[]> raw = getRaw(
+        ArchiveDomain.ACCOUNT_ASSET, Bytes.concat(address, assetId));
+    if (raw.isPresent() && raw.getValue().length != Long.BYTES) {
+      throw new ArchiveReaderException(ArchiveReaderException.Reason.CORRUPT_VALUE,
+          "archive account-asset value must be 8 bytes");
+    }
+    return raw;
   }
 
   @Override
