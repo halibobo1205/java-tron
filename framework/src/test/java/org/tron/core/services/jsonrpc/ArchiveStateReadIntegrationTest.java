@@ -65,8 +65,7 @@ public class ArchiveStateReadIntegrationTest {
         ArchiveStorageKeyCodec.contractStorageKey(addr21, slot, 0), word);
 
     Wallet wallet = mock(Wallet.class);
-    BlockCapsule block = new BlockCapsule(1L, Sha256Hash.ZERO_HASH, 1000L,
-        ByteString.copyFrom(new byte[21]));
+    BlockCapsule block = blockCapsule(1);
     when(wallet.getBlockByNum(1L)).thenReturn(block.getInstance());
 
     ArchiveJsonRpcStateAdapter adapter = new ArchiveJsonRpcStateAdapter(wallet, svc);
@@ -107,15 +106,23 @@ public class ArchiveStateReadIntegrationTest {
     svc.getTxNumIndex().beginBlock(blockNum, ArchiveSource.NORMAL);
     svc.getTxNumIndex().allocateSystemTx(blockNum, ArchivePhase.BLOCK_PREPARE);
     svc.getTxNumIndex().allocateSystemTx(blockNum, ArchivePhase.BLOCK_FINALIZE);
-    return svc.getTxNumIndex().commitBlock(blockNum, 0);
+    return svc.getTxNumIndex().commitBlock(blockNum, blockHash(blockNum), 0);
   }
 
   private static Wallet walletWithBlock(long blockNum) {
     Wallet wallet = mock(Wallet.class);
-    BlockCapsule block = new BlockCapsule(blockNum, Sha256Hash.ZERO_HASH, 1000L,
-        ByteString.copyFrom(new byte[21]));
+    BlockCapsule block = blockCapsule(blockNum);
     when(wallet.getBlockByNum(blockNum)).thenReturn(block.getInstance());
     return wallet;
+  }
+
+  private static byte[] blockHash(long blockNum) {
+    return blockCapsule(blockNum).getBlockId().getBytes();
+  }
+
+  private static BlockCapsule blockCapsule(long blockNum) {
+    return new BlockCapsule(blockNum, Sha256Hash.ZERO_HASH, 1000L,
+        ByteString.copyFrom(new byte[21]));
   }
 
   private void put(InMemoryArchiveTemporalStore temporal, long txNum, ArchiveDomain domain,

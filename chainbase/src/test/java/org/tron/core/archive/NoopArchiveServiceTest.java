@@ -132,7 +132,7 @@ public class NoopArchiveServiceTest {
         new RocksDbArchiveBlockRangeStore(dir.resolve("index").toString());
     try {
       ArchiveBlockRange range = new ArchiveBlockRange(
-          7, 0, 1, 0, 1, 0, ArchiveSource.NORMAL);
+          7, 0, 1, 0, 1, blockHash(7), 0, ArchiveSource.NORMAL);
       index.commitRange(range, 2);
     } finally {
       index.close();
@@ -152,9 +152,9 @@ public class NoopArchiveServiceTest {
     config.setEnable(true);
     Path dir = Files.createTempDirectory("archive-factory-early-marker-test");
     ArchiveBlockRange first = new ArchiveBlockRange(
-        7, 0, 1, 0, 1, 0, ArchiveSource.NORMAL);
+        7, 0, 1, 0, 1, blockHash(7), 0, ArchiveSource.NORMAL);
     ArchiveBlockRange last = new ArchiveBlockRange(
-        8, 2, 3, 2, 3, 0, ArchiveSource.NORMAL);
+        8, 2, 3, 2, 3, blockHash(8), 0, ArchiveSource.NORMAL);
     RocksDbArchiveTemporalStore temporal =
         new RocksDbArchiveTemporalStore(dir.resolve("temporal").toString());
     try {
@@ -185,7 +185,7 @@ public class NoopArchiveServiceTest {
     config.setEnable(true);
     Path dir = Files.createTempDirectory("archive-factory-cursor-test");
     ArchiveBlockRange range = new ArchiveBlockRange(
-        7, 0, 1, 0, 1, 0, ArchiveSource.NORMAL);
+        7, 0, 1, 0, 1, blockHash(7), 0, ArchiveSource.NORMAL);
 
     RocksDbArchiveTemporalStore temporal =
         new RocksDbArchiveTemporalStore(dir.resolve("temporal").toString());
@@ -218,7 +218,7 @@ public class NoopArchiveServiceTest {
     config.setEnable(true);
     Path dir = Files.createTempDirectory("archive-factory-unwind-crash-test");
     ArchiveBlockRange range = new ArchiveBlockRange(
-        7, 0, 1, 0, 1, 0, ArchiveSource.NORMAL);
+        7, 0, 1, 0, 1, blockHash(7), 0, ArchiveSource.NORMAL);
 
     RocksDbArchiveTemporalStore temporal =
         new RocksDbArchiveTemporalStore(dir.resolve("temporal").toString());
@@ -259,6 +259,12 @@ public class NoopArchiveServiceTest {
       }
     }
     f.delete();
+  }
+
+  private static byte[] blockHash(int seed) {
+    byte[] hash = new byte[ArchiveBlockRange.BLOCK_HASH_LENGTH];
+    hash[ArchiveBlockRange.BLOCK_HASH_LENGTH - 1] = (byte) seed;
+    return hash;
   }
 
   private static void overwriteArchiveCursor(Path indexDir, long cursor) {

@@ -54,11 +54,20 @@ public final class JsonRpcArchiveStatePointResolver {
       throw new JsonRpcInternalException("archive history unavailable for block " + blockNum);
     }
     byte[] archivedHash = range.get().getBlockHash();
-    if (archivedHash.length > 0 && !Arrays.equals(archivedHash, blockHash)) {
+    requireBlockHash(archivedHash, "archive history", blockNum);
+    requireBlockHash(blockHash, "canonical block", blockNum);
+    if (!Arrays.equals(archivedHash, blockHash)) {
       throw new JsonRpcInternalException("archive history hash mismatch for block " + blockNum);
     }
     return ResolvedArchiveStatePoint.archive(
         ArchiveStatePoint.blockEnd(blockNum, blockHash, range.get().getFinalizeTxNum()));
+  }
+
+  private static void requireBlockHash(byte[] blockHash, String source, long blockNum)
+      throws JsonRpcInternalException {
+    if (blockHash == null || blockHash.length != ArchiveBlockRange.BLOCK_HASH_LENGTH) {
+      throw new JsonRpcInternalException(source + " has invalid block hash for block " + blockNum);
+    }
   }
 
   private ArchiveTxNumIndex txNumIndex() throws JsonRpcInternalException {

@@ -81,13 +81,13 @@ public class HistoricalEthCallSupportIntegrationTest extends BaseMethodTest {
     svc.getTxNumIndex().beginBlock(0, ArchiveSource.NORMAL);
     svc.getTxNumIndex().allocateSystemTx(0, ArchivePhase.BLOCK_PREPARE);
     svc.getTxNumIndex().allocateSystemTx(0, ArchivePhase.BLOCK_FINALIZE);
-    svc.getTxNumIndex().commitBlock(0, 0);
+    svc.getTxNumIndex().commitBlock(0, blockHash(0), 0);
 
     // Index block 1 so the resolver maps "0x1" -> its finalize txNum.
     svc.getTxNumIndex().beginBlock(1, ArchiveSource.NORMAL);
     svc.getTxNumIndex().allocateSystemTx(1, ArchivePhase.BLOCK_PREPARE);
     svc.getTxNumIndex().allocateSystemTx(1, ArchivePhase.BLOCK_FINALIZE);
-    ArchiveBlockRange range = svc.getTxNumIndex().commitBlock(1, 0);
+    ArchiveBlockRange range = svc.getTxNumIndex().commitBlock(1, blockHash(1), 0);
     long t = range.getFinalizeTxNum();
 
     byte[] addr = addr(0x11);
@@ -107,8 +107,7 @@ public class HistoricalEthCallSupportIntegrationTest extends BaseMethodTest {
         ArchiveStorageKeyCodec.contractStorageKey(addr, slot, 0), storedWord);
 
     Wallet wallet = mock(Wallet.class);
-    BlockCapsule block = new BlockCapsule(1L, Sha256Hash.ZERO_HASH, 1000L,
-        ByteString.copyFrom(new byte[21]));
+    BlockCapsule block = blockCapsule(1);
     when(wallet.getBlockByNum(1L)).thenReturn(block.getInstance());
     when(wallet.createTransactionCapsule(any(), eq(ContractType.TriggerSmartContract)))
         .thenAnswer(inv -> new TransactionCapsule(
@@ -123,5 +122,14 @@ public class HistoricalEthCallSupportIntegrationTest extends BaseMethodTest {
     // executor -> hex render all served the ARCHIVED value.
     assertEquals(
         "0x000000000000000000000000000000000000000000000000000000000000002a", hex);
+  }
+
+  private static byte[] blockHash(long blockNum) {
+    return blockCapsule(blockNum).getBlockId().getBytes();
+  }
+
+  private static BlockCapsule blockCapsule(long blockNum) {
+    return new BlockCapsule(blockNum, Sha256Hash.ZERO_HASH, 1000L,
+        ByteString.copyFrom(new byte[21]));
   }
 }

@@ -4,6 +4,7 @@ import com.google.common.primitives.Bytes;
 import com.google.common.primitives.Ints;
 import com.google.common.primitives.Longs;
 import java.util.Arrays;
+import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveSource;
 
@@ -57,6 +58,7 @@ public final class ArchiveBlockRangeCodec {
   }
 
   static byte[] encodeRange(ArchiveBlockRange range) {
+    requireBlockHash(range.getBlockHash(), "encode archive block range");
     return Bytes.concat(
         Longs.toByteArray(range.getBlockNum()),
         Longs.toByteArray(range.getFirstTxNum()),
@@ -70,6 +72,9 @@ public final class ArchiveBlockRangeCodec {
   }
 
   static ArchiveBlockRange decodeRange(byte[] bytes) {
+    if (bytes == null || bytes.length < 49) {
+      throw new ArchiveException("archive block range value is too short");
+    }
     long blockNum = Longs.fromBytes(bytes[0], bytes[1], bytes[2], bytes[3],
         bytes[4], bytes[5], bytes[6], bytes[7]);
     long firstTxNum = longAt(bytes, 8);
@@ -78,13 +83,21 @@ public final class ArchiveBlockRangeCodec {
     long finalizeTxNum = longAt(bytes, 32);
     int userTxCount = Ints.fromBytes(bytes[40], bytes[41], bytes[42], bytes[43]);
     ArchiveSource source = ArchiveSource.values()[bytes[44]];
-    byte[] blockHash = new byte[0];
-    if (bytes.length > 45) {
-      int blockHashLen = Ints.fromBytes(bytes[45], bytes[46], bytes[47], bytes[48]);
-      blockHash = Arrays.copyOfRange(bytes, 49, 49 + blockHashLen);
+    int blockHashLen = Ints.fromBytes(bytes[45], bytes[46], bytes[47], bytes[48]);
+    if (blockHashLen != ArchiveBlockRange.BLOCK_HASH_LENGTH
+        || bytes.length != 49 + ArchiveBlockRange.BLOCK_HASH_LENGTH) {
+      throw new ArchiveException("archive block range has invalid block hash length "
+          + blockHashLen);
     }
+    byte[] blockHash = Arrays.copyOfRange(bytes, 49, 49 + blockHashLen);
     return new ArchiveBlockRange(blockNum, firstTxNum, lastTxNum, prepareTxNum, finalizeTxNum,
         blockHash, userTxCount, source);
+  }
+
+  static void requireBlockHash(byte[] blockHash, String what) {
+    if (blockHash == null || blockHash.length != ArchiveBlockRange.BLOCK_HASH_LENGTH) {
+      throw new ArchiveException(what + " requires a 32-byte block hash");
+    }
   }
 
   static byte[] encodePosition(ArchiveTxPosition position) {

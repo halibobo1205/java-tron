@@ -101,6 +101,9 @@ public final class ArchiveTemporalCodec {
 
   static byte[] encodeBlockCommit(ArchiveBlockRange range) {
     byte[] blockHash = range.getBlockHash();
+    if (blockHash.length != ArchiveBlockRange.BLOCK_HASH_LENGTH) {
+      throw new ArchiveException("archive block commit requires a 32-byte block hash");
+    }
     return Bytes.concat(
         Longs.toByteArray(range.getBlockNum()),
         Longs.toByteArray(range.getFirstTxNum()),
@@ -111,7 +114,7 @@ public final class ArchiveTemporalCodec {
   }
 
   static boolean blockCommitMatches(byte[] encoded, ArchiveBlockRange range) {
-    if (encoded == null || encoded.length < 32) {
+    if (encoded == null || encoded.length != 36 + ArchiveBlockRange.BLOCK_HASH_LENGTH) {
       return false;
     }
     boolean coreMatches =
@@ -122,15 +125,12 @@ public final class ArchiveTemporalCodec {
     if (!coreMatches) {
       return false;
     }
-    byte[] blockHash = range.getBlockHash();
-    if (encoded.length == 32) {
-      return blockHash.length == 0;
-    }
-    if (encoded.length < 36) {
+    int blockHashLen = Ints.fromBytes(encoded[32], encoded[33], encoded[34], encoded[35]);
+    if (blockHashLen != ArchiveBlockRange.BLOCK_HASH_LENGTH) {
       return false;
     }
-    int blockHashLen = Ints.fromBytes(encoded[32], encoded[33], encoded[34], encoded[35]);
-    if (blockHashLen < 0 || encoded.length != 36 + blockHashLen) {
+    byte[] blockHash = range.getBlockHash();
+    if (blockHash.length != ArchiveBlockRange.BLOCK_HASH_LENGTH) {
       return false;
     }
     return Arrays.equals(Arrays.copyOfRange(encoded, 36, 36 + blockHashLen), blockHash);
