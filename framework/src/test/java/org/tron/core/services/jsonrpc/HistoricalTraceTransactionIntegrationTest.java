@@ -93,6 +93,11 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
   // then opens block 2, allocates prepare + the traced user tx, and commits. Returns the service.
   private DefaultArchiveService buildArchive(InMemoryArchiveTemporalStore temporal, byte[] contract,
       byte[] txId) {
+    return buildArchive(temporal, contract, txId, new byte[0]);
+  }
+
+  private DefaultArchiveService buildArchive(InMemoryArchiveTemporalStore temporal, byte[] contract,
+      byte[] txId, byte[] block2Hash) {
     DefaultArchiveService svc = new DefaultArchiveService(true, temporal);
 
     // Block 1: archive the contract at the finalize txNum (getAsOf inclusive-after finds it).
@@ -113,7 +118,7 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
     svc.getTxNumIndex().allocateSystemTx(2, ArchivePhase.BLOCK_PREPARE);
     svc.getTxNumIndex().allocateUserTx(2, 0, txId);
     svc.getTxNumIndex().allocateSystemTx(2, ArchivePhase.BLOCK_FINALIZE);
-    svc.getTxNumIndex().commitBlock(2, 1);
+    svc.getTxNumIndex().commitBlock(2, block2Hash, 1);
     return svc;
   }
 
@@ -218,6 +223,77 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
     JsonRpcInternalException ex = assertThrows(JsonRpcInternalException.class,
         () -> support.traceTransaction(txId, null));
     assertEquals("archive transaction position mismatch", ex.getMessage());
+  }
+
+  @Test
+  public void traceTransactionRejectsArchiveBlockHashMismatch() throws Exception {
+    byte[] contract = addr(0x11);
+    byte[] caller = addr(0x22);
+
+    TriggerSmartContract trigger =
+        TvmTestUtils.buildTriggerSmartContract(caller, contract, new byte[0], 0L);
+    TransactionCapsule trxCap =
+        new TransactionCapsule(trigger, ContractType.TriggerSmartContract);
+    Transaction tx = trxCap.getInstance();
+    byte[] txId = trxCap.getTransactionId().getBytes();
+
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    DefaultArchiveService svc = buildArchive(temporal, contract, txId, new byte[] {7});
+
+    Wallet wallet = mock(Wallet.class);
+    when(wallet.getTransactionById(ByteString.copyFrom(txId))).thenReturn(tx);
+    when(wallet.getTransactionInfoById(ByteString.copyFrom(txId)))
+        .thenReturn(TransactionInfo.newBuilder().setBlockNumber(2L).build());
+    BlockCapsule block = new BlockCapsule(2L, Sha256Hash.ZERO_HASH, 1000L,
+        ByteString.copyFrom(new byte[21]));
+    when(wallet.getBlockByNum(2L)).thenReturn(block.getInstance());
+
+    HistoricalTraceSupport support = new HistoricalTraceSupport(wallet, svc);
+    JsonRpcInternalException ex = assertThrows(JsonRpcInternalException.class,
+        () -> support.traceTransaction(txId, null));
+    assertEquals("archive history hash mismatch for block 2", ex.getMessage());
+  }
+
+  @Test
+  public void traceTransactionEmptyTraceStillRequiresArchivePosition() throws Exception {
+    Transaction tx = Transaction.newBuilder()
+        .setRawData(Transaction.raw.newBuilder().build())
+        .build();
+    byte[] txId = new TransactionCapsule(tx).getTransactionId().getBytes();
+    DefaultArchiveService svc = genesisCompleteEmptyArchive();
+    Wallet wallet = mock(Wallet.class);
+    when(wallet.getTransactionById(ByteString.copyFrom(txId))).thenReturn(tx);
+    when(wallet.getTransactionInfoById(ByteString.copyFrom(txId)))
+        .thenReturn(TransactionInfo.newBuilder().setBlockNumber(2L).build());
+
+    HistoricalTraceSupport support = new HistoricalTraceSupport(wallet, svc);
+    JsonRpcInternalException ex = assertThrows(JsonRpcInternalException.class,
+        () -> support.traceTransaction(txId, null));
+    assertEquals("transaction not in archive", ex.getMessage());
+  }
+
+  @Test
+  public void traceTransactionReturnsEmptyTraceForArchivedNonVmTransaction() throws Exception {
+    Transaction tx = Transaction.newBuilder()
+        .setRawData(Transaction.raw.newBuilder().build())
+        .build();
+    byte[] txId = new TransactionCapsule(tx).getTransactionId().getBytes();
+    DefaultArchiveService svc = buildArchive(new InMemoryArchiveTemporalStore(), addr(0x11), txId);
+    Wallet wallet = mock(Wallet.class);
+    when(wallet.getTransactionById(ByteString.copyFrom(txId))).thenReturn(tx);
+    when(wallet.getTransactionInfoById(ByteString.copyFrom(txId)))
+        .thenReturn(TransactionInfo.newBuilder().setBlockNumber(2L).build());
+    BlockCapsule block = new BlockCapsule(2L, Sha256Hash.ZERO_HASH, 1000L,
+        ByteString.copyFrom(new byte[21]));
+    when(wallet.getBlockByNum(2L)).thenReturn(block.getInstance());
+
+    HistoricalTraceSupport support = new HistoricalTraceSupport(wallet, svc);
+    TraceResult result = support.traceTransaction(txId, null);
+
+    assertEquals(0L, result.getGas());
+    assertFalse(result.isFailed());
+    assertEquals("", result.getReturnValue());
+    assertTrue(result.getStructLogs().isEmpty());
   }
 
   @Test

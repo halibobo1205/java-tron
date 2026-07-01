@@ -162,6 +162,10 @@ public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
       return account;
     }
 
+    public ArchiveReadResult<byte[]> getAccountAsset(byte[] address, byte[] assetId) {
+      return ArchiveReadResult.missing();
+    }
+
     public ArchiveReadResult<ContractCapsule> getContract(byte[] address) {
       return contract;
     }
