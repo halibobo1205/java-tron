@@ -131,6 +131,11 @@ public final class DefaultArchiveService implements ArchiveService {
 
   @Override
   public void commitBlock(BlockCapsule block) {
+    commitBlock(block, block.getTransactions().size());
+  }
+
+  @Override
+  public void commitBlock(BlockCapsule block, int userTxCount) {
     if (!enabled) {
       return;
     }
@@ -153,7 +158,7 @@ public final class DefaultArchiveService implements ArchiveService {
       }
       List<ArchiveChangeRecord> records = new ArrayList<>(merged.values());
       ArchiveBlockRange range = txNumIndex.commitBlock(
-          block.getNum(), block.getBlockId().getBytes(), block.getTransactions().size());
+          block.getNum(), block.getBlockId().getBytes(), userTxCount);
       txNumCommitted = true;
       temporalStore.putBlockChanges(range, records);
     } catch (RuntimeException e) {
@@ -211,6 +216,11 @@ public final class DefaultArchiveService implements ArchiveService {
     }
     txNumIndex.validateCanonicalHead(
         canonicalHead.getNum(), canonicalHead.getBlockId().getBytes());
+  }
+
+  @Override
+  public boolean hasCommittedBlock(long blockNum) {
+    return enabled && txNumIndex.getBlockRange(blockNum).isPresent();
   }
 
   @Override

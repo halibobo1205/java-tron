@@ -85,6 +85,28 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
+  public void explicitUserTxCountAllowsGenesisSyntheticTransactions() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    DefaultArchiveService service = new DefaultArchiveService(true, index, context);
+
+    BlockCapsule b = block(0);
+    b.addTransaction(new TransactionCapsule(Transaction.getDefaultInstance()));
+    service.beginBlock(b, ArchiveSource.NORMAL);
+    service.beginSystemTx(b, ArchivePhase.BLOCK_PREPARE);
+    service.endTx();
+    service.beginSystemTx(b, ArchivePhase.BLOCK_FINALIZE);
+    service.endTx();
+
+    service.commitBlock(b, 0);
+
+    ArchiveBlockRange range = index.getBlockRange(0).orElseThrow(AssertionError::new);
+    assertEquals(0, range.getUserTxCount());
+    assertEquals(0, range.getPrepareTxNum());
+    assertEquals(1, range.getFinalizeTxNum());
+  }
+
+  @Test
   public void enabledUserTxEntersContextWithTxId() {
     InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
     ArchiveExecutionContext context = new ArchiveExecutionContext();

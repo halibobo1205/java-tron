@@ -2,6 +2,7 @@ package org.tron.core.db;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -33,6 +34,7 @@ import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.WitnessCapsule;
 import org.tron.core.config.args.Args;
 import org.tron.core.consensus.ConsensusService;
+import org.tron.core.exception.jsonrpc.JsonRpcInternalException;
 import org.tron.core.services.jsonrpc.ArchiveJsonRpcStateAdapter;
 import org.tron.protos.Protocol;
 
@@ -170,11 +172,13 @@ public class ManagerArchiveLifecycleTest extends BaseMethodTest {
     assertEquals(ByteArray.toJsonHex(expectedBalance),
         adapter.getBalance(ByteArray.toHexString(addr), blockTag));
 
-    // An account never written in this block is MISSING -> rendered as zero, not an archive gap.
+    // This manual archive starts at block 1, so an account never written in this block is an
+    // unknown pre-coverage value rather than an implicit genesis-complete zero.
     byte[] unknown = new byte[21];
     unknown[0] = 0x41;
     unknown[20] = (byte) 0xff;
-    assertEquals(ByteArray.toJsonHex(0L),
-        adapter.getBalance(ByteArray.toHexString(unknown), blockTag));
+    JsonRpcInternalException ex = assertThrows(JsonRpcInternalException.class,
+        () -> adapter.getBalance(ByteArray.toHexString(unknown), blockTag));
+    assertEquals("archive account is unknown before mid-chain coverage", ex.getMessage());
   }
 }

@@ -622,6 +622,7 @@ public class Manager {
 
     if (chainBaseManager.containBlock(genesisBlock.getBlockId())) {
       Args.getInstance().setChainId(genesisBlock.getBlockId().toString());
+      validateGenesisArchiveCoverage();
     } else {
       if (chainBaseManager.hasBlocks()) {
         String msg = String.format("Genesis block modify, please delete database directory(%s) and "
@@ -631,22 +632,64 @@ public class Manager {
         logger.info("Create genesis block.");
         Args.getInstance().setChainId(genesisBlock.getBlockId().toString());
 
-        chainBaseManager.getBlockStore().put(genesisBlock.getBlockId().getBytes(), genesisBlock);
-        chainBaseManager.getBlockIndexStore().put(genesisBlock.getBlockId());
+        boolean archivePending = false;
+        try {
+          archiveService.beginBlock(genesisBlock, ArchiveSource.NORMAL);
+          archivePending = archiveService.isEnabled();
+          archiveService.beginSystemTx(genesisBlock, ArchivePhase.BLOCK_PREPARE);
+          try {
+            chainBaseManager.getBlockStore().put(genesisBlock.getBlockId().getBytes(),
+                genesisBlock);
+            chainBaseManager.getBlockIndexStore().put(genesisBlock.getBlockId());
 
-        logger.info(SAVE_BLOCK, genesisBlock);
-        // init Dynamic Properties Store
-        chainBaseManager.getDynamicPropertiesStore().saveLatestBlockHeaderNumber(0);
-        chainBaseManager.getDynamicPropertiesStore().saveLatestBlockHeaderHash(
-            genesisBlock.getBlockId().getByteString());
-        chainBaseManager.getDynamicPropertiesStore().saveLatestBlockHeaderTimestamp(
-            genesisBlock.getTimeStamp());
-        this.initAccount();
-        this.initWitness();
-        this.khaosDb.start(genesisBlock);
-        this.updateRecentBlock(genesisBlock);
-        initAccountHistoryBalance();
+            logger.info(SAVE_BLOCK, genesisBlock);
+            // init Dynamic Properties Store
+            chainBaseManager.getDynamicPropertiesStore().saveLatestBlockHeaderNumber(0);
+            chainBaseManager.getDynamicPropertiesStore().saveLatestBlockHeaderHash(
+                genesisBlock.getBlockId().getByteString());
+            chainBaseManager.getDynamicPropertiesStore().saveLatestBlockHeaderTimestamp(
+                genesisBlock.getTimeStamp());
+            this.initAccount();
+            this.initWitness();
+            this.khaosDb.start(genesisBlock);
+            this.updateRecentBlock(genesisBlock);
+            initAccountHistoryBalance();
+          } finally {
+            archiveService.endTx();
+          }
+          archiveService.beginSystemTx(genesisBlock, ArchivePhase.BLOCK_FINALIZE);
+          try {
+            // Genesis has no user transactions; finalize exists to close the block range.
+          } finally {
+            archiveService.endTx();
+          }
+          archiveService.commitBlock(genesisBlock, 0);
+          archivePending = false;
+        } catch (RuntimeException | Error t) {
+          if (archivePending) {
+            try {
+              archiveService.abortBlock(genesisBlock);
+            } catch (RuntimeException cleanupFailure) {
+              t.addSuppressed(cleanupFailure);
+            }
+          }
+          throw t;
+        }
       }
+    }
+  }
+
+  private void validateGenesisArchiveCoverage() {
+    if (!archiveService.isEnabled()
+        || chainBaseManager.getDynamicPropertiesStore().getLatestBlockHeaderNumber() != 0L) {
+      return;
+    }
+    if (!archiveService.hasCommittedBlock(0L)) {
+      String msg = String.format("Archive enabled but genesis block was not captured, please "
+              + "delete archive database directory(%s) and restart from an empty archive-enabled "
+              + "database.",
+          Args.getInstance().getOutputDirectory());
+      throw new TronError(msg, TronError.ErrCode.GENESIS_BLOCK_INIT);
     }
   }
 
