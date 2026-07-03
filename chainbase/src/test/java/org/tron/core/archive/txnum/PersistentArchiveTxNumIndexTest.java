@@ -358,6 +358,29 @@ public class PersistentArchiveTxNumIndexTest {
   }
 
   @Test
+  public void stalePositionOutsideCommittedRangesIsNotCommittedTxNum() throws Exception {
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        1, 0, 1, 0, 1, blockHash(1), 0, ArchiveSource.NORMAL);
+    store.commitRange(range, 2, Arrays.asList(
+        new ArchiveTxPosition(0, 1, ArchivePhase.BLOCK_PREPARE, ArchiveSource.NORMAL, -1, null),
+        new ArchiveTxPosition(1, 1, ArchivePhase.BLOCK_FINALIZE, ArchiveSource.NORMAL, -1, null)));
+
+    index.close();
+    index = null;
+    store = null;
+    putRawPosition(new ArchiveTxPosition(
+        99, 99, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, TX_A));
+    RocksDbArchiveBlockRangeStore reopenedStore =
+        new RocksDbArchiveBlockRangeStore(dir.toString());
+
+    try {
+      assertFalse(reopenedStore.hasCommittedTxNum(99));
+    } finally {
+      reopenedStore.close();
+    }
+  }
+
+  @Test
   public void txPositionAndTxIdLookupSurviveRestart() {
     ArchiveBlockRange range = pushBlockWithUserTx(10, TX_A);
     long userTxNum = range.getPrepareTxNum() + 1;
@@ -431,6 +454,15 @@ public class PersistentArchiveTxNumIndexTest {
       rawDb.put(ArchiveBlockRangeCodec.CURSOR_KEY, ArchiveBlockRangeCodec.encodeCursor(0));
       rawDb.put(ArchiveBlockRangeCodec.FIRST_BLOCK_KEY,
           ArchiveBlockRangeCodec.encodeFirstBlock(firstBlock));
+    }
+  }
+
+  private void putRawPosition(ArchiveTxPosition position) throws RocksDBException {
+    RocksDB.loadLibrary();
+    try (Options options = new Options().setCreateIfMissing(false);
+        RocksDB rawDb = RocksDB.open(options, dir.toString())) {
+      rawDb.put(ArchiveBlockRangeCodec.positionKey(position.getTxNum()),
+          ArchiveBlockRangeCodec.encodePosition(position));
     }
   }
 

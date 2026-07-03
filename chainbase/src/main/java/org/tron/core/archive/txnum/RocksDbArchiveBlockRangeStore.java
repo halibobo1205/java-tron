@@ -47,6 +47,28 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
     }
   }
 
+  /** Fail closed after a prior post-canonical archive failure until manual repair clears the DB. */
+  public void validateNoRepairRequired() {
+    try {
+      byte[] value = db.get(ArchiveBlockRangeCodec.REPAIR_REQUIRED_KEY);
+      if (value != null) {
+        throw new ArchiveException("archive requires repair after fatal failure: "
+            + ArchiveBlockRangeCodec.decodeRepairRequired(value));
+      }
+    } catch (RocksDBException e) {
+      throw new ArchiveException("archive repair marker read failed", e);
+    }
+  }
+
+  public void markRepairRequired(String reason) {
+    try {
+      db.put(ArchiveBlockRangeCodec.REPAIR_REQUIRED_KEY,
+          ArchiveBlockRangeCodec.encodeRepairRequired(reason));
+    } catch (RocksDBException e) {
+      throw new ArchiveException("archive repair marker write failed", e);
+    }
+  }
+
   public void commitRange(ArchiveBlockRange range, long committedNextTxNum) {
     commitRange(range, committedNextTxNum, Collections.emptyList());
   }
@@ -296,6 +318,23 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
     } catch (RocksDBException e) {
       throw new ArchiveException("archive tx-position read failed", e);
     }
+  }
+
+  public boolean hasCommittedTxNum(long txNum) {
+    Optional<ArchiveTxPosition> position = getPosition(txNum);
+    if (!position.isPresent()) {
+      return false;
+    }
+    Optional<ArchiveBlockRange> range = getRange(position.get().getBlockNum());
+    if (!range.isPresent()) {
+      return false;
+    }
+    ArchiveBlockRange blockRange = range.get();
+    if (txNum < blockRange.getFirstTxNum() || txNum > blockRange.getLastTxNum()) {
+      return false;
+    }
+    validatePosition(blockRange, txNum);
+    return true;
   }
 
   public OptionalLong findTxNumByBlockAndIndex(long blockNum, int txIndex) {

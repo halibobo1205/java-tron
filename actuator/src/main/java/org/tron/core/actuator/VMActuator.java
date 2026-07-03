@@ -119,6 +119,10 @@ public class VMActuator implements Actuator2 {
     return program;
   }
 
+  public void setConstantCallMaxEnergyLimit(long maxEnergyLimit) {
+    this.maxEnergyLimit = maxEnergyLimit;
+  }
+
   private static long getEnergyFee(long callerEnergyUsage, long callerEnergyFrozen,
       long callerEnergyTotal) {
     if (callerEnergyTotal <= 0) {
