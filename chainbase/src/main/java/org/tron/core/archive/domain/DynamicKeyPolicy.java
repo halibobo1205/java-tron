@@ -11,9 +11,8 @@ import java.util.Map;
  * Key-level policy for the DYNAMIC_PROPERTIES domain. VM, fee, resource, validation and governance
  * parameters that can change historical execution or transaction validity enter the global root;
  * header cursors and price history are kept history-only; one-time migration markers and aggregate
- * statistics are excluded. Unknown keys default to {@code EXCLUDED} root + {@code FULL_HISTORY}
- * (keep history, don't root) so a future execution-affecting key is never silently lost to history
- * - but it never enters the root until explicitly classified and the registry checksum updated.
+ * statistics are excluded. Unknown keys default to rooted + history so a future execution-affecting
+ * key is not silently omitted from the archive root before this allowlist is updated.
  */
 public final class DynamicKeyPolicy {
 
@@ -51,8 +50,10 @@ public final class DynamicKeyPolicy {
     root("MARKET_QUANTITY_LIMIT", DynamicKeyClass.RESOURCE_PARAMETER);
     root("MAX_DELEGATE_LOCK_PERIOD", DynamicKeyClass.RESOURCE_PARAMETER);
     root("MAX_CREATE_ACCOUNT_TX_SIZE", DynamicKeyClass.RESOURCE_PARAMETER);
+    root("SHIELDED_TRANSACTION_FEE", DynamicKeyClass.RESOURCE_PARAMETER);
 
     // --- IN_GLOBAL_ROOT: governance / protocol validation knobs ---
+    root("NEXT_MAINTENANCE_TIME", DynamicKeyClass.GOVERNANCE_PARAMETER);
     root("MAINTENANCE_TIME_INTERVAL", DynamicKeyClass.GOVERNANCE_PARAMETER);
     root("ACCOUNT_UPGRADE_COST", DynamicKeyClass.GOVERNANCE_PARAMETER);
     root("WITNESS_PAY_PER_BLOCK", DynamicKeyClass.GOVERNANCE_PARAMETER);
@@ -119,7 +120,10 @@ public final class DynamicKeyPolicy {
     // multi-sign changes ADDRESS / ORIGIN return bytes -- so they belong in the VM_CONFIG root.
     root("UNFREEZE_DELAY_DAYS", DynamicKeyClass.VM_CONFIG);
     root("ALLOW_SHIELDED_TRC20_TRANSACTION", DynamicKeyClass.VM_CONFIG);
+    root("ALLOW_SHIELDED_TRANSACTION", DynamicKeyClass.VM_CONFIG);
     root("ALLOW_MULTI_SIGN", DynamicKeyClass.VM_CONFIG);
+    root("AVAILABLE_CONTRACT_TYPE", DynamicKeyClass.VM_CONFIG);
+    root("ACTIVE_DEFAULT_OPERATIONS", DynamicKeyClass.VM_CONFIG);
 
     // --- HISTORY_ONLY: header cursors + price history ---
     historyOnly("latest_block_header_timestamp", DynamicKeyClass.HEADER_CURSOR);
@@ -161,16 +165,16 @@ public final class DynamicKeyPolicy {
         RootPolicy.EXCLUDED, HistoryPolicy.NO_ARCHIVE, ReaderPolicy.INTERNAL_ONLY));
   }
 
-  /** Decision for a dynamic property key (ASCII bytes); unknown keys are excluded-from-root. */
+  /** Decision for a dynamic property key (ASCII bytes); unknown keys are rooted by default. */
   public DynamicKeyDecision decision(byte[] key) {
     String name = new String(key, StandardCharsets.US_ASCII);
     DynamicKeyDecision decision = decisions.get(name);
     if (decision != null) {
       return decision;
     }
-    // Unknown: keep history (diagnostic), never root, until explicitly classified.
+    // Unknown: keep history and root by default so future consensus keys are not silently omitted.
     return new DynamicKeyDecision(name, DynamicKeyClass.UNKNOWN,
-        RootPolicy.EXCLUDED, HistoryPolicy.FULL_HISTORY, ReaderPolicy.INTERNAL_ONLY);
+        RootPolicy.IN_GLOBAL_ROOT, HistoryPolicy.FULL_HISTORY, ReaderPolicy.INTERNAL_ONLY);
   }
 
   public List<DynamicKeyDecision> allDecisions() {
