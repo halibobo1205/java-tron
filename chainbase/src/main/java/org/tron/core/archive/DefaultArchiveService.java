@@ -4,6 +4,7 @@ import com.google.common.primitives.Bytes;
 import com.google.common.primitives.Ints;
 import com.google.common.primitives.Longs;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -13,6 +14,7 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 import org.tron.core.archive.capture.ArchiveCaptureEngine;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
+import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomainCatalog;
 import org.tron.core.archive.domain.DefaultArchiveDomainCatalog;
 import org.tron.core.archive.domain.DefaultArchiveDomainRegistry;
@@ -43,7 +45,7 @@ public final class DefaultArchiveService implements ArchiveService {
   private final ArchiveCaptureEngine captureEngine;
   private final ArchiveTemporalStore temporalStore;
   private final ArchiveStateReaderFactory readerFactory;
-  private final ReentrantReadWriteLock consistencyLock = new ReentrantReadWriteLock();
+  private final ReentrantReadWriteLock consistencyLock = new ReentrantReadWriteLock(true);
   private volatile RuntimeException fatalFailure;
 
   public DefaultArchiveService(boolean enabled) {
@@ -176,6 +178,7 @@ public final class DefaultArchiveService implements ArchiveService {
                 prior.getCanonicalKey(), prior.getPrevValue(), record.getValue()));
       }
       List<ArchiveChangeRecord> records = new ArrayList<>(merged.values());
+      records.removeIf(this::isKnownNoop);
       ArchiveBlockRange range = txNumIndex.commitBlock(
           block.getNum(), block.getBlockId().getBytes(), userTxCount);
       txNumCommitted = true;
@@ -196,6 +199,20 @@ public final class DefaultArchiveService implements ArchiveService {
       executionContext.clear();
       captureEngine.clear();
     }
+  }
+
+  private boolean isKnownNoop(ArchiveChangeRecord record) {
+    if (!record.isSameValue()) {
+      return false;
+    }
+    Optional<DomainValue> latest = temporalStore.latest(record.getDomain(),
+        record.getCanonicalKey());
+    return latest.isPresent() && sameDomainValue(latest.get(), record.getValue());
+  }
+
+  private static boolean sameDomainValue(DomainValue left, DomainValue right) {
+    return left.isDeleted() == right.isDeleted()
+        && Arrays.equals(left.getValue(), right.getValue());
   }
 
   /** Identity for within-block change collapsing: (domainId, txNum, canonicalKey). */

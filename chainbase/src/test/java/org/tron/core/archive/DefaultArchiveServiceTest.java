@@ -201,6 +201,18 @@ public class DefaultArchiveServiceTest {
     assertEquals(10, balanceOf(temporal.latest(ArchiveDomain.ACCOUNT, addr).get().getValue()));
     assertEquals(10, balanceOf(
         temporal.getAsOf(ArchiveDomain.ACCOUNT, addr, Long.MAX_VALUE).get().getValue()));
+
+    BlockCapsule b2 = block(6);
+    service.beginBlock(b2, ArchiveSource.NORMAL);
+    service.beginSystemTx(b2, ArchivePhase.BLOCK_PREPARE);
+    service.getCaptureEngine().capturePut("account", addr, account(10), account(10));
+    service.endTx();
+    service.beginSystemTx(b2, ArchivePhase.BLOCK_FINALIZE);
+    service.endTx();
+    service.commitBlock(b2);
+
+    assertTrue(index.getBlockRange(6).isPresent());
+    assertEquals(1, temporal.changeCount());
   }
 
   @Test
