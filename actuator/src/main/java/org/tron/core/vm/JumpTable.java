@@ -17,7 +17,11 @@ public class JumpTable {
     // fill all op slots to undefined
     Arrays.fill(table, UNDEFINED);
   }
-  
+
+  public JumpTable(JumpTable source) {
+    System.arraycopy(source.table, 0, table, 0, table.length);
+  }
+
   public Operation get(int op) {
     return table[op];
   }

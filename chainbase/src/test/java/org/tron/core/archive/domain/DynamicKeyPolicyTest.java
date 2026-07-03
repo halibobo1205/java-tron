@@ -144,6 +144,14 @@ public class DynamicKeyPolicyTest {
   }
 
   @Test
+  public void realAllowSameTokenNameKeyWithLeadingSpaceIsRooted() {
+    DynamicKeyDecision decision = decide(" ALLOW_SAME_TOKEN_NAME");
+    assertEquals(RootPolicy.IN_GLOBAL_ROOT, decision.getRootPolicy());
+    assertEquals(DynamicKeyClass.GOVERNANCE_PARAMETER, decision.getKeyClass());
+    assertEquals(ReaderPolicy.HISTORICAL_VM, decision.getReaderPolicy());
+  }
+
+  @Test
   public void headerCursorsAndPriceHistoryAreHistoryOnly() {
     assertEquals(RootPolicy.HISTORY_ONLY, decide("latest_block_header_number").getRootPolicy());
     assertEquals(RootPolicy.HISTORY_ONLY, decide("ENERGY_PRICE_HISTORY").getRootPolicy());

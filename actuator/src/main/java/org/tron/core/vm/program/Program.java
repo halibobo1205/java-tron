@@ -923,7 +923,7 @@ public class Program {
       if (VMConfig.allowTvmCompatibleEvm()) {
         program.setContractVersion(getContractVersion());
       }
-      // Reuse the table prepared by the top-level execution.
+      // Prepare a table under the current VMConfig scope.
       VM.play(program, OperationRegistry.getTable(isConstantCall()));
       createResult = program.getResult();
       getTrace().merge(program.getTrace());
@@ -1156,7 +1156,7 @@ public class Program {
         program.setContractVersion(invoke.getDeposit()
             .getContract(codeAddress).getContractVersion());
       }
-      // Reuse the table prepared by the top-level execution.
+      // Prepare a table under the current VMConfig scope.
       VM.play(program, OperationRegistry.getTable(isConstantCall()));
       callResult = program.getResult();
 

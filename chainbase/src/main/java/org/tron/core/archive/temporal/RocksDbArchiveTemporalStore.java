@@ -167,6 +167,46 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
     }
   }
 
+  /** Fail closed if history/changeset txNums are not covered by the committed txNum index. */
+  public void validateTxNumsCovered(LongPredicate hasCommittedTxNum) {
+    try (RocksIterator it = db.newIterator()) {
+      it.seek(new byte[] {ArchiveTemporalCodec.HISTORY_PREFIX});
+      while (it.isValid() && it.key()[0] == ArchiveTemporalCodec.HISTORY_PREFIX) {
+        byte[] historyKey = it.key();
+        long txNum = ArchiveTemporalCodec.txNumOfHistory(historyKey);
+        if (!hasCommittedTxNum.test(txNum)) {
+          throw new ArchiveException(
+              "archive temporal history txNum has no index position: " + txNum);
+        }
+        if (db.get(ArchiveTemporalCodec.changesetKeyOfHistory(historyKey)) == null) {
+          throw new ArchiveException(
+              "archive temporal changeset missing for history txNum " + txNum);
+        }
+        it.next();
+      }
+    } catch (RocksDBException e) {
+      throw new ArchiveException("archive temporal history validation failed", e);
+    }
+    try (RocksIterator it = db.newIterator()) {
+      it.seek(new byte[] {ArchiveTemporalCodec.CHANGESET_PREFIX});
+      while (it.isValid() && it.key()[0] == ArchiveTemporalCodec.CHANGESET_PREFIX) {
+        byte[] changesetKey = it.key();
+        long txNum = ArchiveTemporalCodec.txNumOfChangeset(changesetKey);
+        if (!hasCommittedTxNum.test(txNum)) {
+          throw new ArchiveException(
+              "archive temporal changeset txNum has no index position: " + txNum);
+        }
+        if (db.get(ArchiveTemporalCodec.historyKeyOfChangeset(changesetKey)) == null) {
+          throw new ArchiveException(
+              "archive temporal history missing for changeset txNum " + txNum);
+        }
+        it.next();
+      }
+    } catch (RocksDBException e) {
+      throw new ArchiveException("archive temporal changeset validation failed", e);
+    }
+  }
+
   private static void putChange(WriteBatch batch, ArchiveChangeRecord record)
       throws RocksDBException {
     if (record.isSameValue()) {

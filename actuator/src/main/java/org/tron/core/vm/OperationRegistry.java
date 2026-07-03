@@ -116,14 +116,16 @@ public class OperationRegistry {
   public static void init() {}
 
   public static JumpTable prepareAndGetTable(boolean isConstantCall) {
-    JumpTable table = getTable(isConstantCall);
-    // Apply configuration-dependent changes once at the top level.
-    adjustTable(table);
-    return table;
+    return getTable(isConstantCall);
   }
 
   public static JumpTable getTable(boolean isConstantCall) {
-    return isConstantCall ? CONSTANT_CALL_TABLE : tableMap.get(LATEST_VERSION);
+    // Always start from an immutable base table; per-call VMConfig adjustments must not mutate
+    // shared tables or a latest fork view can leak into historical replay/trace calls.
+    JumpTable base = isConstantCall ? CONSTANT_CALL_TABLE : tableMap.get(LATEST_VERSION);
+    JumpTable table = new JumpTable(base);
+    adjustTable(table);
+    return table;
   }
 
   private static void adjustTable(JumpTable table) {

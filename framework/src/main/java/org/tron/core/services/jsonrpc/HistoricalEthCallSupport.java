@@ -5,6 +5,7 @@ import static org.tron.core.services.jsonrpc.JsonRpcApiUtil.triggerCallContract;
 
 import org.tron.common.utils.ByteArray;
 import org.tron.core.Wallet;
+import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchiveService;
 import org.tron.core.archive.DefaultArchiveService;
 import org.tron.core.archive.reader.ArchiveReaderException;
@@ -124,6 +125,7 @@ public final class HistoricalEthCallSupport {
     if (!(archiveService instanceof DefaultArchiveService)) {
       throw new JsonRpcInternalException("archive is not available");
     }
+    requireArchiveAvailable();
     ArchiveStateReaderFactory factory = ((DefaultArchiveService) archiveService).getReaderFactory();
     if (factory == null) {
       throw new JsonRpcInternalException("archive reader is not available");
@@ -136,12 +138,21 @@ public final class HistoricalEthCallSupport {
    * default rather than an un-captured pre-coverage change. A mid-chain archive (or an empty index)
    * returns false, and missing execution-affecting flags fail closed instead of using latest.
    */
-  private boolean isGenesisComplete() {
+  private boolean isGenesisComplete() throws JsonRpcInternalException {
     if (!(archiveService instanceof DefaultArchiveService)) {
       return false;
     }
+    requireArchiveAvailable();
     long first = ((DefaultArchiveService) archiveService).getTxNumIndex().getFirstArchivedBlock();
     return first == 0;
+  }
+
+  private void requireArchiveAvailable() throws JsonRpcInternalException {
+    try {
+      archiveService.validateAvailable();
+    } catch (ArchiveException e) {
+      throw new JsonRpcInternalException(e.getMessage());
+    }
   }
 
 }

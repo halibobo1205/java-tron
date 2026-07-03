@@ -25,6 +25,7 @@ import org.tron.core.archive.ArchiveSource;
 public class PersistentArchiveTxNumIndexTest {
 
   private static final byte[] TX_A = new byte[] {0x01, 0x02, 0x03};
+  private static final byte[] TX_B = new byte[] {0x04, 0x05, 0x06};
   private static final byte[] HASH_A = blockHash(4);
   private static final byte[] HASH_B = blockHash(6);
 
@@ -298,6 +299,65 @@ public class PersistentArchiveTxNumIndexTest {
   }
 
   @Test
+  public void restartWithFirstBlockMarkerButNoRangeFailsClosed() throws Exception {
+    index.close();
+    index = null;
+    store = null;
+
+    putRawFirstBlockOnly(0);
+
+    RocksDbArchiveBlockRangeStore reopenedStore =
+        new RocksDbArchiveBlockRangeStore(dir.toString());
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> new PersistentArchiveTxNumIndex(reopenedStore));
+      assertTrue(ex.getMessage().contains("first-block marker"));
+    } finally {
+      reopenedStore.close();
+    }
+  }
+
+  @Test
+  public void restartWithSwappedUserTxPositionOrderFailsClosed() {
+    ArchiveBlockRange corruptRange = new ArchiveBlockRange(
+        1, 0, 3, 0, 3, blockHash(1), 2, ArchiveSource.NORMAL);
+    store.commitRange(corruptRange, 4, Arrays.asList(
+        new ArchiveTxPosition(0, 1, ArchivePhase.BLOCK_PREPARE, ArchiveSource.NORMAL, -1, null),
+        new ArchiveTxPosition(1, 1, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 1, TX_B),
+        new ArchiveTxPosition(2, 1, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, TX_A),
+        new ArchiveTxPosition(3, 1, ArchivePhase.BLOCK_FINALIZE, ArchiveSource.NORMAL, -1, null)));
+    index.close();
+    index = null;
+    store = new RocksDbArchiveBlockRangeStore(dir.toString());
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> new PersistentArchiveTxNumIndex(store));
+      assertTrue(ex.getMessage().contains("user tx-position order"));
+    } finally {
+      store.close();
+    }
+  }
+
+  @Test
+  public void restartWithSystemPositionTxIdFailsClosed() {
+    ArchiveBlockRange corruptRange = new ArchiveBlockRange(
+        1, 0, 1, 0, 1, blockHash(1), 0, ArchiveSource.NORMAL);
+    store.commitRange(corruptRange, 2, Arrays.asList(
+        new ArchiveTxPosition(0, 1, ArchivePhase.BLOCK_PREPARE, ArchiveSource.NORMAL, -1, TX_A),
+        new ArchiveTxPosition(1, 1, ArchivePhase.BLOCK_FINALIZE, ArchiveSource.NORMAL, -1, null)));
+    index.close();
+    index = null;
+    store = new RocksDbArchiveBlockRangeStore(dir.toString());
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> new PersistentArchiveTxNumIndex(store));
+      assertTrue(ex.getMessage().contains("prepare tx-position mismatch"));
+    } finally {
+      store.close();
+    }
+  }
+
+  @Test
   public void txPositionAndTxIdLookupSurviveRestart() {
     ArchiveBlockRange range = pushBlockWithUserTx(10, TX_A);
     long userTxNum = range.getPrepareTxNum() + 1;
@@ -361,6 +421,16 @@ public class PersistentArchiveTxNumIndexTest {
         rawDb.put(ArchiveBlockRangeCodec.FIRST_BLOCK_KEY,
             ArchiveBlockRangeCodec.encodeFirstBlock(firstBlock));
       }
+    }
+  }
+
+  private void putRawFirstBlockOnly(long firstBlock) throws RocksDBException {
+    RocksDB.loadLibrary();
+    try (Options options = new Options().setCreateIfMissing(false);
+        RocksDB rawDb = RocksDB.open(options, dir.toString())) {
+      rawDb.put(ArchiveBlockRangeCodec.CURSOR_KEY, ArchiveBlockRangeCodec.encodeCursor(0));
+      rawDb.put(ArchiveBlockRangeCodec.FIRST_BLOCK_KEY,
+          ArchiveBlockRangeCodec.encodeFirstBlock(firstBlock));
     }
   }
 

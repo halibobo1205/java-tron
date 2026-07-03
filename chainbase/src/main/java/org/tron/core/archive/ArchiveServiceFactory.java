@@ -52,6 +52,8 @@ public final class ArchiveServiceFactory {
         temporalStore.validateCommitMarkersCovered(
             blockNum -> blockRangeStore.getRange(blockNum).isPresent());
         blockRangeStore.validateCommittedRanges(temporalStore::validateCommittedBlock);
+        temporalStore.validateTxNumsCovered(
+            txNum -> blockRangeStore.getPosition(txNum).isPresent());
         PersistentArchiveTxNumIndex txNumIndex = new PersistentArchiveTxNumIndex(blockRangeStore);
         return new DefaultArchiveService(true, txNumIndex,
             ArchiveExecutionContextHolder.get(), temporalStore);

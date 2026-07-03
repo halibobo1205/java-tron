@@ -231,6 +231,8 @@ public class DefaultArchiveServiceTest {
     service.endTx();
 
     assertThrows(ArchiveException.class, () -> service.commitBlock(b));
+    assertThrows(ArchiveException.class, service::validateAvailable);
+    assertThrows(ArchiveException.class, () -> service.beginBlock(block(6), ArchiveSource.NORMAL));
     assertFalse(index.getBlockRange(5).isPresent());
     assertEquals(0, temporal.changeCount());
   }
@@ -253,7 +255,29 @@ public class DefaultArchiveServiceTest {
     service.endTx();
 
     assertThrows(ArchiveException.class, () -> service.commitBlock(b));
+    assertThrows(ArchiveException.class, service::validateAvailable);
+    assertThrows(ArchiveException.class, () -> service.beginBlock(block(6), ArchiveSource.NORMAL));
     assertFalse(index.getBlockRange(5).isPresent());
+  }
+
+  @Test
+  public void unwindFailureMarksArchiveUnavailable() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    DefaultArchiveService service =
+        new DefaultArchiveService(true, index, context, new FailingUnwindTemporalStore());
+
+    BlockCapsule b = block(5);
+    service.beginBlock(b, ArchiveSource.NORMAL);
+    service.beginSystemTx(b, ArchivePhase.BLOCK_PREPARE);
+    service.endTx();
+    service.beginSystemTx(b, ArchivePhase.BLOCK_FINALIZE);
+    service.endTx();
+    service.commitBlock(b);
+
+    assertThrows(ArchiveException.class, () -> service.unwindBlock(b));
+    assertThrows(ArchiveException.class, service::validateAvailable);
+    assertThrows(ArchiveException.class, () -> service.beginBlock(block(6), ArchiveSource.NORMAL));
   }
 
   @Test
@@ -296,12 +320,8 @@ public class DefaultArchiveServiceTest {
     assertFalse(index.getBlockRange(5).isPresent());
     assertEquals(0, temporal.changeCount());
 
-    // The failed pending block was aborted, so the next block can start cleanly.
-    BlockCapsule next = block(6);
-    service.beginBlock(next, ArchiveSource.NORMAL);
-    service.beginSystemTx(next, ArchivePhase.BLOCK_PREPARE);
-    service.endTx();
-    service.abortBlock(next);
+    assertThrows(ArchiveException.class, service::validateAvailable);
+    assertThrows(ArchiveException.class, () -> service.beginBlock(block(6), ArchiveSource.NORMAL));
   }
 
   private static final class FailingTemporalStore implements ArchiveTemporalStore {
@@ -328,6 +348,28 @@ public class DefaultArchiveServiceTest {
 
     @Override
     public void unwind(long fromTxNum) {
+    }
+  }
+
+  private static final class FailingUnwindTemporalStore implements ArchiveTemporalStore {
+
+    @Override
+    public void putChange(ArchiveChangeRecord record) {
+    }
+
+    @Override
+    public Optional<DomainValue> getAsOf(ArchiveDomain domain, byte[] canonicalKey, long txNum) {
+      return Optional.empty();
+    }
+
+    @Override
+    public Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey) {
+      return Optional.empty();
+    }
+
+    @Override
+    public void unwind(long fromTxNum) {
+      throw new ArchiveException("unwind failed");
     }
   }
 }

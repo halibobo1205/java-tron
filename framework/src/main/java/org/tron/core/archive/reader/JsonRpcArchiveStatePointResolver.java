@@ -3,6 +3,7 @@ package org.tron.core.archive.reader;
 import java.util.Arrays;
 import java.util.Optional;
 import org.tron.core.Wallet;
+import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchiveService;
 import org.tron.core.archive.DefaultArchiveService;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
@@ -73,6 +74,11 @@ public final class JsonRpcArchiveStatePointResolver {
   private ArchiveTxNumIndex txNumIndex() throws JsonRpcInternalException {
     if (!(archiveService instanceof DefaultArchiveService)) {
       throw new JsonRpcInternalException("archive is not available");
+    }
+    try {
+      archiveService.validateAvailable();
+    } catch (ArchiveException e) {
+      throw new JsonRpcInternalException(e.getMessage());
     }
     return ((DefaultArchiveService) archiveService).getTxNumIndex();
   }

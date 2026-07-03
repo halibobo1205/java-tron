@@ -3,6 +3,7 @@ package org.tron.core.services.jsonrpc;
 import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.Wallet;
+import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchiveService;
 import org.tron.core.archive.DefaultArchiveService;
 import org.tron.core.archive.reader.ArchiveReadResult;
@@ -116,6 +117,11 @@ public final class ArchiveJsonRpcStateAdapter {
   private ArchiveStateReaderFactory readerFactory() throws JsonRpcInternalException {
     if (!(archiveService instanceof DefaultArchiveService)) {
       throw new JsonRpcInternalException("archive is not available");
+    }
+    try {
+      archiveService.validateAvailable();
+    } catch (ArchiveException e) {
+      throw new JsonRpcInternalException(e.getMessage());
     }
     ArchiveStateReaderFactory factory = ((DefaultArchiveService) archiveService).getReaderFactory();
     if (factory == null) {

@@ -137,17 +137,36 @@ public final class ArchiveTemporalCodec {
   }
 
   static long txNumOfChangeset(byte[] changesetKey) {
+    validateChangesetKey(changesetKey);
     return Longs.fromByteArray(Arrays.copyOfRange(changesetKey, 1, 9));
+  }
+
+  static long txNumOfHistory(byte[] historyKey) {
+    validateHistoryKey(historyKey);
+    return Longs.fromByteArray(
+        Arrays.copyOfRange(historyKey, historyKey.length - 8, historyKey.length));
   }
 
   // The (domainId || canonicalKey) bytes shared by latest/history keys, recovered from a changeset.
   private static byte[] domainAndKeyOfChangeset(byte[] changesetKey) {
+    validateChangesetKey(changesetKey);
     return Arrays.copyOfRange(changesetKey, 9, changesetKey.length);
+  }
+
+  private static byte[] domainAndKeyOfHistory(byte[] historyKey) {
+    validateHistoryKey(historyKey);
+    return Arrays.copyOfRange(historyKey, 1, historyKey.length - 8);
   }
 
   static byte[] historyKeyOfChangeset(byte[] changesetKey) {
     return Bytes.concat(new byte[] {HISTORY_PREFIX}, domainAndKeyOfChangeset(changesetKey),
         Arrays.copyOfRange(changesetKey, 1, 9));
+  }
+
+  static byte[] changesetKeyOfHistory(byte[] historyKey) {
+    return Bytes.concat(new byte[] {CHANGESET_PREFIX},
+        Arrays.copyOfRange(historyKey, historyKey.length - 8, historyKey.length),
+        domainAndKeyOfHistory(historyKey));
   }
 
   static byte[] latestKeyOfChangeset(byte[] changesetKey) {
@@ -168,6 +187,30 @@ public final class ArchiveTemporalCodec {
       }
     }
     return true;
+  }
+
+  private static void validateChangesetKey(byte[] key) {
+    if (key == null || key.length < 13 || key[0] != CHANGESET_PREFIX) {
+      throw new ArchiveException("archive temporal changeset key is invalid");
+    }
+    int keyLen = unsignedShort(key[11], key[12]);
+    if (key.length != 13 + keyLen) {
+      throw new ArchiveException("archive temporal changeset key length is invalid");
+    }
+  }
+
+  private static void validateHistoryKey(byte[] key) {
+    if (key == null || key.length < 13 || key[0] != HISTORY_PREFIX) {
+      throw new ArchiveException("archive temporal history key is invalid");
+    }
+    int keyLen = unsignedShort(key[3], key[4]);
+    if (key.length != 13 + keyLen) {
+      throw new ArchiveException("archive temporal history key length is invalid");
+    }
+  }
+
+  private static int unsignedShort(byte high, byte low) {
+    return ((high & 0xff) << 8) | (low & 0xff);
   }
 
   static byte[] encodeValue(DomainValue value) {
