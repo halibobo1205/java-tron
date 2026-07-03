@@ -4,6 +4,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -21,8 +22,10 @@ import org.tron.common.utils.ReflectUtils;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.ChainBaseManager;
 import org.tron.core.Wallet;
+import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchiveExecutionContextHolder;
 import org.tron.core.archive.ArchivePhase;
+import org.tron.core.archive.ArchiveService;
 import org.tron.core.archive.ArchiveSource;
 import org.tron.core.archive.DefaultArchiveService;
 import org.tron.core.archive.capture.ArchiveCaptureEngine;
@@ -34,6 +37,7 @@ import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.WitnessCapsule;
 import org.tron.core.config.args.Args;
 import org.tron.core.consensus.ConsensusService;
+import org.tron.core.exception.TronError;
 import org.tron.core.exception.jsonrpc.JsonRpcInternalException;
 import org.tron.core.services.jsonrpc.ArchiveJsonRpcStateAdapter;
 import org.tron.protos.Protocol;
@@ -86,6 +90,38 @@ public class ManagerArchiveLifecycleTest extends BaseMethodTest {
     block.setMerkleRoot();
     block.sign(ByteArray.fromHexString(Args.getLocalWitnesses().getPrivateKey()));
     return block;
+  }
+
+  @Test
+  public void archiveCommitFailureAfterCanonicalCommitEscalatesToTronError() {
+    ArchiveService failingArchive = mock(ArchiveService.class);
+    BlockCapsule block = new BlockCapsule(1, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY);
+    ArchiveException failure = new ArchiveException("commit failed");
+    doThrow(failure).when(failingArchive).commitBlock(block);
+    ReflectUtils.setFieldValue(dbManager, "archiveService", failingArchive);
+
+    TronError error = assertThrows(TronError.class,
+        () -> dbManager.commitArchiveBlockOrFailStop(block, "push block"));
+
+    assertEquals(TronError.ErrCode.ARCHIVE_RUNTIME, error.getErrCode());
+    assertTrue(error.getMessage().contains("push block"));
+    assertEquals(failure, error.getCause());
+  }
+
+  @Test
+  public void archiveUnwindFailureAfterCanonicalPopEscalatesToTronError() {
+    ArchiveService failingArchive = mock(ArchiveService.class);
+    BlockCapsule block = new BlockCapsule(1, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY);
+    ArchiveException failure = new ArchiveException("unwind failed");
+    doThrow(failure).when(failingArchive).unwindBlock(block);
+    ReflectUtils.setFieldValue(dbManager, "archiveService", failingArchive);
+
+    TronError error = assertThrows(TronError.class,
+        () -> dbManager.unwindArchiveBlockOrFailStop(block, "erase canonical head"));
+
+    assertEquals(TronError.ErrCode.ARCHIVE_RUNTIME, error.getErrCode());
+    assertTrue(error.getMessage().contains("erase canonical head"));
+    assertEquals(failure, error.getCause());
   }
 
   @Test

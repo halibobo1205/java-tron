@@ -1090,7 +1090,7 @@ public class Manager {
       khaosDb.pop();
       revokingStore.fastPop();
       // Archive unwind only after canonical fastPop succeeds (no-op when archive disabled).
-      archiveService.unwindBlock(oldHeadBlock);
+      unwindArchiveBlockOrFailStop(oldHeadBlock, "erase canonical head");
       logger.info("End to erase block: {}.", oldHeadBlock);
       oldHeadBlock.getTransactions().forEach(tc ->
           poppedTransactions.add(new TransactionCapsule(tc.getInstance())));
@@ -1100,6 +1100,30 @@ public class Manager {
     } catch (ItemNotFoundException | BadItemException e) {
       logger.warn(e.getMessage(), e);
     }
+  }
+
+  void commitArchiveBlockOrFailStop(BlockCapsule block, String action) {
+    try {
+      archiveService.commitBlock(block);
+    } catch (RuntimeException e) {
+      throw archiveRuntimeError(action, block, e);
+    }
+  }
+
+  void unwindArchiveBlockOrFailStop(BlockCapsule block, String action) {
+    try {
+      archiveService.unwindBlock(block);
+    } catch (RuntimeException e) {
+      throw archiveRuntimeError(action, block, e);
+    }
+  }
+
+  private TronError archiveRuntimeError(String action, BlockCapsule block, RuntimeException e) {
+    logger.error("Archive {} failed after canonical state changed for block {}.",
+        action, block.getNum(), e);
+    return new TronError(
+        "archive " + action + " failed after canonical state changed for block " + block.getNum(),
+        e, TronError.ErrCode.ARCHIVE_RUNTIME);
   }
 
   private void applyBlock(BlockCapsule block) throws ContractValidateException,
@@ -1208,7 +1232,7 @@ public class Manager {
           applyBlock(item.getBlk().setSwitch(true));
           tmpSession.commit();
           // Archive commit inside try, after canonical commit (catch handles any failure).
-          archiveService.commitBlock(item.getBlk());
+          commitArchiveBlockOrFailStop(item.getBlk(), "switch fork replay");
         } catch (AccountResourceInsufficientException
             | ValidateSignatureException
             | ContractValidateException
@@ -1252,7 +1276,7 @@ public class Manager {
                 applyBlock(khaosBlock.getBlk().setSwitch(true));
                 tmpSession.commit();
                 // Archive commit inside try; recovery catch swallows, so commit only on success.
-                archiveService.commitBlock(khaosBlock.getBlk());
+                commitArchiveBlockOrFailStop(khaosBlock.getBlk(), "switch fork recovery");
               } catch (AccountResourceInsufficientException
                   | ValidateSignatureException
                   | ContractValidateException
@@ -1466,7 +1490,7 @@ public class Manager {
             }
             // Archive commit after canonical commit, before blockTrigger reads progress.
             // L5 note: a commitBlock failure here must become a deterministic fail-stop.
-            archiveService.commitBlock(newBlock);
+            commitArchiveBlockOrFailStop(newBlock, "push block");
             long newSolidNum = getDynamicPropertiesStore().getLatestSolidifiedBlockNum();
             blockTrigger(newBlock, oldSolidNum, newSolidNum);
           }
@@ -1990,44 +2014,47 @@ public class Manager {
     }
     // BLOCK_FINALIZE: block-end system writes share one txNum (no-op when disabled).
     archiveService.beginSystemTx(block, ArchivePhase.BLOCK_FINALIZE);
-    merkleContainer.saveCurrentMerkleTreeAsBestMerkleTree(block.getNum());
-    block.setResult(transactionRetCapsule);
-    if (getDynamicPropertiesStore().getAllowAdaptiveEnergy() == 1) {
-      EnergyProcessor energyProcessor = new EnergyProcessor(
-          chainBaseManager.getDynamicPropertiesStore(), chainBaseManager.getAccountStore());
-      energyProcessor.updateTotalEnergyAverageUsage();
-      energyProcessor.updateAdaptiveTotalEnergyLimit();
+    try {
+      merkleContainer.saveCurrentMerkleTreeAsBestMerkleTree(block.getNum());
+      block.setResult(transactionRetCapsule);
+      if (getDynamicPropertiesStore().getAllowAdaptiveEnergy() == 1) {
+        EnergyProcessor energyProcessor = new EnergyProcessor(
+            chainBaseManager.getDynamicPropertiesStore(), chainBaseManager.getAccountStore());
+        energyProcessor.updateTotalEnergyAverageUsage();
+        energyProcessor.updateAdaptiveTotalEnergyLimit();
+      }
+
+      payReward(block);
+
+      boolean flag = chainBaseManager.getDynamicPropertiesStore().getNextMaintenanceTime()
+          <= block.getTimeStamp();
+      if (flag) {
+        proposalController.processProposals();
+      }
+
+      if (!consensus.applyBlock(block)) {
+        throw new BadBlockException("consensus apply block failed");
+      }
+
+      if (flag) {
+        chainBaseManager.getForkController().reset();
+      }
+
+      updateTransHashCache(block);
+      updateRecentBlock(block);
+      updateRecentTransaction(block);
+      updateDynamicProperties(block);
+      updateFork(block);
+
+      chainBaseManager.getBalanceTraceStore().resetCurrentBlockTrace();
+
+      Bloom blockBloom = chainBaseManager.getSectionBloomStore()
+          .initBlockSection(transactionRetCapsule);
+      chainBaseManager.getSectionBloomStore().write(block.getNum());
+      block.setBloom(blockBloom);
+    } finally {
+      archiveService.endTx();
     }
-
-    payReward(block);
-
-    boolean flag = chainBaseManager.getDynamicPropertiesStore().getNextMaintenanceTime()
-        <= block.getTimeStamp();
-    if (flag) {
-      proposalController.processProposals();
-    }
-
-    if (!consensus.applyBlock(block)) {
-      throw new BadBlockException("consensus apply block failed");
-    }
-
-    if (flag) {
-      chainBaseManager.getForkController().reset();
-    }
-
-    updateTransHashCache(block);
-    updateRecentBlock(block);
-    updateRecentTransaction(block);
-    updateDynamicProperties(block);
-    updateFork(block);
-
-    chainBaseManager.getBalanceTraceStore().resetCurrentBlockTrace();
-
-    Bloom blockBloom = chainBaseManager.getSectionBloomStore()
-        .initBlockSection(transactionRetCapsule);
-    chainBaseManager.getSectionBloomStore().write(block.getNum());
-    block.setBloom(blockBloom);
-    archiveService.endTx();
   }
 
   private void payReward(BlockCapsule block) {

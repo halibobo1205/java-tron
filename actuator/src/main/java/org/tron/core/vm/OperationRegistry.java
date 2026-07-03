@@ -75,8 +75,9 @@ public class OperationRegistry {
   public static void init() {}
 
   public static JumpTable getTable() {
-    // always get the table which has the newest version
-    JumpTable table = tableMap.get(Version.TRON_V1_5);
+    // Always start from the newest immutable base table; per-call VMConfig adjustments must not
+    // mutate the shared base or a latest fork view can leak into historical replay/trace calls.
+    JumpTable table = new JumpTable(tableMap.get(Version.TRON_V1_5));
 
     // next make the corresponding changes, exclude activating opcode
     if (VMConfig.allowHigherLimitForMaxCpuTimeOfOneTx()) {

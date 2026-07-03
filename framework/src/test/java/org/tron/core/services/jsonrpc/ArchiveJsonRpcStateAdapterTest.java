@@ -11,6 +11,7 @@ import org.junit.After;
 import org.junit.Test;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.Wallet;
+import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveSource;
 import org.tron.core.archive.DefaultArchiveService;
@@ -108,6 +109,24 @@ public class ArchiveJsonRpcStateAdapterTest {
   }
 
   @Test
+  public void historicalRpcFailsClosedAfterArchiveFatalError() {
+    DefaultArchiveService svc = new DefaultArchiveService(true);
+    BlockCapsule archiveBlock = blockCapsule(5);
+    svc.beginBlock(archiveBlock, ArchiveSource.NORMAL);
+    svc.beginSystemTx(archiveBlock, ArchivePhase.BLOCK_PREPARE);
+    svc.endTx();
+    assertThrows(ArchiveException.class, () -> svc.commitBlock(archiveBlock));
+
+    Wallet wallet = mock(Wallet.class);
+    when(wallet.getBlockByNum(5)).thenReturn(archiveBlock.getInstance());
+    ArchiveJsonRpcStateAdapter adapter = new ArchiveJsonRpcStateAdapter(wallet, svc);
+
+    JsonRpcInternalException ex = assertThrows(JsonRpcInternalException.class,
+        () -> adapter.getBalance("0xabd4b9367799eaa3197fecb144eb71de1e049abc", "0x5"));
+    assertTrue(ex.getMessage().contains("archive is unavailable after fatal failure"));
+  }
+
+  @Test
   public void nullStorageSlotRejectedLikeLatestPath() {
     ArchiveJsonRpcStateAdapter adapter =
         new ArchiveJsonRpcStateAdapter(null, new DefaultArchiveService(true));
@@ -118,11 +137,14 @@ public class ArchiveJsonRpcStateAdapterTest {
   }
 
   private static Block block(long num) {
-    return new BlockCapsule(num, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY).getInstance();
+    return blockCapsule(num).getInstance();
   }
 
   private static byte[] blockHash(long num) {
-    return new BlockCapsule(num, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY)
-        .getBlockId().getBytes();
+    return blockCapsule(num).getBlockId().getBytes();
+  }
+
+  private static BlockCapsule blockCapsule(long num) {
+    return new BlockCapsule(num, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY);
   }
 }

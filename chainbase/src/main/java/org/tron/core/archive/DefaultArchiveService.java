@@ -40,6 +40,7 @@ public final class DefaultArchiveService implements ArchiveService {
   private final ArchiveCaptureEngine captureEngine;
   private final ArchiveTemporalStore temporalStore;
   private final ArchiveStateReaderFactory readerFactory;
+  private volatile RuntimeException fatalFailure;
 
   public DefaultArchiveService(boolean enabled) {
     this(enabled, enabled ? new InMemoryArchiveTemporalStore() : null);
@@ -103,6 +104,7 @@ public final class DefaultArchiveService implements ArchiveService {
     if (!enabled) {
       return;
     }
+    validateAvailable();
     txNumIndex.beginBlock(block.getNum(), source);
     captureEngine.clear();
   }
@@ -112,6 +114,7 @@ public final class DefaultArchiveService implements ArchiveService {
     if (!enabled) {
       return;
     }
+    validateAvailable();
     executionContext.enter(txNumIndex.allocateSystemTx(block.getNum(), phase));
   }
 
@@ -120,6 +123,7 @@ public final class DefaultArchiveService implements ArchiveService {
     if (!enabled) {
       return;
     }
+    validateAvailable();
     byte[] txId = (tx == null) ? null : tx.getTransactionId().getBytes();
     executionContext.enter(txNumIndex.allocateUserTx(block.getNum(), txIndex, txId));
   }
@@ -139,6 +143,7 @@ public final class DefaultArchiveService implements ArchiveService {
     if (!enabled) {
       return;
     }
+    validateAvailable();
     boolean txNumCommitted = false;
     try {
       if (captureEngine.failure().isPresent()) {
@@ -171,6 +176,7 @@ public final class DefaultArchiveService implements ArchiveService {
       } catch (RuntimeException cleanupFailure) {
         e.addSuppressed(cleanupFailure);
       }
+      markFatal(e);
       throw e;
     } finally {
       executionContext.clear();
@@ -201,12 +207,18 @@ public final class DefaultArchiveService implements ArchiveService {
     if (!enabled) {
       return;
     }
-    // Drop the reverted block's already-persisted changes (txNum >= its first txNum) before the
-    // index forgets the range, so the temporal store never retains rolled-back state.
-    ArchiveBlockRange range = txNumIndex.getHeadBlockRange(block.getNum());
-    temporalStore.unwindBlock(range);
-    txNumIndex.unwindBlock(block.getNum());
-    captureEngine.clear();
+    validateAvailable();
+    try {
+      // Drop the reverted block's already-persisted changes (txNum >= its first txNum) before the
+      // index forgets the range, so the temporal store never retains rolled-back state.
+      ArchiveBlockRange range = txNumIndex.getHeadBlockRange(block.getNum());
+      temporalStore.unwindBlock(range);
+      txNumIndex.unwindBlock(block.getNum());
+      captureEngine.clear();
+    } catch (RuntimeException e) {
+      markFatal(e);
+      throw e;
+    }
   }
 
   @Override
@@ -214,12 +226,25 @@ public final class DefaultArchiveService implements ArchiveService {
     if (!enabled) {
       return;
     }
+    validateAvailable();
     txNumIndex.validateCanonicalHead(
         canonicalHead.getNum(), canonicalHead.getBlockId().getBytes());
   }
 
   @Override
+  public void validateAvailable() {
+    if (!enabled) {
+      return;
+    }
+    RuntimeException failure = fatalFailure;
+    if (failure != null) {
+      throw new ArchiveException("archive is unavailable after fatal failure", failure);
+    }
+  }
+
+  @Override
   public boolean hasCommittedBlock(long blockNum) {
+    validateAvailable();
     return enabled && txNumIndex.getBlockRange(blockNum).isPresent();
   }
 
@@ -237,6 +262,12 @@ public final class DefaultArchiveService implements ArchiveService {
       } catch (Exception e) {
         throw new ArchiveException("failed to close archive " + name, e);
       }
+    }
+  }
+
+  private void markFatal(RuntimeException failure) {
+    if (fatalFailure == null) {
+      fatalFailure = failure;
     }
   }
 }
