@@ -51,6 +51,8 @@ public class VMConfig {
     public boolean allowTvmSelfdestructRestriction;
     public boolean allowTvmOsaka;
     public boolean allowHardenResourceCalculation;
+    public boolean passFork471;
+    public boolean passFork4811;
   }
 
   // HEAD / block-processing config, written by the consensus path; read by everyone with no
@@ -224,6 +226,14 @@ public class VMConfig {
     globalSnapshot.allowHardenResourceCalculation = allow == 1;
   }
 
+  public static void initPassFork471(boolean pass) {
+    globalSnapshot.passFork471 = pass;
+  }
+
+  public static void initPassFork4811(boolean pass) {
+    globalSnapshot.passFork4811 = pass;
+  }
+
   public static boolean getEnergyLimitHardFork() {
     return CommonParameter.ENERGY_LIMIT_HARD_FORK;
   }
@@ -330,5 +340,13 @@ public class VMConfig {
 
   public static boolean allowHardenResourceCalculation() {
     return current().allowHardenResourceCalculation;
+  }
+
+  public static boolean passFork471() {
+    return current().passFork471;
+  }
+
+  public static boolean passFork4811() {
+    return current().passFork4811;
   }
 }

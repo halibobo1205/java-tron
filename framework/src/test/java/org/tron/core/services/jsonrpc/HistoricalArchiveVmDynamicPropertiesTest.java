@@ -1,5 +1,6 @@
 package org.tron.core.services.jsonrpc;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThrows;
 import static org.mockito.Mockito.mock;
@@ -93,6 +94,8 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
   @Test
   public void energyFeeIsHistoricalAndExecutionParamsReconstruct() throws Exception {
     FakeReader reader = new FakeReader();
+    reader.put("latest_block_header_timestamp", 456L);
+    reader.put("MAINTENANCE_TIME_INTERVAL", 1_000L);
     reader.put("CURRENT_CYCLE_NUMBER", 7L);
     reader.put("TOTAL_NET_LIMIT", 101L);
     reader.put("TOTAL_NET_WEIGHT", 102L);
@@ -138,6 +141,8 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
 
     assertEquals(ENERGY_FEE, view.getEnergyFee());      // inherited historical fee
     assertEquals(FakeReader.BLOCK_NUM, view.getLatestBlockHeaderNumber());
+    assertEquals(456L, view.getLatestBlockHeaderTimestamp());
+    assertEquals(1_000L, view.getMaintenanceTimeInterval());
     assertEquals(7L, view.getCurrentCycleNumber());
     assertEquals(101L, view.getTotalNetLimit());
     assertEquals(102L, view.getTotalNetWeight());
@@ -217,6 +222,35 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
     when(latestOn.supportUnfreezeDelay()).thenReturn(true);
     assertThrows(ArchiveReaderException.class,
         () -> new HistoricalArchiveVmDynamicProperties(latestOn, ENERGY_FEE, missing, false));
+  }
+
+  @Test
+  public void forkStatsReconstructFromArchiveRows() throws Exception {
+    FakeReader reader = new FakeReader();
+    byte[] fork471 = new byte[] {1, 1, 0};
+    byte[] fork4811 = new byte[] {1, 1, 1};
+    reader.putRaw("FORK_VERSION_27", fork471);
+    reader.putRaw("FORK_VERSION_35", fork4811);
+    VmDynamicProperties latest = mock(VmDynamicProperties.class);
+
+    HistoricalArchiveVmDynamicProperties view =
+        new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true);
+
+    assertArrayEquals(fork471, view.statsByVersion(27));
+    assertArrayEquals(fork4811, view.statsByVersion(35));
+    fork471[0] = 0;
+    assertEquals(1, view.statsByVersion(27)[0]);
+  }
+
+  @Test
+  public void tombstonedForkStatsFailClosed() {
+    FakeReader reader = new FakeReader();
+    reader.putTombstone("FORK_VERSION_35");
+    VmDynamicProperties latest = mock(VmDynamicProperties.class);
+
+    ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
+        () -> new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true));
+    assertEquals(ArchiveReaderException.Reason.CORRUPT_VALUE, e.getReason());
   }
 
   /** Serves configured DYNAMIC_PROPERTIES values by key; everything else MISSING. */
