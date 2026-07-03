@@ -123,12 +123,24 @@ public class DynamicKeyPolicyTest {
         "ALLOW_DELEGATE_OPTIMIZATION",
         "ALLOW_CANCEL_ALL_UNFREEZE_V2",
         "ALLOW_OLD_REWARD_OPT",
-        "PROPOSAL_EXPIRE_TIME"}) {
+        "PROPOSAL_EXPIRE_TIME",
+        "LATEST_PROPOSAL_NUM",
+        "LATEST_EXCHANGE_NUM",
+        "TOTAL_SIGN_NUM",
+        "TOKEN_ID_NUM"}) {
       DynamicKeyDecision d = decide(key);
       assertEquals(RootPolicy.IN_GLOBAL_ROOT, d.getRootPolicy());
       assertEquals(DynamicKeyClass.GOVERNANCE_PARAMETER, d.getKeyClass());
       assertEquals(ReaderPolicy.HISTORICAL_VM, d.getReaderPolicy());
     }
+  }
+
+  @Test
+  public void validationCountersAndMarketLimitsAreRooted() {
+    DynamicKeyDecision marketLimit = decide("MARKET_QUANTITY_LIMIT");
+    assertEquals(RootPolicy.IN_GLOBAL_ROOT, marketLimit.getRootPolicy());
+    assertEquals(DynamicKeyClass.RESOURCE_PARAMETER, marketLimit.getKeyClass());
+    assertEquals(ReaderPolicy.HISTORICAL_VM, marketLimit.getReaderPolicy());
   }
 
   @Test

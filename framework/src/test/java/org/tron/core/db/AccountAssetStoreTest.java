@@ -143,7 +143,7 @@ public class AccountAssetStoreTest extends BaseTest {
 
   @Test
   public void archiveAccountAssetDoesNotEmitForImportedUnchangedOptimizedAsset() {
-    chainBaseManager.getDynamicPropertiesStore().setAllowAccountAssetOptimization(1);
+    chainBaseManager.getDynamicPropertiesStore().setAllowAssetOptimization(1);
     byte[] address = ByteArray.fromHexString(OWNER_ADDRESS);
     Protocol.Account accountWithAsset = Protocol.Account.newBuilder()
         .setAddress(ByteString.copyFrom(address))
@@ -181,7 +181,8 @@ public class AccountAssetStoreTest extends BaseTest {
 
   @Test
   public void archiveAccountDeleteEmitsAssetTombstoneForOptimizedAsset() {
-    chainBaseManager.getDynamicPropertiesStore().setAllowAccountAssetOptimization(1);
+    chainBaseManager.getDynamicPropertiesStore().setAllowAssetOptimization(1);
+    chainBaseManager.getDynamicPropertiesStore().setAllowAccountAssetOptimization(0);
     byte[] address = ByteArray.fromHexString(OWNER_ADDRESS);
     address[20] = 0x55; // keep this test isolated from OWNER_ADDRESS assets created elsewhere
     Protocol.Account accountWithAsset = Protocol.Account.newBuilder()

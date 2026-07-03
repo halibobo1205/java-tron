@@ -106,7 +106,7 @@ public class AccountStore extends TronStoreWithRevoking<AccountCapsule> {
       return accountBytes;
     }
     try {
-      if (!dynamicPropertiesStore.supportAllowAccountAssetOptimization()) {
+      if (dynamicPropertiesStore.getAllowAccountAssetOptimizationFromRoot() != 1L) {
         return accountBytes;
       }
       AccountCapsule account = new AccountCapsule(accountBytes);
