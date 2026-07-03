@@ -9,6 +9,7 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import org.tron.core.archive.ArchiveException;
+import org.tron.core.archive.codec.AccountAssetKeyCodec;
 import org.tron.core.archive.codec.AccountCanonicalValueCodec;
 import org.tron.core.archive.codec.Address21KeyCodec;
 import org.tron.core.archive.codec.BytesValueCodec;
@@ -19,7 +20,9 @@ import org.tron.core.archive.codec.ContractStorageKeyCodec;
 import org.tron.core.archive.codec.DeterministicProtoValueCodec;
 import org.tron.core.archive.codec.DynamicPropertyKeyCodec;
 import org.tron.core.archive.codec.FixedLengthKeyCodec;
+import org.tron.core.archive.codec.Int64BalanceValueCodec;
 import org.tron.core.archive.codec.RawKeyCodec;
+import org.tron.core.archive.codec.StorageWordValueCodec;
 import org.tron.protos.Protocol.DelegatedResource;
 import org.tron.protos.Protocol.Exchange;
 import org.tron.protos.Protocol.MarketAccountOrder;
@@ -104,11 +107,11 @@ public final class DefaultArchiveDomainCatalog implements ArchiveDomainCatalog {
         ReaderPolicy.HISTORICAL_VM);
     // CONTRACT_STORAGE: 32-byte word, semantic 54-byte key (address||slot||version).
     rootDomain(ArchiveDomain.CONTRACT_STORAGE, "storage-row", new ContractStorageKeyCodec(),
-        new BytesValueCodec("storage-word-v1", false), ReaderPolicy.PUBLIC_STATE);
+        new StorageWordValueCodec(), ReaderPolicy.PUBLIC_STATE);
     // ACCOUNT_ASSET: TRC10 balance (int64) captured semantically; address||assetId key.
     rootDomain(ArchiveDomain.ACCOUNT_ASSET, "account-asset",
-        new RawKeyCodec("tron-account-asset-key-v1"),
-        new BytesValueCodec("trc10-balance-v1", false), ReaderPolicy.PUBLIC_STATE);
+        new AccountAssetKeyCodec(),
+        new Int64BalanceValueCodec("trc10-balance-v2"), ReaderPolicy.PUBLIC_STATE);
 
     // ABI: HISTORY_ONLY (client metadata), SmartContract.ABI proto, 21-byte contract address.
     add(ArchiveDomain.ABI, "abi", address21,

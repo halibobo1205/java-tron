@@ -1,9 +1,12 @@
 package org.tron.core.vm.archive;
 
+import java.util.Arrays;
 import org.tron.common.runtime.ProgramResult;
 import org.tron.core.actuator.VMActuator;
 import org.tron.core.archive.reader.ArchiveStateReader;
+import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockCapsule;
+import org.tron.core.capsule.ContractCapsule;
 import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.db.TransactionContext;
 import org.tron.core.exception.ContractExeException;
@@ -13,6 +16,7 @@ import org.tron.core.store.VmDynamicProperties;
 import org.tron.core.vm.config.VMConfig;
 import org.tron.core.vm.program.Program;
 import org.tron.core.vm.trace.ProgramTrace;
+import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
 
 /**
  * Replays a TVM constant call against archived state with the native opcode tracer enabled, so the
@@ -59,7 +63,8 @@ public final class HistoricalTraceCallExecutor {
     vmActuator.setInjectedRootRepository(root);
     vmActuator.setInjectedVmProperties(vmProperties);
     if (!useConstantEnergyCap) {
-      vmActuator.setConstantCallMaxEnergyLimit(transactionEnergyLimit(vmProperties, trxCap));
+      vmActuator.setConstantCallMaxEnergyLimit(
+          exactTransactionEnergyLimit(root, vmProperties, trxCap));
     }
     VMConfig.setLocalVmTrace(true);
     try {
@@ -80,14 +85,26 @@ public final class HistoricalTraceCallExecutor {
           result.getException());
     }
     ProgramTrace trace = program.getTrace();
+    if (!useConstantEnergyCap && result.getException() != null) {
+      throw new HistoricalVmExecutionException(
+          "historical debug_traceTransaction cannot replay VM exception with exact "
+              + "non-constant energy accounting",
+          result.getException());
+    }
     boolean failed = result.getException() != null || result.isRevert()
         || (result.getRuntimeError() != null && !result.getRuntimeError().isEmpty());
     return HistoricalTraceCallResult.of(result.getHReturn(), result.getEnergyUsed(), failed,
         result.getRuntimeError(), trace);
   }
 
-  private static long transactionEnergyLimit(VmDynamicProperties vmProperties,
-      TransactionCapsule trxCap) {
+  private static long exactTransactionEnergyLimit(ArchiveRepositoryAdapter root,
+      VmDynamicProperties vmProperties, TransactionCapsule trxCap) {
+    TriggerSmartContract contract =
+        ContractCapsule.getTriggerContractFromTransaction(trxCap.getInstance());
+    if (contract == null) {
+      throw new HistoricalVmExecutionException(
+          "historical debug_traceTransaction requires TriggerSmartContract", null);
+    }
     long feeLimit = trxCap.getInstance().getRawData().getFeeLimit();
     if (feeLimit <= 0) {
       return 0L;
@@ -95,6 +112,37 @@ public final class HistoricalTraceCallExecutor {
     long energyFee = vmProperties.getEnergyFee();
     if (energyFee <= 0) {
       throw new HistoricalVmExecutionException("historical energy fee must be positive", null);
+    }
+    byte[] callerAddress = contract.getOwnerAddress().toByteArray();
+    AccountCapsule caller = root.getAccount(callerAddress);
+    if (caller == null) {
+      throw new HistoricalVmExecutionException(
+          "historical debug_traceTransaction caller account is missing", null);
+    }
+    if (caller.getAllFrozenBalanceForEnergy() > 0) {
+      throw new HistoricalVmExecutionException(
+          "historical debug_traceTransaction requires archived frozen-energy accounting", null);
+    }
+    if (contract.getCallValue() < 0) {
+      throw new HistoricalVmExecutionException(
+          "historical debug_traceTransaction callValue must be non-negative", null);
+    }
+    long balanceAvailable = caller.getBalance() - contract.getCallValue();
+    if (balanceAvailable < feeLimit) {
+      throw new HistoricalVmExecutionException(
+          "historical debug_traceTransaction requires exact balance-limited energy accounting",
+          null);
+    }
+    ContractCapsule deployed = root.getContract(contract.getContractAddress().toByteArray());
+    if (deployed == null) {
+      throw new HistoricalVmExecutionException(
+          "historical debug_traceTransaction contract is missing", null);
+    }
+    byte[] originAddress = deployed.getInstance().getOriginAddress().toByteArray();
+    if (!Arrays.equals(originAddress, callerAddress)
+        && deployed.getConsumeUserResourcePercent(false) < 100L) {
+      throw new HistoricalVmExecutionException(
+          "historical debug_traceTransaction requires exact creator-energy accounting", null);
     }
     return feeLimit / energyFee;
   }

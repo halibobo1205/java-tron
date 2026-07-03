@@ -47,7 +47,10 @@ public class DynamicKeyPolicyTest {
         "ALLOW_NEW_RESOURCE_MODEL",
         "UNFREEZE_DELAY_DAYS",
         "ALLOW_SHIELDED_TRC20_TRANSACTION",
-        "ALLOW_MULTI_SIGN"}) {
+        "ALLOW_SHIELDED_TRANSACTION",
+        "ALLOW_MULTI_SIGN",
+        "AVAILABLE_CONTRACT_TYPE",
+        "ACTIVE_DEFAULT_OPERATIONS"}) {
       DynamicKeyDecision d = decide(key);
       assertEquals(RootPolicy.IN_GLOBAL_ROOT, d.getRootPolicy());
       assertEquals(DynamicKeyClass.VM_CONFIG, d.getKeyClass());
@@ -68,6 +71,7 @@ public class DynamicKeyPolicyTest {
         "TOTAL_ENERGY_WEIGHT",
         "TOTAL_TRON_POWER_WEIGHT",
         "FREE_NET_LIMIT",
+        "SHIELDED_TRANSACTION_FEE",
         "EXCHANGE_BALANCE_LIMIT",
         "MAX_DELEGATE_LOCK_PERIOD",
         "MAX_CREATE_ACCOUNT_TX_SIZE"}) {
@@ -136,6 +140,14 @@ public class DynamicKeyPolicyTest {
   }
 
   @Test
+  public void maintenanceCursorIsRootedBecauseItControlsFinalize() {
+    DynamicKeyDecision d = decide("NEXT_MAINTENANCE_TIME");
+    assertEquals(RootPolicy.IN_GLOBAL_ROOT, d.getRootPolicy());
+    assertEquals(DynamicKeyClass.GOVERNANCE_PARAMETER, d.getKeyClass());
+    assertEquals(ReaderPolicy.HISTORICAL_VM, d.getReaderPolicy());
+  }
+
+  @Test
   public void validationCountersAndMarketLimitsAreRooted() {
     DynamicKeyDecision marketLimit = decide("MARKET_QUANTITY_LIMIT");
     assertEquals(RootPolicy.IN_GLOBAL_ROOT, marketLimit.getRootPolicy());
@@ -169,10 +181,10 @@ public class DynamicKeyPolicyTest {
   }
 
   @Test
-  public void unknownKeyKeepsHistoryButNeverRoots() {
+  public void unknownKeyKeepsHistoryAndRootsByDefault() {
     DynamicKeyDecision d = decide("SOME_FUTURE_KEY");
     assertEquals(DynamicKeyClass.UNKNOWN, d.getKeyClass());
-    assertEquals(RootPolicy.EXCLUDED, d.getRootPolicy());
+    assertEquals(RootPolicy.IN_GLOBAL_ROOT, d.getRootPolicy());
     // Keep history (diagnostic) so a future execution-affecting key is not lost.
     assertEquals(HistoryPolicy.FULL_HISTORY, d.getHistoryPolicy());
   }
