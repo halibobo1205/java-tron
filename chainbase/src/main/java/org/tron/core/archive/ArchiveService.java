@@ -13,6 +13,11 @@ import org.tron.core.capsule.TransactionCapsule;
  */
 public interface ArchiveService {
 
+  interface ReadGuard extends AutoCloseable {
+    @Override
+    void close();
+  }
+
   boolean isEnabled();
 
   void beginBlock(BlockCapsule block, ArchiveSource source);
@@ -33,6 +38,12 @@ public interface ArchiveService {
 
   /** Runtime guard: fail closed if archive has seen a fatal post-canonical failure. */
   default void validateAvailable() {
+  }
+
+  /** Guard a consistent archive read against concurrent commit/unwind publication. */
+  default ReadGuard acquireReadGuard() {
+    return () -> {
+    };
   }
 
   /** True when this sidecar has a committed archive range for {@code blockNum}. */

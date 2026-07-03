@@ -7,6 +7,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import org.tron.core.archive.capture.ArchiveCaptureEngine;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
@@ -40,6 +43,7 @@ public final class DefaultArchiveService implements ArchiveService {
   private final ArchiveCaptureEngine captureEngine;
   private final ArchiveTemporalStore temporalStore;
   private final ArchiveStateReaderFactory readerFactory;
+  private final ReentrantReadWriteLock consistencyLock = new ReentrantReadWriteLock();
   private volatile RuntimeException fatalFailure;
 
   public DefaultArchiveService(boolean enabled) {
@@ -143,6 +147,16 @@ public final class DefaultArchiveService implements ArchiveService {
     if (!enabled) {
       return;
     }
+    Lock writeLock = consistencyLock.writeLock();
+    writeLock.lock();
+    try {
+      commitBlockLocked(block, userTxCount);
+    } finally {
+      writeLock.unlock();
+    }
+  }
+
+  private void commitBlockLocked(BlockCapsule block, int userTxCount) {
     validateAvailable();
     boolean txNumCommitted = false;
     try {
@@ -198,8 +212,20 @@ public final class DefaultArchiveService implements ArchiveService {
     if (!enabled) {
       return;
     }
-    txNumIndex.abortBlock(block.getNum());
-    captureEngine.clear();
+    Lock writeLock = consistencyLock.writeLock();
+    writeLock.lock();
+    try {
+      validateAvailable();
+      try {
+        txNumIndex.abortBlock(block.getNum());
+        captureEngine.clear();
+      } catch (RuntimeException e) {
+        markFatal(e);
+        throw e;
+      }
+    } finally {
+      writeLock.unlock();
+    }
   }
 
   @Override
@@ -207,17 +233,31 @@ public final class DefaultArchiveService implements ArchiveService {
     if (!enabled) {
       return;
     }
-    validateAvailable();
+    Lock writeLock = consistencyLock.writeLock();
+    writeLock.lock();
     try {
-      // Drop the reverted block's already-persisted changes (txNum >= its first txNum) before the
-      // index forgets the range, so the temporal store never retains rolled-back state.
-      ArchiveBlockRange range = txNumIndex.getHeadBlockRange(block.getNum());
-      temporalStore.unwindBlock(range);
-      txNumIndex.unwindBlock(block.getNum());
-      captureEngine.clear();
-    } catch (RuntimeException e) {
-      markFatal(e);
-      throw e;
+      validateAvailable();
+      try {
+        Optional<ArchiveBlockRange> committed = txNumIndex.getBlockRange(block.getNum());
+        long firstArchivedBlock = txNumIndex.getFirstArchivedBlock();
+        if (!committed.isPresent()
+            && (firstArchivedBlock < 0 || block.getNum() < firstArchivedBlock)) {
+          executionContext.clear();
+          captureEngine.clear();
+          return;
+        }
+        // Drop the reverted block's already-persisted changes (txNum >= its first txNum) before the
+        // index forgets the range, so the temporal store never retains rolled-back state.
+        ArchiveBlockRange range = txNumIndex.getHeadBlockRange(block.getNum());
+        temporalStore.unwindBlock(range);
+        txNumIndex.unwindBlock(block.getNum());
+        captureEngine.clear();
+      } catch (RuntimeException e) {
+        markFatal(e);
+        throw e;
+      }
+    } finally {
+      writeLock.unlock();
     }
   }
 
@@ -243,6 +283,22 @@ public final class DefaultArchiveService implements ArchiveService {
   }
 
   @Override
+  public ReadGuard acquireReadGuard() {
+    if (!enabled) {
+      return ArchiveService.super.acquireReadGuard();
+    }
+    Lock readLock = consistencyLock.readLock();
+    readLock.lock();
+    try {
+      validateAvailable();
+      return readLock::unlock;
+    } catch (RuntimeException e) {
+      readLock.unlock();
+      throw e;
+    }
+  }
+
+  @Override
   public boolean hasCommittedBlock(long blockNum) {
     validateAvailable();
     return enabled && txNumIndex.getBlockRange(blockNum).isPresent();
@@ -251,22 +307,41 @@ public final class DefaultArchiveService implements ArchiveService {
   @Override
   public void close() {
     ArchiveCaptureHolder.clear();
-    closeQuietly(temporalStore, "temporal store");
-    closeQuietly(txNumIndex, "txNum index");
+    RuntimeException failure = null;
+    failure = closeResource(temporalStore, "temporal store", failure);
+    failure = closeResource(txNumIndex, "txNum index", failure);
+    if (failure != null) {
+      throw failure;
+    }
   }
 
-  private static void closeQuietly(Object resource, String name) {
+  private static RuntimeException closeResource(Object resource, String name,
+      RuntimeException failure) {
     if (resource instanceof AutoCloseable) {
       try {
         ((AutoCloseable) resource).close();
       } catch (Exception e) {
-        throw new ArchiveException("failed to close archive " + name, e);
+        RuntimeException closeFailure = e instanceof RuntimeException
+            ? (RuntimeException) e
+            : new ArchiveException("failed to close archive " + name, e);
+        if (failure == null) {
+          return closeFailure;
+        }
+        failure.addSuppressed(closeFailure);
       }
     }
+    return failure;
   }
 
   private void markFatal(RuntimeException failure) {
     if (fatalFailure == null) {
+      try {
+        txNumIndex.markRepairRequired(failure.getMessage() == null
+            ? failure.getClass().getSimpleName()
+            : failure.getMessage());
+      } catch (RuntimeException markerFailure) {
+        failure.addSuppressed(markerFailure);
+      }
       fatalFailure = failure;
     }
   }

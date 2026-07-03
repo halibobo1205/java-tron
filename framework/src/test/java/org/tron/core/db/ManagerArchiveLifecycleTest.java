@@ -125,6 +125,21 @@ public class ManagerArchiveLifecycleTest extends BaseMethodTest {
   }
 
   @Test
+  public void archiveAbortFailureIsSuppressedOnPrimaryFailure() {
+    ArchiveService failingArchive = mock(ArchiveService.class);
+    BlockCapsule block = new BlockCapsule(1, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY);
+    ArchiveException abortFailure = new ArchiveException("abort failed");
+    RuntimeException primary = new RuntimeException("apply failed");
+    doThrow(abortFailure).when(failingArchive).abortBlock(block);
+    ReflectUtils.setFieldValue(dbManager, "archiveService", failingArchive);
+
+    dbManager.abortArchiveBlockBestEffort(block, "push block", primary);
+
+    assertEquals(1, primary.getSuppressed().length);
+    assertEquals(abortFailure, primary.getSuppressed()[0]);
+  }
+
+  @Test
   public void pushBlockAllocatesTxNumRangeAndEraseUnwinds() throws Exception {
     BlockCapsule block = signedEmptyBlock();
 

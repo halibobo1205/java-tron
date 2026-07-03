@@ -68,48 +68,50 @@ public final class HistoricalEthCallSupport {
     if (JsonRpcApiUtil.LATEST_STR.equalsIgnoreCase(blockNumOrTag)) {
       throw new JsonRpcInternalException("historical eth_call invoked for the latest tag");
     }
-    ResolvedArchiveStatePoint resolved = resolver.resolveBlockEnd(blockNumOrTag);
-    if (resolved.isLatest()) {
-      // shouldUseArchive already filters latest; reaching here means a caller skipped that guard.
-      throw new JsonRpcInternalException("historical eth_call invoked for the latest tag");
-    }
-    ArchiveStatePoint point = resolved.getPoint();
-    boolean genesisComplete = isGenesisComplete();
-
-    Block block = wallet.getBlockByNum(point.getBlockNum());
-    if (block == null) {
-      throw new JsonRpcInternalException("archive history unavailable for block "
-          + point.getBlockNum());
-    }
-    BlockCapsule historicalBlock = new BlockCapsule(block);
-    DynamicPropertiesStore latestStore =
-        StoreFactory.getInstance().getChainBaseManager().getDynamicPropertiesStore();
-    // Energy price has a complete, time-keyed history in the live store, so we replay BASEFEE /
-    // GASPRICE with the value in force at the target block rather than the current price.
-    long historicalEnergyFee = HistoricalVmDynamicProperties.resolveHistoricalEnergyFee(
-        historicalBlock.getTimeStamp(), latestStore.getEnergyPriceHistory());
-    TriggerSmartContract trigger =
-        triggerCallContract(ownerAddress, contractAddress, callValue, data, 0, null);
-
-    try (ArchiveStateReader reader = readerFactory().open(point)) {
-      // The result-affecting hard-fork flags are read from the archive at the target block, so the
-      // config view is built here (reader open) rather than before the try.
-      VmDynamicProperties vmProperties = new HistoricalArchiveVmDynamicProperties(
-          latestStore, historicalEnergyFee, reader, genesisComplete);
-      TransactionCapsule trxCap =
-          wallet.createTransactionCapsule(trigger, ContractType.TriggerSmartContract);
-      HistoricalConstantCallResult result = new HistoricalConstantCallExecutor()
-          .execute(reader, vmProperties, historicalBlock, trxCap, genesisComplete);
-      if (result.isReverted()) {
-        // Mirror the latest path: message carries the decoded revert reason, data the raw bytes.
-        throw new JsonRpcInternalException(
-            "REVERT opcode executed" + TronJsonRpcImpl.tryDecodeRevertReason(result.getResult()),
-            ByteArray.toJsonHex(result.getResult()));
+    try (ArchiveService.ReadGuard ignored = readGuard()) {
+      ResolvedArchiveStatePoint resolved = resolver.resolveBlockEnd(blockNumOrTag);
+      if (resolved.isLatest()) {
+        // shouldUseArchive already filters latest; reaching here means a caller skipped that guard.
+        throw new JsonRpcInternalException("historical eth_call invoked for the latest tag");
       }
-      if (result.getRuntimeError() != null && !result.getRuntimeError().isEmpty()) {
-        throw new JsonRpcInternalException(result.getRuntimeError());
+      ArchiveStatePoint point = resolved.getPoint();
+      boolean genesisComplete = isGenesisComplete();
+
+      Block block = wallet.getBlockByNum(point.getBlockNum());
+      if (block == null) {
+        throw new JsonRpcInternalException("archive history unavailable for block "
+            + point.getBlockNum());
       }
-      return ByteArray.toJsonHex(result.getResult());
+      BlockCapsule historicalBlock = new BlockCapsule(block);
+      DynamicPropertiesStore latestStore =
+          StoreFactory.getInstance().getChainBaseManager().getDynamicPropertiesStore();
+      // Energy price has a complete, time-keyed history in the live store, so we replay BASEFEE /
+      // GASPRICE with the value in force at the target block rather than the current price.
+      long historicalEnergyFee = HistoricalVmDynamicProperties.resolveHistoricalEnergyFee(
+          historicalBlock.getTimeStamp(), latestStore.getEnergyPriceHistory());
+      TriggerSmartContract trigger =
+          triggerCallContract(ownerAddress, contractAddress, callValue, data, 0, null);
+
+      try (ArchiveStateReader reader = readerFactory().open(point)) {
+        // The result-affecting hard-fork flags are read from the archive at the target block, so
+        // the config view is built here (reader open) rather than before the try.
+        VmDynamicProperties vmProperties = new HistoricalArchiveVmDynamicProperties(
+            latestStore, historicalEnergyFee, reader, genesisComplete);
+        TransactionCapsule trxCap =
+            wallet.createTransactionCapsule(trigger, ContractType.TriggerSmartContract);
+        HistoricalConstantCallResult result = new HistoricalConstantCallExecutor()
+            .execute(reader, vmProperties, historicalBlock, trxCap, genesisComplete);
+        if (result.isReverted()) {
+          // Mirror the latest path: message carries the decoded revert reason, data the raw bytes.
+          throw new JsonRpcInternalException(
+              "REVERT opcode executed" + TronJsonRpcImpl.tryDecodeRevertReason(result.getResult()),
+              ByteArray.toJsonHex(result.getResult()));
+        }
+        if (result.getRuntimeError() != null && !result.getRuntimeError().isEmpty()) {
+          throw new JsonRpcInternalException(result.getRuntimeError());
+        }
+        return ByteArray.toJsonHex(result.getResult());
+      }
     } catch (ContractValidateException e) {
       // Match the latest eth_call path, which maps a validate failure to an invalid-request error.
       throw new JsonRpcInvalidRequestException(
@@ -150,6 +152,14 @@ public final class HistoricalEthCallSupport {
   private void requireArchiveAvailable() throws JsonRpcInternalException {
     try {
       archiveService.validateAvailable();
+    } catch (ArchiveException e) {
+      throw new JsonRpcInternalException(e.getMessage());
+    }
+  }
+
+  private ArchiveService.ReadGuard readGuard() throws JsonRpcInternalException {
+    try {
+      return archiveService.acquireReadGuard();
     } catch (ArchiveException e) {
       throw new JsonRpcInternalException(e.getMessage());
     }

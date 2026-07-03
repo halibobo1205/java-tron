@@ -91,15 +91,30 @@ public class RocksDbArchiveTemporalStoreTest {
   }
 
   @Test
-  public void sameValueWriteDoesNotCreateStateHistory() {
+  public void sameValueWriteSeedsLatestAndHistoryCoverage() {
     store.putChange(change(5, DomainValue.present(new byte[] {1}),
         DomainValue.present(new byte[] {1})));
-    assertFalse(store.latest(ArchiveDomain.ACCOUNT, KEY).isPresent());
-    assertFalse(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 5).isPresent());
+    assertArrayEquals(new byte[] {1}, store.latest(ArchiveDomain.ACCOUNT, KEY).get().getValue());
+    assertArrayEquals(new byte[] {1},
+        store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 5).get().getValue());
 
     store.putChange(change(6, DomainValue.tombstone(), DomainValue.tombstone()));
+    assertTrue(store.latest(ArchiveDomain.ACCOUNT, KEY).get().isDeleted());
+    assertTrue(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 6).get().isDeleted());
+  }
+
+  @Test
+  public void sameValueWriteUnwindsCleanlyFromArchiveStart() {
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        3, 0, 0, 0, 0, blockHash(3), 0, ArchiveSource.NORMAL);
+    store.putBlockChanges(range, Collections.singletonList(
+        change(0, DomainValue.present(new byte[] {1}), DomainValue.present(new byte[] {1}))));
+    assertArrayEquals(new byte[] {1}, store.latest(ArchiveDomain.ACCOUNT, KEY).get().getValue());
+
+    store.unwindBlock(range);
+
     assertFalse(store.latest(ArchiveDomain.ACCOUNT, KEY).isPresent());
-    assertFalse(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 6).isPresent());
+    assertFalse(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, Long.MAX_VALUE).isPresent());
   }
 
   @Test

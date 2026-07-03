@@ -39,21 +39,24 @@ public final class ArchiveServiceFactory {
           "storage.archive.temporal.enable must be true when archive is enabled");
     }
     if (archiveDir != null && config.getTemporal().isEnable()) {
-      RocksDbArchiveTemporalStore temporalStore = new RocksDbArchiveTemporalStore(
-          Paths.get(archiveDir, "temporal").toString());
-      RocksDbArchiveBlockRangeStore blockRangeStore =
-          new RocksDbArchiveBlockRangeStore(Paths.get(archiveDir, "index").toString());
+      RocksDbArchiveTemporalStore temporalStore = null;
+      RocksDbArchiveBlockRangeStore blockRangeStore = null;
       try {
+        temporalStore = new RocksDbArchiveTemporalStore(
+            Paths.get(archiveDir, "temporal").toString());
+        blockRangeStore =
+            new RocksDbArchiveBlockRangeStore(Paths.get(archiveDir, "index").toString());
+        blockRangeStore.validateNoRepairRequired();
         if (!blockRangeStore.getLastRange().isPresent()
             && temporalStore.hasDataBeyondManifest()) {
           throw new ArchiveException(
               "archive temporal store is non-empty but block-range index is empty");
         }
+        RocksDbArchiveBlockRangeStore committedIndex = blockRangeStore;
         temporalStore.validateCommitMarkersCovered(
-            blockNum -> blockRangeStore.getRange(blockNum).isPresent());
+            blockNum -> committedIndex.getRange(blockNum).isPresent());
         blockRangeStore.validateCommittedRanges(temporalStore::validateCommittedBlock);
-        temporalStore.validateTxNumsCovered(
-            txNum -> blockRangeStore.getPosition(txNum).isPresent());
+        temporalStore.validateTxNumsCovered(committedIndex::hasCommittedTxNum);
         PersistentArchiveTxNumIndex txNumIndex = new PersistentArchiveTxNumIndex(blockRangeStore);
         return new DefaultArchiveService(true, txNumIndex,
             ArchiveExecutionContextHolder.get(), temporalStore);
@@ -67,6 +70,9 @@ public final class ArchiveServiceFactory {
   }
 
   private static void closeOnFailure(AutoCloseable resource, RuntimeException failure) {
+    if (resource == null) {
+      return;
+    }
     try {
       resource.close();
     } catch (Exception closeFailure) {

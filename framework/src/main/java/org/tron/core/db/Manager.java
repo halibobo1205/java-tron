@@ -1118,6 +1118,15 @@ public class Manager {
     }
   }
 
+  void abortArchiveBlockBestEffort(BlockCapsule block, String action, Throwable primary) {
+    try {
+      archiveService.abortBlock(block);
+    } catch (RuntimeException e) {
+      primary.addSuppressed(e);
+      logger.error("Archive {} abort failed for block {}.", action, block.getNum(), e);
+    }
+  }
+
   private TronError archiveRuntimeError(String action, BlockCapsule block, RuntimeException e) {
     logger.error("Archive {} failed after canonical state changed for block {}.",
         action, block.getNum(), e);
@@ -1249,9 +1258,9 @@ public class Manager {
             | BadBlockException
             | EventBloomException
             | RuntimeException e) {
-          archiveService.abortBlock(item.getBlk());
-          logger.warn(e.getMessage(), e);
           exception = e;
+          abortArchiveBlockBestEffort(item.getBlk(), "switch fork replay", e);
+          logger.warn(e.getMessage(), e);
           throw e;
         } finally {
           if (exception != null) {
@@ -1293,7 +1302,7 @@ public class Manager {
                   | BadBlockException
                   | EventBloomException
                   | RuntimeException e) {
-                archiveService.abortBlock(khaosBlock.getBlk());
+                abortArchiveBlockBestEffort(khaosBlock.getBlk(), "switch fork recovery", e);
                 logger.warn(e.getMessage(), e);
               }
             }
@@ -1482,7 +1491,7 @@ public class Manager {
               applyBlock(newBlock, txs);
               tmpSession.commit();
             } catch (Throwable throwable) {
-              archiveService.abortBlock(newBlock);
+              abortArchiveBlockBestEffort(newBlock, "push block", throwable);
               logger.error(throwable.getMessage(), throwable);
               khaosDb.removeBlk(block.getBlockId());
               clearSolidityContractTriggerCache(block.getNum());

@@ -44,6 +44,13 @@ public final class HistoricalTraceCallExecutor {
   public HistoricalTraceCallResult execute(ArchiveStateReader reader,
       VmDynamicProperties vmProperties, BlockCapsule block, TransactionCapsule trxCap,
       boolean genesisComplete) throws ContractValidateException, ContractExeException {
+    return execute(reader, vmProperties, block, trxCap, genesisComplete, true);
+  }
+
+  public HistoricalTraceCallResult execute(ArchiveStateReader reader,
+      VmDynamicProperties vmProperties, BlockCapsule block, TransactionCapsule trxCap,
+      boolean genesisComplete, boolean useConstantEnergyCap)
+      throws ContractValidateException, ContractExeException {
     ArchiveRepositoryAdapter root =
         new ArchiveRepositoryAdapter(reader, vmProperties, genesisComplete);
     TransactionContext context =
@@ -51,6 +58,9 @@ public final class HistoricalTraceCallExecutor {
     VMActuator vmActuator = new VMActuator(true);
     vmActuator.setInjectedRootRepository(root);
     vmActuator.setInjectedVmProperties(vmProperties);
+    if (!useConstantEnergyCap) {
+      vmActuator.setConstantCallMaxEnergyLimit(transactionEnergyLimit(vmProperties, trxCap));
+    }
     VMConfig.setLocalVmTrace(true);
     try {
       vmActuator.validate(context);
@@ -74,5 +84,18 @@ public final class HistoricalTraceCallExecutor {
         || (result.getRuntimeError() != null && !result.getRuntimeError().isEmpty());
     return HistoricalTraceCallResult.of(result.getHReturn(), result.getEnergyUsed(), failed,
         result.getRuntimeError(), trace);
+  }
+
+  private static long transactionEnergyLimit(VmDynamicProperties vmProperties,
+      TransactionCapsule trxCap) {
+    long feeLimit = trxCap.getInstance().getRawData().getFeeLimit();
+    if (feeLimit <= 0) {
+      return 0L;
+    }
+    long energyFee = vmProperties.getEnergyFee();
+    if (energyFee <= 0) {
+      throw new HistoricalVmExecutionException("historical energy fee must be positive", null);
+    }
+    return feeLimit / energyFee;
   }
 }

@@ -9,6 +9,9 @@ import static org.junit.Assert.assertTrue;
 import com.google.protobuf.ByteString;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
 import org.junit.After;
 import org.junit.Test;
 import org.tron.common.utils.Sha256Hash;
@@ -174,7 +177,7 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
-  public void sameValueWritesKeepTxNumRangeButSkipTemporalHistory() {
+  public void sameValueWritesSeedTemporalLatestForMidChainCoverage() throws Exception {
     InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
     ArchiveExecutionContext context = new ArchiveExecutionContext();
     InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
@@ -194,8 +197,10 @@ public class DefaultArchiveServiceTest {
     service.commitBlock(b);
 
     assertTrue(index.getBlockRange(5).isPresent());
-    assertEquals(0, temporal.changeCount());
-    assertFalse(temporal.latest(ArchiveDomain.ACCOUNT, addr).isPresent());
+    assertEquals(1, temporal.changeCount());
+    assertEquals(10, balanceOf(temporal.latest(ArchiveDomain.ACCOUNT, addr).get().getValue()));
+    assertEquals(10, balanceOf(
+        temporal.getAsOf(ArchiveDomain.ACCOUNT, addr, Long.MAX_VALUE).get().getValue()));
   }
 
   @Test
@@ -278,6 +283,48 @@ public class DefaultArchiveServiceTest {
     assertThrows(ArchiveException.class, () -> service.unwindBlock(b));
     assertThrows(ArchiveException.class, service::validateAvailable);
     assertThrows(ArchiveException.class, () -> service.beginBlock(block(6), ArchiveSource.NORMAL));
+  }
+
+  @Test
+  public void readGuardBlocksCommitPublication() throws Exception {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    DefaultArchiveService service = new DefaultArchiveService(true, index, context);
+
+    BlockCapsule b = block(5);
+    service.beginBlock(b, ArchiveSource.NORMAL);
+    service.beginSystemTx(b, ArchivePhase.BLOCK_PREPARE);
+    service.endTx();
+    service.beginSystemTx(b, ArchivePhase.BLOCK_FINALIZE);
+    service.endTx();
+
+    ArchiveService.ReadGuard guard = service.acquireReadGuard();
+    CountDownLatch started = new CountDownLatch(1);
+    FutureTask<Void> commit = new FutureTask<>(() -> {
+      started.countDown();
+      service.commitBlock(b);
+      return null;
+    });
+    Thread t = new Thread(commit);
+    t.start();
+
+    assertTrue(started.await(1, TimeUnit.SECONDS));
+    Thread.sleep(100);
+    assertFalse(index.getBlockRange(5).isPresent());
+    guard.close();
+    commit.get(1, TimeUnit.SECONDS);
+    assertTrue(index.getBlockRange(5).isPresent());
+  }
+
+  @Test
+  public void preCoverageUnwindIsNoop() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    DefaultArchiveService service = new DefaultArchiveService(true, index, context);
+
+    service.unwindBlock(block(100));
+    assertFalse(index.getBlockRange(100).isPresent());
+    assertFalse(context.current().isPresent());
   }
 
   @Test

@@ -84,6 +84,14 @@ public final class HistoricalTraceSupport {
   public TraceResult traceCall(byte[] ownerAddress, byte[] contractAddress, long callValue,
       byte[] data, String blockNumOrTag) throws JsonRpcInvalidParamsException,
       JsonRpcInvalidRequestException, JsonRpcInternalException {
+    try (ArchiveService.ReadGuard ignored = readGuard()) {
+      return traceCallLocked(ownerAddress, contractAddress, callValue, data, blockNumOrTag);
+    }
+  }
+
+  private TraceResult traceCallLocked(byte[] ownerAddress, byte[] contractAddress, long callValue,
+      byte[] data, String blockNumOrTag) throws JsonRpcInvalidParamsException,
+      JsonRpcInvalidRequestException, JsonRpcInternalException {
     if (JsonRpcApiUtil.LATEST_STR.equalsIgnoreCase(blockNumOrTag)) {
       throw new JsonRpcInternalException("historical debug_traceCall invoked for the latest tag");
     }
@@ -108,7 +116,7 @@ public final class HistoricalTraceSupport {
       throw new JsonRpcInvalidRequestException(
           e.getMessage() == null ? CONTRACT_VALIDATE_ERROR : e.getMessage());
     }
-    return runTrace(historicalBlock, point, trxCap, "historical debug_traceCall");
+    return runTrace(historicalBlock, point, trxCap, true, "historical debug_traceCall");
   }
 
   /**
@@ -128,6 +136,14 @@ public final class HistoricalTraceSupport {
    * opcode execution, so an empty-structLogs {@link TraceResult} is returned (Geth-friendly).
    */
   public TraceResult traceTransaction(byte[] txId, Object traceOptions)
+      throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
+      JsonRpcInternalException {
+    try (ArchiveService.ReadGuard ignored = readGuard()) {
+      return traceTransactionLocked(txId, traceOptions);
+    }
+  }
+
+  private TraceResult traceTransactionLocked(byte[] txId, Object traceOptions)
       throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
       JsonRpcInternalException {
     ByteString txIdBs = ByteString.copyFrom(txId);
@@ -210,7 +226,7 @@ public final class HistoricalTraceSupport {
     ArchiveStatePoint point = ArchiveStatePoint.blockEnd(blockNum, blockHash, t - 1);
     // Reuse the real transaction so feeLimit (hence the energy limit) is preserved.
     TransactionCapsule trxCap = new TransactionCapsule(tx);
-    return runTrace(historicalBlock, point, trxCap, "historical debug_traceTransaction");
+    return runTrace(historicalBlock, point, trxCap, false, "historical debug_traceTransaction");
   }
 
   private static void requireBlockHash(byte[] blockHash, String source, long blockNum)
@@ -226,7 +242,7 @@ public final class HistoricalTraceSupport {
    * executor with the given {@link TransactionCapsule}, and render the Geth structLogs result.
    */
   private TraceResult runTrace(BlockCapsule historicalBlock, ArchiveStatePoint point,
-      TransactionCapsule trxCap, String label)
+      TransactionCapsule trxCap, boolean useConstantEnergyCap, String label)
       throws JsonRpcInvalidRequestException, JsonRpcInternalException {
     DynamicPropertiesStore latestStore =
         StoreFactory.getInstance().getChainBaseManager().getDynamicPropertiesStore();
@@ -238,7 +254,8 @@ public final class HistoricalTraceSupport {
       VmDynamicProperties vmProperties = new HistoricalArchiveVmDynamicProperties(
           latestStore, historicalEnergyFee, reader, genesisComplete);
       HistoricalTraceCallResult result = new HistoricalTraceCallExecutor()
-          .execute(reader, vmProperties, historicalBlock, trxCap, genesisComplete);
+          .execute(reader, vmProperties, historicalBlock, trxCap, genesisComplete,
+              useConstantEnergyCap);
       return toTraceResult(result);
     } catch (ContractValidateException e) {
       throw new JsonRpcInvalidRequestException(
@@ -295,6 +312,14 @@ public final class HistoricalTraceSupport {
   private void requireArchiveAvailable() throws JsonRpcInternalException {
     try {
       archiveService.validateAvailable();
+    } catch (ArchiveException e) {
+      throw new JsonRpcInternalException(e.getMessage());
+    }
+  }
+
+  private ArchiveService.ReadGuard readGuard() throws JsonRpcInternalException {
+    try {
+      return archiveService.acquireReadGuard();
     } catch (ArchiveException e) {
       throw new JsonRpcInternalException(e.getMessage());
     }

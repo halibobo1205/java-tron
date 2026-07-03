@@ -21,6 +21,7 @@ public final class PersistentArchiveTxNumIndex implements ArchiveTxNumIndex, Aut
 
   public PersistentArchiveTxNumIndex(RocksDbArchiveBlockRangeStore store) {
     this.store = store;
+    store.validateNoRepairRequired();
     store.validateCursorConsistentWithLastRange();
     store.validateContiguousCoverage();
     store.validatePositionCoverage();
@@ -112,6 +113,11 @@ public final class PersistentArchiveTxNumIndex implements ArchiveTxNumIndex, Aut
   @Override
   public OptionalLong findTxNumByTxId(byte[] txId) {
     return store.findTxNumByTxId(txId);
+  }
+
+  @Override
+  public void markRepairRequired(String reason) {
+    store.markRepairRequired(reason);
   }
 
   @Override
