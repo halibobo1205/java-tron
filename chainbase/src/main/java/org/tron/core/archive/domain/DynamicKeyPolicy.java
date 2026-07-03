@@ -48,6 +48,7 @@ public final class DynamicKeyPolicy {
     root("TOTAL_ENERGY_WEIGHT", DynamicKeyClass.RESOURCE_PARAMETER);
     root("TOTAL_TRON_POWER_WEIGHT", DynamicKeyClass.RESOURCE_PARAMETER);
     root("EXCHANGE_BALANCE_LIMIT", DynamicKeyClass.RESOURCE_PARAMETER);
+    root("MARKET_QUANTITY_LIMIT", DynamicKeyClass.RESOURCE_PARAMETER);
     root("MAX_DELEGATE_LOCK_PERIOD", DynamicKeyClass.RESOURCE_PARAMETER);
     root("MAX_CREATE_ACCOUNT_TX_SIZE", DynamicKeyClass.RESOURCE_PARAMETER);
 
@@ -77,6 +78,10 @@ public final class DynamicKeyPolicy {
     root("ALLOW_CANCEL_ALL_UNFREEZE_V2", DynamicKeyClass.GOVERNANCE_PARAMETER);
     root("ALLOW_OLD_REWARD_OPT", DynamicKeyClass.GOVERNANCE_PARAMETER);
     root("PROPOSAL_EXPIRE_TIME", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("LATEST_PROPOSAL_NUM", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("LATEST_EXCHANGE_NUM", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("TOTAL_SIGN_NUM", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("TOKEN_ID_NUM", DynamicKeyClass.GOVERNANCE_PARAMETER);
 
     // --- IN_GLOBAL_ROOT: VM / fork-gate config (changes historical execution) ---
     root("ALLOW_CREATION_OF_CONTRACTS", DynamicKeyClass.VM_CONFIG);
