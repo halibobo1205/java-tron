@@ -143,6 +143,10 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
         throw new ArchiveException("archive txNum cursor " + cursor
             + " exists without a committed block range");
       }
+      if (firstArchivedBlock != NO_FIRST_BLOCK) {
+        throw new ArchiveException(
+            "archive first-block marker exists without a committed block range");
+      }
       return;
     }
     long expectedCursor = lastRange.get().getLastTxNum() + 1;
@@ -210,13 +214,15 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
       throw new ArchiveException("archive tx-position mismatch for committed txNum " + txNum);
     }
     if (position.getPhase() == ArchivePhase.BLOCK_PREPARE) {
-      if (txNum != range.getPrepareTxNum() || position.getTxIndex() != -1) {
+      if (txNum != range.getPrepareTxNum() || position.getTxIndex() != -1
+          || position.getTxId().length != 0) {
         throw new ArchiveException("archive prepare tx-position mismatch for txNum " + txNum);
       }
       return;
     }
     if (position.getPhase() == ArchivePhase.BLOCK_FINALIZE) {
-      if (txNum != range.getFinalizeTxNum() || position.getTxIndex() != -1) {
+      if (txNum != range.getFinalizeTxNum() || position.getTxIndex() != -1
+          || position.getTxId().length != 0) {
         throw new ArchiveException("archive finalize tx-position mismatch for txNum " + txNum);
       }
       return;
@@ -224,6 +230,10 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
     if (position.getPhase() != ArchivePhase.USER_TX || position.getTxIndex() < 0
         || position.getTxIndex() >= range.getUserTxCount()) {
       throw new ArchiveException("archive user tx-position mismatch for txNum " + txNum);
+    }
+    long expectedTxNum = range.getFirstTxNum() + 1 + position.getTxIndex();
+    if (position.getTxNum() != expectedTxNum) {
+      throw new ArchiveException("archive user tx-position order mismatch for txNum " + txNum);
     }
     OptionalLong byBlockIndex = findTxNumByBlockAndIndex(
         position.getBlockNum(), position.getTxIndex());

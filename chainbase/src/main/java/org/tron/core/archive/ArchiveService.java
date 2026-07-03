@@ -31,6 +31,10 @@ public interface ArchiveService {
   default void validateCanonicalHead(BlockCapsule canonicalHead) {
   }
 
+  /** Runtime guard: fail closed if archive has seen a fatal post-canonical failure. */
+  default void validateAvailable() {
+  }
+
   /** True when this sidecar has a committed archive range for {@code blockNum}. */
   default boolean hasCommittedBlock(long blockNum) {
     return false;

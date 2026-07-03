@@ -357,6 +357,35 @@ public class RocksDbArchiveTemporalStoreTest {
     assertArrayEquals(new byte[] {0x0B}, store.latest(domain, keyB).get().getValue()); // untouched
   }
 
+  @Test
+  public void validateTxNumsCoveredRejectsHistoryWithoutCommittedPosition() {
+    store.putChange(change(8, DomainValue.tombstone(), DomainValue.present(new byte[] {0x0B})));
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> store.validateTxNumsCovered(txNum -> false));
+
+    assertTrue(ex.getMessage().contains("history txNum"));
+  }
+
+  @Test
+  public void validateTxNumsCoveredRejectsChangesetWithoutHistory() throws Exception {
+    store.putChange(change(8, DomainValue.tombstone(), DomainValue.present(new byte[] {0x0B})));
+    store.close();
+    try (Options options = new Options().setCreateIfMissing(false);
+        RocksDB db = RocksDB.open(options, dir.toString());
+        WriteBatch batch = new WriteBatch();
+        WriteOptions writeOptions = new WriteOptions()) {
+      batch.delete(ArchiveTemporalCodec.historyKey(ArchiveDomain.ACCOUNT, KEY, 8));
+      db.write(writeOptions, batch);
+    }
+    store = new RocksDbArchiveTemporalStore(dir.toString());
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> store.validateTxNumsCovered(txNum -> true));
+
+    assertTrue(ex.getMessage().contains("history missing"));
+  }
+
   private static void deleteRecursively(File f) {
     File[] children = f.listFiles();
     if (children != null) {

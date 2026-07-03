@@ -60,6 +60,8 @@ public final class DynamicKeyPolicy {
     root("WITNESS_STANDBY_ALLOWANCE", DynamicKeyClass.GOVERNANCE_PARAMETER);
     root("REMOVE_THE_POWER_OF_THE_GR", DynamicKeyClass.GOVERNANCE_PARAMETER);
     root("ALLOW_UPDATE_ACCOUNT_NAME", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    // DynamicPropertiesStore's persisted key intentionally has a leading space.
+    root(" ALLOW_SAME_TOKEN_NAME", DynamicKeyClass.GOVERNANCE_PARAMETER);
     root("ALLOW_SAME_TOKEN_NAME", DynamicKeyClass.GOVERNANCE_PARAMETER);
     root("ALLOW_DELEGATE_RESOURCE", DynamicKeyClass.GOVERNANCE_PARAMETER);
     root("ALLOW_ADAPTIVE_ENERGY", DynamicKeyClass.GOVERNANCE_PARAMETER);

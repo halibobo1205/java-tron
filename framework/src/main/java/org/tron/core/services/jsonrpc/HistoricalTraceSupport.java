@@ -11,6 +11,7 @@ import java.util.Optional;
 import java.util.OptionalLong;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.Wallet;
+import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveService;
 import org.tron.core.archive.DefaultArchiveService;
@@ -258,6 +259,7 @@ public final class HistoricalTraceSupport {
     if (!(archiveService instanceof DefaultArchiveService)) {
       throw new JsonRpcInternalException("archive is not available");
     }
+    requireArchiveAvailable();
     return ((DefaultArchiveService) archiveService).getTxNumIndex();
   }
 
@@ -273,6 +275,7 @@ public final class HistoricalTraceSupport {
     if (!(archiveService instanceof DefaultArchiveService)) {
       throw new JsonRpcInternalException("archive is not available");
     }
+    requireArchiveAvailable();
     ArchiveStateReaderFactory factory = ((DefaultArchiveService) archiveService).getReaderFactory();
     if (factory == null) {
       throw new JsonRpcInternalException("archive reader is not available");
@@ -280,12 +283,21 @@ public final class HistoricalTraceSupport {
     return factory;
   }
 
-  private boolean isGenesisComplete() {
+  private boolean isGenesisComplete() throws JsonRpcInternalException {
     if (!(archiveService instanceof DefaultArchiveService)) {
       return false;
     }
+    requireArchiveAvailable();
     long first = ((DefaultArchiveService) archiveService).getTxNumIndex().getFirstArchivedBlock();
     return first == 0;
+  }
+
+  private void requireArchiveAvailable() throws JsonRpcInternalException {
+    try {
+      archiveService.validateAvailable();
+    } catch (ArchiveException e) {
+      throw new JsonRpcInternalException(e.getMessage());
+    }
   }
 
 }

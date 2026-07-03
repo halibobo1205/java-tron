@@ -20,8 +20,12 @@ import org.rocksdb.RocksDB;
 import org.rocksdb.RocksDBException;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
+import org.tron.core.archive.capture.ArchiveChangeRecord;
+import org.tron.core.archive.codec.DomainValue;
+import org.tron.core.archive.domain.ArchiveDomain;
 import org.tron.core.archive.temporal.RocksDbArchiveTemporalStore;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
+import org.tron.core.archive.txnum.ArchiveTxPosition;
 import org.tron.core.archive.txnum.PersistentArchiveTxNumIndex;
 import org.tron.core.archive.txnum.RocksDbArchiveBlockRangeStore;
 import org.tron.core.capsule.BlockCapsule;
@@ -297,6 +301,42 @@ public class NoopArchiveServiceTest {
       ArchiveException ex = assertThrows(ArchiveException.class,
           () -> ArchiveServiceFactory.create(config, dir.toString()));
       assertTrue(ex.getMessage().contains("commit marker missing"));
+    } finally {
+      deleteRecursively(dir.toFile());
+    }
+  }
+
+  @Test
+  public void factoryRejectsTemporalHistoryOutsideCommittedIndexRange() throws IOException {
+    StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
+    config.setEnable(true);
+    Path dir = Files.createTempDirectory("archive-factory-orphan-history-test");
+    try {
+      DefaultArchiveService service =
+          (DefaultArchiveService) ArchiveServiceFactory.create(config, dir.toString());
+      BlockCapsule block = new BlockCapsule(1, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY);
+      service.beginBlock(block, ArchiveSource.NORMAL);
+      service.beginSystemTx(block, ArchivePhase.BLOCK_PREPARE);
+      service.endTx();
+      service.beginSystemTx(block, ArchivePhase.BLOCK_FINALIZE);
+      service.endTx();
+      service.commitBlock(block);
+      service.close();
+
+      RocksDbArchiveTemporalStore temporal =
+          new RocksDbArchiveTemporalStore(dir.resolve("temporal").toString());
+      try {
+        temporal.putChange(new ArchiveChangeRecord(
+            new ArchiveTxPosition(99, 99, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, null),
+            ArchiveDomain.ACCOUNT, new byte[] {0x01},
+            DomainValue.tombstone(), DomainValue.present(new byte[] {0x02})));
+      } finally {
+        temporal.close();
+      }
+
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> ArchiveServiceFactory.create(config, dir.toString()));
+      assertTrue(ex.getMessage().contains("history txNum"));
     } finally {
       deleteRecursively(dir.toFile());
     }
