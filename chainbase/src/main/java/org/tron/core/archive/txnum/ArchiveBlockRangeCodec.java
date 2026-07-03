@@ -36,6 +36,7 @@ public final class ArchiveBlockRangeCodec {
   static final byte POSITION_PREFIX = 0x03;
   static final byte BLOCK_INDEX_PREFIX = 0x04;
   static final byte TX_ID_PREFIX = 0x05;
+  static final byte[] REPAIR_REQUIRED_KEY = {0x06};
 
   private ArchiveBlockRangeCodec() {
   }
@@ -137,6 +138,14 @@ public final class ArchiveBlockRangeCodec {
 
   static long decodeFirstBlock(byte[] bytes) {
     return Longs.fromByteArray(bytes);
+  }
+
+  static byte[] encodeRepairRequired(String reason) {
+    return reason.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+  }
+
+  static String decodeRepairRequired(byte[] bytes) {
+    return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
   }
 
   private static long longAt(byte[] bytes, int offset) {

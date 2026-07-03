@@ -37,9 +37,6 @@ public final class InMemoryArchiveTemporalStore implements ArchiveTemporalStore 
 
   @Override
   public void putChange(ArchiveChangeRecord record) {
-    if (record.isSameValue()) {
-      return;
-    }
     Map<WrappedByteArray, KeyState> domainMap =
         byDomain.computeIfAbsent(record.getDomain(), d -> new HashMap<>());
     KeyState state = domainMap.computeIfAbsent(
@@ -88,7 +85,7 @@ public final class InMemoryArchiveTemporalStore implements ArchiveTemporalStore 
         if (!dropped.isEmpty()) {
           // Restore latest to the smallest dropped change's pre-value = value at end of
           // (fromTxNum - 1); independent of any surviving (older) history.
-          state.latest = dropped.get(dropped.firstKey());
+          state.latest = fromTxNum == 0 ? null : dropped.get(dropped.firstKey());
           dropped.clear();
         }
         if (state.history.isEmpty() && state.latest == null) {

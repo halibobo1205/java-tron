@@ -12,7 +12,10 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.List;
+import java.util.Optional;
 import org.junit.After;
 import org.junit.Test;
 import org.rocksdb.Options;
@@ -30,6 +33,7 @@ import org.tron.core.archive.txnum.PersistentArchiveTxNumIndex;
 import org.tron.core.archive.txnum.RocksDbArchiveBlockRangeStore;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.config.args.StorageConfig;
+import org.tron.protos.Protocol.Account;
 
 public class NoopArchiveServiceTest {
 
@@ -342,6 +346,81 @@ public class NoopArchiveServiceTest {
     }
   }
 
+  @Test
+  public void factoryReopensAfterUnwindingOnlyArchivedBlock() throws IOException {
+    StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
+    config.setEnable(true);
+    Path dir = Files.createTempDirectory("archive-factory-unwind-empty-test");
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        7, 0, 1, 0, 1, blockHash(7), 0, ArchiveSource.NORMAL);
+    ArchiveChangeRecord change = new ArchiveChangeRecord(
+        new ArchiveTxPosition(0, 7, ArchivePhase.BLOCK_PREPARE, ArchiveSource.NORMAL, -1, null),
+        ArchiveDomain.ACCOUNT, new byte[] {0x41},
+        DomainValue.tombstone(), DomainValue.present(new byte[] {0x01}));
+
+    RocksDbArchiveTemporalStore temporal =
+        new RocksDbArchiveTemporalStore(dir.resolve("temporal").toString());
+    try {
+      temporal.putBlockChanges(range, Collections.singletonList(change));
+      temporal.unwindBlock(range);
+      assertFalse(temporal.hasDataBeyondManifest());
+    } finally {
+      temporal.close();
+    }
+    RocksDbArchiveBlockRangeStore index =
+        new RocksDbArchiveBlockRangeStore(dir.resolve("index").toString());
+    try {
+      index.commitRange(range, 2, Arrays.asList(
+          new ArchiveTxPosition(0, 7, ArchivePhase.BLOCK_PREPARE, ArchiveSource.NORMAL, -1, null),
+          new ArchiveTxPosition(1, 7, ArchivePhase.BLOCK_FINALIZE, ArchiveSource.NORMAL, -1,
+              null)));
+      index.unwindRange(range, 0);
+    } finally {
+      index.close();
+    }
+
+    try {
+      DefaultArchiveService reopened =
+          (DefaultArchiveService) ArchiveServiceFactory.create(config, dir.toString());
+      reopened.close();
+    } finally {
+      deleteRecursively(dir.toFile());
+    }
+  }
+
+  @Test
+  public void factoryRejectsPersistentRepairMarkerAfterFatalCommitFailure() throws IOException {
+    StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
+    config.setEnable(true);
+    Path dir = Files.createTempDirectory("archive-factory-repair-marker-test");
+    RocksDbArchiveTemporalStore persistentTemporal =
+        new RocksDbArchiveTemporalStore(dir.resolve("temporal").toString());
+    persistentTemporal.close();
+    RocksDbArchiveBlockRangeStore blockRangeStore =
+        new RocksDbArchiveBlockRangeStore(dir.resolve("index").toString());
+    PersistentArchiveTxNumIndex txNumIndex = new PersistentArchiveTxNumIndex(blockRangeStore);
+    DefaultArchiveService service = new DefaultArchiveService(true, txNumIndex,
+        ArchiveExecutionContextHolder.get(), new FailingTemporalStore());
+    BlockCapsule block = new BlockCapsule(1, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY);
+    service.beginBlock(block, ArchiveSource.NORMAL);
+    service.beginSystemTx(block, ArchivePhase.BLOCK_PREPARE);
+    service.endTx();
+    service.beginSystemTx(block, ArchivePhase.BLOCK_FINALIZE);
+    service.getCaptureEngine().capturePut(
+        "account", new byte[21], null, Account.newBuilder().setBalance(1).build().toByteArray());
+    service.endTx();
+    assertThrows(ArchiveException.class, () -> service.commitBlock(block));
+    service.close();
+
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> ArchiveServiceFactory.create(config, dir.toString()));
+      assertTrue(ex.getMessage().contains("requires repair"));
+    } finally {
+      deleteRecursively(dir.toFile());
+    }
+  }
+
   @After
   public void clearCaptureHolder() {
     // An enabled DefaultArchiveService installs a static capture engine; clear between tests.
@@ -371,6 +450,34 @@ public class NoopArchiveServiceTest {
       rawDb.put(new byte[] {0x01}, Longs.toByteArray(cursor));
     } catch (RocksDBException e) {
       throw new ArchiveException("failed to overwrite archive cursor for test", e);
+    }
+  }
+
+  private static final class FailingTemporalStore
+      implements org.tron.core.archive.temporal.ArchiveTemporalStore {
+
+    @Override
+    public void putChange(ArchiveChangeRecord record) {
+      throw new ArchiveException("temporal failed");
+    }
+
+    @Override
+    public void putChanges(List<ArchiveChangeRecord> records) {
+      throw new ArchiveException("temporal failed");
+    }
+
+    @Override
+    public Optional<DomainValue> getAsOf(ArchiveDomain domain, byte[] canonicalKey, long txNum) {
+      return Optional.empty();
+    }
+
+    @Override
+    public Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey) {
+      return Optional.empty();
+    }
+
+    @Override
+    public void unwind(long fromTxNum) {
     }
   }
 }

@@ -209,9 +209,6 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
 
   private static void putChange(WriteBatch batch, ArchiveChangeRecord record)
       throws RocksDBException {
-    if (record.isSameValue()) {
-      return;
-    }
     ArchiveDomain domain = record.getDomain();
     byte[] key = record.getCanonicalKey();
     byte[] prevValue = ArchiveTemporalCodec.encodeValue(record.getPrevValue());
@@ -299,7 +296,11 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
       for (Map.Entry<WrappedByteArray, byte[]> e : affectedPrefix.entrySet()) {
         byte[] latestKey = e.getValue().clone();
         latestKey[0] = ArchiveTemporalCodec.LATEST_PREFIX;
-        batch.put(latestKey, restore.get(e.getKey()));
+        if (fromTxNum == 0) {
+          batch.delete(latestKey);
+        } else {
+          batch.put(latestKey, restore.get(e.getKey()));
+        }
       }
       if (deleteBlockMarker) {
         batch.delete(ArchiveTemporalCodec.blockCommitKey(blockNum));
