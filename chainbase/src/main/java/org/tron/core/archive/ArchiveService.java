@@ -19,12 +19,21 @@ public interface ArchiveService {
 
   void commitBlock(BlockCapsule block);
 
+  default void commitBlock(BlockCapsule block, int userTxCount) {
+    commitBlock(block);
+  }
+
   void abortBlock(BlockCapsule block);
 
   void unwindBlock(BlockCapsule block);
 
   /** Startup guard: fail closed if persisted archive head disagrees with canonical chain head. */
   default void validateCanonicalHead(BlockCapsule canonicalHead) {
+  }
+
+  /** True when this sidecar has a committed archive range for {@code blockNum}. */
+  default boolean hasCommittedBlock(long blockNum) {
+    return false;
   }
 
   void beginSystemTx(BlockCapsule block, ArchivePhase phase);

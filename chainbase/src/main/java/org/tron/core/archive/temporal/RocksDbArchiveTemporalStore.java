@@ -1,10 +1,13 @@
 package org.tron.core.archive.temporal;
 
+import com.google.common.primitives.Longs;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.LongPredicate;
 import org.rocksdb.Options;
 import org.rocksdb.RocksDB;
 import org.rocksdb.RocksDBException;
@@ -127,6 +130,40 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
       }
     } catch (RocksDBException e) {
       throw new ArchiveException("archive temporal commit marker read failed", e);
+    }
+  }
+
+  /** True when this temporal store contains any row other than its schema manifest. */
+  public boolean hasDataBeyondManifest() {
+    try (RocksIterator it = db.newIterator()) {
+      it.seekToFirst();
+      while (it.isValid()) {
+        if (!Arrays.equals(it.key(), ArchiveTemporalCodec.manifestKey())) {
+          return true;
+        }
+        it.next();
+      }
+      return false;
+    }
+  }
+
+  /** Fail closed if temporal commit markers refer to blocks absent from the txNum index. */
+  public void validateCommitMarkersCovered(LongPredicate hasIndexRange) {
+    try (RocksIterator it = db.newIterator()) {
+      it.seek(new byte[] {ArchiveTemporalCodec.BLOCK_COMMIT_PREFIX});
+      while (it.isValid() && it.key()[0] == ArchiveTemporalCodec.BLOCK_COMMIT_PREFIX) {
+        byte[] key = it.key();
+        if (key.length != 9) {
+          throw new ArchiveException("archive temporal commit marker has invalid key");
+        }
+        long blockNum = Longs.fromBytes(key[1], key[2], key[3], key[4],
+            key[5], key[6], key[7], key[8]);
+        if (!hasIndexRange.test(blockNum)) {
+          throw new ArchiveException(
+              "archive temporal commit marker has no index range for block " + blockNum);
+        }
+        it.next();
+      }
     }
   }
 
