@@ -1,6 +1,8 @@
 package org.tron.core.services.jsonrpc;
 
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.function.LongSupplier;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.ByteArray;
@@ -8,6 +10,7 @@ import org.tron.core.archive.reader.ArchiveReadResult;
 import org.tron.core.archive.reader.ArchiveReadResult.Status;
 import org.tron.core.archive.reader.ArchiveReaderException;
 import org.tron.core.archive.reader.ArchiveStateReader;
+import org.tron.core.config.Parameter.ForkBlockVersionEnum;
 import org.tron.core.store.VmDynamicProperties;
 
 /**
@@ -35,6 +38,8 @@ import org.tron.core.store.VmDynamicProperties;
 final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProperties {
 
   private final long latestBlockHeaderNumber;
+  private final long latestBlockHeaderTimestamp;
+  private final long maintenanceTimeInterval;
   private final long currentCycleNumber;
   private final long totalNetLimit;
   private final long totalNetWeight;
@@ -74,12 +79,17 @@ final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProp
   private final long allowStrictMath;
   private final long consensusLogicOptimization;
   private final long allowHardenResourceCalculation;
+  private final Map<Integer, byte[]> forkStatsByVersion;
 
   HistoricalArchiveVmDynamicProperties(VmDynamicProperties latest, long energyFee,
       ArchiveStateReader reader, boolean genesisComplete) throws ArchiveReaderException {
     super(latest, energyFee);
     CommonParameter p = CommonParameter.getInstance();
     this.latestBlockHeaderNumber = reader.getPoint().getBlockNum();
+    this.latestBlockHeaderTimestamp = resolve(reader, "latest_block_header_timestamp",
+        genesisComplete, 0L, latest::getLatestBlockHeaderTimestamp);
+    this.maintenanceTimeInterval = resolve(reader, "MAINTENANCE_TIME_INTERVAL", genesisComplete,
+        p.getMaintenanceTimeInterval(), latest::getMaintenanceTimeInterval);
     this.currentCycleNumber = resolve(reader, "CURRENT_CYCLE_NUMBER", genesisComplete,
         0L, latest::getCurrentCycleNumber);
     this.totalNetLimit = resolve(reader, "TOTAL_NET_LIMIT", genesisComplete,
@@ -158,6 +168,8 @@ final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProp
         genesisComplete, p.getConsensusLogicOptimization(), latest::getConsensusLogicOptimization);
     this.allowHardenResourceCalculation = resolve(reader, "ALLOW_HARDEN_RESOURCE_CALCULATION",
         genesisComplete, 0L, latest::getAllowHardenResourceCalculation);
+    this.forkStatsByVersion = resolveForkStats(reader, genesisComplete,
+        ForkBlockVersionEnum.VERSION_4_7_1, ForkBlockVersionEnum.VERSION_4_8_1_1);
   }
 
   private static long resolve(ArchiveStateReader reader, String key, boolean genesisComplete,
@@ -185,9 +197,49 @@ final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProp
         "archive dynamic property " + key + " is unknown before mid-chain coverage");
   }
 
+  private static Map<Integer, byte[]> resolveForkStats(ArchiveStateReader reader,
+      boolean genesisComplete, ForkBlockVersionEnum... versions) throws ArchiveReaderException {
+    Map<Integer, byte[]> statsByVersion = new HashMap<>();
+    for (ForkBlockVersionEnum version : versions) {
+      int value = version.getValue();
+      String key = "FORK_VERSION_" + value;
+      ArchiveReadResult<byte[]> r =
+          reader.getDynamicProperty(key.getBytes(StandardCharsets.US_ASCII));
+      if (r.isPresent()) {
+        statsByVersion.put(value, r.getValue().clone());
+        continue;
+      }
+      if (r.getStatus() == Status.TOMBSTONE) {
+        throw new ArchiveReaderException(ArchiveReaderException.Reason.CORRUPT_VALUE,
+            "archive dynamic property " + key + " is tombstoned");
+      }
+      if (!genesisComplete) {
+        throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
+            "archive dynamic property " + key + " is unknown before mid-chain coverage");
+      }
+    }
+    return statsByVersion;
+  }
+
   @Override
   public long getLatestBlockHeaderNumber() {
     return latestBlockHeaderNumber;
+  }
+
+  @Override
+  public long getLatestBlockHeaderTimestamp() {
+    return latestBlockHeaderTimestamp;
+  }
+
+  @Override
+  public long getMaintenanceTimeInterval() {
+    return maintenanceTimeInterval;
+  }
+
+  @Override
+  public byte[] statsByVersion(int version) {
+    byte[] stats = forkStatsByVersion.get(version);
+    return stats == null ? null : stats.clone();
   }
 
   @Override

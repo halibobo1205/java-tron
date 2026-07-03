@@ -111,8 +111,8 @@ public class Create2ModExpForkTest extends BaseTest {
   @Test
   public void createContract2_atMaxDepth_legacyPath_throwsAfterFork()
       throws ContractValidateException {
-    VMConfig.initAllowTvmCompatibleEvm(0);
     activateFork(ForkBlockVersionEnum.VERSION_4_8_1_1);
+    VMConfig.initAllowTvmCompatibleEvm(0);
 
     Program program = buildProgramAtMaxDepth();
     OutOfTimeException ex = Assert.assertThrows(OutOfTimeException.class,
@@ -124,8 +124,8 @@ public class Create2ModExpForkTest extends BaseTest {
   @Test
   public void createContract2_atMaxDepth_compatibleEvmOn_doesNotThrow()
       throws ContractValidateException {
-    VMConfig.initAllowTvmCompatibleEvm(1);
     activateFork(ForkBlockVersionEnum.VERSION_4_8_1_1);
+    VMConfig.initAllowTvmCompatibleEvm(1);
 
     Program program = buildProgramAtMaxDepth();
     program.createContract2(DataWord.ZERO(), DataWord.ZERO(), DataWord.ZERO(), DataWord.ZERO());
@@ -168,11 +168,13 @@ public class Create2ModExpForkTest extends BaseTest {
     long hardForkTime = ((forkVersion.getHardForkTime() - 1) / maintenanceTimeInterval + 1)
         * maintenanceTimeInterval;
     chainBaseManager.getDynamicPropertiesStore().saveLatestBlockHeaderTimestamp(hardForkTime + 1);
+    ConfigLoader.load(chainBaseManager.getDynamicPropertiesStore(), false);
   }
 
   private void deactivateFork(ForkBlockVersionEnum forkVersion) {
     chainBaseManager.getDynamicPropertiesStore()
         .statsByVersion(forkVersion.getValue(), new byte[27]);
     chainBaseManager.getDynamicPropertiesStore().saveLatestBlockHeaderTimestamp(0L);
+    ConfigLoader.load(chainBaseManager.getDynamicPropertiesStore(), false);
   }
 }

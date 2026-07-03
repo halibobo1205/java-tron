@@ -4,7 +4,9 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import java.util.Arrays;
 import org.junit.Test;
+import org.tron.core.config.Parameter.ForkBlockVersionEnum;
 import org.tron.core.store.VmDynamicProperties;
 
 /**
@@ -14,6 +16,8 @@ import org.tron.core.store.VmDynamicProperties;
  * unchanged because {@code load(StoreFactory)} now delegates here with the live store.
  */
 public class ConfigLoaderVmPropertiesTest {
+
+  private static final long MAINTENANCE_INTERVAL = 6 * 60 * 60 * 1000L;
 
   /** A VmDynamicProperties whose every long getter returns {@code v}, boolean getter {@code b}. */
   private static final class StubProps implements VmDynamicProperties {
@@ -27,6 +31,25 @@ public class ConfigLoaderVmPropertiesTest {
 
     public long getLatestBlockHeaderNumber() {
       return v;
+    }
+
+    public long getLatestBlockHeaderTimestamp() {
+      if (v == 0L) {
+        return 0L;
+      }
+      return hardForkTime(ForkBlockVersionEnum.VERSION_4_8_1_1) + 1;
+    }
+
+    public long getMaintenanceTimeInterval() {
+      return MAINTENANCE_INTERVAL;
+    }
+
+    public byte[] statsByVersion(int version) {
+      byte[] stats = new byte[27];
+      if (v != 0L) {
+        Arrays.fill(stats, (byte) 1);
+      }
+      return stats;
     }
 
     public long getCurrentCycleNumber() {
@@ -199,6 +222,8 @@ public class ConfigLoaderVmPropertiesTest {
       assertTrue(VMConfig.allowStrictMath());
       assertTrue(VMConfig.allowTvmTransferTrc10());
       assertTrue(VMConfig.allowTvmFreezeV2()); // from supportUnfreezeDelay()
+      assertTrue(VMConfig.passFork471());
+      assertTrue(VMConfig.passFork4811());
       assertEquals(1L, VMConfig.getDynamicEnergyThreshold());
 
       // Inactive view: the same flags turn off, proving the load is data-driven, not constant.
@@ -208,9 +233,16 @@ public class ConfigLoaderVmPropertiesTest {
       assertFalse(VMConfig.allowStrictMath());
       assertFalse(VMConfig.allowTvmTransferTrc10());
       assertFalse(VMConfig.allowTvmFreezeV2());
+      assertFalse(VMConfig.passFork471());
+      assertFalse(VMConfig.passFork4811());
       assertEquals(0L, VMConfig.getDynamicEnergyThreshold());
     } finally {
       ConfigLoader.disable = prevDisable;
     }
+  }
+
+  private static long hardForkTime(ForkBlockVersionEnum version) {
+    return ((version.getHardForkTime() - 1) / MAINTENANCE_INTERVAL + 1)
+        * MAINTENANCE_INTERVAL;
   }
 }

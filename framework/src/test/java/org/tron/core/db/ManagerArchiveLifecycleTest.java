@@ -140,6 +140,25 @@ public class ManagerArchiveLifecycleTest extends BaseMethodTest {
   }
 
   @Test
+  public void archiveAbortAndFailStopEscalatesRecoveryFailure() {
+    ArchiveService failingArchive = mock(ArchiveService.class);
+    BlockCapsule block = new BlockCapsule(1, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY);
+    ArchiveException abortFailure = new ArchiveException("abort failed");
+    RuntimeException primary = new RuntimeException("recovery failed");
+    doThrow(abortFailure).when(failingArchive).abortBlock(block);
+    ReflectUtils.setFieldValue(dbManager, "archiveService", failingArchive);
+
+    TronError error = assertThrows(TronError.class,
+        () -> dbManager.abortArchiveBlockAndFailStop(block, "switch fork recovery", primary));
+
+    assertEquals(TronError.ErrCode.ARCHIVE_RUNTIME, error.getErrCode());
+    assertTrue(error.getMessage().contains("switch fork recovery"));
+    assertEquals(primary, error.getCause());
+    assertEquals(1, primary.getSuppressed().length);
+    assertEquals(abortFailure, primary.getSuppressed()[0]);
+  }
+
+  @Test
   public void pushBlockAllocatesTxNumRangeAndEraseUnwinds() throws Exception {
     BlockCapsule block = signedEmptyBlock();
 

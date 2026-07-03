@@ -1127,7 +1127,12 @@ public class Manager {
     }
   }
 
-  private TronError archiveRuntimeError(String action, BlockCapsule block, RuntimeException e) {
+  void abortArchiveBlockAndFailStop(BlockCapsule block, String action, Throwable primary) {
+    abortArchiveBlockBestEffort(block, action, primary);
+    throw archiveRuntimeError(action, block, primary);
+  }
+
+  private TronError archiveRuntimeError(String action, BlockCapsule block, Throwable e) {
     logger.error("Archive {} failed after canonical state changed for block {}.",
         action, block.getNum(), e);
     return new TronError(
@@ -1284,7 +1289,7 @@ public class Manager {
               try (ISession tmpSession = revokingStore.buildSession()) {
                 applyBlock(khaosBlock.getBlk().setSwitch(true));
                 tmpSession.commit();
-                // Archive commit inside try; recovery catch swallows, so commit only on success.
+                // Archive commit inside try; recovery failures fail-stop below.
                 commitArchiveBlockOrFailStop(khaosBlock.getBlk(), "switch fork recovery");
               } catch (AccountResourceInsufficientException
                   | ValidateSignatureException
@@ -1302,8 +1307,8 @@ public class Manager {
                   | BadBlockException
                   | EventBloomException
                   | RuntimeException e) {
-                abortArchiveBlockBestEffort(khaosBlock.getBlk(), "switch fork recovery", e);
                 logger.warn(e.getMessage(), e);
+                abortArchiveBlockAndFailStop(khaosBlock.getBlk(), "switch fork recovery", e);
               }
             }
           }

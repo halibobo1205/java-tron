@@ -61,22 +61,32 @@ public class VMConfigIsolationTest {
   @Test
   public void testLocalConfigDoesNotPolluteGlobalAcrossThreads() throws InterruptedException {
     VMConfig.initAllowTvmOsaka(1);            // global (HEAD) view: activated
+    VMConfig.initPassFork4811(true);
     assertTrue(VMConfig.allowTvmOsaka());     // no thread-local -> reads global
+    assertTrue(VMConfig.passFork4811());
 
     VMConfig.Snapshot local = new VMConfig.Snapshot();
     local.allowTvmOsaka = false;              // simulate a not-yet-solidified snapshot
+    local.passFork4811 = false;
     VMConfig.setLocalSnapshot(local);
 
     // this thread now sees its own (solidity) view...
     assertFalse(VMConfig.allowTvmOsaka());
+    assertFalse(VMConfig.passFork4811());
 
     // ...but another thread (e.g. block processing) must still see the global HEAD value.
     AtomicBoolean otherThreadSaw = new AtomicBoolean(false);
-    Thread t = new Thread(() -> otherThreadSaw.set(VMConfig.allowTvmOsaka()));
+    AtomicBoolean otherThreadSawFork = new AtomicBoolean(false);
+    Thread t = new Thread(() -> {
+      otherThreadSaw.set(VMConfig.allowTvmOsaka());
+      otherThreadSawFork.set(VMConfig.passFork4811());
+    });
     t.start();
     t.join();
     assertTrue("global config must be unaffected by another thread's local view",
         otherThreadSaw.get());
+    assertTrue("global fork config must be unaffected by another thread's local view",
+        otherThreadSawFork.get());
 
     // after dropping the local view, this thread falls back to the global value again.
     VMConfig.clearLocalSnapshot();
@@ -96,8 +106,11 @@ public class VMConfigIsolationTest {
 
     VMConfig.Snapshot head = new VMConfig.Snapshot();
     head.allowTvmOsaka = false;
+    head.passFork4811 = false;
     VMConfig.setGlobalSnapshot(head);
     assertFalse("setGlobalSnapshot must drop the thread-local view", VMConfig.allowTvmOsaka());
+    assertFalse("setGlobalSnapshot must drop the fork thread-local view",
+        VMConfig.passFork4811());
   }
 
   // Deep-copy the current global config through the public getters (no thread-local set here, so
@@ -130,6 +143,8 @@ public class VMConfigIsolationTest {
     snapshot.allowTvmSelfdestructRestriction = VMConfig.allowTvmSelfdestructRestriction();
     snapshot.allowTvmOsaka = VMConfig.allowTvmOsaka();
     snapshot.allowHardenResourceCalculation = VMConfig.allowHardenResourceCalculation();
+    snapshot.passFork471 = VMConfig.passFork471();
+    snapshot.passFork4811 = VMConfig.passFork4811();
     return snapshot;
   }
 }

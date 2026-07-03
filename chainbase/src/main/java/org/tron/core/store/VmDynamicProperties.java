@@ -17,6 +17,12 @@ public interface VmDynamicProperties {
 
   long getLatestBlockHeaderNumber();
 
+  long getLatestBlockHeaderTimestamp();
+
+  long getMaintenanceTimeInterval();
+
+  byte[] statsByVersion(int version);
+
   long getCurrentCycleNumber();
 
   long getTotalNetLimit();

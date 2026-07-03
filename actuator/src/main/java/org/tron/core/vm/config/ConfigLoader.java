@@ -1,7 +1,10 @@
 package org.tron.core.vm.config;
 
+import static org.tron.common.math.Maths.ceil;
+
 import lombok.extern.slf4j.Slf4j;
 import org.tron.common.parameter.CommonParameter;
+import org.tron.core.config.Parameter.ForkBlockVersionEnum;
 import org.tron.core.store.StoreFactory;
 import org.tron.core.store.VmDynamicProperties;
 
@@ -50,7 +53,8 @@ public class ConfigLoader {
         snapshot.allowHigherLimitForMaxCpuTimeOfOneTx =
             ds.getAllowHigherLimitForMaxCpuTimeOfOneTx() == 1;
         snapshot.allowTvmFreezeV2 = ds.supportUnfreezeDelay();
-        snapshot.allowOptimizedReturnValueOfChainId = ds.getAllowOptimizedReturnValueOfChainId() == 1;
+        snapshot.allowOptimizedReturnValueOfChainId =
+            ds.getAllowOptimizedReturnValueOfChainId() == 1;
         snapshot.allowDynamicEnergy = ds.getAllowDynamicEnergy() == 1;
         snapshot.dynamicEnergyThreshold = ds.getDynamicEnergyThreshold();
         snapshot.dynamicEnergyIncreaseFactor = ds.getDynamicEnergyIncreaseFactor();
@@ -61,9 +65,12 @@ public class ConfigLoader {
         snapshot.allowTvmCancun = ds.getAllowTvmCancun() == 1;
         snapshot.disableJavaLangMath = ds.getConsensusLogicOptimization() == 1;
         snapshot.allowTvmBlob = ds.getAllowTvmBlob() == 1;
-        snapshot.allowTvmSelfdestructRestriction = ds.getAllowTvmSelfdestructRestriction() == 1;
+        snapshot.allowTvmSelfdestructRestriction =
+            ds.getAllowTvmSelfdestructRestriction() == 1;
         snapshot.allowTvmOsaka = ds.getAllowTvmOsaka() == 1;
         snapshot.allowHardenResourceCalculation = ds.getAllowHardenResourceCalculation() == 1;
+        snapshot.passFork471 = isForkActive(ds, ForkBlockVersionEnum.VERSION_4_7_1);
+        snapshot.passFork4811 = isForkActive(ds, ForkBlockVersionEnum.VERSION_4_8_1_1);
         if (isolate) {
           VMConfig.setLocalSnapshot(snapshot);
         } else {
@@ -78,5 +85,29 @@ public class ConfigLoader {
   private static boolean isEnergyLimitForkActive(VmDynamicProperties ds) {
     return ds.getLatestBlockHeaderNumber()
         >= CommonParameter.getInstance().getBlockNumForEnergyLimit();
+  }
+
+  private static boolean isForkActive(VmDynamicProperties ds, ForkBlockVersionEnum version) {
+    long maintenanceTimeInterval = ds.getMaintenanceTimeInterval();
+    if (maintenanceTimeInterval <= 0) {
+      throw new IllegalArgumentException("maintenance time interval must be positive");
+    }
+    long hardForkTime = ((version.getHardForkTime() - 1) / maintenanceTimeInterval + 1)
+        * maintenanceTimeInterval;
+    if (ds.getLatestBlockHeaderTimestamp() < hardForkTime) {
+      return false;
+    }
+    byte[] stats = ds.statsByVersion(version.getValue());
+    if (stats == null || stats.length == 0) {
+      return false;
+    }
+    int count = 0;
+    for (byte stat : stats) {
+      if (stat == 1) {
+        count++;
+      }
+    }
+    return count >= ceil((double) version.getHardForkRate() * stats.length / 100,
+        ds.getConsensusLogicOptimization() == 1);
   }
 }

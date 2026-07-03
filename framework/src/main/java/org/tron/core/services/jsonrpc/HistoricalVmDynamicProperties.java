@@ -49,6 +49,21 @@ class HistoricalVmDynamicProperties implements VmDynamicProperties {
   }
 
   @Override
+  public long getLatestBlockHeaderTimestamp() {
+    return latest.getLatestBlockHeaderTimestamp();
+  }
+
+  @Override
+  public long getMaintenanceTimeInterval() {
+    return latest.getMaintenanceTimeInterval();
+  }
+
+  @Override
+  public byte[] statsByVersion(int version) {
+    return latest.statsByVersion(version);
+  }
+
+  @Override
   public long getCurrentCycleNumber() {
     return latest.getCurrentCycleNumber();
   }
