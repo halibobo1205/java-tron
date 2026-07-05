@@ -40,6 +40,7 @@ public class ConfigLoader {
           VMConfig.initVmHardFork(isEnergyLimitForkActive(ds));
         }
         VMConfig.Snapshot snapshot = new VMConfig.Snapshot();
+        snapshot.energyLimitHardFork = isEnergyLimitForkActive(ds);
         snapshot.allowMultiSign = ds.getAllowMultiSign() == 1;
         snapshot.allowTvmTransferTrc10 = ds.getAllowTvmTransferTrc10() == 1;
         snapshot.allowTvmConstantinople = ds.getAllowTvmConstantinople() == 1;

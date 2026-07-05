@@ -296,11 +296,10 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
       for (Map.Entry<WrappedByteArray, byte[]> e : affectedPrefix.entrySet()) {
         byte[] latestKey = e.getValue().clone();
         latestKey[0] = ArchiveTemporalCodec.LATEST_PREFIX;
-        if (fromTxNum == 0) {
-          batch.delete(latestKey);
-        } else {
-          batch.put(latestKey, restore.get(e.getKey()));
-        }
+        batch.put(latestKey, restore.get(e.getKey()));
+      }
+      if (fromTxNum == 0) {
+        deleteAllLatest(batch);
       }
       if (deleteBlockMarker) {
         batch.delete(ArchiveTemporalCodec.blockCommitKey(blockNum));
@@ -308,6 +307,16 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
       db.write(writeOptions, batch);
     } catch (RocksDBException e) {
       throw new ArchiveException("archive temporal unwind failed", e);
+    }
+  }
+
+  private void deleteAllLatest(WriteBatch batch) throws RocksDBException {
+    try (RocksIterator it = db.newIterator()) {
+      it.seek(new byte[] {ArchiveTemporalCodec.LATEST_PREFIX});
+      while (it.isValid() && it.key()[0] == ArchiveTemporalCodec.LATEST_PREFIX) {
+        batch.delete(it.key().clone());
+        it.next();
+      }
     }
   }
 

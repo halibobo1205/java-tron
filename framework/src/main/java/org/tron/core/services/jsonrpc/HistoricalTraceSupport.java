@@ -7,6 +7,7 @@ import com.google.protobuf.ByteString;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
 import org.tron.common.utils.ByteArray;
@@ -84,14 +85,23 @@ public final class HistoricalTraceSupport {
   public TraceResult traceCall(byte[] ownerAddress, byte[] contractAddress, long callValue,
       byte[] data, String blockNumOrTag) throws JsonRpcInvalidParamsException,
       JsonRpcInvalidRequestException, JsonRpcInternalException {
+    return traceCall(ownerAddress, contractAddress, callValue, data, blockNumOrTag, null);
+  }
+
+  public TraceResult traceCall(byte[] ownerAddress, byte[] contractAddress, long callValue,
+      byte[] data, String blockNumOrTag, Object traceOptions)
+      throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
+      JsonRpcInternalException {
     try (ArchiveService.ReadGuard ignored = readGuard()) {
-      return traceCallLocked(ownerAddress, contractAddress, callValue, data, blockNumOrTag);
+      return traceCallLocked(ownerAddress, contractAddress, callValue, data, blockNumOrTag,
+          traceOptions);
     }
   }
 
   private TraceResult traceCallLocked(byte[] ownerAddress, byte[] contractAddress, long callValue,
-      byte[] data, String blockNumOrTag) throws JsonRpcInvalidParamsException,
+      byte[] data, String blockNumOrTag, Object traceOptions) throws JsonRpcInvalidParamsException,
       JsonRpcInvalidRequestException, JsonRpcInternalException {
+    validateTraceOptions(traceOptions);
     if (JsonRpcApiUtil.LATEST_STR.equalsIgnoreCase(blockNumOrTag)) {
       throw new JsonRpcInternalException("historical debug_traceCall invoked for the latest tag");
     }
@@ -146,6 +156,7 @@ public final class HistoricalTraceSupport {
   private TraceResult traceTransactionLocked(byte[] txId, Object traceOptions)
       throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
       JsonRpcInternalException {
+    validateTraceOptions(traceOptions);
     ByteString txIdBs = ByteString.copyFrom(txId);
     Transaction tx = wallet.getTransactionById(txIdBs);
     if (tx == null) {
@@ -226,7 +237,8 @@ public final class HistoricalTraceSupport {
     ArchiveStatePoint point = ArchiveStatePoint.blockEnd(blockNum, blockHash, t - 1);
     // Reuse the real transaction so feeLimit (hence the energy limit) is preserved.
     TransactionCapsule trxCap = new TransactionCapsule(tx);
-    return runTrace(historicalBlock, point, trxCap, false, "historical debug_traceTransaction");
+    return runTrace(historicalBlock, point, trxCap, false, "historical debug_traceTransaction",
+        info.getReceipt().getEnergyUsageTotal());
   }
 
   private static void requireBlockHash(byte[] blockHash, String source, long blockNum)
@@ -236,6 +248,18 @@ public final class HistoricalTraceSupport {
     }
   }
 
+  private static void validateTraceOptions(Object traceOptions)
+      throws JsonRpcInvalidParamsException {
+    if (traceOptions == null) {
+      return;
+    }
+    if (traceOptions instanceof Map && ((Map<?, ?>) traceOptions).isEmpty()) {
+      return;
+    }
+    throw new JsonRpcInvalidParamsException(
+        "debug trace options are not supported; only the default struct-log tracer is available");
+  }
+
   /**
    * Shared core: open the archive reader at {@code point}, build the historical config view at the
    * block (energy fee resolved from the block timestamp + genesis-complete flag), run the trace
@@ -243,6 +267,12 @@ public final class HistoricalTraceSupport {
    */
   private TraceResult runTrace(BlockCapsule historicalBlock, ArchiveStatePoint point,
       TransactionCapsule trxCap, boolean useConstantEnergyCap, String label)
+      throws JsonRpcInvalidRequestException, JsonRpcInternalException {
+    return runTrace(historicalBlock, point, trxCap, useConstantEnergyCap, label, -1L);
+  }
+
+  private TraceResult runTrace(BlockCapsule historicalBlock, ArchiveStatePoint point,
+      TransactionCapsule trxCap, boolean useConstantEnergyCap, String label, long gasOverride)
       throws JsonRpcInvalidRequestException, JsonRpcInternalException {
     DynamicPropertiesStore latestStore =
         StoreFactory.getInstance().getChainBaseManager().getDynamicPropertiesStore();
@@ -256,7 +286,7 @@ public final class HistoricalTraceSupport {
       HistoricalTraceCallResult result = new HistoricalTraceCallExecutor()
           .execute(reader, vmProperties, historicalBlock, trxCap, genesisComplete,
               useConstantEnergyCap);
-      return toTraceResult(result);
+      return toTraceResult(result, gasOverride);
     } catch (ContractValidateException e) {
       throw new JsonRpcInvalidRequestException(
           e.getMessage() == null ? CONTRACT_VALIDATE_ERROR : e.getMessage());
@@ -282,10 +312,15 @@ public final class HistoricalTraceSupport {
 
   /** Renders the executor outcome as the Geth-shaped struct-log trace result. */
   public static TraceResult toTraceResult(HistoricalTraceCallResult result) {
+    return toTraceResult(result, -1L);
+  }
+
+  private static TraceResult toTraceResult(HistoricalTraceCallResult result, long gasOverride) {
     List<StructLog> structLogs = StructLogReconstructor.reconstruct(result.getTrace());
     // Geth returnValue is the return data as hex WITHOUT a 0x prefix (empty string when none).
     String returnValue = ByteArray.toHexString(result.getHReturn());
-    return new TraceResult(result.getEnergyUsed(), result.isFailed(), returnValue, structLogs);
+    long gas = gasOverride >= 0 ? gasOverride : result.getEnergyUsed();
+    return new TraceResult(gas, result.isFailed(), returnValue, structLogs);
   }
 
   private ArchiveStateReaderFactory readerFactory() throws JsonRpcInternalException {

@@ -1049,8 +1049,7 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
   public TraceResult traceCall(CallArguments transactionCall, Object blockParamObj,
       Object traceOptions) throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
       JsonRpcInternalException {
-    // traceOptions (tracer / config) is accepted for Geth wire-compatibility; only the default
-    // struct-log tracer is implemented, so the field is currently ignored.
+    // Only the default struct-log tracer is implemented; unsupported options fail closed below.
     String blockNumOrTag = resolveBlockParam(blockParamObj);
     if (historicalTraceSupport == null
         || !historicalTraceSupport.shouldUseArchive(blockNumOrTag)) {
@@ -1063,15 +1062,15 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
         addressCompatibleToByteArray(transactionCall.getTo()),
         transactionCall.parseValue(),
         ByteArray.fromHexString(transactionCall.resolveData()),
-        blockNumOrTag);
+        blockNumOrTag,
+        traceOptions);
   }
 
   @Override
   public TraceResult traceTransaction(String txHash, Object traceOptions)
       throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
       JsonRpcInternalException {
-    // traceOptions (tracer / config) is accepted for Geth wire-compatibility; only the default
-    // struct-log tracer is implemented, so the field is currently ignored.
+    // Only the default struct-log tracer is implemented; unsupported options fail closed below.
     if (historicalTraceSupport == null || !historicalTraceSupport.isArchiveEnabled()) {
       throw new JsonRpcInternalException(
           "debug_traceTransaction is only available when archiving is enabled");
