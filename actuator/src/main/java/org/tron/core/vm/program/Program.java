@@ -1616,10 +1616,12 @@ public class Program {
     }
   }
 
-  public void saveOpTrace() {
+  public org.tron.core.vm.trace.Op saveOpTrace() {
     if (this.pc < ops.length) {
-      trace.addOp(ops[pc], pc, getCallDeep(), getEnergyLimitLeft(), traceListener.resetActions());
+      return trace.addOp(ops[pc], pc, getCallDeep(), getEnergyLimitLeft(),
+          traceListener.resetActions());
     }
+    return null;
   }
 
   public ProgramTrace getTrace() {

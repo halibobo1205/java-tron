@@ -8,6 +8,7 @@ public class Op {
   private int deep;
   private int pc;
   private BigInteger energy;
+  private BigInteger energyCost;
   private OpActions actions;
 
   public int getCode() {
@@ -40,6 +41,14 @@ public class Op {
 
   public void setEnergy(BigInteger energy) {
     this.energy = energy;
+  }
+
+  public BigInteger getEnergyCost() {
+    return energyCost;
+  }
+
+  public void setEnergyCost(BigInteger energyCost) {
+    this.energyCost = energyCost;
   }
 
   public OpActions getActions() {
