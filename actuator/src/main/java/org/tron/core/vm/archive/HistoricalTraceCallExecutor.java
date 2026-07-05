@@ -16,6 +16,8 @@ import org.tron.core.store.VmDynamicProperties;
 import org.tron.core.vm.config.VMConfig;
 import org.tron.core.vm.program.Program;
 import org.tron.core.vm.trace.ProgramTrace;
+import org.tron.protos.Protocol.Transaction.Contract.ContractType;
+import org.tron.protos.contract.SmartContractOuterClass.CreateSmartContract;
 import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
 
 /**
@@ -93,6 +95,14 @@ public final class HistoricalTraceCallExecutor {
 
   private static long exactTransactionEnergyLimit(ArchiveRepositoryAdapter root,
       VmDynamicProperties vmProperties, TransactionCapsule trxCap) {
+    ContractType contractType = trxCap.getInstance().getRawData().getContract(0).getType();
+    if (contractType == ContractType.CreateSmartContract) {
+      return exactCreateEnergyLimit(root, vmProperties, trxCap);
+    }
+    if (contractType != ContractType.TriggerSmartContract) {
+      throw new HistoricalVmExecutionException(
+          "historical debug_traceTransaction requires a VM contract", null);
+    }
     TriggerSmartContract contract =
         ContractCapsule.getTriggerContractFromTransaction(trxCap.getInstance());
     if (contract == null) {
@@ -121,12 +131,7 @@ public final class HistoricalTraceCallExecutor {
       throw new HistoricalVmExecutionException(
           "historical debug_traceTransaction callValue must be non-negative", null);
     }
-    long balanceAvailable = caller.getBalance() - contract.getCallValue();
-    if (balanceAvailable < feeLimit) {
-      throw new HistoricalVmExecutionException(
-          "historical debug_traceTransaction requires exact balance-limited energy accounting",
-          null);
-    }
+    requireBalanceCoversFeeLimit(caller, feeLimit, contract.getCallValue());
     ContractCapsule deployed = root.getContract(contract.getContractAddress().toByteArray());
     if (deployed == null) {
       throw new HistoricalVmExecutionException(
@@ -139,5 +144,50 @@ public final class HistoricalTraceCallExecutor {
           "historical debug_traceTransaction requires exact creator-energy accounting", null);
     }
     return feeLimit / energyFee;
+  }
+
+  private static long exactCreateEnergyLimit(ArchiveRepositoryAdapter root,
+      VmDynamicProperties vmProperties, TransactionCapsule trxCap) {
+    CreateSmartContract contract =
+        ContractCapsule.getSmartContractFromTransaction(trxCap.getInstance());
+    if (contract == null) {
+      throw new HistoricalVmExecutionException(
+          "historical debug_traceTransaction requires CreateSmartContract", null);
+    }
+    long feeLimit = trxCap.getInstance().getRawData().getFeeLimit();
+    if (feeLimit <= 0) {
+      return 0L;
+    }
+    long energyFee = vmProperties.getEnergyFee();
+    if (energyFee <= 0) {
+      throw new HistoricalVmExecutionException("historical energy fee must be positive", null);
+    }
+    byte[] callerAddress = contract.getOwnerAddress().toByteArray();
+    AccountCapsule caller = root.getAccount(callerAddress);
+    if (caller == null) {
+      throw new HistoricalVmExecutionException(
+          "historical debug_traceTransaction caller account is missing", null);
+    }
+    if (caller.getAllFrozenBalanceForEnergy() > 0) {
+      throw new HistoricalVmExecutionException(
+          "historical debug_traceTransaction requires archived frozen-energy accounting", null);
+    }
+    long callValue = contract.getNewContract().getCallValue();
+    if (callValue < 0) {
+      throw new HistoricalVmExecutionException(
+          "historical debug_traceTransaction callValue must be non-negative", null);
+    }
+    requireBalanceCoversFeeLimit(caller, feeLimit, callValue);
+    return feeLimit / energyFee;
+  }
+
+  private static void requireBalanceCoversFeeLimit(AccountCapsule caller, long feeLimit,
+      long callValue) {
+    long balanceAvailable = caller.getBalance() - callValue;
+    if (balanceAvailable < feeLimit) {
+      throw new HistoricalVmExecutionException(
+          "historical debug_traceTransaction requires exact balance-limited energy accounting",
+          null);
+    }
   }
 }

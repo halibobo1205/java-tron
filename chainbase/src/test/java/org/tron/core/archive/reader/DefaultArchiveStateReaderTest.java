@@ -185,6 +185,36 @@ public class DefaultArchiveStateReaderTest {
   }
 
   @Test
+  public void getStorageFallsBackToAlternateVersionWhenPrimaryIsMissing() throws Exception {
+    byte[] address = addr(1);
+    byte[] slot = new byte[32];
+    slot[31] = 7;
+    byte[] v0Word = new byte[32];
+    v0Word[31] = 9;
+    put(ArchiveDomain.CONTRACT, address, DomainValue.present(contract(1)), 5);
+    put(ArchiveDomain.CONTRACT_STORAGE, Bytes.concat(address, slot, new byte[] {0}),
+        DomainValue.present(v0Word), 5);
+
+    assertArrayEquals(v0Word, readerAt(5).getStorage(address, slot).getValue());
+  }
+
+  @Test
+  public void getStoragePrefersAlternatePresentOverPrimaryTombstone() throws Exception {
+    byte[] address = addr(1);
+    byte[] slot = new byte[32];
+    slot[31] = 7;
+    byte[] v0Word = new byte[32];
+    v0Word[31] = 9;
+    put(ArchiveDomain.CONTRACT, address, DomainValue.present(contract(1)), 5);
+    put(ArchiveDomain.CONTRACT_STORAGE, Bytes.concat(address, slot, new byte[] {1}),
+        DomainValue.present(new byte[] {1}), DomainValue.tombstone(), 5);
+    put(ArchiveDomain.CONTRACT_STORAGE, Bytes.concat(address, slot, new byte[] {0}),
+        DomainValue.present(v0Word), 5);
+
+    assertArrayEquals(v0Word, readerAt(5).getStorage(address, slot).getValue());
+  }
+
+  @Test
   public void getStorageDoesNotReadStorageForDeletedContract() throws Exception {
     byte[] address = addr(1);
     byte[] slot = new byte[32];

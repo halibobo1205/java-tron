@@ -85,16 +85,14 @@ public final class HistoricalEthCallSupport {
       BlockCapsule historicalBlock = new BlockCapsule(block);
       DynamicPropertiesStore latestStore =
           StoreFactory.getInstance().getChainBaseManager().getDynamicPropertiesStore();
-      // Energy price has a complete, time-keyed history in the live store, so we replay BASEFEE /
-      // GASPRICE with the value in force at the target block rather than the current price.
-      long historicalEnergyFee = HistoricalVmDynamicProperties.resolveHistoricalEnergyFee(
-          historicalBlock.getTimeStamp(), latestStore.getEnergyPriceHistory());
       TriggerSmartContract trigger =
           triggerCallContract(ownerAddress, contractAddress, callValue, data, 0, null);
 
       try (ArchiveStateReader reader = readerFactory().open(point)) {
-        // The result-affecting hard-fork flags are read from the archive at the target block, so
-        // the config view is built here (reader open) rather than before the try.
+        // Execution parameters are read from the archive at the target point, so proposal writes
+        // made later in the same block cannot leak into historical replay.
+        long historicalEnergyFee =
+            HistoricalArchiveVmDynamicProperties.resolveEnergyFee(reader, genesisComplete);
         VmDynamicProperties vmProperties = new HistoricalArchiveVmDynamicProperties(
             latestStore, historicalEnergyFee, reader, genesisComplete);
         TransactionCapsule trxCap =

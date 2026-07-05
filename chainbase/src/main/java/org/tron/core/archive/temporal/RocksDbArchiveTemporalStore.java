@@ -15,6 +15,7 @@ import org.rocksdb.RocksIterator;
 import org.rocksdb.WriteBatch;
 import org.rocksdb.WriteOptions;
 import org.tron.core.archive.ArchiveException;
+import org.tron.core.archive.ArchiveRocksDbWriteOptions;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
@@ -68,7 +69,10 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
     if (!isEmpty(db)) {
       throw new ArchiveException("archive temporal store is non-empty but missing manifest");
     }
-    db.put(ArchiveTemporalCodec.manifestKey(), ArchiveTemporalCodec.manifestValue());
+    try (WriteOptions writeOptions = ArchiveRocksDbWriteOptions.create()) {
+      db.put(writeOptions, ArchiveTemporalCodec.manifestKey(),
+          ArchiveTemporalCodec.manifestValue());
+    }
   }
 
   private static boolean isEmpty(RocksDB db) {
@@ -86,7 +90,8 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
 
   @Override
   public void putChange(ArchiveChangeRecord record) {
-    try (WriteBatch batch = new WriteBatch(); WriteOptions writeOptions = new WriteOptions()) {
+    try (WriteBatch batch = new WriteBatch();
+         WriteOptions writeOptions = ArchiveRocksDbWriteOptions.create()) {
       putChange(batch, record);
       db.write(writeOptions, batch);
     } catch (RocksDBException e) {
@@ -96,7 +101,8 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
 
   @Override
   public void putChanges(List<ArchiveChangeRecord> records) {
-    try (WriteBatch batch = new WriteBatch(); WriteOptions writeOptions = new WriteOptions()) {
+    try (WriteBatch batch = new WriteBatch();
+         WriteOptions writeOptions = ArchiveRocksDbWriteOptions.create()) {
       for (ArchiveChangeRecord record : records) {
         putChange(batch, record);
       }
@@ -108,7 +114,8 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
 
   @Override
   public void putBlockChanges(ArchiveBlockRange range, List<ArchiveChangeRecord> records) {
-    try (WriteBatch batch = new WriteBatch(); WriteOptions writeOptions = new WriteOptions()) {
+    try (WriteBatch batch = new WriteBatch();
+         WriteOptions writeOptions = ArchiveRocksDbWriteOptions.create()) {
       for (ArchiveChangeRecord record : records) {
         putChange(batch, record);
       }
@@ -266,7 +273,8 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
     // latest pointing at a deleted entry.
     Map<WrappedByteArray, byte[]> affectedPrefix = new LinkedHashMap<>();
     Map<WrappedByteArray, byte[]> restore = new HashMap<>();
-    try (WriteBatch batch = new WriteBatch(); WriteOptions writeOptions = new WriteOptions()) {
+    try (WriteBatch batch = new WriteBatch();
+         WriteOptions writeOptions = ArchiveRocksDbWriteOptions.create()) {
       try (RocksIterator it = db.newIterator()) {
         it.seek(ArchiveTemporalCodec.changesetSeekFrom(fromTxNum));
         while (it.isValid() && it.key()[0] == ArchiveTemporalCodec.CHANGESET_PREFIX) {
