@@ -8,6 +8,7 @@ import static org.junit.Assert.assertTrue;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -18,6 +19,7 @@ import org.junit.Test;
 import org.rocksdb.Options;
 import org.rocksdb.RocksDB;
 import org.rocksdb.RocksDBException;
+import org.rocksdb.RocksIterator;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveSource;
@@ -192,6 +194,38 @@ public class PersistentArchiveTxNumIndexTest {
         () -> new RocksDbArchiveBlockRangeStore(dir.toString()));
 
     assertTrue(ex.getMessage().contains("manifest mismatch"));
+  }
+
+  @Test
+  public void storeMigratesSchemaOneManifestAndDeletesLegacyBlockIndexRows() throws Exception {
+    ArchiveBlockRange range = pushBlockWithUserTx(10, TX_A);
+    long userTxNum = range.getPrepareTxNum() + 1;
+    index.close();
+    index = null;
+    store = null;
+    try (Options options = new Options().setCreateIfMissing(false);
+        RocksDB rawDb = RocksDB.open(options, dir.toString())) {
+      rawDb.put(ArchiveBlockRangeCodec.manifestKey(),
+          legacySchemaOneManifest());
+      rawDb.put(legacyBlockIndexKey(10, 0), ArchiveBlockRangeCodec.encodeCursor(userTxNum));
+    }
+
+    store = new RocksDbArchiveBlockRangeStore(dir.toString());
+    index = new PersistentArchiveTxNumIndex(store);
+
+    assertEquals(userTxNum, index.findTxNumByBlockAndIndex(10, 0).getAsLong());
+    assertEquals(userTxNum, index.findTxNumByTxId(TX_A).getAsLong());
+    index.close();
+    index = null;
+    store = null;
+    try (Options options = new Options().setCreateIfMissing(false);
+        RocksDB rawDb = RocksDB.open(options, dir.toString());
+        RocksIterator it = rawDb.newIterator()) {
+      assertArrayEquals(ArchiveBlockRangeCodec.manifestValue(),
+          rawDb.get(ArchiveBlockRangeCodec.manifestKey()));
+      it.seek(new byte[] {ArchiveBlockRangeCodec.LEGACY_BLOCK_INDEX_PREFIX});
+      assertFalse(it.isValid() && it.key()[0] == ArchiveBlockRangeCodec.LEGACY_BLOCK_INDEX_PREFIX);
+    }
   }
 
   @Test
@@ -448,7 +482,29 @@ public class PersistentArchiveTxNumIndexTest {
   }
 
   @Test
-  public void unwindAfterRestartRemovesPersistedTxIndexes() {
+  public void blockAndIndexLookupIsDerivedWithoutPersistedBlockIndexRows() throws Exception {
+    ArchiveBlockRange range = pushBlockWithUserTx(10, TX_A);
+    long userTxNum = range.getPrepareTxNum() + 1;
+
+    assertEquals(userTxNum, index.findTxNumByBlockAndIndex(10, 0).getAsLong());
+    index.close();
+    index = null;
+    store = null;
+
+    try (Options options = new Options().setCreateIfMissing(false);
+        RocksDB rawDb = RocksDB.open(options, dir.toString());
+        RocksIterator it = rawDb.newIterator()) {
+      it.seek(new byte[] {ArchiveBlockRangeCodec.LEGACY_BLOCK_INDEX_PREFIX});
+      assertFalse(it.isValid() && it.key()[0] == ArchiveBlockRangeCodec.LEGACY_BLOCK_INDEX_PREFIX);
+    }
+
+    store = new RocksDbArchiveBlockRangeStore(dir.toString());
+    index = new PersistentArchiveTxNumIndex(store);
+    assertEquals(userTxNum, index.findTxNumByBlockAndIndex(10, 0).getAsLong());
+  }
+
+  @Test
+  public void unwindAfterRestartRemovesPersistedPositionAndTxIdIndexes() {
     ArchiveBlockRange range = pushBlockWithUserTx(10, TX_A);
     long userTxNum = range.getPrepareTxNum() + 1;
 
@@ -510,6 +566,33 @@ public class PersistentArchiveTxNumIndexTest {
         RocksDB rawDb = RocksDB.open(options, dir.toString())) {
       rawDb.put(ArchiveBlockRangeCodec.positionKey(position.getTxNum()),
           ArchiveBlockRangeCodec.encodePosition(position));
+    }
+  }
+
+  private static byte[] legacySchemaOneManifest() {
+    return "tron-archive-txnum|schema=1|model=range-position-index-v1|prefix=legacy-0x00-0x06"
+        .getBytes(StandardCharsets.US_ASCII);
+  }
+
+  private static byte[] legacyBlockIndexKey(long blockNum, int txIndex) {
+    byte[] key = new byte[13];
+    key[0] = ArchiveBlockRangeCodec.LEGACY_BLOCK_INDEX_PREFIX;
+    putLong(key, 1, blockNum);
+    putInt(key, 9, txIndex);
+    return key;
+  }
+
+  private static void putLong(byte[] key, int offset, long value) {
+    for (int i = Long.BYTES - 1; i >= 0; i--) {
+      key[offset + i] = (byte) value;
+      value >>>= Byte.SIZE;
+    }
+  }
+
+  private static void putInt(byte[] key, int offset, int value) {
+    for (int i = Integer.BYTES - 1; i >= 0; i--) {
+      key[offset + i] = (byte) value;
+      value >>>= Byte.SIZE;
     }
   }
 
