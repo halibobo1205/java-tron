@@ -45,6 +45,20 @@ public class ArchiveCaptureHolderTest {
   }
 
   @Test
+  public void clearIfDoesNotClearNewerEngine() {
+    ArchiveCaptureEngine older = engineWithActiveContext();
+    ArchiveCaptureEngine newer = engineWithActiveContext();
+    ArchiveCaptureHolder.set(older);
+    ArchiveCaptureHolder.set(newer);
+
+    ArchiveCaptureHolder.clearIf(older);
+    assertTrue(ArchiveCaptureHolder.isActive());
+
+    ArchiveCaptureHolder.clearIf(newer);
+    assertFalse(ArchiveCaptureHolder.isActive());
+  }
+
+  @Test
   public void unknownStoreLookupIsRecordedForFailClosedCommit() {
     ArchiveCaptureEngine engine = engineWithActiveContext();
     ArchiveCaptureHolder.set(engine);

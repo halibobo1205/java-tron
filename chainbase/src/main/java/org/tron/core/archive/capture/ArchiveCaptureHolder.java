@@ -21,12 +21,18 @@ public final class ArchiveCaptureHolder {
   private ArchiveCaptureHolder() {
   }
 
-  public static void set(ArchiveCaptureEngine captureEngine) {
+  public static synchronized void set(ArchiveCaptureEngine captureEngine) {
     engine = captureEngine;
   }
 
-  public static void clear() {
+  public static synchronized void clear() {
     engine = null;
+  }
+
+  public static synchronized void clearIf(ArchiveCaptureEngine captureEngine) {
+    if (engine == captureEngine) {
+      engine = null;
+    }
   }
 
   public static boolean isActive() {
