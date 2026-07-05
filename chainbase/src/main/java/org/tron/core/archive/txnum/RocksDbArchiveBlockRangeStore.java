@@ -13,6 +13,7 @@ import org.rocksdb.RocksIterator;
 import org.rocksdb.WriteBatch;
 import org.rocksdb.WriteOptions;
 import org.tron.core.archive.ArchiveException;
+import org.tron.core.archive.ArchiveRocksDbWriteOptions;
 import org.tron.core.archive.ArchivePhase;
 
 /**
@@ -61,8 +62,8 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
   }
 
   public void markRepairRequired(String reason) {
-    try {
-      db.put(ArchiveBlockRangeCodec.REPAIR_REQUIRED_KEY,
+    try (WriteOptions writeOptions = ArchiveRocksDbWriteOptions.create()) {
+      db.put(writeOptions, ArchiveBlockRangeCodec.REPAIR_REQUIRED_KEY,
           ArchiveBlockRangeCodec.encodeRepairRequired(reason));
     } catch (RocksDBException e) {
       throw new ArchiveException("archive repair marker write failed", e);
@@ -77,7 +78,8 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
   public void commitRange(ArchiveBlockRange range, long committedNextTxNum,
       List<ArchiveTxPosition> positions) {
     validateAppendOnlyCommit(range, committedNextTxNum);
-    try (WriteBatch batch = new WriteBatch(); WriteOptions writeOptions = new WriteOptions()) {
+    try (WriteBatch batch = new WriteBatch();
+         WriteOptions writeOptions = ArchiveRocksDbWriteOptions.create()) {
       batch.put(ArchiveBlockRangeCodec.rangeKey(range.getBlockNum()),
           ArchiveBlockRangeCodec.encodeRange(range));
       batch.put(ArchiveBlockRangeCodec.CURSOR_KEY,
@@ -119,7 +121,8 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
 
   /** Atomically drop a reverted block's range/index rows and rewind the persisted cursor. */
   public void unwindRange(ArchiveBlockRange range, long committedNextTxNum) {
-    try (WriteBatch batch = new WriteBatch(); WriteOptions writeOptions = new WriteOptions()) {
+    try (WriteBatch batch = new WriteBatch();
+         WriteOptions writeOptions = ArchiveRocksDbWriteOptions.create()) {
       batch.delete(ArchiveBlockRangeCodec.rangeKey(range.getBlockNum()));
       batch.put(ArchiveBlockRangeCodec.CURSOR_KEY,
           ArchiveBlockRangeCodec.encodeCursor(committedNextTxNum));

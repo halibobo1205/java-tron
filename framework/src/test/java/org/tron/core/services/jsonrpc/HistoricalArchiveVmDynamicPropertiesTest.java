@@ -166,6 +166,41 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
   }
 
   @Test
+  public void energyFeeResolvesFromArchivedDynamicProperty() throws Exception {
+    FakeReader reader = new FakeReader();
+    reader.put("ENERGY_FEE", 420L);
+
+    assertEquals(420L, HistoricalArchiveVmDynamicProperties.resolveEnergyFee(reader, true));
+    assertEquals(420L, HistoricalArchiveVmDynamicProperties.resolveEnergyFee(reader, false));
+  }
+
+  @Test
+  public void missingEnergyFeeUsesDefaultOnlyWhenGenesisComplete() throws Exception {
+    FakeReader reader = new FakeReader();
+
+    assertEquals(100L, HistoricalArchiveVmDynamicProperties.resolveEnergyFee(reader, true));
+
+    ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
+        () -> HistoricalArchiveVmDynamicProperties.resolveEnergyFee(reader, false));
+    assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, e.getReason());
+  }
+
+  @Test
+  public void badEnergyFeeFailsClosed() {
+    FakeReader malformed = new FakeReader();
+    malformed.putRaw("ENERGY_FEE", new byte[] {1});
+    ArchiveReaderException malformedError = assertThrows(ArchiveReaderException.class,
+        () -> HistoricalArchiveVmDynamicProperties.resolveEnergyFee(malformed, true));
+    assertEquals(ArchiveReaderException.Reason.CORRUPT_VALUE, malformedError.getReason());
+
+    FakeReader tombstone = new FakeReader();
+    tombstone.putTombstone("ENERGY_FEE");
+    ArchiveReaderException tombstoneError = assertThrows(ArchiveReaderException.class,
+        () -> HistoricalArchiveVmDynamicProperties.resolveEnergyFee(tombstone, true));
+    assertEquals(ArchiveReaderException.Reason.CORRUPT_VALUE, tombstoneError.getReason());
+  }
+
+  @Test
   public void missingExecutionParamsUseDefaultsOrLatestByCoverage() throws Exception {
     FakeReader reader = new FakeReader();
     VmDynamicProperties latest = mock(VmDynamicProperties.class);

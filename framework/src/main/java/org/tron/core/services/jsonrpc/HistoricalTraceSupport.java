@@ -167,7 +167,8 @@ public final class HistoricalTraceSupport {
     if (tx.getRawData().getContractCount() > 0) {
       Contract contract = tx.getRawData().getContract(0);
       contractType = contract.getType();
-      traceable = contractType == ContractType.TriggerSmartContract;
+      traceable = contractType == ContractType.TriggerSmartContract
+          || contractType == ContractType.CreateSmartContract;
     }
 
     TransactionInfo info = wallet.getTransactionInfoById(txIdBs);
@@ -221,15 +222,11 @@ public final class HistoricalTraceSupport {
     if (!Arrays.equals(archivedHash, blockHash)) {
       throw new JsonRpcInternalException("archive history hash mismatch for block " + blockNum);
     }
-    if (contractType == ContractType.CreateSmartContract) {
-      throw new JsonRpcInternalException(
-          "historical debug_traceTransaction does not support CreateSmartContract");
-    }
     if (!traceable) {
-      // Only a TriggerSmartContract produces a TVM opcode trace; other types (transfers, votes,
-      // etc.) have no constant-call execution to replay. Still do the archive/canonical validation
-      // first so a pre-archive or forked transaction cannot be reported as a successful empty
-      // trace.
+      // Only TriggerSmartContract and CreateSmartContract produce TVM opcode traces; other types
+      // (transfers, votes, etc.) have no VM execution to replay. Still do the archive/canonical
+      // validation first so a pre-archive or forked transaction cannot be reported as a successful
+      // empty trace.
       return emptyTrace();
     }
     // The pre-tx state is read as-of t - 1 (getAsOf inclusive-after; t is the tx's own txNum whose
@@ -262,8 +259,8 @@ public final class HistoricalTraceSupport {
 
   /**
    * Shared core: open the archive reader at {@code point}, build the historical config view at the
-   * block (energy fee resolved from the block timestamp + genesis-complete flag), run the trace
-   * executor with the given {@link TransactionCapsule}, and render the Geth structLogs result.
+   * block (energy fee and fork flags resolved from the archived point), run the trace executor
+   * with the given {@link TransactionCapsule}, and render the Geth structLogs result.
    */
   private TraceResult runTrace(BlockCapsule historicalBlock, ArchiveStatePoint point,
       TransactionCapsule trxCap, boolean useConstantEnergyCap, String label)
@@ -276,11 +273,11 @@ public final class HistoricalTraceSupport {
       throws JsonRpcInvalidRequestException, JsonRpcInternalException {
     DynamicPropertiesStore latestStore =
         StoreFactory.getInstance().getChainBaseManager().getDynamicPropertiesStore();
-    long historicalEnergyFee = HistoricalVmDynamicProperties.resolveHistoricalEnergyFee(
-        historicalBlock.getTimeStamp(), latestStore.getEnergyPriceHistory());
     boolean genesisComplete = isGenesisComplete();
 
     try (ArchiveStateReader reader = readerFactory().open(point)) {
+      long historicalEnergyFee =
+          HistoricalArchiveVmDynamicProperties.resolveEnergyFee(reader, genesisComplete);
       VmDynamicProperties vmProperties = new HistoricalArchiveVmDynamicProperties(
           latestStore, historicalEnergyFee, reader, genesisComplete);
       HistoricalTraceCallResult result = new HistoricalTraceCallExecutor()

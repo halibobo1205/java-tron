@@ -37,6 +37,7 @@ import org.tron.protos.Protocol.ResourceReceipt;
 import org.tron.protos.Protocol.Transaction;
 import org.tron.protos.Protocol.Transaction.Contract.ContractType;
 import org.tron.protos.Protocol.TransactionInfo;
+import org.tron.protos.contract.SmartContractOuterClass.CreateSmartContract;
 import org.tron.protos.contract.SmartContractOuterClass.SmartContract;
 import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
 
@@ -57,6 +58,7 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
       0x60, 0x01, 0x60, 0x02, 0x01, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, (byte) 0xf3
   };
   private static final byte[] INVALID_CODE = {(byte) 0xfe};
+  private static final byte[] STOP_CODE = {0x00};
 
   @Override
   protected void afterInit() {
@@ -362,28 +364,41 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
   }
 
   @Test
-  public void traceTransactionRejectsArchivedCreateSmartContractAsUnsupported() throws Exception {
-    Transaction tx = Transaction.newBuilder()
-        .setRawData(Transaction.raw.newBuilder()
-            .addContract(Transaction.Contract.newBuilder()
-                .setType(ContractType.CreateSmartContract))
-            .build())
+  public void traceTransactionReplaysCreateSmartContractConstructor() throws Exception {
+    byte[] owner = addr(0x22);
+    SmartContract newContract = SmartContract.newBuilder()
+        .setName("tracecreate")
+        .setOriginAddress(ByteString.copyFrom(owner))
+        .setConsumeUserResourcePercent(100)
+        .setOriginEnergyLimit(1_000_000L)
+        .setBytecode(ByteString.copyFrom(STOP_CODE))
         .build();
-    byte[] txId = new TransactionCapsule(tx).getTransactionId().getBytes();
+    CreateSmartContract create = CreateSmartContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(owner))
+        .setNewContract(newContract)
+        .build();
+    TransactionCapsule trxCap = new TransactionCapsule(create, ContractType.CreateSmartContract);
+    trxCap.setFeeLimit(1_000_000_000L);
+    Transaction tx = trxCap.getInstance();
+    byte[] txId = trxCap.getTransactionId().getBytes();
     DefaultArchiveService svc = buildArchive(new InMemoryArchiveTemporalStore(), addr(0x11), txId);
     Wallet wallet = mock(Wallet.class);
     when(wallet.getTransactionById(ByteString.copyFrom(txId))).thenReturn(tx);
     when(wallet.getTransactionInfoById(ByteString.copyFrom(txId)))
-        .thenReturn(TransactionInfo.newBuilder().setBlockNumber(2L).build());
+        .thenReturn(TransactionInfo.newBuilder().setBlockNumber(2L)
+            .setReceipt(ResourceReceipt.newBuilder().setEnergyUsageTotal(777L)).build());
     BlockCapsule block = blockCapsule(2);
     when(wallet.getBlockByNum(2L)).thenReturn(block.getInstance());
 
     HistoricalTraceSupport support = new HistoricalTraceSupport(wallet, svc);
-    JsonRpcInternalException ex = assertThrows(JsonRpcInternalException.class,
-        () -> support.traceTransaction(txId, null));
+    TraceResult result = support.traceTransaction(txId, null);
 
-    assertEquals("historical debug_traceTransaction does not support CreateSmartContract",
-        ex.getMessage());
+    assertFalse(result.isFailed());
+    assertEquals("top-level gas must come from the real transaction receipt", 777L,
+        result.getGas());
+    assertEquals("", result.getReturnValue());
+    assertEquals(1, result.getStructLogs().size());
+    assertEquals("STOP", result.getStructLogs().get(0).getOp());
   }
 
   @Test
