@@ -1,5 +1,6 @@
 package org.tron.core.archive.txnum;
 
+import com.google.common.primitives.Longs;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -66,13 +67,18 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
     byte[] manifest = db.get(ArchiveBlockRangeCodec.manifestKey());
     if (manifest != null) {
       if (!ArchiveBlockRangeCodec.manifestMatches(manifest)) {
-        if (ArchiveBlockRangeCodec.legacySchemaOneManifestMatches(manifest)) {
-          migrateSchemaOne(db);
-          return;
-        }
         throw new ArchiveException("archive txNum manifest mismatch");
       }
       return;
+    }
+    byte[] legacyManifest = db.get(ArchiveBlockRangeCodec.legacyManifestKey());
+    if (legacyManifest != null) {
+      if (ArchiveBlockRangeCodec.legacySchemaOneManifestMatches(legacyManifest)
+          || ArchiveBlockRangeCodec.legacySchemaTwoManifestMatches(legacyManifest)) {
+        migrateLegacySchema(db);
+        return;
+      }
+      throw new ArchiveException("archive txNum manifest mismatch");
     }
     if (!isEmpty(db)) {
       throw new ArchiveException("archive txNum store is non-empty but missing manifest");
@@ -83,18 +89,68 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
     }
   }
 
-  private static void migrateSchemaOne(RocksDB db) throws RocksDBException {
+  private static void migrateLegacySchema(RocksDB db) throws RocksDBException {
     try (WriteBatch batch = new WriteBatch();
          WriteOptions writeOptions = ArchiveRocksDbWriteOptions.create();
          RocksIterator it = db.newIterator()) {
-      it.seek(new byte[] {ArchiveBlockRangeCodec.LEGACY_BLOCK_INDEX_PREFIX});
-      while (it.isValid() && it.key()[0] == ArchiveBlockRangeCodec.LEGACY_BLOCK_INDEX_PREFIX) {
-        batch.delete(it.key().clone());
-        it.next();
-      }
+      migrateLegacyPrefixedRows(batch, it, ArchiveBlockRangeCodec.LEGACY_RANGE_PREFIX,
+          key -> ArchiveBlockRangeCodec.rangeKey(longSuffix(key)));
+      migrateLegacyPrefixedRows(batch, it, ArchiveBlockRangeCodec.LEGACY_POSITION_PREFIX,
+          key -> ArchiveBlockRangeCodec.positionKey(longSuffix(key)));
+      migrateLegacyPrefixedRows(batch, it, ArchiveBlockRangeCodec.LEGACY_TX_ID_PREFIX,
+          key -> ArchiveBlockRangeCodec.txIdKey(Arrays.copyOfRange(key, 1, key.length)));
+      migrateLegacyExactRow(db, batch, ArchiveBlockRangeCodec.LEGACY_CURSOR_KEY,
+          ArchiveBlockRangeCodec.CURSOR_KEY);
+      migrateLegacyExactRow(db, batch, ArchiveBlockRangeCodec.LEGACY_FIRST_BLOCK_KEY,
+          ArchiveBlockRangeCodec.FIRST_BLOCK_KEY);
+      migrateLegacyExactRow(db, batch, ArchiveBlockRangeCodec.LEGACY_REPAIR_REQUIRED_KEY,
+          ArchiveBlockRangeCodec.REPAIR_REQUIRED_KEY);
+      deleteLegacyPrefixedRows(batch, it, ArchiveBlockRangeCodec.LEGACY_BLOCK_INDEX_PREFIX);
+      batch.delete(ArchiveBlockRangeCodec.legacyManifestKey());
       batch.put(ArchiveBlockRangeCodec.manifestKey(), ArchiveBlockRangeCodec.manifestValue());
       db.write(writeOptions, batch);
     }
+  }
+
+  private static void migrateLegacyExactRow(RocksDB db, WriteBatch batch, byte[] oldKey,
+      byte[] newKey) throws RocksDBException {
+    byte[] value = db.get(oldKey);
+    if (value == null) {
+      return;
+    }
+    batch.put(newKey, value);
+    batch.delete(oldKey);
+  }
+
+  private interface LegacyKeyMapper {
+    byte[] map(byte[] legacyKey);
+  }
+
+  private static void migrateLegacyPrefixedRows(WriteBatch batch, RocksIterator it,
+      byte legacyPrefix, LegacyKeyMapper mapper) throws RocksDBException {
+    it.seek(new byte[] {legacyPrefix});
+    while (it.isValid() && it.key()[0] == legacyPrefix) {
+      byte[] key = it.key().clone();
+      batch.put(mapper.map(key), it.value().clone());
+      batch.delete(key);
+      it.next();
+    }
+  }
+
+  private static void deleteLegacyPrefixedRows(WriteBatch batch, RocksIterator it,
+      byte legacyPrefix) throws RocksDBException {
+    it.seek(new byte[] {legacyPrefix});
+    while (it.isValid() && it.key()[0] == legacyPrefix) {
+      batch.delete(it.key().clone());
+      it.next();
+    }
+  }
+
+  private static long longSuffix(byte[] key) {
+    if (key.length != 1 + Long.BYTES) {
+      throw new ArchiveException("archive txNum legacy key has invalid length");
+    }
+    return Longs.fromByteArray(Arrays.copyOfRange(key, 1, key.length));
   }
 
   private static boolean isEmpty(RocksDB db) {
@@ -236,8 +292,8 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
   public void validateContiguousCoverage() {
     try (RocksIterator it = db.newIterator()) {
       ArchiveBlockRange previous = null;
-      it.seek(new byte[] {ArchiveBlockRangeCodec.RANGE_PREFIX});
-      while (it.isValid() && it.key()[0] == ArchiveBlockRangeCodec.RANGE_PREFIX) {
+      it.seek(new byte[] {ArchiveBlockRangeCodec.TXNUM_BLOCK_PREFIX});
+      while (it.isValid() && it.key()[0] == ArchiveBlockRangeCodec.TXNUM_BLOCK_PREFIX) {
         ArchiveBlockRange current = ArchiveBlockRangeCodec.decodeRange(it.value());
         validateRangeKeyMatchesValue(it.key(), current);
         validateRangeShape(current);
@@ -264,8 +320,8 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
   /** Iterate every persisted committed range in block order, failing on corrupt range rows. */
   public void validateCommittedRanges(Consumer<ArchiveBlockRange> validator) {
     try (RocksIterator it = db.newIterator()) {
-      it.seek(new byte[] {ArchiveBlockRangeCodec.RANGE_PREFIX});
-      while (it.isValid() && it.key()[0] == ArchiveBlockRangeCodec.RANGE_PREFIX) {
+      it.seek(new byte[] {ArchiveBlockRangeCodec.TXNUM_BLOCK_PREFIX});
+      while (it.isValid() && it.key()[0] == ArchiveBlockRangeCodec.TXNUM_BLOCK_PREFIX) {
         ArchiveBlockRange current = ArchiveBlockRangeCodec.decodeRange(it.value());
         validateRangeKeyMatchesValue(it.key(), current);
         validateRangeShape(current);
@@ -333,13 +389,20 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
 
   public Optional<ArchiveBlockRange> getLastRange() {
     try (RocksIterator it = db.newIterator()) {
-      it.seek(ArchiveBlockRangeCodec.CURSOR_KEY);
-      it.prev();
-      if (!it.isValid() || it.key()[0] != ArchiveBlockRangeCodec.RANGE_PREFIX) {
+      it.seekToLast();
+      while (it.isValid()
+          && unsigned(it.key()[0]) > unsigned(ArchiveBlockRangeCodec.TXNUM_BLOCK_PREFIX)) {
+        it.prev();
+      }
+      if (!it.isValid() || it.key()[0] != ArchiveBlockRangeCodec.TXNUM_BLOCK_PREFIX) {
         return Optional.empty();
       }
       return Optional.of(ArchiveBlockRangeCodec.decodeRange(it.value()));
     }
+  }
+
+  private static int unsigned(byte value) {
+    return value & 0xff;
   }
 
   public void validateCanonicalHead(long headNum, byte[] headHash) {

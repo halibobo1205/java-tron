@@ -10,36 +10,47 @@ import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveSource;
 
 /**
- * On-disk byte layout for the persistent txNum index. A 1-byte family prefix separates the
- * block-range entries (keyed by block number) from the single committed-txNum cursor.
+ * On-disk byte layout for the persistent txNum index. A 1-byte table prefix follows the L5
+ * archive keyspace for txNum rows, while small operational metadata lives under the meta table.
  *
  * <ul>
- *   <li>range key: {@code 0x00 || blockNum(8, BE)} -&gt; encoded {@link ArchiveBlockRange}</li>
- *   <li>cursor key: {@code 0x01} -&gt; committedNextTxNum(8, big-endian)</li>
- *   <li>position key: {@code 0x03 || txNum(8, BE)} -&gt; encoded {@link ArchiveTxPosition}</li>
- *   <li>txId key: {@code 0x05 || txId} -&gt; txNum</li>
+ *   <li>range key: {@code 0x10 || blockNum(8, BE)} -&gt; encoded {@link ArchiveBlockRange}</li>
+ *   <li>txId key: {@code 0x11 || txIdLen(4) || txId} -&gt; txNum</li>
+ *   <li>position key: {@code 0x12 || txNum(8, BE)} -&gt; encoded {@link ArchiveTxPosition}</li>
+ *   <li>meta key: {@code 0x01 || asciiName} -&gt; manifest/cursor/repair metadata</li>
  *   <li>range value: 5 longs (blockNum, firstTxNum, lastTxNum, prepareTxNum, finalizeTxNum)
  *       || userTxCount(int) || source(1 byte ordinal) || blockHashLen(int) || blockHash</li>
  * </ul>
  */
 public final class ArchiveBlockRangeCodec {
 
-  static final byte RANGE_PREFIX = 0x00;
-  static final byte CURSOR_PREFIX = 0x01;
-  static final byte[] CURSOR_KEY = {CURSOR_PREFIX};
+  static final byte META_PREFIX = 0x01;
+  static final byte TXNUM_BLOCK_PREFIX = 0x10;
+  static final byte TXNUM_BY_TXID_PREFIX = 0x11;
+  static final byte TXNUM_META_PREFIX = 0x12;
+
+  static final byte LEGACY_RANGE_PREFIX = 0x00;
+  static final byte[] LEGACY_CURSOR_KEY = {0x01};
   // The lowest block currently committed to this index -- written for the first committed range and
   // cleared if the archive is unwound back to empty. The historical-read coverage gate uses it to
   // tell a genesis-complete archive
   // (where a MISSING dynamic-property is unambiguously the in-memory default) from a mid-chain one.
-  static final byte FIRST_BLOCK_PREFIX = 0x02;
-  static final byte[] FIRST_BLOCK_KEY = {FIRST_BLOCK_PREFIX};
-  static final byte POSITION_PREFIX = 0x03;
+  static final byte[] LEGACY_FIRST_BLOCK_KEY = {0x02};
+  static final byte LEGACY_POSITION_PREFIX = 0x03;
   static final byte LEGACY_BLOCK_INDEX_PREFIX = 0x04;
-  static final byte TX_ID_PREFIX = 0x05;
-  static final byte[] REPAIR_REQUIRED_KEY = {0x06};
-  static final byte META_PREFIX = 0x12;
-  private static final byte[] MANIFEST_KEY = new byte[] {META_PREFIX, 'm', 'a', 'n', 'i'};
+  static final byte LEGACY_TX_ID_PREFIX = 0x05;
+  static final byte[] LEGACY_REPAIR_REQUIRED_KEY = {0x06};
+  private static final byte[] LEGACY_MANIFEST_KEY =
+      new byte[] {TXNUM_META_PREFIX, 'm', 'a', 'n', 'i'};
+
+  static final byte[] CURSOR_KEY = metaKey("cursor");
+  static final byte[] FIRST_BLOCK_KEY = metaKey("first-block");
+  static final byte[] REPAIR_REQUIRED_KEY = metaKey("repair-required");
+  private static final byte[] MANIFEST_KEY = metaKey("mani");
   private static final byte[] MANIFEST_VALUE =
+      "tron-archive-txnum|schema=3|keys=l5-txnum-v1|values=range-position-v2"
+          .getBytes(StandardCharsets.US_ASCII);
+  private static final byte[] LEGACY_SCHEMA_TWO_MANIFEST_VALUE =
       "tron-archive-txnum|schema=2|model=range-position-txid-v1|block-index=derived"
           .getBytes(StandardCharsets.US_ASCII);
   private static final byte[] LEGACY_SCHEMA_ONE_MANIFEST_VALUE =
@@ -50,15 +61,31 @@ public final class ArchiveBlockRangeCodec {
   }
 
   static byte[] rangeKey(long blockNum) {
-    return Bytes.concat(new byte[] {RANGE_PREFIX}, Longs.toByteArray(blockNum));
+    return Bytes.concat(new byte[] {TXNUM_BLOCK_PREFIX}, Longs.toByteArray(blockNum));
   }
 
   static byte[] positionKey(long txNum) {
-    return Bytes.concat(new byte[] {POSITION_PREFIX}, Longs.toByteArray(txNum));
+    return Bytes.concat(new byte[] {TXNUM_META_PREFIX}, Longs.toByteArray(txNum));
   }
 
   static byte[] txIdKey(byte[] txId) {
-    return Bytes.concat(new byte[] {TX_ID_PREFIX}, txId);
+    return Bytes.concat(new byte[] {TXNUM_BY_TXID_PREFIX}, Ints.toByteArray(txId.length), txId);
+  }
+
+  static byte[] legacyManifestKey() {
+    return Arrays.copyOf(LEGACY_MANIFEST_KEY, LEGACY_MANIFEST_KEY.length);
+  }
+
+  static byte[] legacyRangeKey(long blockNum) {
+    return Bytes.concat(new byte[] {LEGACY_RANGE_PREFIX}, Longs.toByteArray(blockNum));
+  }
+
+  static byte[] legacyPositionKey(long txNum) {
+    return Bytes.concat(new byte[] {LEGACY_POSITION_PREFIX}, Longs.toByteArray(txNum));
+  }
+
+  static byte[] legacyTxIdKey(byte[] txId) {
+    return Bytes.concat(new byte[] {LEGACY_TX_ID_PREFIX}, txId);
   }
 
   static byte[] manifestKey() {
@@ -75,6 +102,14 @@ public final class ArchiveBlockRangeCodec {
 
   static boolean legacySchemaOneManifestMatches(byte[] value) {
     return Arrays.equals(LEGACY_SCHEMA_ONE_MANIFEST_VALUE, value);
+  }
+
+  static boolean legacySchemaTwoManifestMatches(byte[] value) {
+    return Arrays.equals(LEGACY_SCHEMA_TWO_MANIFEST_VALUE, value);
+  }
+
+  private static byte[] metaKey(String name) {
+    return Bytes.concat(new byte[] {META_PREFIX}, name.getBytes(StandardCharsets.US_ASCII));
   }
 
   static byte[] encodeRange(ArchiveBlockRange range) {

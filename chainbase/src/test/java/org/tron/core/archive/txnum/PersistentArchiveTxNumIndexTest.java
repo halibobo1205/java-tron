@@ -198,17 +198,11 @@ public class PersistentArchiveTxNumIndexTest {
 
   @Test
   public void storeMigratesSchemaOneManifestAndDeletesLegacyBlockIndexRows() throws Exception {
-    ArchiveBlockRange range = pushBlockWithUserTx(10, TX_A);
-    long userTxNum = range.getPrepareTxNum() + 1;
     index.close();
     index = null;
     store = null;
-    try (Options options = new Options().setCreateIfMissing(false);
-        RocksDB rawDb = RocksDB.open(options, dir.toString())) {
-      rawDb.put(ArchiveBlockRangeCodec.manifestKey(),
-          legacySchemaOneManifest());
-      rawDb.put(legacyBlockIndexKey(10, 0), ArchiveBlockRangeCodec.encodeCursor(userTxNum));
-    }
+    ArchiveBlockRange range = writeLegacyTxNumFixture(legacySchemaOneManifest());
+    long userTxNum = range.getPrepareTxNum() + 1;
 
     store = new RocksDbArchiveBlockRangeStore(dir.toString());
     index = new PersistentArchiveTxNumIndex(store);
@@ -223,8 +217,44 @@ public class PersistentArchiveTxNumIndexTest {
         RocksIterator it = rawDb.newIterator()) {
       assertArrayEquals(ArchiveBlockRangeCodec.manifestValue(),
           rawDb.get(ArchiveBlockRangeCodec.manifestKey()));
+      assertFalse(rawDb.get(ArchiveBlockRangeCodec.legacyManifestKey()) != null);
+      assertFalse(rawDb.get(ArchiveBlockRangeCodec.legacyRangeKey(10)) != null);
+      assertFalse(rawDb.get(ArchiveBlockRangeCodec.legacyPositionKey(userTxNum)) != null);
+      assertFalse(rawDb.get(ArchiveBlockRangeCodec.legacyTxIdKey(TX_A)) != null);
       it.seek(new byte[] {ArchiveBlockRangeCodec.LEGACY_BLOCK_INDEX_PREFIX});
       assertFalse(it.isValid() && it.key()[0] == ArchiveBlockRangeCodec.LEGACY_BLOCK_INDEX_PREFIX);
+    }
+  }
+
+  @Test
+  public void storeMigratesSchemaTwoKeysToL5Prefixes() throws Exception {
+    index.close();
+    index = null;
+    store = null;
+    ArchiveBlockRange range = writeLegacyTxNumFixture(legacySchemaTwoManifest());
+    long userTxNum = range.getPrepareTxNum() + 1;
+
+    store = new RocksDbArchiveBlockRangeStore(dir.toString());
+    index = new PersistentArchiveTxNumIndex(store);
+
+    assertEquals(userTxNum, index.findTxNumByBlockAndIndex(10, 0).getAsLong());
+    assertEquals(userTxNum, index.findTxNumByTxId(TX_A).getAsLong());
+    assertTrue(index.getBlockRange(10).isPresent());
+    assertTrue(index.getPosition(userTxNum).isPresent());
+    index.close();
+    index = null;
+    store = null;
+    try (Options options = new Options().setCreateIfMissing(false);
+        RocksDB rawDb = RocksDB.open(options, dir.toString())) {
+      assertArrayEquals(ArchiveBlockRangeCodec.manifestValue(),
+          rawDb.get(ArchiveBlockRangeCodec.manifestKey()));
+      assertTrue(rawDb.get(ArchiveBlockRangeCodec.rangeKey(10)) != null);
+      assertTrue(rawDb.get(ArchiveBlockRangeCodec.positionKey(userTxNum)) != null);
+      assertTrue(rawDb.get(ArchiveBlockRangeCodec.txIdKey(TX_A)) != null);
+      assertFalse(rawDb.get(ArchiveBlockRangeCodec.legacyManifestKey()) != null);
+      assertFalse(rawDb.get(ArchiveBlockRangeCodec.legacyRangeKey(10)) != null);
+      assertFalse(rawDb.get(ArchiveBlockRangeCodec.legacyPositionKey(userTxNum)) != null);
+      assertFalse(rawDb.get(ArchiveBlockRangeCodec.legacyTxIdKey(TX_A)) != null);
     }
   }
 
@@ -569,8 +599,48 @@ public class PersistentArchiveTxNumIndexTest {
     }
   }
 
+  private ArchiveBlockRange writeLegacyTxNumFixture(byte[] legacyManifest) throws IOException,
+      RocksDBException {
+    deleteRecursively(dir.toFile());
+    Files.createDirectories(dir);
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        10, 0, 2, 0, 2, blockHash(10), 1, ArchiveSource.NORMAL);
+    ArchiveTxPosition prepare = new ArchiveTxPosition(
+        0, 10, ArchivePhase.BLOCK_PREPARE, ArchiveSource.NORMAL, -1, null);
+    ArchiveTxPosition user = new ArchiveTxPosition(
+        1, 10, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, TX_A);
+    ArchiveTxPosition finalize = new ArchiveTxPosition(
+        2, 10, ArchivePhase.BLOCK_FINALIZE, ArchiveSource.NORMAL, -1, null);
+    try (Options options = new Options().setCreateIfMissing(true);
+        RocksDB rawDb = RocksDB.open(options, dir.toString())) {
+      rawDb.put(ArchiveBlockRangeCodec.legacyManifestKey(), legacyManifest);
+      rawDb.put(ArchiveBlockRangeCodec.legacyRangeKey(range.getBlockNum()),
+          ArchiveBlockRangeCodec.encodeRange(range));
+      rawDb.put(ArchiveBlockRangeCodec.LEGACY_CURSOR_KEY,
+          ArchiveBlockRangeCodec.encodeCursor(range.getLastTxNum() + 1));
+      rawDb.put(ArchiveBlockRangeCodec.LEGACY_FIRST_BLOCK_KEY,
+          ArchiveBlockRangeCodec.encodeFirstBlock(range.getBlockNum()));
+      rawDb.put(ArchiveBlockRangeCodec.legacyPositionKey(prepare.getTxNum()),
+          ArchiveBlockRangeCodec.encodePosition(prepare));
+      rawDb.put(ArchiveBlockRangeCodec.legacyPositionKey(user.getTxNum()),
+          ArchiveBlockRangeCodec.encodePosition(user));
+      rawDb.put(ArchiveBlockRangeCodec.legacyPositionKey(finalize.getTxNum()),
+          ArchiveBlockRangeCodec.encodePosition(finalize));
+      rawDb.put(ArchiveBlockRangeCodec.legacyTxIdKey(TX_A),
+          ArchiveBlockRangeCodec.encodeCursor(user.getTxNum()));
+      rawDb.put(legacyBlockIndexKey(range.getBlockNum(), 0),
+          ArchiveBlockRangeCodec.encodeCursor(user.getTxNum()));
+    }
+    return range;
+  }
+
   private static byte[] legacySchemaOneManifest() {
     return "tron-archive-txnum|schema=1|model=range-position-index-v1|prefix=legacy-0x00-0x06"
+        .getBytes(StandardCharsets.US_ASCII);
+  }
+
+  private static byte[] legacySchemaTwoManifest() {
+    return "tron-archive-txnum|schema=2|model=range-position-txid-v1|block-index=derived"
         .getBytes(StandardCharsets.US_ASCII);
   }
 
