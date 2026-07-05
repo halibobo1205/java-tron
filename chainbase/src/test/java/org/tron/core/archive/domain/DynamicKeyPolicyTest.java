@@ -181,11 +181,12 @@ public class DynamicKeyPolicyTest {
   }
 
   @Test
-  public void unknownKeyKeepsHistoryAndRootsByDefault() {
+  public void unknownKeyKeepsDiagnosticHistoryButDoesNotEnterRoot() {
     DynamicKeyDecision d = decide("SOME_FUTURE_KEY");
     assertEquals(DynamicKeyClass.UNKNOWN, d.getKeyClass());
-    assertEquals(RootPolicy.IN_GLOBAL_ROOT, d.getRootPolicy());
-    // Keep history (diagnostic) so a future execution-affecting key is not lost.
+    assertEquals(RootPolicy.EXCLUDED, d.getRootPolicy());
+    // Keep diagnostic history so a future execution-affecting key can be promoted explicitly.
     assertEquals(HistoryPolicy.FULL_HISTORY, d.getHistoryPolicy());
+    assertEquals(ReaderPolicy.INTERNAL_ONLY, d.getReaderPolicy());
   }
 }

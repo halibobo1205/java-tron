@@ -176,6 +176,11 @@ public final class DefaultArchiveDomainCatalog implements ArchiveDomainCatalog {
           .append(dec.getRootPolicy()).append('|').append(dec.getHistoryPolicy()).append('|')
           .append(dec.getReaderPolicy()).append('\n');
     }
+    DynamicKeyDecision unknown = dynamicKeyPolicy.unknownDecisionForChecksum();
+    sb.append("dyn|").append(unknown.getKey()).append('|').append(unknown.getKeyClass())
+        .append('|').append(unknown.getRootPolicy()).append('|')
+        .append(unknown.getHistoryPolicy()).append('|')
+        .append(unknown.getReaderPolicy()).append('\n');
     try {
       return MessageDigest.getInstance("SHA-256")
           .digest(sb.toString().getBytes(StandardCharsets.UTF_8));

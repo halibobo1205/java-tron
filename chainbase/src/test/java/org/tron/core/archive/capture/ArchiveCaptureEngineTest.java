@@ -129,8 +129,14 @@ public class ArchiveCaptureEngineTest {
     enterTx(5);
     engine.capturePut("properties", ascii("ENERGY_FEE"), null, new byte[] {1}); // root -> capture
     engine.capturePut("properties", ascii("ABI_MOVE_DONE"), null, new byte[] {1}); // NO_ARCHIVE
-    engine.capturePut("properties", ascii("SOME_FUTURE_KEY"), null, new byte[] {1}); // unknown kept
+    // Unknown keys are not root-eligible, but keep diagnostic history.
+    engine.capturePut("properties", ascii("SOME_FUTURE_KEY"), null, new byte[] {1});
+
     assertEquals(2, engine.records().size());
+    assertEquals(ArchiveDomain.DYNAMIC_PROPERTIES, engine.records().get(0).getDomain());
+    assertArrayEquals(ascii("ENERGY_FEE"), engine.records().get(0).getCanonicalKey());
+    assertEquals(ArchiveDomain.DYNAMIC_PROPERTIES, engine.records().get(1).getDomain());
+    assertArrayEquals(ascii("SOME_FUTURE_KEY"), engine.records().get(1).getCanonicalKey());
   }
 
   @Test

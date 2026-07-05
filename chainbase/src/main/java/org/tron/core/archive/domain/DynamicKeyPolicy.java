@@ -11,8 +11,8 @@ import java.util.Map;
  * Key-level policy for the DYNAMIC_PROPERTIES domain. VM, fee, resource, validation and governance
  * parameters that can change historical execution or transaction validity enter the global root;
  * header cursors and price history are kept history-only; one-time migration markers and aggregate
- * statistics are excluded. Unknown keys default to rooted + history so a future execution-affecting
- * key is not silently omitted from the archive root before this allowlist is updated.
+ * statistics are excluded. Unknown keys keep diagnostic history but are excluded from the root; a
+ * future execution-affecting key must be promoted explicitly so root coverage stays reviewable.
  */
 public final class DynamicKeyPolicy {
 
@@ -165,16 +165,23 @@ public final class DynamicKeyPolicy {
         RootPolicy.EXCLUDED, HistoryPolicy.NO_ARCHIVE, ReaderPolicy.INTERNAL_ONLY));
   }
 
-  /** Decision for a dynamic property key (ASCII bytes); unknown keys are rooted by default. */
+  /** Decision for a dynamic property key (ASCII bytes). */
   public DynamicKeyDecision decision(byte[] key) {
     String name = new String(key, StandardCharsets.US_ASCII);
     DynamicKeyDecision decision = decisions.get(name);
     if (decision != null) {
       return decision;
     }
-    // Unknown: keep history and root by default so future consensus keys are not silently omitted.
+    return unknownDecision(name);
+  }
+
+  DynamicKeyDecision unknownDecisionForChecksum() {
+    return unknownDecision("<unknown-dynamic-property>");
+  }
+
+  private DynamicKeyDecision unknownDecision(String name) {
     return new DynamicKeyDecision(name, DynamicKeyClass.UNKNOWN,
-        RootPolicy.IN_GLOBAL_ROOT, HistoryPolicy.FULL_HISTORY, ReaderPolicy.INTERNAL_ONLY);
+        RootPolicy.EXCLUDED, HistoryPolicy.FULL_HISTORY, ReaderPolicy.INTERNAL_ONLY);
   }
 
   public List<DynamicKeyDecision> allDecisions() {
