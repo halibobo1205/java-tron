@@ -3,8 +3,6 @@ package org.tron.core.services.jsonrpc;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.function.LongSupplier;
-import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.archive.reader.ArchiveReadResult;
 import org.tron.core.archive.reader.ArchiveReadResult.Status;
@@ -23,11 +21,10 @@ import org.tron.core.store.VmDynamicProperties;
  * <p>Each flag is read once at construction (reader open) via {@code getDynamicProperty}:
  * <ul>
  *   <li>PRESENT -- the value explicitly written by a proposal as of this block;</li>
- *   <li>MISSING -- no proposal change captured by this block. For a genesis-complete archive that
- *       is unambiguously the in-memory default (which mirrors the live getter's own default, so the
- *       reconstruction matches what the chain computed). For a mid-chain archive it is unknown:
- *       the key may have changed before coverage or after the queried block, so execution fails
- *       closed rather than using latest as a historical value.</li>
+ *   <li>MISSING -- no proposal change captured by this block. For hard-coded local defaults, a
+ *       genesis-complete archive can reconstruct the in-memory default. For config/proposal-driven
+ *       flags whose genesis value can vary by deployment, archive history must contain the value
+ *       explicitly; otherwise execution fails closed.</li>
  * </ul>
  *
  * <p>Only proposals or dynamic-property maintenance writes these keys (the constructor's default
@@ -37,6 +34,7 @@ import org.tron.core.store.VmDynamicProperties;
  */
 final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProperties {
 
+  private static final long DEFAULT_MAINTENANCE_TIME_INTERVAL = 21_600_000L;
   private final long latestBlockHeaderNumber;
   private final long latestBlockHeaderTimestamp;
   private final long maintenanceTimeInterval;
@@ -84,90 +82,67 @@ final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProp
   HistoricalArchiveVmDynamicProperties(VmDynamicProperties latest, long energyFee,
       ArchiveStateReader reader, boolean genesisComplete) throws ArchiveReaderException {
     super(latest, energyFee);
-    CommonParameter p = CommonParameter.getInstance();
     this.latestBlockHeaderNumber = reader.getPoint().getBlockNum();
     this.latestBlockHeaderTimestamp = resolve(reader, "latest_block_header_timestamp",
-        genesisComplete, 0L, latest::getLatestBlockHeaderTimestamp);
+        genesisComplete, 0L);
     this.maintenanceTimeInterval = resolve(reader, "MAINTENANCE_TIME_INTERVAL", genesisComplete,
-        p.getMaintenanceTimeInterval(), latest::getMaintenanceTimeInterval);
+        DEFAULT_MAINTENANCE_TIME_INTERVAL);
     this.currentCycleNumber = resolve(reader, "CURRENT_CYCLE_NUMBER", genesisComplete,
-        0L, latest::getCurrentCycleNumber);
+        0L);
     this.totalNetLimit = resolve(reader, "TOTAL_NET_LIMIT", genesisComplete,
-        43_200_000_000L, latest::getTotalNetLimit);
+        43_200_000_000L);
     this.totalNetWeight = resolve(reader, "TOTAL_NET_WEIGHT", genesisComplete,
-        0L, latest::getTotalNetWeight);
+        0L);
     this.totalEnergyCurrentLimit = resolve(reader, "TOTAL_ENERGY_CURRENT_LIMIT", genesisComplete,
-        50_000_000_000L, latest::getTotalEnergyCurrentLimit);
+        50_000_000_000L);
     this.totalEnergyWeight = resolve(reader, "TOTAL_ENERGY_WEIGHT", genesisComplete,
-        0L, latest::getTotalEnergyWeight);
+        0L);
     this.totalTronPowerWeight = resolve(reader, "TOTAL_TRON_POWER_WEIGHT", genesisComplete,
-        0L, latest::getTotalTronPowerWeight);
-    this.allowCreationOfContracts = resolve(reader, "ALLOW_CREATION_OF_CONTRACTS",
-        genesisComplete, p.getAllowCreationOfContracts(), () -> latest.supportVM() ? 1L : 0L);
+        0L);
+    this.allowCreationOfContracts = resolveArchived(reader, "ALLOW_CREATION_OF_CONTRACTS");
     this.maxFeeLimit = resolve(reader, "MAX_FEE_LIMIT", genesisComplete,
-        1_000_000_000L, latest::getMaxFeeLimit);
+        1_000_000_000L);
     this.maxCpuTimeOfOneTx = resolve(reader, "MAX_CPU_TIME_OF_ONE_TX", genesisComplete,
-        50L, latest::getMaxCpuTimeOfOneTx);
-    this.allowTvmTransferTrc10 = resolve(reader, "ALLOW_TVM_TRANSFER_TRC10", genesisComplete,
-        p.getAllowTvmTransferTrc10(), latest::getAllowTvmTransferTrc10);
-    this.allowTvmConstantinople = resolve(reader, "ALLOW_TVM_CONSTANTINOPLE", genesisComplete,
-        p.getAllowTvmConstantinople(), latest::getAllowTvmConstantinople);
-    this.allowTvmSolidity059 = resolve(reader, "ALLOW_TVM_SOLIDITY_059", genesisComplete,
-        p.getAllowTvmSolidity059(), latest::getAllowTvmSolidity059);
-    this.allowTvmIstanbul = resolve(reader, "ALLOW_TVM_ISTANBUL", genesisComplete,
-        p.getAllowTvmIstanbul(), latest::getAllowTvmIstanbul);
-    this.allowTvmFreeze = resolve(reader, "ALLOW_TVM_FREEZE", genesisComplete,
-        p.getAllowTvmFreeze(), latest::getAllowTvmFreeze);
-    this.allowTvmVote = resolve(reader, "ALLOW_TVM_VOTE", genesisComplete,
-        p.getAllowTvmVote(), latest::getAllowTvmVote);
-    this.allowTvmLondon = resolve(reader, "ALLOW_TVM_LONDON", genesisComplete,
-        p.getAllowTvmLondon(), latest::getAllowTvmLondon);
-    this.allowTvmShangHai = resolve(reader, "ALLOW_TVM_SHANGHAI", genesisComplete,
-        p.getAllowTvmShangHai(), latest::getAllowTvmShangHai);
-    this.allowTvmCancun = resolve(reader, "ALLOW_TVM_CANCUN", genesisComplete,
-        p.getAllowTvmCancun(), latest::getAllowTvmCancun);
-    this.allowTvmBlob = resolve(reader, "ALLOW_TVM_BLOB", genesisComplete,
-        p.getAllowTvmBlob(), latest::getAllowTvmBlob);
+        50L);
+    this.allowTvmTransferTrc10 = resolveArchived(reader, "ALLOW_TVM_TRANSFER_TRC10");
+    this.allowTvmConstantinople = resolveArchived(reader, "ALLOW_TVM_CONSTANTINOPLE");
+    this.allowTvmSolidity059 = resolveArchived(reader, "ALLOW_TVM_SOLIDITY_059");
+    this.allowTvmIstanbul = resolveArchived(reader, "ALLOW_TVM_ISTANBUL");
+    this.allowTvmFreeze = resolveArchived(reader, "ALLOW_TVM_FREEZE");
+    this.allowTvmVote = resolveArchived(reader, "ALLOW_TVM_VOTE");
+    this.allowTvmLondon = resolveArchived(reader, "ALLOW_TVM_LONDON");
+    this.allowTvmShangHai = resolveArchived(reader, "ALLOW_TVM_SHANGHAI");
+    this.allowTvmCancun = resolveArchived(reader, "ALLOW_TVM_CANCUN");
+    this.allowTvmBlob = resolveArchived(reader, "ALLOW_TVM_BLOB");
     // Osaka and selfdestruct-restriction default to a hard-coded 0L in their live getters.
     this.allowTvmOsaka = resolve(reader, "ALLOW_TVM_OSAKA", genesisComplete,
-        0L, latest::getAllowTvmOsaka);
+        0L);
     this.allowTvmSelfdestructRestriction = resolve(reader, "ALLOW_TVM_SELFDESTRUCT_RESTRICTION",
-        genesisComplete, 0L, latest::getAllowTvmSelfdestructRestriction);
-    this.allowTvmCompatibleEvm = resolve(reader, "ALLOW_TVM_COMPATIBLE_EVM", genesisComplete,
-        p.getAllowTvmCompatibleEvm(), latest::getAllowTvmCompatibleEvm);
+        genesisComplete, 0L);
+    this.allowTvmCompatibleEvm = resolveArchived(reader, "ALLOW_TVM_COMPATIBLE_EVM");
     this.allowOptimizedReturnValueOfChainId = resolve(reader,
-        "ALLOW_OPTIMIZED_RETURN_VALUE_OF_CHAIN_ID", genesisComplete,
-        p.getAllowOptimizedReturnValueOfChainId(), latest::getAllowOptimizedReturnValueOfChainId);
-    this.unfreezeDelayDays = resolve(reader, "UNFREEZE_DELAY_DAYS", genesisComplete,
-        p.getUnfreezeDelayDays(), () -> latest.supportUnfreezeDelay() ? 1L : 0L);
-    this.allowNewResourceModel = resolve(reader, "ALLOW_NEW_RESOURCE_MODEL", genesisComplete,
-        p.getAllowNewResourceModel(), latest::getAllowNewResourceModel);
+        "ALLOW_OPTIMIZED_RETURN_VALUE_OF_CHAIN_ID", genesisComplete, 0L);
+    this.unfreezeDelayDays = resolveArchived(reader, "UNFREEZE_DELAY_DAYS");
+    this.allowNewResourceModel = resolveArchived(reader, "ALLOW_NEW_RESOURCE_MODEL");
     this.allowShieldedTRC20Transaction = resolve(reader, "ALLOW_SHIELDED_TRC20_TRANSACTION",
-        genesisComplete, p.getAllowShieldedTRC20Transaction(),
-        latest::getAllowShieldedTRC20Transaction);
-    this.allowMultiSign = resolve(reader, "ALLOW_MULTI_SIGN", genesisComplete,
-        p.getAllowMultiSign(), latest::getAllowMultiSign);
+        genesisComplete, 0L);
+    this.allowMultiSign = resolveArchived(reader, "ALLOW_MULTI_SIGN");
     this.allowHigherLimitForMaxCpuTimeOfOneTx = resolve(reader,
-        "ALLOW_HIGHER_LIMIT_FOR_MAX_CPU_TIME_OF_ONE_TX", genesisComplete,
-        p.getAllowHigherLimitForMaxCpuTimeOfOneTx(),
-        latest::getAllowHigherLimitForMaxCpuTimeOfOneTx);
-    this.allowDynamicEnergy = resolve(reader, "ALLOW_DYNAMIC_ENERGY", genesisComplete,
-        p.getAllowDynamicEnergy(), latest::getAllowDynamicEnergy);
-    this.dynamicEnergyThreshold = resolve(reader, "DYNAMIC_ENERGY_THRESHOLD", genesisComplete,
-        p.getDynamicEnergyThreshold(), latest::getDynamicEnergyThreshold);
+        "ALLOW_HIGHER_LIMIT_FOR_MAX_CPU_TIME_OF_ONE_TX", genesisComplete, 0L);
+    this.allowDynamicEnergy = resolveArchived(reader, "ALLOW_DYNAMIC_ENERGY");
+    this.dynamicEnergyThreshold = resolveArchived(reader, "DYNAMIC_ENERGY_THRESHOLD");
     this.dynamicEnergyIncreaseFactor = resolve(reader, "DYNAMIC_ENERGY_INCREASE_FACTOR",
-        genesisComplete, p.getDynamicEnergyIncreaseFactor(),
-        latest::getDynamicEnergyIncreaseFactor);
+        genesisComplete, 0L);
     this.dynamicEnergyMaxFactor = resolve(reader, "DYNAMIC_ENERGY_MAX_FACTOR", genesisComplete,
-        p.getDynamicEnergyMaxFactor(), latest::getDynamicEnergyMaxFactor);
+        0L);
     this.allowEnergyAdjustment = resolve(reader, "ALLOW_ENERGY_ADJUSTMENT", genesisComplete,
-        p.getAllowEnergyAdjustment(), latest::getAllowEnergyAdjustment);
+        0L);
     this.allowStrictMath = resolve(reader, "ALLOW_STRICT_MATH", genesisComplete,
-        p.getAllowStrictMath(), latest::getAllowStrictMath);
+        0L);
     this.consensusLogicOptimization = resolve(reader, "CONSENSUS_LOGIC_OPTIMIZATION",
-        genesisComplete, p.getConsensusLogicOptimization(), latest::getConsensusLogicOptimization);
+        genesisComplete, 0L);
     this.allowHardenResourceCalculation = resolve(reader, "ALLOW_HARDEN_RESOURCE_CALCULATION",
-        genesisComplete, 0L, latest::getAllowHardenResourceCalculation);
+        genesisComplete, 0L);
     this.forkStatsByVersion = resolveForkStats(reader, genesisComplete,
         ForkBlockVersionEnum.VERSION_4_7_1, ForkBlockVersionEnum.VERSION_4_8_1_1);
   }
@@ -175,11 +150,11 @@ final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProp
   static long resolveEnergyFee(ArchiveStateReader reader, boolean genesisComplete)
       throws ArchiveReaderException {
     return resolve(reader, "ENERGY_FEE", genesisComplete,
-        HistoricalVmDynamicProperties.DEFAULT_ENERGY_FEE, () -> 0L);
+        HistoricalVmDynamicProperties.DEFAULT_ENERGY_FEE);
   }
 
   private static long resolve(ArchiveStateReader reader, String key, boolean genesisComplete,
-      long inMemoryDefault, LongSupplier latestValue) throws ArchiveReaderException {
+      long inMemoryDefault) throws ArchiveReaderException {
     byte[] canonicalKey = key.getBytes(StandardCharsets.US_ASCII);
     ArchiveReadResult<byte[]> r = reader.getDynamicProperty(canonicalKey);
     if (r.isPresent()) {
@@ -201,6 +176,26 @@ final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProp
     }
     throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
         "archive dynamic property " + key + " is unknown before mid-chain coverage");
+  }
+
+  private static long resolveArchived(ArchiveStateReader reader, String key)
+      throws ArchiveReaderException {
+    byte[] canonicalKey = key.getBytes(StandardCharsets.US_ASCII);
+    ArchiveReadResult<byte[]> r = reader.getDynamicProperty(canonicalKey);
+    if (r.isPresent()) {
+      byte[] value = r.getValue();
+      if (value.length != Long.BYTES) {
+        throw new ArchiveReaderException(ArchiveReaderException.Reason.CORRUPT_VALUE,
+            "archive dynamic property " + key + " has invalid length " + value.length);
+      }
+      return ByteArray.toLong(value);
+    }
+    if (r.getStatus() == Status.TOMBSTONE) {
+      throw new ArchiveReaderException(ArchiveReaderException.Reason.CORRUPT_VALUE,
+          "archive dynamic property " + key + " is tombstoned");
+    }
+    throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
+        "archive dynamic property " + key + " is missing from archived history");
   }
 
   private static Map<Integer, byte[]> resolveForkStats(ArchiveStateReader reader,

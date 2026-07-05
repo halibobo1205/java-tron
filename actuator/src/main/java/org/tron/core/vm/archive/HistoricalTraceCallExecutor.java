@@ -131,7 +131,8 @@ public final class HistoricalTraceCallExecutor {
       throw new HistoricalVmExecutionException(
           "historical debug_traceTransaction callValue must be non-negative", null);
     }
-    requireBalanceCoversFeeLimit(caller, feeLimit, contract.getCallValue());
+    long energyLimit = balanceLimitedEnergyLimit(caller, feeLimit, contract.getCallValue(),
+        energyFee);
     ContractCapsule deployed = root.getContract(contract.getContractAddress().toByteArray());
     if (deployed == null) {
       throw new HistoricalVmExecutionException(
@@ -143,7 +144,7 @@ public final class HistoricalTraceCallExecutor {
       throw new HistoricalVmExecutionException(
           "historical debug_traceTransaction requires exact creator-energy accounting", null);
     }
-    return feeLimit / energyFee;
+    return energyLimit;
   }
 
   private static long exactCreateEnergyLimit(ArchiveRepositoryAdapter root,
@@ -177,17 +178,15 @@ public final class HistoricalTraceCallExecutor {
       throw new HistoricalVmExecutionException(
           "historical debug_traceTransaction callValue must be non-negative", null);
     }
-    requireBalanceCoversFeeLimit(caller, feeLimit, callValue);
-    return feeLimit / energyFee;
+    return balanceLimitedEnergyLimit(caller, feeLimit, callValue, energyFee);
   }
 
-  private static void requireBalanceCoversFeeLimit(AccountCapsule caller, long feeLimit,
-      long callValue) {
+  private static long balanceLimitedEnergyLimit(AccountCapsule caller, long feeLimit,
+      long callValue, long energyFee) {
     long balanceAvailable = caller.getBalance() - callValue;
-    if (balanceAvailable < feeLimit) {
-      throw new HistoricalVmExecutionException(
-          "historical debug_traceTransaction requires exact balance-limited energy accounting",
-          null);
+    if (balanceAvailable <= 0) {
+      return 0L;
     }
+    return Math.min(feeLimit, balanceAvailable) / energyFee;
   }
 }
