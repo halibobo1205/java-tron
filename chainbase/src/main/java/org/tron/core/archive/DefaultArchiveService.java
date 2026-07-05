@@ -16,6 +16,8 @@ import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomainCatalog;
+import org.tron.core.archive.domain.ArchiveDomainRegistry;
+import org.tron.core.archive.domain.ArchiveSchemaChecksum;
 import org.tron.core.archive.domain.DefaultArchiveDomainCatalog;
 import org.tron.core.archive.domain.DefaultArchiveDomainRegistry;
 import org.tron.core.archive.domain.DynamicKeyPolicy;
@@ -45,6 +47,7 @@ public final class DefaultArchiveService implements ArchiveService {
   private final ArchiveCaptureEngine captureEngine;
   private final ArchiveTemporalStore temporalStore;
   private final ArchiveStateReaderFactory readerFactory;
+  private final byte[] schemaChecksum;
   private final ReentrantReadWriteLock consistencyLock = new ReentrantReadWriteLock(true);
   private volatile RuntimeException fatalFailure;
 
@@ -66,17 +69,26 @@ public final class DefaultArchiveService implements ArchiveService {
 
   DefaultArchiveService(boolean enabled, ArchiveTxNumIndex txNumIndex,
       ArchiveExecutionContext executionContext, ArchiveTemporalStore temporalStore) {
+    this(enabled, txNumIndex, executionContext, temporalStore,
+        new DefaultArchiveDomainRegistry(), new DefaultArchiveDomainCatalog());
+  }
+
+  DefaultArchiveService(boolean enabled, ArchiveTxNumIndex txNumIndex,
+      ArchiveExecutionContext executionContext, ArchiveTemporalStore temporalStore,
+      ArchiveDomainRegistry registry, ArchiveDomainCatalog catalog) {
     this.enabled = enabled;
     this.txNumIndex = txNumIndex;
     this.executionContext = executionContext;
     if (enabled) {
-      ArchiveDomainCatalog catalog = new DefaultArchiveDomainCatalog();
-      this.captureEngine = new ArchiveCaptureEngine(new DefaultArchiveDomainRegistry(),
-          catalog, new DynamicKeyPolicy(), executionContext);
+      this.schemaChecksum = ArchiveSchemaChecksum.of(registry, catalog);
+      this.captureEngine = new ArchiveCaptureEngine(registry, catalog, new DynamicKeyPolicy(),
+          executionContext);
       this.temporalStore = temporalStore;
       this.readerFactory = new DefaultArchiveStateReaderFactory(temporalStore, catalog);
       ArchiveCaptureHolder.set(captureEngine);
     } else {
+      ArchiveCaptureHolder.clear();
+      this.schemaChecksum = new byte[0];
       this.captureEngine = null;
       this.temporalStore = null;
       this.readerFactory = null;
@@ -180,7 +192,7 @@ public final class DefaultArchiveService implements ArchiveService {
       List<ArchiveChangeRecord> records = new ArrayList<>(merged.values());
       records.removeIf(this::isKnownNoop);
       ArchiveBlockRange range = txNumIndex.commitBlock(
-          block.getNum(), block.getBlockId().getBytes(), userTxCount);
+          block.getNum(), block.getBlockId().getBytes(), userTxCount, schemaChecksum);
       txNumCommitted = true;
       temporalStore.putBlockChanges(range, records);
     } catch (RuntimeException e) {
@@ -334,7 +346,7 @@ public final class DefaultArchiveService implements ArchiveService {
 
   @Override
   public void close() {
-    ArchiveCaptureHolder.clear();
+    ArchiveCaptureHolder.clearIf(captureEngine);
     RuntimeException failure = null;
     failure = closeResource(temporalStore, "temporal store", failure);
     failure = closeResource(txNumIndex, "txNum index", failure);

@@ -12,7 +12,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
-import java.util.Collections;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -30,6 +29,7 @@ public class PersistentArchiveTxNumIndexTest {
   private static final byte[] TX_B = new byte[] {0x04, 0x05, 0x06};
   private static final byte[] HASH_A = blockHash(4);
   private static final byte[] HASH_B = blockHash(6);
+  private static final byte[] SCHEMA_CHECKSUM = checksum(9);
 
   private Path dir;
   private RocksDbArchiveBlockRangeStore store;
@@ -39,7 +39,7 @@ public class PersistentArchiveTxNumIndexTest {
   public void setUp() throws IOException {
     dir = Files.createTempDirectory("archive-txnum-test");
     store = new RocksDbArchiveBlockRangeStore(dir.toString());
-    index = new PersistentArchiveTxNumIndex(store);
+    index = persistent(store);
   }
 
   @After
@@ -69,6 +69,27 @@ public class PersistentArchiveTxNumIndexTest {
     return index.commitBlock(blockNum, blockHash(blockNum), 1);
   }
 
+  private static PersistentArchiveTxNumIndex persistent(RocksDbArchiveBlockRangeStore store) {
+    return persistent(store, SCHEMA_CHECKSUM);
+  }
+
+  private static PersistentArchiveTxNumIndex persistent(RocksDbArchiveBlockRangeStore store,
+      byte[] schemaChecksum) {
+    return new PersistentArchiveTxNumIndex(store, schemaChecksum);
+  }
+
+  private static ArchiveBlockRange withChecksum(ArchiveBlockRange range) {
+    return new ArchiveBlockRange(range.getBlockNum(), range.getFirstTxNum(),
+        range.getLastTxNum(), range.getPrepareTxNum(), range.getFinalizeTxNum(),
+        range.getBlockHash(), range.getUserTxCount(), range.getSource(), SCHEMA_CHECKSUM);
+  }
+
+  private static ArchiveTxPosition withBlockHash(ArchiveTxPosition position, byte[] blockHash) {
+    return new ArchiveTxPosition(position.getTxNum(), position.getBlockNum(),
+        position.getPhase(), position.getSource(), position.getTxIndex(), position.getTxId(),
+        blockHash);
+  }
+
   @Test
   public void commitPersistsRangeAndCursorAcrossRestart() {
     ArchiveBlockRange r1 = pushBlock(1);
@@ -76,7 +97,7 @@ public class PersistentArchiveTxNumIndexTest {
     // Restart: a fresh index over the same store sees the committed ranges + restored cursor.
     index.close();
     store = new RocksDbArchiveBlockRangeStore(dir.toString());
-    index = new PersistentArchiveTxNumIndex(store);
+    index = persistent(store);
     assertEquals(r1.getFinalizeTxNum(), index.getBlockRange(1).get().getFinalizeTxNum());
     assertEquals(r2.getFinalizeTxNum(), index.getBlockRange(2).get().getFinalizeTxNum());
     // Cursor restored: the next block continues from block 2's end, no txNum collision.
@@ -109,16 +130,17 @@ public class PersistentArchiveTxNumIndexTest {
   }
 
   @Test
-  public void restartWithMissingPositionRowFailsClosed() {
+  public void restartWithMissingPositionRowFailsClosed() throws Exception {
     ArchiveBlockRange corruptRange = new ArchiveBlockRange(
         1, 0, 1, 0, 1, blockHash(1), 0, ArchiveSource.NORMAL);
-    store.commitRange(corruptRange, 2, Collections.emptyList());
     index.close();
     index = null;
+    store = null;
+    putRawRange(corruptRange, 2, 1);
     store = new RocksDbArchiveBlockRangeStore(dir.toString());
     try {
       ArchiveException ex = assertThrows(ArchiveException.class,
-          () -> new PersistentArchiveTxNumIndex(store));
+          () -> persistent(store));
       assertTrue(ex.getMessage().contains("tx-position missing"));
     } finally {
       store.close();
@@ -126,22 +148,18 @@ public class PersistentArchiveTxNumIndexTest {
   }
 
   @Test
-  public void restartWithMismatchedPositionRowFailsClosed() {
+  public void storeRejectsMismatchedPositionRow() {
     ArchiveBlockRange corruptRange = new ArchiveBlockRange(
         1, 0, 1, 0, 1, blockHash(1), 0, ArchiveSource.NORMAL);
-    store.commitRange(corruptRange, 2, Arrays.asList(
-        new ArchiveTxPosition(0, 99, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, TX_A),
-        new ArchiveTxPosition(1, 1, ArchivePhase.BLOCK_FINALIZE, ArchiveSource.NORMAL, -1, null)));
-    index.close();
-    index = null;
-    store = new RocksDbArchiveBlockRangeStore(dir.toString());
-    try {
-      ArchiveException ex = assertThrows(ArchiveException.class,
-          () -> new PersistentArchiveTxNumIndex(store));
-      assertTrue(ex.getMessage().contains("tx-position mismatch"));
-    } finally {
-      store.close();
-    }
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> store.commitRange(withChecksum(corruptRange), 2, Arrays.asList(
+            new ArchiveTxPosition(0, 99, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, TX_A),
+            new ArchiveTxPosition(1, 1, ArchivePhase.BLOCK_FINALIZE, ArchiveSource.NORMAL, -1,
+                null))));
+
+    assertTrue(ex.getMessage().contains("tx-position mismatch"));
+    assertFalse(store.getRange(1).isPresent());
   }
 
   @Test
@@ -155,7 +173,7 @@ public class PersistentArchiveTxNumIndexTest {
     index = null;
     store = null;
 
-    try (Options options = new Options().setCreateIfMissing(false);
+    try (Options options = new Options().setCreateIfMissing(true);
         RocksDB rawDb = RocksDB.open(options, dir.toString())) {
       assertArrayEquals(ArchiveBlockRangeCodec.manifestValue(),
           rawDb.get(ArchiveBlockRangeCodec.manifestKey()));
@@ -185,7 +203,7 @@ public class PersistentArchiveTxNumIndexTest {
     index.close();
     index = null;
     store = null;
-    try (Options options = new Options().setCreateIfMissing(false);
+    try (Options options = new Options().setCreateIfMissing(true);
         RocksDB rawDb = RocksDB.open(options, dir.toString())) {
       rawDb.put(ArchiveBlockRangeCodec.manifestKey(), new byte[] {1});
     }
@@ -197,65 +215,66 @@ public class PersistentArchiveTxNumIndexTest {
   }
 
   @Test
-  public void storeMigratesSchemaOneManifestAndDeletesLegacyBlockIndexRows() throws Exception {
+  public void storeRejectsNonEmptySchemaOneStoreWithoutValueMigration() throws Exception {
     index.close();
     index = null;
     store = null;
-    ArchiveBlockRange range = writeLegacyTxNumFixture(legacySchemaOneManifest());
-    long userTxNum = range.getPrepareTxNum() + 1;
+    writeLegacyTxNumFixture(legacySchemaOneManifest());
 
-    store = new RocksDbArchiveBlockRangeStore(dir.toString());
-    index = new PersistentArchiveTxNumIndex(store);
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> new RocksDbArchiveBlockRangeStore(dir.toString()));
 
-    assertEquals(userTxNum, index.findTxNumByBlockAndIndex(10, 0).getAsLong());
-    assertEquals(userTxNum, index.findTxNumByTxId(TX_A).getAsLong());
-    index.close();
-    index = null;
-    store = null;
-    try (Options options = new Options().setCreateIfMissing(false);
-        RocksDB rawDb = RocksDB.open(options, dir.toString());
-        RocksIterator it = rawDb.newIterator()) {
-      assertArrayEquals(ArchiveBlockRangeCodec.manifestValue(),
-          rawDb.get(ArchiveBlockRangeCodec.manifestKey()));
-      assertFalse(rawDb.get(ArchiveBlockRangeCodec.legacyManifestKey()) != null);
-      assertFalse(rawDb.get(ArchiveBlockRangeCodec.legacyRangeKey(10)) != null);
-      assertFalse(rawDb.get(ArchiveBlockRangeCodec.legacyPositionKey(userTxNum)) != null);
-      assertFalse(rawDb.get(ArchiveBlockRangeCodec.legacyTxIdKey(TX_A)) != null);
-      it.seek(new byte[] {ArchiveBlockRangeCodec.LEGACY_BLOCK_INDEX_PREFIX});
-      assertFalse(it.isValid() && it.key()[0] == ArchiveBlockRangeCodec.LEGACY_BLOCK_INDEX_PREFIX);
-    }
+    assertTrue(ex.getMessage().contains("requires rebuild or resync"));
   }
 
   @Test
-  public void storeMigratesSchemaTwoKeysToL5Prefixes() throws Exception {
+  public void storeRejectsNonEmptySchemaTwoStoreWithoutValueMigration() throws Exception {
     index.close();
     index = null;
     store = null;
-    ArchiveBlockRange range = writeLegacyTxNumFixture(legacySchemaTwoManifest());
-    long userTxNum = range.getPrepareTxNum() + 1;
+    writeLegacyTxNumFixture(legacySchemaTwoManifest());
 
-    store = new RocksDbArchiveBlockRangeStore(dir.toString());
-    index = new PersistentArchiveTxNumIndex(store);
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> new RocksDbArchiveBlockRangeStore(dir.toString()));
 
-    assertEquals(userTxNum, index.findTxNumByBlockAndIndex(10, 0).getAsLong());
-    assertEquals(userTxNum, index.findTxNumByTxId(TX_A).getAsLong());
-    assertTrue(index.getBlockRange(10).isPresent());
-    assertTrue(index.getPosition(userTxNum).isPresent());
+    assertTrue(ex.getMessage().contains("requires rebuild or resync"));
+  }
+
+  @Test
+  public void storeUpgradesManifestOnlySchemaOneStore() throws Exception {
+    verifyManifestOnlyLegacyStoreUpgrades(ArchiveBlockRangeCodec.legacyManifestKey(),
+        legacySchemaOneManifest());
+  }
+
+  @Test
+  public void storeUpgradesManifestOnlySchemaTwoStore() throws Exception {
+    verifyManifestOnlyLegacyStoreUpgrades(ArchiveBlockRangeCodec.legacyManifestKey(),
+        legacySchemaTwoManifest());
+  }
+
+  @Test
+  public void storeUpgradesManifestOnlySchemaThreeStore() throws Exception {
+    verifyManifestOnlyLegacyStoreUpgrades(ArchiveBlockRangeCodec.manifestKey(),
+        legacySchemaThreeManifest());
+  }
+
+  @Test
+  public void storeRejectsNonEmptySchemaThreeStoreWithoutValueMigration() throws Exception {
     index.close();
     index = null;
     store = null;
-    try (Options options = new Options().setCreateIfMissing(false);
+    deleteRecursively(dir.toFile());
+    Files.createDirectories(dir);
+    try (Options options = new Options().setCreateIfMissing(true);
         RocksDB rawDb = RocksDB.open(options, dir.toString())) {
-      assertArrayEquals(ArchiveBlockRangeCodec.manifestValue(),
-          rawDb.get(ArchiveBlockRangeCodec.manifestKey()));
-      assertTrue(rawDb.get(ArchiveBlockRangeCodec.rangeKey(10)) != null);
-      assertTrue(rawDb.get(ArchiveBlockRangeCodec.positionKey(userTxNum)) != null);
-      assertTrue(rawDb.get(ArchiveBlockRangeCodec.txIdKey(TX_A)) != null);
-      assertFalse(rawDb.get(ArchiveBlockRangeCodec.legacyManifestKey()) != null);
-      assertFalse(rawDb.get(ArchiveBlockRangeCodec.legacyRangeKey(10)) != null);
-      assertFalse(rawDb.get(ArchiveBlockRangeCodec.legacyPositionKey(userTxNum)) != null);
-      assertFalse(rawDb.get(ArchiveBlockRangeCodec.legacyTxIdKey(TX_A)) != null);
+      rawDb.put(ArchiveBlockRangeCodec.manifestKey(), legacySchemaThreeManifest());
+      rawDb.put(ArchiveBlockRangeCodec.CURSOR_KEY, ArchiveBlockRangeCodec.encodeCursor(0));
     }
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> new RocksDbArchiveBlockRangeStore(dir.toString()));
+
+    assertTrue(ex.getMessage().contains("schema=3 requires rebuild or resync"));
   }
 
   @Test
@@ -267,7 +286,7 @@ public class PersistentArchiveTxNumIndexTest {
     // Restart: the floor survives and a later commit must NOT overwrite it.
     index.close();
     store = new RocksDbArchiveBlockRangeStore(dir.toString());
-    index = new PersistentArchiveTxNumIndex(store);
+    index = persistent(store);
     assertEquals(7, index.getFirstArchivedBlock());
     pushBlock(9);
     assertEquals(7, index.getFirstArchivedBlock());
@@ -305,11 +324,12 @@ public class PersistentArchiveTxNumIndexTest {
   public void storeRejectsDirectNonContiguousCommit() {
     ArchiveBlockRange first = new ArchiveBlockRange(
         10, 0, 1, 0, 1, blockHash(10), 0, ArchiveSource.NORMAL);
-    store.commitRange(first, 2);
+    store.commitRange(withChecksum(first), 2);
     ArchiveBlockRange gap = new ArchiveBlockRange(
         12, 2, 3, 2, 3, blockHash(12), 0, ArchiveSource.NORMAL);
 
-    ArchiveException ex = assertThrows(ArchiveException.class, () -> store.commitRange(gap, 4));
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> store.commitRange(withChecksum(gap), 4));
     assertTrue(ex.getMessage().contains("non-contiguous archive block range"));
     assertFalse(store.getRange(12).isPresent());
   }
@@ -318,13 +338,31 @@ public class PersistentArchiveTxNumIndexTest {
   public void storeRejectsDirectNonContiguousTxNumCommit() {
     ArchiveBlockRange first = new ArchiveBlockRange(
         10, 0, 1, 0, 1, blockHash(10), 0, ArchiveSource.NORMAL);
-    store.commitRange(first, 2);
+    store.commitRange(withChecksum(first), 2);
     ArchiveBlockRange gap = new ArchiveBlockRange(
         11, 4, 5, 4, 5, blockHash(11), 0, ArchiveSource.NORMAL);
 
-    ArchiveException ex = assertThrows(ArchiveException.class, () -> store.commitRange(gap, 6));
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> store.commitRange(withChecksum(gap), 6));
     assertTrue(ex.getMessage().contains("non-contiguous archive txNum range"));
     assertFalse(store.getRange(11).isPresent());
+  }
+
+  @Test
+  public void storeRejectsDirectNonHeadUnwind() {
+    ArchiveBlockRange first = new ArchiveBlockRange(
+        10, 0, 1, 0, 1, blockHash(10), 0, ArchiveSource.NORMAL);
+    ArchiveBlockRange second = new ArchiveBlockRange(
+        11, 2, 3, 2, 3, blockHash(11), 0, ArchiveSource.NORMAL);
+    store.commitRange(withChecksum(first), 2);
+    store.commitRange(withChecksum(second), 4);
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> store.unwindRange(withChecksum(first), 0));
+
+    assertTrue(ex.getMessage().contains("not archive head"));
+    assertTrue(store.getRange(10).isPresent());
+    assertTrue(store.getRange(11).isPresent());
   }
 
   @Test
@@ -333,7 +371,7 @@ public class PersistentArchiveTxNumIndexTest {
         1, 0, 1, 0, 1, blockHash(1), 1, ArchiveSource.NORMAL);
 
     ArchiveException ex = assertThrows(ArchiveException.class,
-        () -> store.commitRange(corruptRange, 2));
+        () -> store.commitRange(withChecksum(corruptRange), 2));
     assertTrue(ex.getMessage().contains("txNum span"));
     assertFalse(store.getRange(1).isPresent());
   }
@@ -344,9 +382,50 @@ public class PersistentArchiveTxNumIndexTest {
         1, 0, 1, 0, 1, 0, ArchiveSource.NORMAL);
 
     ArchiveException ex = assertThrows(ArchiveException.class,
-        () -> store.commitRange(corruptRange, 2));
+        () -> store.commitRange(withChecksum(corruptRange), 2));
     assertTrue(ex.getMessage().contains("32-byte block hash"));
     assertFalse(store.getRange(1).isPresent());
+  }
+
+  @Test
+  public void storeRejectsRangeWithoutSchemaChecksum() {
+    ArchiveBlockRange corruptRange = new ArchiveBlockRange(
+        1, 0, 1, 0, 1, blockHash(1), 0, ArchiveSource.NORMAL);
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> store.commitRange(corruptRange, 2));
+    assertTrue(ex.getMessage().contains("32-byte schema checksum"));
+    assertFalse(store.getRange(1).isPresent());
+  }
+
+  @Test
+  public void commitRejectsMismatchedSchemaChecksum() {
+    index.beginBlock(1, ArchiveSource.NORMAL);
+    index.allocateSystemTx(1, ArchivePhase.BLOCK_PREPARE);
+    index.allocateSystemTx(1, ArchivePhase.BLOCK_FINALIZE);
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> index.commitBlock(1, blockHash(1), 0, checksum(10)));
+
+    assertTrue(ex.getMessage().contains("schema checksum mismatch"));
+    assertFalse(index.getBlockRange(1).isPresent());
+    index.abortBlock(1);
+  }
+
+  @Test
+  public void restartRejectsMismatchedSchemaChecksum() {
+    pushBlock(1);
+    index.close();
+    index = null;
+    store = new RocksDbArchiveBlockRangeStore(dir.toString());
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> persistent(store, checksum(10)));
+      assertTrue(ex.getMessage().contains("schema checksum mismatch"));
+    } finally {
+      store.close();
+      store = null;
+    }
   }
 
   @Test
@@ -381,7 +460,7 @@ public class PersistentArchiveTxNumIndexTest {
         new RocksDbArchiveBlockRangeStore(dir.toString());
     try {
       ArchiveException ex = assertThrows(ArchiveException.class,
-          () -> new PersistentArchiveTxNumIndex(reopenedStore));
+          () -> persistent(reopenedStore));
       assertTrue(ex.getMessage().contains("non-contiguous archive block range"));
     } finally {
       reopenedStore.close();
@@ -402,7 +481,7 @@ public class PersistentArchiveTxNumIndexTest {
         new RocksDbArchiveBlockRangeStore(dir.toString());
     try {
       ArchiveException ex = assertThrows(ArchiveException.class,
-          () -> new PersistentArchiveTxNumIndex(reopenedStore));
+          () -> persistent(reopenedStore));
       assertTrue(ex.getMessage().contains("txNum span"));
     } finally {
       reopenedStore.close();
@@ -421,7 +500,7 @@ public class PersistentArchiveTxNumIndexTest {
         new RocksDbArchiveBlockRangeStore(dir.toString());
     try {
       ArchiveException ex = assertThrows(ArchiveException.class,
-          () -> new PersistentArchiveTxNumIndex(reopenedStore));
+          () -> persistent(reopenedStore));
       assertTrue(ex.getMessage().contains("first-block marker"));
     } finally {
       reopenedStore.close();
@@ -429,50 +508,60 @@ public class PersistentArchiveTxNumIndexTest {
   }
 
   @Test
-  public void restartWithSwappedUserTxPositionOrderFailsClosed() {
+  public void storeRejectsSwappedUserTxPositionOrder() {
     ArchiveBlockRange corruptRange = new ArchiveBlockRange(
         1, 0, 3, 0, 3, blockHash(1), 2, ArchiveSource.NORMAL);
-    store.commitRange(corruptRange, 4, Arrays.asList(
-        new ArchiveTxPosition(0, 1, ArchivePhase.BLOCK_PREPARE, ArchiveSource.NORMAL, -1, null),
-        new ArchiveTxPosition(1, 1, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 1, TX_B),
-        new ArchiveTxPosition(2, 1, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, TX_A),
-        new ArchiveTxPosition(3, 1, ArchivePhase.BLOCK_FINALIZE, ArchiveSource.NORMAL, -1, null)));
-    index.close();
-    index = null;
-    store = new RocksDbArchiveBlockRangeStore(dir.toString());
-    try {
-      ArchiveException ex = assertThrows(ArchiveException.class,
-          () -> new PersistentArchiveTxNumIndex(store));
-      assertTrue(ex.getMessage().contains("user tx-position order"));
-    } finally {
-      store.close();
-    }
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> store.commitRange(withChecksum(corruptRange), 4, Arrays.asList(
+            new ArchiveTxPosition(0, 1, ArchivePhase.BLOCK_PREPARE, ArchiveSource.NORMAL, -1,
+                null),
+            new ArchiveTxPosition(1, 1, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 1, TX_B),
+            new ArchiveTxPosition(2, 1, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, TX_A),
+            new ArchiveTxPosition(3, 1, ArchivePhase.BLOCK_FINALIZE, ArchiveSource.NORMAL, -1,
+                null))));
+
+    assertTrue(ex.getMessage().contains("user tx-position mismatch"));
   }
 
   @Test
-  public void restartWithSystemPositionTxIdFailsClosed() {
+  public void storeRejectsSystemPositionTxId() {
     ArchiveBlockRange corruptRange = new ArchiveBlockRange(
         1, 0, 1, 0, 1, blockHash(1), 0, ArchiveSource.NORMAL);
-    store.commitRange(corruptRange, 2, Arrays.asList(
-        new ArchiveTxPosition(0, 1, ArchivePhase.BLOCK_PREPARE, ArchiveSource.NORMAL, -1, TX_A),
-        new ArchiveTxPosition(1, 1, ArchivePhase.BLOCK_FINALIZE, ArchiveSource.NORMAL, -1, null)));
-    index.close();
-    index = null;
-    store = new RocksDbArchiveBlockRangeStore(dir.toString());
-    try {
-      ArchiveException ex = assertThrows(ArchiveException.class,
-          () -> new PersistentArchiveTxNumIndex(store));
-      assertTrue(ex.getMessage().contains("prepare tx-position mismatch"));
-    } finally {
-      store.close();
-    }
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> store.commitRange(withChecksum(corruptRange), 2, Arrays.asList(
+            new ArchiveTxPosition(0, 1, ArchivePhase.BLOCK_PREPARE, ArchiveSource.NORMAL, -1,
+                TX_A),
+            new ArchiveTxPosition(1, 1, ArchivePhase.BLOCK_FINALIZE, ArchiveSource.NORMAL, -1,
+                null))));
+
+    assertTrue(ex.getMessage().contains("prepare tx-position mismatch"));
   }
 
   @Test
-  public void stalePositionOutsideCommittedRangesIsNotCommittedTxNum() throws Exception {
+  public void storeRejectsDuplicateTxIdsInSameCommit() {
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        1, 0, 3, 0, 3, blockHash(1), 2, ArchiveSource.NORMAL);
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> store.commitRange(withChecksum(range), 4, Arrays.asList(
+            new ArchiveTxPosition(0, 1, ArchivePhase.BLOCK_PREPARE, ArchiveSource.NORMAL, -1,
+                null),
+            new ArchiveTxPosition(1, 1, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, TX_A),
+            new ArchiveTxPosition(2, 1, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 1, TX_A),
+            new ArchiveTxPosition(3, 1, ArchivePhase.BLOCK_FINALIZE, ArchiveSource.NORMAL, -1,
+                null))));
+
+    assertTrue(ex.getMessage().contains("duplicate txId"));
+    assertFalse(store.getRange(1).isPresent());
+  }
+
+  @Test
+  public void restartWithOrphanPositionFailsClosed() throws Exception {
     ArchiveBlockRange range = new ArchiveBlockRange(
         1, 0, 1, 0, 1, blockHash(1), 0, ArchiveSource.NORMAL);
-    store.commitRange(range, 2, Arrays.asList(
+    store.commitRange(withChecksum(range), 2, Arrays.asList(
         new ArchiveTxPosition(0, 1, ArchivePhase.BLOCK_PREPARE, ArchiveSource.NORMAL, -1, null),
         new ArchiveTxPosition(1, 1, ArchivePhase.BLOCK_FINALIZE, ArchiveSource.NORMAL, -1, null)));
 
@@ -485,9 +574,70 @@ public class PersistentArchiveTxNumIndexTest {
         new RocksDbArchiveBlockRangeStore(dir.toString());
 
     try {
-      assertFalse(reopenedStore.hasCommittedTxNum(99));
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> persistent(reopenedStore));
+      assertTrue(ex.getMessage().contains("orphan"));
     } finally {
       reopenedStore.close();
+    }
+  }
+
+  @Test
+  public void restartWithOrphanTxIdIndexFailsClosed() throws Exception {
+    pushBlock(1);
+    index.close();
+    index = null;
+    store = null;
+    putRawTxId(TX_B, 99);
+    RocksDbArchiveBlockRangeStore reopenedStore =
+        new RocksDbArchiveBlockRangeStore(dir.toString());
+
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> persistent(reopenedStore));
+      assertTrue(ex.getMessage().contains("orphan"));
+    } finally {
+      reopenedStore.close();
+    }
+  }
+
+  @Test
+  public void txIdLookupRejectsOrphanTxIdIndex() throws Exception {
+    pushBlock(1);
+    index.close();
+    index = null;
+    store = null;
+    putRawTxId(TX_B, 99);
+    store = new RocksDbArchiveBlockRangeStore(dir.toString());
+
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> store.findTxNumByTxId(TX_B));
+
+      assertTrue(ex.getMessage().contains("orphan"));
+    } finally {
+      store.close();
+      store = null;
+    }
+  }
+
+  @Test
+  public void blockIndexLookupRejectsMissingPositionRow() throws Exception {
+    ArchiveBlockRange range = pushBlockWithUserTx(10, TX_A);
+    long userTxNum = range.getPrepareTxNum() + 1;
+    index.close();
+    index = null;
+    store = null;
+    deleteRawPosition(userTxNum);
+    store = new RocksDbArchiveBlockRangeStore(dir.toString());
+
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> store.findTxNumByBlockAndIndex(10, 0));
+      assertTrue(ex.getMessage().contains("orphan"));
+    } finally {
+      store.close();
+      store = null;
     }
   }
 
@@ -500,7 +650,7 @@ public class PersistentArchiveTxNumIndexTest {
 
     index.close();
     store = new RocksDbArchiveBlockRangeStore(dir.toString());
-    index = new PersistentArchiveTxNumIndex(store);
+    index = persistent(store);
 
     assertEquals(userTxNum, index.findTxNumByTxId(TX_A).getAsLong());
     assertEquals(userTxNum, index.findTxNumByBlockAndIndex(10, 0).getAsLong());
@@ -529,7 +679,7 @@ public class PersistentArchiveTxNumIndexTest {
     }
 
     store = new RocksDbArchiveBlockRangeStore(dir.toString());
-    index = new PersistentArchiveTxNumIndex(store);
+    index = persistent(store);
     assertEquals(userTxNum, index.findTxNumByBlockAndIndex(10, 0).getAsLong());
   }
 
@@ -540,7 +690,7 @@ public class PersistentArchiveTxNumIndexTest {
 
     index.close();
     store = new RocksDbArchiveBlockRangeStore(dir.toString());
-    index = new PersistentArchiveTxNumIndex(store);
+    index = persistent(store);
 
     index.unwindBlock(10);
     assertFalse(index.getBlockRange(10).isPresent());
@@ -569,9 +719,9 @@ public class PersistentArchiveTxNumIndexTest {
       throws RocksDBException {
     RocksDB.loadLibrary();
     try (Options options = new Options().setCreateIfMissing(false);
-        RocksDB rawDb = RocksDB.open(options, dir.toString())) {
+      RocksDB rawDb = RocksDB.open(options, dir.toString())) {
       rawDb.put(ArchiveBlockRangeCodec.rangeKey(range.getBlockNum()),
-          ArchiveBlockRangeCodec.encodeRange(range));
+          ArchiveBlockRangeCodec.encodeRange(withChecksum(range)));
       rawDb.put(ArchiveBlockRangeCodec.CURSOR_KEY, ArchiveBlockRangeCodec.encodeCursor(cursor));
       if (firstBlock != null) {
         rawDb.put(ArchiveBlockRangeCodec.FIRST_BLOCK_KEY,
@@ -594,8 +744,49 @@ public class PersistentArchiveTxNumIndexTest {
     RocksDB.loadLibrary();
     try (Options options = new Options().setCreateIfMissing(false);
         RocksDB rawDb = RocksDB.open(options, dir.toString())) {
+      ArchiveTxPosition persistedPosition = position.getBlockHash().length == 0
+          ? withBlockHash(position, blockHash(position.getBlockNum()))
+          : position;
       rawDb.put(ArchiveBlockRangeCodec.positionKey(position.getTxNum()),
-          ArchiveBlockRangeCodec.encodePosition(position));
+          ArchiveBlockRangeCodec.encodePosition(persistedPosition));
+    }
+  }
+
+  private void putRawTxId(byte[] txId, long txNum) throws RocksDBException {
+    RocksDB.loadLibrary();
+    try (Options options = new Options().setCreateIfMissing(false);
+        RocksDB rawDb = RocksDB.open(options, dir.toString())) {
+      rawDb.put(ArchiveBlockRangeCodec.txIdKey(txId), ArchiveBlockRangeCodec.encodeCursor(txNum));
+    }
+  }
+
+  private void deleteRawPosition(long txNum) throws RocksDBException {
+    RocksDB.loadLibrary();
+    try (Options options = new Options().setCreateIfMissing(false);
+        RocksDB rawDb = RocksDB.open(options, dir.toString())) {
+      rawDb.delete(ArchiveBlockRangeCodec.positionKey(txNum));
+    }
+  }
+
+  private void verifyManifestOnlyLegacyStoreUpgrades(byte[] manifestKey, byte[] manifest)
+      throws IOException, RocksDBException {
+    index.close();
+    index = null;
+    store = null;
+    deleteRecursively(dir.toFile());
+    Files.createDirectories(dir);
+    try (Options options = new Options().setCreateIfMissing(true);
+        RocksDB rawDb = RocksDB.open(options, dir.toString())) {
+      rawDb.put(manifestKey, manifest);
+    }
+
+    store = new RocksDbArchiveBlockRangeStore(dir.toString());
+    store.close();
+    store = null;
+    try (Options options = new Options().setCreateIfMissing(false);
+        RocksDB rawDb = RocksDB.open(options, dir.toString())) {
+      assertArrayEquals(ArchiveBlockRangeCodec.manifestValue(),
+          rawDb.get(ArchiveBlockRangeCodec.manifestKey()));
     }
   }
 
@@ -615,17 +806,17 @@ public class PersistentArchiveTxNumIndexTest {
         RocksDB rawDb = RocksDB.open(options, dir.toString())) {
       rawDb.put(ArchiveBlockRangeCodec.legacyManifestKey(), legacyManifest);
       rawDb.put(ArchiveBlockRangeCodec.legacyRangeKey(range.getBlockNum()),
-          ArchiveBlockRangeCodec.encodeRange(range));
+          new byte[] {1});
       rawDb.put(ArchiveBlockRangeCodec.LEGACY_CURSOR_KEY,
           ArchiveBlockRangeCodec.encodeCursor(range.getLastTxNum() + 1));
       rawDb.put(ArchiveBlockRangeCodec.LEGACY_FIRST_BLOCK_KEY,
           ArchiveBlockRangeCodec.encodeFirstBlock(range.getBlockNum()));
       rawDb.put(ArchiveBlockRangeCodec.legacyPositionKey(prepare.getTxNum()),
-          ArchiveBlockRangeCodec.encodePosition(prepare));
+          new byte[] {1});
       rawDb.put(ArchiveBlockRangeCodec.legacyPositionKey(user.getTxNum()),
-          ArchiveBlockRangeCodec.encodePosition(user));
+          new byte[] {1});
       rawDb.put(ArchiveBlockRangeCodec.legacyPositionKey(finalize.getTxNum()),
-          ArchiveBlockRangeCodec.encodePosition(finalize));
+          new byte[] {1});
       rawDb.put(ArchiveBlockRangeCodec.legacyTxIdKey(TX_A),
           ArchiveBlockRangeCodec.encodeCursor(user.getTxNum()));
       rawDb.put(legacyBlockIndexKey(range.getBlockNum(), 0),
@@ -641,6 +832,11 @@ public class PersistentArchiveTxNumIndexTest {
 
   private static byte[] legacySchemaTwoManifest() {
     return "tron-archive-txnum|schema=2|model=range-position-txid-v1|block-index=derived"
+        .getBytes(StandardCharsets.US_ASCII);
+  }
+
+  private static byte[] legacySchemaThreeManifest() {
+    return "tron-archive-txnum|schema=3|keys=l5-txnum-v1|values=range-position-v2"
         .getBytes(StandardCharsets.US_ASCII);
   }
 
@@ -670,5 +866,11 @@ public class PersistentArchiveTxNumIndexTest {
     byte[] hash = new byte[ArchiveBlockRange.BLOCK_HASH_LENGTH];
     hash[ArchiveBlockRange.BLOCK_HASH_LENGTH - 1] = (byte) seed;
     return hash;
+  }
+
+  private static byte[] checksum(int seed) {
+    byte[] checksum = new byte[ArchiveBlockRange.SCHEMA_CHECKSUM_LENGTH];
+    checksum[ArchiveBlockRange.SCHEMA_CHECKSUM_LENGTH - 1] = (byte) seed;
+    return checksum;
   }
 }

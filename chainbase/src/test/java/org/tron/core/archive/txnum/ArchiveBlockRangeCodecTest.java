@@ -8,9 +8,20 @@ import static org.junit.Assert.assertThrows;
 import java.util.Arrays;
 import org.junit.Test;
 import org.tron.core.archive.ArchiveException;
+import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveSource;
 
 public class ArchiveBlockRangeCodecTest {
+
+  private static final int RANGE_SOURCE_OFFSET = 45;
+  private static final int RANGE_BLOCK_HASH_LENGTH_OFFSET =
+      1 + Long.BYTES * 5 + Integer.BYTES + 1;
+  private static final int RANGE_SCHEMA_CHECKSUM_LENGTH_OFFSET =
+      RANGE_BLOCK_HASH_LENGTH_OFFSET + Integer.BYTES + ArchiveBlockRange.BLOCK_HASH_LENGTH;
+  private static final int POSITION_PHASE_OFFSET = 17;
+  private static final int POSITION_SOURCE_OFFSET = 18;
+  private static final int POSITION_TX_ID_LENGTH_OFFSET = 23;
+  private static final int POSITION_TX_ID_OFFSET = 27;
 
   @Test
   public void rangeRoundTrips() {
@@ -26,35 +37,137 @@ public class ArchiveBlockRangeCodecTest {
     assertArrayEquals(blockHash, back.getBlockHash());
     assertEquals(3, back.getUserTxCount());
     assertEquals(ArchiveSource.REPLAY, back.getSource());
+    assertArrayEquals(schemaChecksum(7), back.getSchemaChecksum());
   }
 
   @Test
-  public void decodeRejectsLegacyRangeWithoutBlockHash() {
-    byte[] legacy = Arrays.copyOf(ArchiveBlockRangeCodec.encodeRange(range(blockHash(7))), 45);
+  public void txPositionRoundTrips() {
+    byte[] blockHash = blockHash(8);
+    ArchiveTxPosition position = new ArchiveTxPosition(12, 7, ArchivePhase.USER_TX,
+        ArchiveSource.REPLAY, 1, new byte[] {9}, blockHash);
 
-    assertThrows(ArchiveException.class, () -> ArchiveBlockRangeCodec.decodeRange(legacy));
+    ArchiveTxPosition back =
+        ArchiveBlockRangeCodec.decodePosition(ArchiveBlockRangeCodec.encodePosition(position));
+
+    assertEquals(12, back.getTxNum());
+    assertEquals(7, back.getBlockNum());
+    assertEquals(ArchivePhase.USER_TX, back.getPhase());
+    assertEquals(ArchiveSource.REPLAY, back.getSource());
+    assertEquals(1, back.getTxIndex());
+    assertArrayEquals(new byte[] {9}, back.getTxId());
+    assertArrayEquals(blockHash, back.getBlockHash());
+  }
+
+  @Test
+  public void decodeRejectsUnsupportedRangeVersion() {
+    byte[] encoded = ArchiveBlockRangeCodec.encodeRange(range(blockHash(7)));
+    encoded[0] = 2;
+
+    assertThrows(ArchiveException.class, () -> ArchiveBlockRangeCodec.decodeRange(encoded));
   }
 
   @Test
   public void decodeRejectsEmptyBlockHash() {
-    byte[] emptyHash = Arrays.copyOf(ArchiveBlockRangeCodec.encodeRange(range(blockHash(7))), 49);
-    Arrays.fill(emptyHash, 45, 49, (byte) 0);
+    byte[] emptyHash = ArchiveBlockRangeCodec.encodeRange(range(blockHash(7)));
+    putInt(emptyHash, RANGE_BLOCK_HASH_LENGTH_OFFSET, 0);
 
     assertThrows(ArchiveException.class, () -> ArchiveBlockRangeCodec.decodeRange(emptyHash));
   }
 
   @Test
+  public void decodeRejectsInvalidSchemaChecksumLength() {
+    byte[] invalidChecksum = ArchiveBlockRangeCodec.encodeRange(range(blockHash(7)));
+    putInt(invalidChecksum, RANGE_SCHEMA_CHECKSUM_LENGTH_OFFSET, 0);
+
+    assertThrows(ArchiveException.class,
+        () -> ArchiveBlockRangeCodec.decodeRange(invalidChecksum));
+  }
+
+  @Test
   public void decodeRejectsTrailingGarbage() {
     byte[] withGarbage = Arrays.copyOf(
-        ArchiveBlockRangeCodec.encodeRange(range(blockHash(7))), 82);
+        ArchiveBlockRangeCodec.encodeRange(range(blockHash(7))),
+        ArchiveBlockRangeCodec.encodeRange(range(blockHash(7))).length + 1);
 
     assertThrows(ArchiveException.class, () -> ArchiveBlockRangeCodec.decodeRange(withGarbage));
+  }
+
+  @Test
+  public void decodeRejectsInvalidRangeSourceOrdinal() {
+    byte[] encoded = ArchiveBlockRangeCodec.encodeRange(range(blockHash(7)));
+    encoded[RANGE_SOURCE_OFFSET] = 127;
+
+    assertThrows(ArchiveException.class, () -> ArchiveBlockRangeCodec.decodeRange(encoded));
+  }
+
+  @Test
+  public void decodePositionRejectsUnsupportedVersion() {
+    ArchiveTxPosition position = new ArchiveTxPosition(12, 7, ArchivePhase.USER_TX,
+        ArchiveSource.REPLAY, 1, new byte[] {9}, blockHash(8));
+    byte[] encoded = ArchiveBlockRangeCodec.encodePosition(position);
+    encoded[0] = 2;
+
+    assertThrows(ArchiveException.class, () -> ArchiveBlockRangeCodec.decodePosition(encoded));
+  }
+
+  @Test
+  public void decodePositionRejectsInvalidBlockHashLength() {
+    ArchiveTxPosition position = position();
+    byte[] encoded = ArchiveBlockRangeCodec.encodePosition(position);
+    putInt(encoded, POSITION_TX_ID_OFFSET + position.getTxId().length, 0);
+
+    assertThrows(ArchiveException.class, () -> ArchiveBlockRangeCodec.decodePosition(encoded));
+  }
+
+  @Test
+  public void decodePositionRejectsTrailingGarbage() {
+    byte[] encoded = ArchiveBlockRangeCodec.encodePosition(position());
+    byte[] withGarbage = Arrays.copyOf(encoded, encoded.length + 1);
+
+    assertThrows(ArchiveException.class,
+        () -> ArchiveBlockRangeCodec.decodePosition(withGarbage));
+  }
+
+  @Test
+  public void decodePositionRejectsInvalidTxIdLength() {
+    byte[] encoded = ArchiveBlockRangeCodec.encodePosition(position());
+    putInt(encoded, POSITION_TX_ID_LENGTH_OFFSET, Integer.MAX_VALUE);
+
+    assertThrows(ArchiveException.class, () -> ArchiveBlockRangeCodec.decodePosition(encoded));
+  }
+
+  @Test
+  public void decodePositionRejectsInvalidPhaseOrdinal() {
+    byte[] encoded = ArchiveBlockRangeCodec.encodePosition(position());
+    encoded[POSITION_PHASE_OFFSET] = 127;
+
+    assertThrows(ArchiveException.class, () -> ArchiveBlockRangeCodec.decodePosition(encoded));
+  }
+
+  @Test
+  public void decodePositionRejectsInvalidSourceOrdinal() {
+    byte[] encoded = ArchiveBlockRangeCodec.encodePosition(position());
+    encoded[POSITION_SOURCE_OFFSET] = 127;
+
+    assertThrows(ArchiveException.class, () -> ArchiveBlockRangeCodec.decodePosition(encoded));
   }
 
   @Test
   public void cursorRoundTrips() {
     assertEquals(42L,
         ArchiveBlockRangeCodec.decodeCursor(ArchiveBlockRangeCodec.encodeCursor(42L)));
+  }
+
+  @Test
+  public void decodeCursorRejectsInvalidLength() {
+    assertThrows(ArchiveException.class,
+        () -> ArchiveBlockRangeCodec.decodeCursor(new byte[] {1}));
+  }
+
+  @Test
+  public void decodeFirstBlockRejectsInvalidLength() {
+    assertThrows(ArchiveException.class,
+        () -> ArchiveBlockRangeCodec.decodeFirstBlock(new byte[] {1}));
   }
 
   @Test
@@ -82,12 +195,31 @@ public class ArchiveBlockRangeCodecTest {
   }
 
   private static ArchiveBlockRange range(byte[] blockHash) {
-    return new ArchiveBlockRange(7, 10, 15, 10, 15, blockHash, 3, ArchiveSource.REPLAY);
+    return new ArchiveBlockRange(7, 10, 15, 10, 15, blockHash, 3, ArchiveSource.REPLAY,
+        schemaChecksum(7));
+  }
+
+  private static ArchiveTxPosition position() {
+    return new ArchiveTxPosition(12, 7, ArchivePhase.USER_TX, ArchiveSource.REPLAY, 1,
+        new byte[] {9}, blockHash(8));
   }
 
   private static byte[] blockHash(int seed) {
     byte[] hash = new byte[ArchiveBlockRange.BLOCK_HASH_LENGTH];
     hash[ArchiveBlockRange.BLOCK_HASH_LENGTH - 1] = (byte) seed;
     return hash;
+  }
+
+  private static byte[] schemaChecksum(int seed) {
+    byte[] checksum = new byte[ArchiveBlockRange.SCHEMA_CHECKSUM_LENGTH];
+    checksum[ArchiveBlockRange.SCHEMA_CHECKSUM_LENGTH - 1] = (byte) seed;
+    return checksum;
+  }
+
+  private static void putInt(byte[] bytes, int offset, int value) {
+    for (int i = Integer.BYTES - 1; i >= 0; i--) {
+      bytes[offset + i] = (byte) value;
+      value >>>= Byte.SIZE;
+    }
   }
 }

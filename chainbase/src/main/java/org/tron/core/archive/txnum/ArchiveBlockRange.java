@@ -10,6 +10,7 @@ import org.tron.core.archive.ArchiveSource;
 public final class ArchiveBlockRange {
 
   public static final int BLOCK_HASH_LENGTH = 32;
+  public static final int SCHEMA_CHECKSUM_LENGTH = 32;
 
   private final long blockNum;
   private final long firstTxNum;
@@ -17,6 +18,7 @@ public final class ArchiveBlockRange {
   private final long prepareTxNum;
   private final long finalizeTxNum;
   private final byte[] blockHash;
+  private final byte[] schemaChecksum;
   private final int userTxCount;
   private final ArchiveSource source;
 
@@ -28,12 +30,22 @@ public final class ArchiveBlockRange {
 
   public ArchiveBlockRange(long blockNum, long firstTxNum, long lastTxNum, long prepareTxNum,
       long finalizeTxNum, byte[] blockHash, int userTxCount, ArchiveSource source) {
+    this(blockNum, firstTxNum, lastTxNum, prepareTxNum, finalizeTxNum, blockHash,
+        userTxCount, source, new byte[0]);
+  }
+
+  public ArchiveBlockRange(long blockNum, long firstTxNum, long lastTxNum, long prepareTxNum,
+      long finalizeTxNum, byte[] blockHash, int userTxCount, ArchiveSource source,
+      byte[] schemaChecksum) {
     this.blockNum = blockNum;
     this.firstTxNum = firstTxNum;
     this.lastTxNum = lastTxNum;
     this.prepareTxNum = prepareTxNum;
     this.finalizeTxNum = finalizeTxNum;
     this.blockHash = blockHash == null ? new byte[0] : Arrays.copyOf(blockHash, blockHash.length);
+    this.schemaChecksum = schemaChecksum == null
+        ? new byte[0]
+        : Arrays.copyOf(schemaChecksum, schemaChecksum.length);
     this.userTxCount = userTxCount;
     this.source = source;
   }
@@ -60,6 +72,10 @@ public final class ArchiveBlockRange {
 
   public byte[] getBlockHash() {
     return Arrays.copyOf(blockHash, blockHash.length);
+  }
+
+  public byte[] getSchemaChecksum() {
+    return Arrays.copyOf(schemaChecksum, schemaChecksum.length);
   }
 
   public int getUserTxCount() {

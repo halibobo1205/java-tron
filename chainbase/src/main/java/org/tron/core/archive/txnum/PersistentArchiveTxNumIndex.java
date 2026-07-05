@@ -1,6 +1,7 @@
 package org.tron.core.archive.txnum;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
@@ -18,10 +19,15 @@ public final class PersistentArchiveTxNumIndex implements ArchiveTxNumIndex, Aut
 
   private InMemoryArchiveTxNumIndex inner;
   private final RocksDbArchiveBlockRangeStore store;
+  private final byte[] schemaChecksum;
 
-  public PersistentArchiveTxNumIndex(RocksDbArchiveBlockRangeStore store) {
+  public PersistentArchiveTxNumIndex(RocksDbArchiveBlockRangeStore store,
+      byte[] schemaChecksum) {
     this.store = store;
+    ArchiveBlockRangeCodec.requireSchemaChecksum(schemaChecksum, "archive txNum index");
+    this.schemaChecksum = Arrays.copyOf(schemaChecksum, schemaChecksum.length);
     store.validateNoRepairRequired();
+    store.validateSchemaChecksum(this.schemaChecksum);
     store.validateCursorConsistentWithLastRange();
     store.validateContiguousCoverage();
     store.validatePositionCoverage();
@@ -51,18 +57,40 @@ public final class PersistentArchiveTxNumIndex implements ArchiveTxNumIndex, Aut
 
   @Override
   public ArchiveBlockRange commitBlock(long blockNum, byte[] blockHash, int userTxCount) {
+    return commitBlock(blockNum, blockHash, userTxCount, schemaChecksum);
+  }
+
+  @Override
+  public ArchiveBlockRange commitBlock(long blockNum, byte[] blockHash, int userTxCount,
+      byte[] commitSchemaChecksum) {
+    ArchiveBlockRangeCodec.requireSchemaChecksum(commitSchemaChecksum, "archive txNum commit");
+    if (!Arrays.equals(schemaChecksum, commitSchemaChecksum)) {
+      throw new ArchiveException("archive txNum commit schema checksum mismatch");
+    }
     ArchiveBlockRange range = inner.commitBlock(blockNum, blockHash, userTxCount);
+    ArchiveBlockRange persistedRange = new ArchiveBlockRange(
+        range.getBlockNum(), range.getFirstTxNum(), range.getLastTxNum(),
+        range.getPrepareTxNum(), range.getFinalizeTxNum(), range.getBlockHash(),
+        range.getUserTxCount(), range.getSource(), commitSchemaChecksum);
     List<ArchiveTxPosition> positions = new ArrayList<>();
     for (long txNum = range.getFirstTxNum(); txNum <= range.getLastTxNum(); txNum++) {
-      inner.getPosition(txNum).ifPresent(positions::add);
+      Optional<ArchiveTxPosition> stored = inner.getPosition(txNum);
+      if (!stored.isPresent()) {
+        throw new ArchiveException("archive tx-position missing before persist for txNum "
+            + txNum);
+      }
+      ArchiveTxPosition position = stored.get();
+      positions.add(new ArchiveTxPosition(position.getTxNum(), position.getBlockNum(),
+          position.getPhase(), position.getSource(), position.getTxIndex(), position.getTxId(),
+          range.getBlockHash()));
     }
     try {
-      store.commitRange(range, inner.getCommittedNextTxNum(), positions);
+      store.commitRange(persistedRange, inner.getCommittedNextTxNum(), positions);
     } catch (RuntimeException e) {
       inner = new InMemoryArchiveTxNumIndex(store.getCursor());
       throw e;
     }
-    return range;
+    return persistedRange;
   }
 
   @Override
