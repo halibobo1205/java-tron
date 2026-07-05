@@ -291,6 +291,10 @@ public final class DefaultArchiveService implements ArchiveService {
       return;
     }
     validateAvailable();
+    if (!txNumIndex.getBlockRange(canonicalHead.getNum()).isPresent()) {
+      throw new ArchiveException("archive enabled but canonical head block "
+          + canonicalHead.getNum() + " is not covered by archive");
+    }
     txNumIndex.validateCanonicalHead(
         canonicalHead.getNum(), canonicalHead.getBlockId().getBytes());
   }
