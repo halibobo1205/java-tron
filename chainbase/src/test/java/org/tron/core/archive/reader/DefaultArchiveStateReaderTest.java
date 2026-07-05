@@ -199,7 +199,7 @@ public class DefaultArchiveStateReaderTest {
   }
 
   @Test
-  public void getStoragePrefersAlternatePresentOverPrimaryTombstone() throws Exception {
+  public void getStoragePrimaryTombstoneWinsOverAlternatePresent() throws Exception {
     byte[] address = addr(1);
     byte[] slot = new byte[32];
     slot[31] = 7;
@@ -211,7 +211,7 @@ public class DefaultArchiveStateReaderTest {
     put(ArchiveDomain.CONTRACT_STORAGE, Bytes.concat(address, slot, new byte[] {0}),
         DomainValue.present(v0Word), 5);
 
-    assertArrayEquals(v0Word, readerAt(5).getStorage(address, slot).getValue());
+    assertEquals(Status.TOMBSTONE, readerAt(5).getStorage(address, slot).getStatus());
   }
 
   @Test

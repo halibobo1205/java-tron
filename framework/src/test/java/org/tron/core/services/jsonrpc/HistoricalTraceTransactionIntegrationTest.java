@@ -8,12 +8,14 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.junit.Before;
 import org.junit.Test;
 import org.tron.common.BaseMethodTest;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.runtime.TvmTestUtils;
+import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.Wallet;
 import org.tron.core.archive.ArchivePhase;
@@ -59,6 +61,25 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
   };
   private static final byte[] INVALID_CODE = {(byte) 0xfe};
   private static final byte[] STOP_CODE = {0x00};
+  private static final String[] REQUIRED_VM_DEFAULT_KEYS = {
+      "ALLOW_CREATION_OF_CONTRACTS",
+      "ALLOW_TVM_TRANSFER_TRC10",
+      "ALLOW_TVM_CONSTANTINOPLE",
+      "ALLOW_TVM_SOLIDITY_059",
+      "ALLOW_TVM_ISTANBUL",
+      "ALLOW_TVM_FREEZE",
+      "ALLOW_TVM_VOTE",
+      "ALLOW_TVM_LONDON",
+      "ALLOW_TVM_SHANGHAI",
+      "ALLOW_TVM_CANCUN",
+      "ALLOW_TVM_BLOB",
+      "ALLOW_TVM_COMPATIBLE_EVM",
+      "UNFREEZE_DELAY_DAYS",
+      "ALLOW_NEW_RESOURCE_MODEL",
+      "ALLOW_MULTI_SIGN",
+      "ALLOW_DYNAMIC_ENERGY",
+      "DYNAMIC_ENERGY_THRESHOLD"
+  };
 
   @Override
   protected void afterInit() {
@@ -108,6 +129,17 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
         domain, canonicalKey, DomainValue.tombstone(), DomainValue.present(valueBytes)));
   }
 
+  private void putArchiveVmDefaults(InMemoryArchiveTemporalStore temporal, long txNum,
+      boolean supportVm) {
+    for (String key : REQUIRED_VM_DEFAULT_KEYS) {
+      put(temporal, txNum, ArchiveDomain.DYNAMIC_PROPERTIES,
+          key.getBytes(StandardCharsets.US_ASCII), ByteArray.fromLong(0L));
+    }
+    put(temporal, txNum, ArchiveDomain.DYNAMIC_PROPERTIES,
+        "ALLOW_CREATION_OF_CONTRACTS".getBytes(StandardCharsets.US_ASCII),
+        ByteArray.fromLong(supportVm ? 1L : 0L));
+  }
+
   // Archives the contract (account/contract/code) at finalize txNum t1 of block 1, commits block 1,
   // then opens block 2, allocates prepare + the traced user tx, and commits. Returns the service.
   private DefaultArchiveService buildArchive(InMemoryArchiveTemporalStore temporal, byte[] contract,
@@ -122,6 +154,11 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
 
   private DefaultArchiveService buildArchive(InMemoryArchiveTemporalStore temporal, byte[] contract,
       byte[] txId, byte[] block2Hash, byte[] code) {
+    return buildArchive(temporal, contract, txId, block2Hash, code, 2_000_000_000L);
+  }
+
+  private DefaultArchiveService buildArchive(InMemoryArchiveTemporalStore temporal, byte[] contract,
+      byte[] txId, byte[] block2Hash, byte[] code, long callerBalance) {
     DefaultArchiveService svc = new DefaultArchiveService(true, temporal);
     byte[] caller = addr(0x22);
 
@@ -138,7 +175,7 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
     long t1 = fin1.getTxNum();
     put(temporal, t1, ArchiveDomain.ACCOUNT, caller,
         Account.newBuilder().setAddress(ByteString.copyFrom(caller))
-            .setBalance(2_000_000_000L).build().toByteArray());
+            .setBalance(callerBalance).build().toByteArray());
     put(temporal, t1, ArchiveDomain.ACCOUNT, contract,
         Account.newBuilder().setAddress(ByteString.copyFrom(contract)).build().toByteArray());
     put(temporal, t1, ArchiveDomain.CONTRACT, contract,
@@ -146,6 +183,7 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
             .setOriginAddress(ByteString.copyFrom(caller)).build()
             .toByteArray());
     put(temporal, t1, ArchiveDomain.CODE, contract, code);
+    putArchiveVmDefaults(temporal, t1, true);
     svc.getTxNumIndex().commitBlock(1, blockHash(1), 0);
 
     // Block 2: prepare, then the traced user tx (txNum t), then finalize.
@@ -241,6 +279,36 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
     assertEquals("", result.getReturnValue());
     assertEquals(1, result.getStructLogs().size());
     assertEquals("INVALID", result.getStructLogs().get(0).getOp());
+  }
+
+  @Test
+  public void traceTransactionReplaysBalanceLimitedCall() throws Exception {
+    byte[] contract = addr(0x11);
+    byte[] caller = addr(0x22);
+
+    TriggerSmartContract trigger =
+        TvmTestUtils.buildTriggerSmartContract(caller, contract, new byte[0], 0L);
+    TransactionCapsule trxCap =
+        new TransactionCapsule(trigger, ContractType.TriggerSmartContract);
+    trxCap.setFeeLimit(1_000_000_000L);
+    Transaction tx = trxCap.getInstance();
+    byte[] txId = trxCap.getTransactionId().getBytes();
+
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    DefaultArchiveService svc =
+        buildArchive(temporal, contract, txId, blockHash(2), ADD_CODE, 1_000_000L);
+
+    Wallet wallet = mock(Wallet.class);
+    when(wallet.getTransactionById(ByteString.copyFrom(txId))).thenReturn(tx);
+    when(wallet.getTransactionInfoById(ByteString.copyFrom(txId)))
+        .thenReturn(TransactionInfo.newBuilder().setBlockNumber(2L).build());
+    BlockCapsule block = blockCapsule(2);
+    when(wallet.getBlockByNum(2L)).thenReturn(block.getInstance());
+
+    TraceResult result = new HistoricalTraceSupport(wallet, svc).traceTransaction(txId, null);
+
+    assertFalse(result.isFailed());
+    assertEquals(word(3), result.getReturnValue());
   }
 
   @Test

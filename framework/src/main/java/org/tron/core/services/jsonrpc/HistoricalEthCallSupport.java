@@ -36,7 +36,9 @@ import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
  * Serves the historical {@code eth_call} path: resolves a non-latest block selector to an archive
  * state point, replays the call against the archived state via the constant-call executor and
  * renders the result as JSON-RPC hex. {@code latest} / archive-disabled stay on the existing
- * latest-only logic ({@link #shouldUseArchive} returns false).
+ * latest-only logic. Non-latest selectors enter this support even when archive is disabled, so
+ * disabled archive fails closed with the archive error surface rather than latest-only param
+ * validation.
  *
  * <p>Account / code / storage are read historically, and the energy price is reconstructed from the
  * live {@code EnergyPriceHistory} (see {@link HistoricalVmDynamicProperties}), so {@code BASEFEE} /
@@ -56,10 +58,9 @@ public final class HistoricalEthCallSupport {
     this.resolver = new JsonRpcArchiveStatePointResolver(wallet, archiveService);
   }
 
-  /** True when the call must be served from the archive (enabled + a non-latest selector). */
+  /** True when the call is historical and must not fall back to latest state. */
   public boolean shouldUseArchive(String blockNumOrTag) {
-    return archiveService.isEnabled()
-        && !JsonRpcApiUtil.LATEST_STR.equalsIgnoreCase(blockNumOrTag);
+    return !JsonRpcApiUtil.LATEST_STR.equalsIgnoreCase(blockNumOrTag);
   }
 
   public String call(byte[] ownerAddress, byte[] contractAddress, long callValue, byte[] data,
@@ -68,6 +69,7 @@ public final class HistoricalEthCallSupport {
     if (JsonRpcApiUtil.LATEST_STR.equalsIgnoreCase(blockNumOrTag)) {
       throw new JsonRpcInternalException("historical eth_call invoked for the latest tag");
     }
+    requireArchiveEnabled();
     try (ArchiveService.ReadGuard ignored = readGuard()) {
       ResolvedArchiveStatePoint resolved = resolver.resolveBlockEnd(blockNumOrTag);
       if (resolved.isLatest()) {
@@ -160,6 +162,12 @@ public final class HistoricalEthCallSupport {
       return archiveService.acquireReadGuard();
     } catch (ArchiveException e) {
       throw new JsonRpcInternalException(e.getMessage());
+    }
+  }
+
+  private void requireArchiveEnabled() throws JsonRpcInternalException {
+    if (!archiveService.isEnabled()) {
+      throw new JsonRpcInternalException("archive is not available");
     }
   }
 
