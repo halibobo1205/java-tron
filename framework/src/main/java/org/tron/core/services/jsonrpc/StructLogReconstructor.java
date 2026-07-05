@@ -47,29 +47,44 @@ public final class StructLogReconstructor {
       return logs;
     }
     List<org.tron.core.vm.trace.Op> ops = trace.getOps();
-    // Running pre-op machine state, advanced delta-by-delta as we walk the ops in order.
-    List<String> stack = new ArrayList<>();
-    List<Byte> memory = new ArrayList<>();
-    Map<String, String> storage = new LinkedHashMap<>();
+    Map<Integer, MachineState> frames = new LinkedHashMap<>();
+    int previousDepth = -1;
 
     for (int i = 0; i < ops.size(); i++) {
       org.tron.core.vm.trace.Op op = ops.get(i);
+      int depth = op.getDeep();
+      if (previousDepth < depth) {
+        frames.put(depth, new MachineState());
+      } else if (previousDepth > depth) {
+        frames.keySet().removeIf(d -> d > depth);
+      }
+      MachineState frame = frames.computeIfAbsent(depth, ignored -> new MachineState());
       // Apply this op's recorded deltas (the previous op's mutations) to reach op i's PRE-op state.
-      applyActions(op.getActions(), stack, memory, storage);
+      applyActions(op.getActions(), frame.stack, frame.memory, frame.storage);
 
       long gas = op.getEnergy() == null ? 0L : op.getEnergy().longValue();
-      long gasCost = 0L;
-      if (i + 1 < ops.size()) {
-        org.tron.core.vm.trace.Op next = ops.get(i + 1);
-        long nextGas = next.getEnergy() == null ? 0L : next.getEnergy().longValue();
-        gasCost = gas - nextGas;
-      }
+      long gasCost = gas - nextFrameGas(ops, i, depth, gas);
       String name = Op.getNameOf(op.getCode());
       logs.add(new StructLog(op.getPc(), name == null ? "INVALID" : name, gas, gasCost,
-          op.getDeep() + 1, new ArrayList<>(stack), toMemoryWords(memory),
-          new LinkedHashMap<>(storage)));
+          depth + 1, new ArrayList<>(frame.stack), toMemoryWords(frame.memory),
+          new LinkedHashMap<>(frame.storage)));
+      previousDepth = depth;
     }
     return logs;
+  }
+
+  private static long nextFrameGas(List<org.tron.core.vm.trace.Op> ops, int index, int depth,
+      long currentGas) {
+    for (int i = index + 1; i < ops.size(); i++) {
+      org.tron.core.vm.trace.Op next = ops.get(i);
+      if (next.getDeep() < depth) {
+        break;
+      }
+      if (next.getDeep() == depth) {
+        return next.getEnergy() == null ? 0L : next.getEnergy().longValue();
+      }
+    }
+    return currentGas;
   }
 
   private static void applyActions(OpActions actions, List<String> stack, List<Byte> memory,
@@ -179,5 +194,11 @@ public final class StructLogReconstructor {
   private static String param(Action a, String name) {
     Object v = a.getParams() == null ? null : a.getParams().get(name);
     return v == null ? "" : v.toString();
+  }
+
+  private static final class MachineState {
+    private final List<String> stack = new ArrayList<>();
+    private final List<Byte> memory = new ArrayList<>();
+    private final Map<String, String> storage = new LinkedHashMap<>();
   }
 }

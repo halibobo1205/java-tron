@@ -172,6 +172,12 @@ final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProp
         ForkBlockVersionEnum.VERSION_4_7_1, ForkBlockVersionEnum.VERSION_4_8_1_1);
   }
 
+  static long resolveEnergyFee(ArchiveStateReader reader, boolean genesisComplete)
+      throws ArchiveReaderException {
+    return resolve(reader, "ENERGY_FEE", genesisComplete,
+        HistoricalVmDynamicProperties.DEFAULT_ENERGY_FEE, () -> 0L);
+  }
+
   private static long resolve(ArchiveStateReader reader, String key, boolean genesisComplete,
       long inMemoryDefault, LongSupplier latestValue) throws ArchiveReaderException {
     byte[] canonicalKey = key.getBytes(StandardCharsets.US_ASCII);

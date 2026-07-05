@@ -21,7 +21,7 @@ import org.tron.core.store.VmDynamicProperties;
  */
 class HistoricalVmDynamicProperties implements VmDynamicProperties {
 
-  private static final long DEFAULT_ENERGY_FEE = 100L;
+  static final long DEFAULT_ENERGY_FEE = 100L;
 
   private final VmDynamicProperties latest;
   private final long energyFee;

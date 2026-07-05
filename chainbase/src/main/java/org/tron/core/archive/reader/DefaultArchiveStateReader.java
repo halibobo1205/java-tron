@@ -125,9 +125,8 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
     if (!contract.isPresent()) {
       return retype(contract);
     }
-    byte[] key = ArchiveStorageKeyCodec.contractStorageKey(
-        address, slot, contract.getValue().getContractVersion());
-    ArchiveReadResult<byte[]> raw = getRaw(ArchiveDomain.CONTRACT_STORAGE, key);
+    ArchiveReadResult<byte[]> raw =
+        getStorageRaw(address, slot, contract.getValue().getContractVersion());
     if (raw.isPresent() && raw.getValue().length > MAX_STORAGE_VALUE_LEN) {
       throw new ArchiveReaderException(ArchiveReaderException.Reason.CORRUPT_VALUE,
           "archive storage value exceeds 32 bytes");
@@ -141,6 +140,27 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
       throw new IllegalArgumentException("dynamic property key must be non-empty");
     }
     return getRaw(ArchiveDomain.DYNAMIC_PROPERTIES, key);
+  }
+
+  private ArchiveReadResult<byte[]> getStorageRaw(byte[] address, byte[] slot, int contractVersion)
+      throws ArchiveReaderException {
+    byte[] primaryKey = ArchiveStorageKeyCodec.contractStorageKey(address, slot, contractVersion);
+    ArchiveReadResult<byte[]> primary = getRaw(ArchiveDomain.CONTRACT_STORAGE, primaryKey);
+    if (primary.isPresent()) {
+      return primary;
+    }
+
+    int alternateVersion = contractVersion == 1 ? 0 : 1;
+    byte[] alternateKey =
+        ArchiveStorageKeyCodec.contractStorageKey(address, slot, alternateVersion);
+    ArchiveReadResult<byte[]> alternate = getRaw(ArchiveDomain.CONTRACT_STORAGE, alternateKey);
+    if (alternate.isPresent()) {
+      return alternate;
+    }
+    if (primary.getStatus() == ArchiveReadResult.Status.TOMBSTONE) {
+      return primary;
+    }
+    return alternate;
   }
 
   private ArchiveReadResult<byte[]> getRaw(ArchiveDomain domain, byte[] canonicalKey)
