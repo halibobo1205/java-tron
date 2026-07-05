@@ -3,6 +3,7 @@ package org.tron.core.archive.txnum;
 import com.google.common.primitives.Bytes;
 import com.google.common.primitives.Ints;
 import com.google.common.primitives.Longs;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchivePhase;
@@ -37,6 +38,11 @@ public final class ArchiveBlockRangeCodec {
   static final byte BLOCK_INDEX_PREFIX = 0x04;
   static final byte TX_ID_PREFIX = 0x05;
   static final byte[] REPAIR_REQUIRED_KEY = {0x06};
+  static final byte META_PREFIX = 0x12;
+  private static final byte[] MANIFEST_KEY = new byte[] {META_PREFIX, 'm', 'a', 'n', 'i'};
+  private static final byte[] MANIFEST_VALUE =
+      "tron-archive-txnum|schema=1|model=range-position-index-v1|prefix=legacy-0x00-0x06"
+          .getBytes(StandardCharsets.US_ASCII);
 
   private ArchiveBlockRangeCodec() {
   }
@@ -56,6 +62,18 @@ public final class ArchiveBlockRangeCodec {
 
   static byte[] txIdKey(byte[] txId) {
     return Bytes.concat(new byte[] {TX_ID_PREFIX}, txId);
+  }
+
+  static byte[] manifestKey() {
+    return Arrays.copyOf(MANIFEST_KEY, MANIFEST_KEY.length);
+  }
+
+  static byte[] manifestValue() {
+    return Arrays.copyOf(MANIFEST_VALUE, MANIFEST_VALUE.length);
+  }
+
+  static boolean manifestMatches(byte[] value) {
+    return Arrays.equals(MANIFEST_VALUE, value);
   }
 
   static byte[] encodeRange(ArchiveBlockRange range) {

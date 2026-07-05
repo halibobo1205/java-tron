@@ -148,6 +148,53 @@ public class PersistentArchiveTxNumIndexTest {
   }
 
   @Test
+  public void storeInstallsSchemaManifestOnEmptyDb() throws Exception {
+    index.close();
+    index = null;
+    store = null;
+
+    try (Options options = new Options().setCreateIfMissing(false);
+        RocksDB rawDb = RocksDB.open(options, dir.toString())) {
+      assertArrayEquals(ArchiveBlockRangeCodec.manifestValue(),
+          rawDb.get(ArchiveBlockRangeCodec.manifestKey()));
+    }
+  }
+
+  @Test
+  public void storeRejectsNonEmptyDbWithoutManifest() throws Exception {
+    index.close();
+    index = null;
+    store = null;
+    deleteRecursively(dir.toFile());
+    Files.createDirectories(dir);
+    try (Options options = new Options().setCreateIfMissing(true);
+        RocksDB rawDb = RocksDB.open(options, dir.toString())) {
+      rawDb.put(ArchiveBlockRangeCodec.CURSOR_KEY, ArchiveBlockRangeCodec.encodeCursor(0));
+    }
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> new RocksDbArchiveBlockRangeStore(dir.toString()));
+
+    assertTrue(ex.getMessage().contains("non-empty but missing manifest"));
+  }
+
+  @Test
+  public void storeRejectsManifestMismatch() throws Exception {
+    index.close();
+    index = null;
+    store = null;
+    try (Options options = new Options().setCreateIfMissing(false);
+        RocksDB rawDb = RocksDB.open(options, dir.toString())) {
+      rawDb.put(ArchiveBlockRangeCodec.manifestKey(), new byte[] {1});
+    }
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> new RocksDbArchiveBlockRangeStore(dir.toString()));
+
+    assertTrue(ex.getMessage().contains("manifest mismatch"));
+  }
+
+  @Test
   public void firstArchivedBlockIsLowestCommittedAndSurvivesRestart() {
     assertEquals(RocksDbArchiveBlockRangeStore.NO_FIRST_BLOCK, index.getFirstArchivedBlock());
     pushBlock(7); // a mid-chain start: the first commit records 7 as the coverage floor

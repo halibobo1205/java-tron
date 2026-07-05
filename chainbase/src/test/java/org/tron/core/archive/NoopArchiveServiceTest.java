@@ -5,6 +5,7 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.mockStatic;
 
 import com.google.common.primitives.Longs;
 import com.google.protobuf.ByteString;
@@ -18,9 +19,11 @@ import java.util.List;
 import java.util.Optional;
 import org.junit.After;
 import org.junit.Test;
+import org.mockito.MockedStatic;
 import org.rocksdb.Options;
 import org.rocksdb.RocksDB;
 import org.rocksdb.RocksDBException;
+import org.tron.common.arch.Arch;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
@@ -68,9 +71,25 @@ public class NoopArchiveServiceTest {
   public void factoryReturnsEnabledDefaultServiceWhenEnabled() {
     StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
     config.setEnable(true);
-    ArchiveService service = ArchiveServiceFactory.create(config);
+
+    ArchiveService service = createArchive(config);
+
     assertTrue(service instanceof DefaultArchiveService);
     assertTrue(service.isEnabled());
+  }
+
+  @Test
+  public void factoryRejectsArchiveEnabledOnUnsupportedPlatform() {
+    StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
+    config.setEnable(true);
+    try (MockedStatic<Arch> arch = mockStatic(Arch.class)) {
+      arch.when(Arch::isArm64).thenReturn(false);
+
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> ArchiveServiceFactory.create(config));
+
+      assertTrue(ex.getMessage().contains("archive is not supported"));
+    }
   }
 
   @Test
@@ -78,7 +97,7 @@ public class NoopArchiveServiceTest {
     StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
     config.setEnable(true);
     config.getTxnum().setEnable(false);
-    assertThrows(ArchiveException.class, () -> ArchiveServiceFactory.create(config));
+    assertThrows(ArchiveException.class, () -> createArchive(config));
   }
 
   @Test
@@ -86,7 +105,7 @@ public class NoopArchiveServiceTest {
     StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
     config.setEnable(true);
     config.getTemporal().setEnable(false);
-    assertThrows(ArchiveException.class, () -> ArchiveServiceFactory.create(config));
+    assertThrows(ArchiveException.class, () -> createArchive(config));
   }
 
   @Test
@@ -96,7 +115,7 @@ public class NoopArchiveServiceTest {
     Path dir = Files.createTempDirectory("archive-factory-test");
     try {
       DefaultArchiveService service =
-          (DefaultArchiveService) ArchiveServiceFactory.create(config, dir.toString());
+          (DefaultArchiveService) createArchive(config, dir.toString());
       assertTrue(service.getTemporalStore() instanceof RocksDbArchiveTemporalStore);
       assertTrue(service.getTxNumIndex() instanceof PersistentArchiveTxNumIndex);
       assertNotNull(service.getReaderFactory());
@@ -113,7 +132,7 @@ public class NoopArchiveServiceTest {
     Path dir = Files.createTempDirectory("archive-factory-reopen-test");
     try {
       DefaultArchiveService service =
-          (DefaultArchiveService) ArchiveServiceFactory.create(config, dir.toString());
+          (DefaultArchiveService) createArchive(config, dir.toString());
       BlockCapsule block = new BlockCapsule(1, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY);
       service.beginBlock(block, ArchiveSource.NORMAL);
       service.beginSystemTx(block, ArchivePhase.BLOCK_PREPARE);
@@ -124,7 +143,7 @@ public class NoopArchiveServiceTest {
       service.close();
 
       DefaultArchiveService reopened =
-          (DefaultArchiveService) ArchiveServiceFactory.create(config, dir.toString());
+          (DefaultArchiveService) createArchive(config, dir.toString());
       reopened.close();
     } finally {
       deleteRecursively(dir.toFile());
@@ -147,7 +166,7 @@ public class NoopArchiveServiceTest {
     }
     try {
       ArchiveException ex = assertThrows(ArchiveException.class,
-          () -> ArchiveServiceFactory.create(config, dir.toString()));
+          () -> createArchive(config, dir.toString()));
       assertTrue(ex.getMessage().contains("commit marker missing"));
     } finally {
       deleteRecursively(dir.toFile());
@@ -171,7 +190,7 @@ public class NoopArchiveServiceTest {
 
     try {
       ArchiveException ex = assertThrows(ArchiveException.class,
-          () -> ArchiveServiceFactory.create(config, dir.toString()));
+          () -> createArchive(config, dir.toString()));
       assertTrue(ex.getMessage().contains("temporal store is non-empty"));
     } finally {
       deleteRecursively(dir.toFile());
@@ -204,7 +223,7 @@ public class NoopArchiveServiceTest {
 
     try {
       ArchiveException ex = assertThrows(ArchiveException.class,
-          () -> ArchiveServiceFactory.create(config, dir.toString()));
+          () -> createArchive(config, dir.toString()));
       assertTrue(ex.getMessage().contains("no index range for block 8"));
     } finally {
       deleteRecursively(dir.toFile());
@@ -237,7 +256,7 @@ public class NoopArchiveServiceTest {
     }
     try {
       ArchiveException ex = assertThrows(ArchiveException.class,
-          () -> ArchiveServiceFactory.create(config, dir.toString()));
+          () -> createArchive(config, dir.toString()));
       assertTrue(ex.getMessage().contains("commit marker missing for block 7"));
     } finally {
       deleteRecursively(dir.toFile());
@@ -270,7 +289,7 @@ public class NoopArchiveServiceTest {
 
     try {
       ArchiveException ex = assertThrows(ArchiveException.class,
-          () -> ArchiveServiceFactory.create(config, dir.toString()));
+          () -> createArchive(config, dir.toString()));
       assertTrue(ex.getMessage().contains("cursor"));
     } finally {
       deleteRecursively(dir.toFile());
@@ -303,7 +322,7 @@ public class NoopArchiveServiceTest {
 
     try {
       ArchiveException ex = assertThrows(ArchiveException.class,
-          () -> ArchiveServiceFactory.create(config, dir.toString()));
+          () -> createArchive(config, dir.toString()));
       assertTrue(ex.getMessage().contains("commit marker missing"));
     } finally {
       deleteRecursively(dir.toFile());
@@ -317,7 +336,7 @@ public class NoopArchiveServiceTest {
     Path dir = Files.createTempDirectory("archive-factory-orphan-history-test");
     try {
       DefaultArchiveService service =
-          (DefaultArchiveService) ArchiveServiceFactory.create(config, dir.toString());
+          (DefaultArchiveService) createArchive(config, dir.toString());
       BlockCapsule block = new BlockCapsule(1, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY);
       service.beginBlock(block, ArchiveSource.NORMAL);
       service.beginSystemTx(block, ArchivePhase.BLOCK_PREPARE);
@@ -339,7 +358,7 @@ public class NoopArchiveServiceTest {
       }
 
       ArchiveException ex = assertThrows(ArchiveException.class,
-          () -> ArchiveServiceFactory.create(config, dir.toString()));
+          () -> createArchive(config, dir.toString()));
       assertTrue(ex.getMessage().contains("history txNum"));
     } finally {
       deleteRecursively(dir.toFile());
@@ -381,7 +400,7 @@ public class NoopArchiveServiceTest {
 
     try {
       DefaultArchiveService reopened =
-          (DefaultArchiveService) ArchiveServiceFactory.create(config, dir.toString());
+          (DefaultArchiveService) createArchive(config, dir.toString());
       reopened.close();
     } finally {
       deleteRecursively(dir.toFile());
@@ -414,7 +433,7 @@ public class NoopArchiveServiceTest {
 
     try {
       ArchiveException ex = assertThrows(ArchiveException.class,
-          () -> ArchiveServiceFactory.create(config, dir.toString()));
+          () -> createArchive(config, dir.toString()));
       assertTrue(ex.getMessage().contains("requires repair"));
     } finally {
       deleteRecursively(dir.toFile());
@@ -435,6 +454,25 @@ public class NoopArchiveServiceTest {
       }
     }
     f.delete();
+  }
+
+  private static ArchiveService createArchive(StorageConfig.ArchiveConfig config) {
+    try (MockedStatic<Arch> arch = mockArm64()) {
+      return ArchiveServiceFactory.create(config);
+    }
+  }
+
+  private static ArchiveService createArchive(StorageConfig.ArchiveConfig config,
+      String archiveDir) {
+    try (MockedStatic<Arch> arch = mockArm64()) {
+      return ArchiveServiceFactory.create(config, archiveDir);
+    }
+  }
+
+  private static MockedStatic<Arch> mockArm64() {
+    MockedStatic<Arch> arch = mockStatic(Arch.class);
+    arch.when(Arch::isArm64).thenReturn(true);
+    return arch;
   }
 
   private static byte[] blockHash(int seed) {
