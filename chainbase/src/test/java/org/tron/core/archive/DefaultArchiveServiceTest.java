@@ -414,6 +414,18 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
+  public void enabledServiceRejectsCanonicalHeadWithoutArchiveCoverage() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    DefaultArchiveService service = new DefaultArchiveService(true, index, context);
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> service.validateCanonicalHead(block(5)));
+
+    assertTrue(ex.getMessage().contains("canonical head block 5 is not covered by archive"));
+  }
+
+  @Test
   public void txNumCommitFailureClearsPendingContextAndCaptureBuffer() {
     InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
     ArchiveExecutionContext context = new ArchiveExecutionContext();
