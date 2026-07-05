@@ -30,7 +30,8 @@ import org.tron.core.vm.trace.ProgramTrace;
  *   <li>{@code memory} is rebuilt from the recorded write deltas, whose {@code data} field is the
  *       hex the native tracer captured for that write; large writes may be truncated by the tracer
  *       (a pre-existing native-tracer property), so memory is best-effort, not byte-exact.</li>
- *   <li>{@code gasCost} is the drop in remaining energy to the next op (0 for the last op).</li>
+ *   <li>{@code gasCost} uses the native per-op energy cost when available, falling back to the
+ *       drop in remaining energy to the next same-frame op for legacy traces.</li>
  * </ul>
  */
 public final class StructLogReconstructor {
@@ -63,7 +64,7 @@ public final class StructLogReconstructor {
       applyActions(op.getActions(), frame.stack, frame.memory, frame.storage);
 
       long gas = op.getEnergy() == null ? 0L : op.getEnergy().longValue();
-      long gasCost = gas - nextFrameGas(ops, i, depth, gas);
+      long gasCost = gasCost(ops, i, depth, gas);
       String name = Op.getNameOf(op.getCode());
       logs.add(new StructLog(op.getPc(), name == null ? "INVALID" : name, gas, gasCost,
           depth + 1, new ArrayList<>(frame.stack), toMemoryWords(frame.memory),
@@ -71,6 +72,15 @@ public final class StructLogReconstructor {
       previousDepth = depth;
     }
     return logs;
+  }
+
+  private static long gasCost(List<org.tron.core.vm.trace.Op> ops, int index, int depth,
+      long gas) {
+    org.tron.core.vm.trace.Op op = ops.get(index);
+    if (op.getEnergyCost() != null) {
+      return op.getEnergyCost().longValue();
+    }
+    return gas - nextFrameGas(ops, index, depth, gas);
   }
 
   private static long nextFrameGas(List<org.tron.core.vm.trace.Op> ops, int index, int depth,

@@ -18,11 +18,11 @@ public class StructLogReconstructorTest {
   public void nestedTraceKeepsMachineStatePerFrame() {
     ProgramTrace trace = new ProgramTrace();
     trace.setOps(Arrays.asList(
-        op(0x60, 0, 0, 1000L, actions()),
-        op(0x60, 2, 0, 990L, push(1)),
-        op(0x60, 0, 1, 800L, actions()),
-        op(0x00, 2, 1, 790L, push(2)),
-        op(0x00, 4, 0, 900L, actions())));
+        op(0x60, 0, 0, 1000L, 3L, actions()),
+        op(0x60, 2, 0, 990L, 4L, push(1)),
+        op(0x60, 0, 1, 800L, 5L, actions()),
+        op(0x00, 2, 1, 790L, 6L, push(2)),
+        op(0x00, 4, 0, 900L, 7L, actions())));
 
     List<StructLog> logs = StructLogReconstructor.reconstruct(trace);
 
@@ -33,10 +33,26 @@ public class StructLogReconstructorTest {
     assertEquals(Arrays.asList(word(2)), logs.get(3).getStack());
     assertEquals("parent frame state survives the child frame",
         Arrays.asList(word(1)), logs.get(4).getStack());
-    assertEquals("parent gasCost uses the next parent op after the child frame",
-        90L, logs.get(1).getGasCost());
-    assertEquals("child frame last op has no same-frame successor",
-        0L, logs.get(3).getGasCost());
+    assertEquals("parent gasCost uses the recorded opcode cost, not child-frame net energy",
+        4L, logs.get(1).getGasCost());
+    assertEquals("child gasCost uses its recorded opcode cost",
+        6L, logs.get(3).getGasCost());
+  }
+
+  @Test
+  public void legacyTraceGasCostFallsBackToSameFrameDelta() {
+    ProgramTrace trace = new ProgramTrace();
+    trace.setOps(Arrays.asList(
+        op(0x60, 0, 0, 1000L, actions()),
+        op(0x60, 2, 0, 990L, push(1)),
+        op(0x60, 0, 1, 800L, actions()),
+        op(0x00, 2, 1, 790L, push(2)),
+        op(0x00, 4, 0, 900L, actions())));
+
+    List<StructLog> logs = StructLogReconstructor.reconstruct(trace);
+
+    assertEquals(90L, logs.get(1).getGasCost());
+    assertEquals(0L, logs.get(3).getGasCost());
   }
 
   private static org.tron.core.vm.trace.Op op(int code, int pc, int deep, long energy,
@@ -47,6 +63,13 @@ public class StructLogReconstructorTest {
     op.setDeep(deep);
     op.setEnergy(BigInteger.valueOf(energy));
     op.setActions(actions);
+    return op;
+  }
+
+  private static org.tron.core.vm.trace.Op op(int code, int pc, int deep, long energy,
+      long energyCost, OpActions actions) {
+    org.tron.core.vm.trace.Op op = op(code, pc, deep, energy, actions);
+    op.setEnergyCost(BigInteger.valueOf(energyCost));
     return op;
   }
 
