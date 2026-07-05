@@ -18,11 +18,13 @@ import org.tron.core.archive.ArchiveSource;
  *   <li>txId key: {@code 0x11 || txIdLen(4) || txId} -&gt; txNum</li>
  *   <li>position key: {@code 0x12 || txNum(8, BE)} -&gt; encoded {@link ArchiveTxPosition}</li>
  *   <li>meta key: {@code 0x01 || asciiName} -&gt; manifest/cursor/repair metadata</li>
- *   <li>range value: 5 longs (blockNum, firstTxNum, lastTxNum, prepareTxNum, finalizeTxNum)
- *       || userTxCount(int) || source(1 byte ordinal) || blockHashLen(int) || blockHash</li>
+ *   <li>range value: version || block/txNum fields || userTxCount || source ||
+ *       blockHashLen/blockHash || schemaChecksumLen/schemaChecksum</li>
  * </ul>
  */
 public final class ArchiveBlockRangeCodec {
+
+  private static final byte VALUE_VERSION = 0x01;
 
   static final byte META_PREFIX = 0x01;
   static final byte TXNUM_BLOCK_PREFIX = 0x10;
@@ -48,6 +50,9 @@ public final class ArchiveBlockRangeCodec {
   static final byte[] REPAIR_REQUIRED_KEY = metaKey("repair-required");
   private static final byte[] MANIFEST_KEY = metaKey("mani");
   private static final byte[] MANIFEST_VALUE =
+      "tron-archive-txnum|schema=4|keys=l5-txnum-v1|values=versioned-range-position-v1"
+          .getBytes(StandardCharsets.US_ASCII);
+  private static final byte[] LEGACY_SCHEMA_THREE_MANIFEST_VALUE =
       "tron-archive-txnum|schema=3|keys=l5-txnum-v1|values=range-position-v2"
           .getBytes(StandardCharsets.US_ASCII);
   private static final byte[] LEGACY_SCHEMA_TWO_MANIFEST_VALUE =
@@ -70,6 +75,26 @@ public final class ArchiveBlockRangeCodec {
 
   static byte[] txIdKey(byte[] txId) {
     return Bytes.concat(new byte[] {TXNUM_BY_TXID_PREFIX}, Ints.toByteArray(txId.length), txId);
+  }
+
+  static long txNumFromPositionKey(byte[] key) {
+    if (key == null || key.length != 1 + Long.BYTES
+        || key[0] != TXNUM_META_PREFIX) {
+      throw new ArchiveException("archive tx-position key is invalid");
+    }
+    return longAt(key, 1);
+  }
+
+  static byte[] txIdFromKey(byte[] key) {
+    if (key == null || key.length < 1 + Integer.BYTES
+        || key[0] != TXNUM_BY_TXID_PREFIX) {
+      throw new ArchiveException("archive txId key is invalid");
+    }
+    int txIdLen = intAt(key, 1);
+    if (txIdLen <= 0 || key.length != 1 + Integer.BYTES + txIdLen) {
+      throw new ArchiveException("archive txId key has invalid txId length " + txIdLen);
+    }
+    return Arrays.copyOfRange(key, 1 + Integer.BYTES, key.length);
   }
 
   static byte[] legacyManifestKey() {
@@ -108,13 +133,19 @@ public final class ArchiveBlockRangeCodec {
     return Arrays.equals(LEGACY_SCHEMA_TWO_MANIFEST_VALUE, value);
   }
 
+  static boolean legacySchemaThreeManifestMatches(byte[] value) {
+    return Arrays.equals(LEGACY_SCHEMA_THREE_MANIFEST_VALUE, value);
+  }
+
   private static byte[] metaKey(String name) {
     return Bytes.concat(new byte[] {META_PREFIX}, name.getBytes(StandardCharsets.US_ASCII));
   }
 
   static byte[] encodeRange(ArchiveBlockRange range) {
     requireBlockHash(range.getBlockHash(), "encode archive block range");
+    requireSchemaChecksum(range.getSchemaChecksum(), "encode archive block range");
     return Bytes.concat(
+        new byte[] {VALUE_VERSION},
         Longs.toByteArray(range.getBlockNum()),
         Longs.toByteArray(range.getFirstTxNum()),
         Longs.toByteArray(range.getLastTxNum()),
@@ -123,30 +154,44 @@ public final class ArchiveBlockRangeCodec {
         Ints.toByteArray(range.getUserTxCount()),
         new byte[] {(byte) range.getSource().ordinal()},
         Ints.toByteArray(range.getBlockHash().length),
-        range.getBlockHash());
+        range.getBlockHash(),
+        Ints.toByteArray(range.getSchemaChecksum().length),
+        range.getSchemaChecksum());
   }
 
   static ArchiveBlockRange decodeRange(byte[] bytes) {
-    if (bytes == null || bytes.length < 49) {
+    if (bytes == null || bytes.length < 1) {
       throw new ArchiveException("archive block range value is too short");
     }
-    long blockNum = Longs.fromBytes(bytes[0], bytes[1], bytes[2], bytes[3],
-        bytes[4], bytes[5], bytes[6], bytes[7]);
-    long firstTxNum = longAt(bytes, 8);
-    long lastTxNum = longAt(bytes, 16);
-    long prepareTxNum = longAt(bytes, 24);
-    long finalizeTxNum = longAt(bytes, 32);
-    int userTxCount = Ints.fromBytes(bytes[40], bytes[41], bytes[42], bytes[43]);
-    ArchiveSource source = ArchiveSource.values()[bytes[44]];
-    int blockHashLen = Ints.fromBytes(bytes[45], bytes[46], bytes[47], bytes[48]);
+    requireVersion(bytes[0], "archive block range");
+    if (bytes.length < 50) {
+      throw new ArchiveException("archive block range value is too short");
+    }
+    long blockNum = longAt(bytes, 1);
+    long firstTxNum = longAt(bytes, 9);
+    long lastTxNum = longAt(bytes, 17);
+    long prepareTxNum = longAt(bytes, 25);
+    long finalizeTxNum = longAt(bytes, 33);
+    int userTxCount = intAt(bytes, 41);
+    ArchiveSource source = sourceAt(bytes[45], "archive block range");
+    int blockHashLen = intAt(bytes, 46);
     if (blockHashLen != ArchiveBlockRange.BLOCK_HASH_LENGTH
-        || bytes.length != 49 + ArchiveBlockRange.BLOCK_HASH_LENGTH) {
+        || bytes.length < 50 + blockHashLen + Integer.BYTES) {
       throw new ArchiveException("archive block range has invalid block hash length "
           + blockHashLen);
     }
-    byte[] blockHash = Arrays.copyOfRange(bytes, 49, 49 + blockHashLen);
+    byte[] blockHash = Arrays.copyOfRange(bytes, 50, 50 + blockHashLen);
+    int checksumOffset = 50 + blockHashLen;
+    int checksumLen = intAt(bytes, checksumOffset);
+    if (checksumLen != ArchiveBlockRange.SCHEMA_CHECKSUM_LENGTH
+        || bytes.length != checksumOffset + Integer.BYTES + checksumLen) {
+      throw new ArchiveException("archive block range has invalid schema checksum length "
+          + checksumLen);
+    }
+    byte[] schemaChecksum = Arrays.copyOfRange(bytes, checksumOffset + Integer.BYTES,
+        checksumOffset + Integer.BYTES + checksumLen);
     return new ArchiveBlockRange(blockNum, firstTxNum, lastTxNum, prepareTxNum, finalizeTxNum,
-        blockHash, userTxCount, source);
+        blockHash, userTxCount, source, schemaChecksum);
   }
 
   static void requireBlockHash(byte[] blockHash, String what) {
@@ -155,27 +200,54 @@ public final class ArchiveBlockRangeCodec {
     }
   }
 
+  static void requireSchemaChecksum(byte[] schemaChecksum, String what) {
+    if (schemaChecksum == null
+        || schemaChecksum.length != ArchiveBlockRange.SCHEMA_CHECKSUM_LENGTH) {
+      throw new ArchiveException(what + " requires a 32-byte schema checksum");
+    }
+  }
+
   static byte[] encodePosition(ArchiveTxPosition position) {
     byte[] txId = position.getTxId();
+    requireBlockHash(position.getBlockHash(), "encode archive tx-position");
     return Bytes.concat(
+        new byte[] {VALUE_VERSION},
         Longs.toByteArray(position.getTxNum()),
         Longs.toByteArray(position.getBlockNum()),
         new byte[] {(byte) position.getPhase().ordinal()},
         new byte[] {(byte) position.getSource().ordinal()},
         Ints.toByteArray(position.getTxIndex()),
         Ints.toByteArray(txId.length),
-        txId);
+        txId,
+        Ints.toByteArray(position.getBlockHash().length),
+        position.getBlockHash());
   }
 
   static ArchiveTxPosition decodePosition(byte[] bytes) {
-    long txNum = longAt(bytes, 0);
-    long blockNum = longAt(bytes, 8);
-    ArchivePhase phase = ArchivePhase.values()[bytes[16]];
-    ArchiveSource source = ArchiveSource.values()[bytes[17]];
-    int txIndex = Ints.fromBytes(bytes[18], bytes[19], bytes[20], bytes[21]);
-    int txIdLen = Ints.fromBytes(bytes[22], bytes[23], bytes[24], bytes[25]);
-    byte[] txId = Arrays.copyOfRange(bytes, 26, 26 + txIdLen);
-    return new ArchiveTxPosition(txNum, blockNum, phase, source, txIndex, txId);
+    if (bytes == null || bytes.length < 31) {
+      throw new ArchiveException("archive tx-position value is too short");
+    }
+    requireVersion(bytes[0], "archive tx-position");
+    long txNum = longAt(bytes, 1);
+    long blockNum = longAt(bytes, 9);
+    ArchivePhase phase = phaseAt(bytes[17], "archive tx-position");
+    ArchiveSource source = sourceAt(bytes[18], "archive tx-position");
+    int txIndex = intAt(bytes, 19);
+    int txIdLen = intAt(bytes, 23);
+    if (txIdLen < 0 || txIdLen > bytes.length - 27 - Integer.BYTES) {
+      throw new ArchiveException("archive tx-position has invalid txId length " + txIdLen);
+    }
+    int blockHashLenOffset = 27 + txIdLen;
+    byte[] txId = Arrays.copyOfRange(bytes, 27, blockHashLenOffset);
+    int blockHashLen = intAt(bytes, blockHashLenOffset);
+    if (blockHashLen != ArchiveBlockRange.BLOCK_HASH_LENGTH
+        || bytes.length != blockHashLenOffset + Integer.BYTES + blockHashLen) {
+      throw new ArchiveException("archive tx-position has invalid block hash length "
+          + blockHashLen);
+    }
+    byte[] blockHash = Arrays.copyOfRange(bytes, blockHashLenOffset + Integer.BYTES,
+        blockHashLenOffset + Integer.BYTES + blockHashLen);
+    return new ArchiveTxPosition(txNum, blockNum, phase, source, txIndex, txId, blockHash);
   }
 
   static byte[] encodeCursor(long committedNextTxNum) {
@@ -183,6 +255,9 @@ public final class ArchiveBlockRangeCodec {
   }
 
   static long decodeCursor(byte[] bytes) {
+    if (bytes == null || bytes.length != Long.BYTES) {
+      throw new ArchiveException("archive cursor value must be 8 bytes");
+    }
     return Longs.fromByteArray(bytes);
   }
 
@@ -191,6 +266,9 @@ public final class ArchiveBlockRangeCodec {
   }
 
   static long decodeFirstBlock(byte[] bytes) {
+    if (bytes == null || bytes.length != Long.BYTES) {
+      throw new ArchiveException("archive first-block value must be 8 bytes");
+    }
     return Longs.fromByteArray(bytes);
   }
 
@@ -205,5 +283,34 @@ public final class ArchiveBlockRangeCodec {
   private static long longAt(byte[] bytes, int offset) {
     return Longs.fromBytes(bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3],
         bytes[offset + 4], bytes[offset + 5], bytes[offset + 6], bytes[offset + 7]);
+  }
+
+  private static int intAt(byte[] bytes, int offset) {
+    return Ints.fromBytes(bytes[offset], bytes[offset + 1], bytes[offset + 2],
+        bytes[offset + 3]);
+  }
+
+  private static void requireVersion(byte version, String what) {
+    if (version != VALUE_VERSION) {
+      throw new ArchiveException(what + " has unsupported value version " + version);
+    }
+  }
+
+  private static ArchiveSource sourceAt(byte value, String what) {
+    int ordinal = value & 0xff;
+    ArchiveSource[] sources = ArchiveSource.values();
+    if (ordinal >= sources.length) {
+      throw new ArchiveException(what + " has invalid source ordinal " + ordinal);
+    }
+    return sources[ordinal];
+  }
+
+  private static ArchivePhase phaseAt(byte value, String what) {
+    int ordinal = value & 0xff;
+    ArchivePhase[] phases = ArchivePhase.values();
+    if (ordinal >= phases.length) {
+      throw new ArchiveException(what + " has invalid phase ordinal " + ordinal);
+    }
+    return phases[ordinal];
   }
 }

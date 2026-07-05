@@ -2,8 +2,15 @@ package org.tron.core.archive;
 
 import java.nio.file.Paths;
 import org.tron.common.arch.Arch;
+import org.tron.core.archive.capture.ArchiveCaptureHolder;
+import org.tron.core.archive.domain.ArchiveDomainCatalog;
+import org.tron.core.archive.domain.ArchiveDomainRegistry;
+import org.tron.core.archive.domain.ArchiveSchemaChecksum;
+import org.tron.core.archive.domain.DefaultArchiveDomainCatalog;
+import org.tron.core.archive.domain.DefaultArchiveDomainRegistry;
 import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
 import org.tron.core.archive.temporal.RocksDbArchiveTemporalStore;
+import org.tron.core.archive.txnum.InMemoryArchiveTxNumIndex;
 import org.tron.core.archive.txnum.PersistentArchiveTxNumIndex;
 import org.tron.core.archive.txnum.RocksDbArchiveBlockRangeStore;
 import org.tron.core.config.args.StorageConfig;
@@ -29,6 +36,7 @@ public final class ArchiveServiceFactory {
 
   public static ArchiveService create(StorageConfig.ArchiveConfig config, String archiveDir) {
     if (config == null || !config.isEnable()) {
+      ArchiveCaptureHolder.clear();
       return NoopArchiveService.INSTANCE;
     }
     if (!Arch.isArm64()) {
@@ -42,15 +50,19 @@ public final class ArchiveServiceFactory {
       throw new ArchiveException(
           "storage.archive.temporal.enable must be true when archive is enabled");
     }
+    ArchiveDomainRegistry registry = new DefaultArchiveDomainRegistry();
+    ArchiveDomainCatalog catalog = new DefaultArchiveDomainCatalog();
+    byte[] schemaChecksum = ArchiveSchemaChecksum.of(registry, catalog);
     if (archiveDir != null && config.getTemporal().isEnable()) {
       RocksDbArchiveTemporalStore temporalStore = null;
       RocksDbArchiveBlockRangeStore blockRangeStore = null;
+      PersistentArchiveTxNumIndex txNumIndex = null;
       try {
         temporalStore = new RocksDbArchiveTemporalStore(
             Paths.get(archiveDir, "temporal").toString());
         blockRangeStore =
             new RocksDbArchiveBlockRangeStore(Paths.get(archiveDir, "index").toString());
-        blockRangeStore.validateNoRepairRequired();
+        txNumIndex = new PersistentArchiveTxNumIndex(blockRangeStore, schemaChecksum);
         if (!blockRangeStore.getLastRange().isPresent()
             && temporalStore.hasDataBeyondManifest()) {
           throw new ArchiveException(
@@ -61,16 +73,21 @@ public final class ArchiveServiceFactory {
             blockNum -> committedIndex.getRange(blockNum).isPresent());
         blockRangeStore.validateCommittedRanges(temporalStore::validateCommittedBlock);
         temporalStore.validateTxNumsCovered(committedIndex::hasCommittedTxNum);
-        PersistentArchiveTxNumIndex txNumIndex = new PersistentArchiveTxNumIndex(blockRangeStore);
         return new DefaultArchiveService(true, txNumIndex,
-            ArchiveExecutionContextHolder.get(), temporalStore);
+            ArchiveExecutionContextHolder.get(), temporalStore, registry, catalog);
       } catch (RuntimeException e) {
         closeOnFailure(temporalStore, e);
-        closeOnFailure(blockRangeStore, e);
+        if (txNumIndex == null) {
+          closeOnFailure(blockRangeStore, e);
+        } else {
+          closeOnFailure(txNumIndex, e);
+        }
         throw e;
       }
     }
-    return new DefaultArchiveService(true, new InMemoryArchiveTemporalStore());
+    return new DefaultArchiveService(true, new InMemoryArchiveTxNumIndex(),
+        ArchiveExecutionContextHolder.get(), new InMemoryArchiveTemporalStore(),
+        registry, catalog);
   }
 
   private static void closeOnFailure(AutoCloseable resource, RuntimeException failure) {

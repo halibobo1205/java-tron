@@ -1,11 +1,11 @@
 package org.tron.core.archive.txnum;
 
-import com.google.common.primitives.Longs;
 import java.util.Arrays;
-import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.Set;
 import java.util.function.Consumer;
 import org.rocksdb.Options;
 import org.rocksdb.RocksDB;
@@ -66,91 +66,47 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
   private static void validateOrInstallManifest(RocksDB db) throws RocksDBException {
     byte[] manifest = db.get(ArchiveBlockRangeCodec.manifestKey());
     if (manifest != null) {
-      if (!ArchiveBlockRangeCodec.manifestMatches(manifest)) {
+      if (ArchiveBlockRangeCodec.manifestMatches(manifest)) {
+        return;
+      }
+      if (ArchiveBlockRangeCodec.legacySchemaThreeManifestMatches(manifest)) {
+        if (isOnlyKey(db, ArchiveBlockRangeCodec.manifestKey())) {
+          installManifest(db);
+          return;
+        }
+        throw new ArchiveException("archive txNum schema=3 requires rebuild or resync");
+      } else {
         throw new ArchiveException("archive txNum manifest mismatch");
       }
-      return;
     }
     byte[] legacyManifest = db.get(ArchiveBlockRangeCodec.legacyManifestKey());
     if (legacyManifest != null) {
       if (ArchiveBlockRangeCodec.legacySchemaOneManifestMatches(legacyManifest)
           || ArchiveBlockRangeCodec.legacySchemaTwoManifestMatches(legacyManifest)) {
-        migrateLegacySchema(db);
-        return;
+        if (isOnlyKey(db, ArchiveBlockRangeCodec.legacyManifestKey())) {
+          try (WriteBatch batch = new WriteBatch();
+               WriteOptions writeOptions = ArchiveRocksDbWriteOptions.create()) {
+            batch.delete(ArchiveBlockRangeCodec.legacyManifestKey());
+            batch.put(ArchiveBlockRangeCodec.manifestKey(), ArchiveBlockRangeCodec.manifestValue());
+            db.write(writeOptions, batch);
+          }
+          return;
+        }
+        throw new ArchiveException("archive txNum legacy schema requires rebuild or resync");
       }
       throw new ArchiveException("archive txNum manifest mismatch");
     }
     if (!isEmpty(db)) {
       throw new ArchiveException("archive txNum store is non-empty but missing manifest");
     }
+    installManifest(db);
+  }
+
+  private static void installManifest(RocksDB db) throws RocksDBException {
     try (WriteOptions writeOptions = ArchiveRocksDbWriteOptions.create()) {
       db.put(writeOptions, ArchiveBlockRangeCodec.manifestKey(),
           ArchiveBlockRangeCodec.manifestValue());
     }
-  }
-
-  private static void migrateLegacySchema(RocksDB db) throws RocksDBException {
-    try (WriteBatch batch = new WriteBatch();
-         WriteOptions writeOptions = ArchiveRocksDbWriteOptions.create();
-         RocksIterator it = db.newIterator()) {
-      migrateLegacyPrefixedRows(batch, it, ArchiveBlockRangeCodec.LEGACY_RANGE_PREFIX,
-          key -> ArchiveBlockRangeCodec.rangeKey(longSuffix(key)));
-      migrateLegacyPrefixedRows(batch, it, ArchiveBlockRangeCodec.LEGACY_POSITION_PREFIX,
-          key -> ArchiveBlockRangeCodec.positionKey(longSuffix(key)));
-      migrateLegacyPrefixedRows(batch, it, ArchiveBlockRangeCodec.LEGACY_TX_ID_PREFIX,
-          key -> ArchiveBlockRangeCodec.txIdKey(Arrays.copyOfRange(key, 1, key.length)));
-      migrateLegacyExactRow(db, batch, ArchiveBlockRangeCodec.LEGACY_CURSOR_KEY,
-          ArchiveBlockRangeCodec.CURSOR_KEY);
-      migrateLegacyExactRow(db, batch, ArchiveBlockRangeCodec.LEGACY_FIRST_BLOCK_KEY,
-          ArchiveBlockRangeCodec.FIRST_BLOCK_KEY);
-      migrateLegacyExactRow(db, batch, ArchiveBlockRangeCodec.LEGACY_REPAIR_REQUIRED_KEY,
-          ArchiveBlockRangeCodec.REPAIR_REQUIRED_KEY);
-      deleteLegacyPrefixedRows(batch, it, ArchiveBlockRangeCodec.LEGACY_BLOCK_INDEX_PREFIX);
-      batch.delete(ArchiveBlockRangeCodec.legacyManifestKey());
-      batch.put(ArchiveBlockRangeCodec.manifestKey(), ArchiveBlockRangeCodec.manifestValue());
-      db.write(writeOptions, batch);
-    }
-  }
-
-  private static void migrateLegacyExactRow(RocksDB db, WriteBatch batch, byte[] oldKey,
-      byte[] newKey) throws RocksDBException {
-    byte[] value = db.get(oldKey);
-    if (value == null) {
-      return;
-    }
-    batch.put(newKey, value);
-    batch.delete(oldKey);
-  }
-
-  private interface LegacyKeyMapper {
-    byte[] map(byte[] legacyKey);
-  }
-
-  private static void migrateLegacyPrefixedRows(WriteBatch batch, RocksIterator it,
-      byte legacyPrefix, LegacyKeyMapper mapper) throws RocksDBException {
-    it.seek(new byte[] {legacyPrefix});
-    while (it.isValid() && it.key()[0] == legacyPrefix) {
-      byte[] key = it.key().clone();
-      batch.put(mapper.map(key), it.value().clone());
-      batch.delete(key);
-      it.next();
-    }
-  }
-
-  private static void deleteLegacyPrefixedRows(WriteBatch batch, RocksIterator it,
-      byte legacyPrefix) throws RocksDBException {
-    it.seek(new byte[] {legacyPrefix});
-    while (it.isValid() && it.key()[0] == legacyPrefix) {
-      batch.delete(it.key().clone());
-      it.next();
-    }
-  }
-
-  private static long longSuffix(byte[] key) {
-    if (key.length != 1 + Long.BYTES) {
-      throw new ArchiveException("archive txNum legacy key has invalid length");
-    }
-    return Longs.fromByteArray(Arrays.copyOfRange(key, 1, key.length));
   }
 
   private static boolean isEmpty(RocksDB db) {
@@ -158,6 +114,19 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
       it.seekToFirst();
       return !it.isValid();
     }
+  }
+
+  private static boolean isOnlyKey(RocksDB db, byte[] expectedKey) {
+    try (RocksIterator it = db.newIterator()) {
+      it.seekToFirst();
+      return it.isValid() && Arrays.equals(it.key(), expectedKey)
+          && !hasSecondRow(it);
+    }
+  }
+
+  private static boolean hasSecondRow(RocksIterator it) {
+    it.next();
+    return it.isValid();
   }
 
   /** Fail closed after a prior post-canonical archive failure until manual repair clears the DB. */
@@ -183,13 +152,15 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
   }
 
   public void commitRange(ArchiveBlockRange range, long committedNextTxNum) {
-    commitRange(range, committedNextTxNum, Collections.emptyList());
+    validateRangeShape(range);
+    commitRange(range, committedNextTxNum, defaultPositions(range));
   }
 
   /** Atomically persist a committed block's range, tx positions, and committed cursor. */
   public void commitRange(ArchiveBlockRange range, long committedNextTxNum,
       List<ArchiveTxPosition> positions) {
     validateAppendOnlyCommit(range, committedNextTxNum);
+    validatePositionsForCommit(range, positions);
     try (WriteBatch batch = new WriteBatch();
          WriteOptions writeOptions = ArchiveRocksDbWriteOptions.create()) {
       batch.put(ArchiveBlockRangeCodec.rangeKey(range.getBlockNum()),
@@ -204,8 +175,13 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
             ArchiveBlockRangeCodec.encodeFirstBlock(range.getBlockNum()));
       }
       for (ArchiveTxPosition position : positions) {
-        batch.put(ArchiveBlockRangeCodec.positionKey(position.getTxNum()),
-            ArchiveBlockRangeCodec.encodePosition(position));
+        ArchiveTxPosition persistedPosition = position.getBlockHash().length == 0
+            ? new ArchiveTxPosition(position.getTxNum(), position.getBlockNum(),
+                position.getPhase(), position.getSource(), position.getTxIndex(),
+                position.getTxId(), range.getBlockHash())
+            : position;
+        batch.put(ArchiveBlockRangeCodec.positionKey(persistedPosition.getTxNum()),
+            ArchiveBlockRangeCodec.encodePosition(persistedPosition));
         byte[] txId = position.getTxId();
         if (txId.length > 0) {
           batch.put(ArchiveBlockRangeCodec.txIdKey(txId),
@@ -228,6 +204,7 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
 
   /** Atomically drop a reverted block's range/index rows and rewind the persisted cursor. */
   public void unwindRange(ArchiveBlockRange range, long committedNextTxNum) {
+    validateHeadUnwind(range, committedNextTxNum);
     try (WriteBatch batch = new WriteBatch();
          WriteOptions writeOptions = ArchiveRocksDbWriteOptions.create()) {
       batch.delete(ArchiveBlockRangeCodec.rangeKey(range.getBlockNum()));
@@ -239,14 +216,7 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
       }
       for (long txNum = range.getFirstTxNum(); txNum <= range.getLastTxNum(); txNum++) {
         byte[] positionKey = ArchiveBlockRangeCodec.positionKey(txNum);
-        byte[] encodedPosition = db.get(positionKey);
-        if (encodedPosition == null) {
-          throw new ArchiveException("archive tx-position missing for unwind txNum " + txNum);
-        }
-        ArchiveTxPosition position = ArchiveBlockRangeCodec.decodePosition(encodedPosition);
-        if (position.getTxNum() != txNum || position.getBlockNum() != range.getBlockNum()) {
-          throw new ArchiveException("archive tx-position mismatch for unwind txNum " + txNum);
-        }
+        ArchiveTxPosition position = validatePosition(range, txNum);
         batch.delete(positionKey);
         byte[] txId = position.getTxId();
         if (txId.length > 0) {
@@ -315,6 +285,18 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
         validatePosition(range, txNum);
       }
     });
+    validateNoOrphanIndexRows();
+  }
+
+  /** Fail closed if persisted txNum ranges were written under a different archive schema. */
+  public void validateSchemaChecksum(byte[] schemaChecksum) {
+    ArchiveBlockRangeCodec.requireSchemaChecksum(schemaChecksum, "archive schema");
+    validateCommittedRanges(range -> {
+      if (!Arrays.equals(range.getSchemaChecksum(), schemaChecksum)) {
+        throw new ArchiveException("archive block range schema checksum mismatch for block "
+            + range.getBlockNum());
+      }
+    });
   }
 
   /** Iterate every persisted committed range in block order, failing on corrupt range rows. */
@@ -331,8 +313,8 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
     }
   }
 
-  private void validatePosition(ArchiveBlockRange range, long txNum) {
-    Optional<ArchiveTxPosition> stored = getPosition(txNum);
+  private ArchiveTxPosition validatePosition(ArchiveBlockRange range, long txNum) {
+    Optional<ArchiveTxPosition> stored = getRawPosition(txNum);
     if (!stored.isPresent()) {
       throw new ArchiveException("archive tx-position missing for committed txNum " + txNum);
     }
@@ -341,19 +323,22 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
         || position.getSource() != range.getSource()) {
       throw new ArchiveException("archive tx-position mismatch for committed txNum " + txNum);
     }
+    if (!Arrays.equals(position.getBlockHash(), range.getBlockHash())) {
+      throw new ArchiveException("archive tx-position block hash mismatch for txNum " + txNum);
+    }
     if (position.getPhase() == ArchivePhase.BLOCK_PREPARE) {
       if (txNum != range.getPrepareTxNum() || position.getTxIndex() != -1
           || position.getTxId().length != 0) {
         throw new ArchiveException("archive prepare tx-position mismatch for txNum " + txNum);
       }
-      return;
+      return position;
     }
     if (position.getPhase() == ArchivePhase.BLOCK_FINALIZE) {
       if (txNum != range.getFinalizeTxNum() || position.getTxIndex() != -1
           || position.getTxId().length != 0) {
         throw new ArchiveException("archive finalize tx-position mismatch for txNum " + txNum);
       }
-      return;
+      return position;
     }
     if (position.getPhase() != ArchivePhase.USER_TX || position.getTxIndex() < 0
         || position.getTxIndex() >= range.getUserTxCount()) {
@@ -363,18 +348,14 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
     if (position.getTxNum() != expectedTxNum) {
       throw new ArchiveException("archive user tx-position order mismatch for txNum " + txNum);
     }
-    OptionalLong byBlockIndex = findTxNumByBlockAndIndex(
-        position.getBlockNum(), position.getTxIndex());
-    if (!byBlockIndex.isPresent() || byBlockIndex.getAsLong() != txNum) {
-      throw new ArchiveException("archive block-index missing for committed txNum " + txNum);
-    }
     byte[] txId = position.getTxId();
     if (txId.length > 0) {
-      OptionalLong byTxId = findTxNumByTxId(txId);
+      OptionalLong byTxId = findRawTxNumByTxId(txId);
       if (!byTxId.isPresent() || byTxId.getAsLong() != txNum) {
         throw new ArchiveException("archive txId index missing for committed txNum " + txNum);
       }
     }
+    return position;
   }
 
   public Optional<ArchiveBlockRange> getRange(long blockNum) {
@@ -424,6 +405,17 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
   }
 
   public Optional<ArchiveTxPosition> getPosition(long txNum) {
+    Optional<ArchiveTxPosition> stored = getRawPosition(txNum);
+    if (!stored.isPresent()) {
+      return Optional.empty();
+    }
+    ArchiveTxPosition position = stored.get();
+    ArchiveBlockRange range = committedRangeForPosition(position, txNum);
+    validatePosition(range, txNum);
+    return stored;
+  }
+
+  private Optional<ArchiveTxPosition> getRawPosition(long txNum) {
     try {
       byte[] value = db.get(ArchiveBlockRangeCodec.positionKey(txNum));
       return (value == null) ? Optional.empty()
@@ -434,7 +426,7 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
   }
 
   public boolean hasCommittedTxNum(long txNum) {
-    Optional<ArchiveTxPosition> position = getPosition(txNum);
+    Optional<ArchiveTxPosition> position = getRawPosition(txNum);
     if (!position.isPresent()) {
       return false;
     }
@@ -463,13 +455,40 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
     if (txIndex >= blockRange.getUserTxCount()) {
       return OptionalLong.empty();
     }
-    return OptionalLong.of(blockRange.getFirstTxNum() + 1L + txIndex);
+    long txNum = blockRange.getFirstTxNum() + 1L + txIndex;
+    ArchiveTxPosition position = getPosition(txNum)
+        .orElseThrow(() -> new ArchiveException(
+            "archive block-index is orphan for txNum " + txNum));
+    if (position.getPhase() != ArchivePhase.USER_TX
+        || position.getBlockNum() != blockNum
+        || position.getTxIndex() != txIndex) {
+      throw new ArchiveException("archive block-index does not match tx-position for txNum "
+          + txNum);
+    }
+    return OptionalLong.of(txNum);
   }
 
   public OptionalLong findTxNumByTxId(byte[] txId) {
     if (txId == null || txId.length == 0) {
       return OptionalLong.empty();
     }
+    OptionalLong txNum = findRawTxNumByTxId(txId);
+    if (!txNum.isPresent()) {
+      return OptionalLong.empty();
+    }
+    ArchiveTxPosition position = getRawPosition(txNum.getAsLong())
+        .orElseThrow(() -> new ArchiveException(
+            "archive txId index is orphan for txNum " + txNum.getAsLong()));
+    ArchiveBlockRange range = committedRangeForPosition(position, txNum.getAsLong());
+    validatePosition(range, txNum.getAsLong());
+    if (!Arrays.equals(position.getTxId(), txId)) {
+      throw new ArchiveException("archive txId index does not match tx-position for txNum "
+          + txNum.getAsLong());
+    }
+    return txNum;
+  }
+
+  private OptionalLong findRawTxNumByTxId(byte[] txId) {
     try {
       byte[] value = db.get(ArchiveBlockRangeCodec.txIdKey(txId));
       return (value == null) ? OptionalLong.empty()
@@ -513,6 +532,10 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
       }
       return;
     }
+    if (!Arrays.equals(lastRange.get().getSchemaChecksum(), range.getSchemaChecksum())) {
+      throw new ArchiveException("archive block range schema checksum mismatch for block "
+          + range.getBlockNum());
+    }
     validateAdjacentRanges(lastRange.get(), range);
     if (cursor != range.getFirstTxNum()) {
       throw new ArchiveException("archive txNum cursor " + cursor
@@ -551,6 +574,8 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
 
   private void validateRangeShape(ArchiveBlockRange range) {
     ArchiveBlockRangeCodec.requireBlockHash(range.getBlockHash(), "archive block range");
+    ArchiveBlockRangeCodec.requireSchemaChecksum(range.getSchemaChecksum(),
+        "archive block range");
     if (range.getFirstTxNum() > range.getLastTxNum()) {
       throw new ArchiveException("archive block range has inverted txNum bounds for block "
           + range.getBlockNum());
@@ -572,6 +597,168 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
     if (actualSpan != expectedSpan) {
       throw new ArchiveException("archive txNum span does not match user tx count for block "
           + range.getBlockNum());
+    }
+  }
+
+  private static List<ArchiveTxPosition> defaultPositions(ArchiveBlockRange range) {
+    if (range.getUserTxCount() != 0) {
+      throw new ArchiveException("archive block range with user txs requires tx-position rows");
+    }
+    return Arrays.asList(
+        new ArchiveTxPosition(range.getPrepareTxNum(), range.getBlockNum(),
+            ArchivePhase.BLOCK_PREPARE, range.getSource(), -1, null, range.getBlockHash()),
+        new ArchiveTxPosition(range.getFinalizeTxNum(), range.getBlockNum(),
+            ArchivePhase.BLOCK_FINALIZE, range.getSource(), -1, null, range.getBlockHash()));
+  }
+
+  private void validatePositionsForCommit(ArchiveBlockRange range,
+      List<ArchiveTxPosition> positions) {
+    long expectedSize = range.getLastTxNum() - range.getFirstTxNum() + 1L;
+    if (positions == null || positions.size() != expectedSize) {
+      throw new ArchiveException("archive tx-position coverage mismatch for block "
+          + range.getBlockNum());
+    }
+    Set<ByteArrayKey> txIds = new HashSet<>();
+    for (long txNum = range.getFirstTxNum(); txNum <= range.getLastTxNum(); txNum++) {
+      int index = (int) (txNum - range.getFirstTxNum());
+      ArchiveTxPosition position = positions.get(index);
+      validatePositionForCommit(range, txNum, position);
+      byte[] txId = position.getTxId();
+      if (txId.length > 0 && !txIds.add(new ByteArrayKey(txId))) {
+        throw new ArchiveException("archive duplicate txId in block " + range.getBlockNum());
+      }
+    }
+  }
+
+  private void validatePositionForCommit(ArchiveBlockRange range, long txNum,
+      ArchiveTxPosition position) {
+    if (position.getTxNum() != txNum || position.getBlockNum() != range.getBlockNum()
+        || position.getSource() != range.getSource()) {
+      throw new ArchiveException("archive tx-position mismatch for commit txNum " + txNum);
+    }
+    byte[] positionBlockHash = position.getBlockHash();
+    if (positionBlockHash.length != 0 && !Arrays.equals(positionBlockHash, range.getBlockHash())) {
+      throw new ArchiveException("archive tx-position block hash mismatch for commit txNum "
+          + txNum);
+    }
+    if (txNum == range.getPrepareTxNum()) {
+      if (position.getPhase() != ArchivePhase.BLOCK_PREPARE || position.getTxIndex() != -1
+          || position.getTxId().length != 0) {
+        throw new ArchiveException("archive prepare tx-position mismatch for commit txNum "
+            + txNum);
+      }
+      return;
+    }
+    if (txNum == range.getFinalizeTxNum()) {
+      if (position.getPhase() != ArchivePhase.BLOCK_FINALIZE || position.getTxIndex() != -1
+          || position.getTxId().length != 0) {
+        throw new ArchiveException("archive finalize tx-position mismatch for commit txNum "
+            + txNum);
+      }
+      return;
+    }
+    int expectedTxIndex = (int) (txNum - range.getFirstTxNum() - 1);
+    if (position.getPhase() != ArchivePhase.USER_TX || position.getTxIndex() != expectedTxIndex) {
+      throw new ArchiveException("archive user tx-position mismatch for commit txNum " + txNum);
+    }
+  }
+
+  private void validateNoOrphanIndexRows() {
+    try (RocksIterator it = db.newIterator()) {
+      it.seek(new byte[] {ArchiveBlockRangeCodec.TXNUM_META_PREFIX});
+      while (it.isValid() && it.key()[0] == ArchiveBlockRangeCodec.TXNUM_META_PREFIX) {
+        long txNum = ArchiveBlockRangeCodec.txNumFromPositionKey(it.key());
+        ArchiveTxPosition position = ArchiveBlockRangeCodec.decodePosition(it.value());
+        if (position.getTxNum() != txNum) {
+          throw new ArchiveException("archive tx-position key mismatch for txNum " + txNum);
+        }
+        ArchiveBlockRange range = committedRangeForPosition(position, txNum);
+        validatePosition(range, txNum);
+        it.next();
+      }
+    }
+    try (RocksIterator it = db.newIterator()) {
+      it.seek(new byte[] {ArchiveBlockRangeCodec.TXNUM_BY_TXID_PREFIX});
+      while (it.isValid() && it.key()[0] == ArchiveBlockRangeCodec.TXNUM_BY_TXID_PREFIX) {
+        byte[] txId = ArchiveBlockRangeCodec.txIdFromKey(it.key());
+        long txNum = ArchiveBlockRangeCodec.decodeCursor(it.value());
+        ArchiveTxPosition position = getRawPosition(txNum)
+            .orElseThrow(() -> new ArchiveException(
+                "archive txId index is orphan for txNum " + txNum));
+        ArchiveBlockRange range = committedRangeForPosition(position, txNum);
+        validatePosition(range, txNum);
+        if (!Arrays.equals(position.getTxId(), txId)) {
+          throw new ArchiveException(
+              "archive txId index does not match tx-position for txNum " + txNum);
+        }
+        it.next();
+      }
+    }
+  }
+
+  private ArchiveBlockRange committedRangeForPosition(ArchiveTxPosition position, long txNum) {
+    ArchiveBlockRange range = getRange(position.getBlockNum())
+        .orElseThrow(() -> new ArchiveException(
+            "archive tx-position is orphan for committed txNum " + txNum));
+    if (txNum < range.getFirstTxNum() || txNum > range.getLastTxNum()) {
+      throw new ArchiveException("archive tx-position is outside committed range for txNum "
+          + txNum);
+    }
+    return range;
+  }
+
+  private void validateHeadUnwind(ArchiveBlockRange range, long committedNextTxNum) {
+    ArchiveBlockRange stored = getRange(range.getBlockNum())
+        .orElseThrow(() -> new ArchiveException(
+            "cannot unwind archive block " + range.getBlockNum() + ": range not committed"));
+    if (!sameRange(stored, range)) {
+      throw new ArchiveException("cannot unwind archive block " + range.getBlockNum()
+          + ": range does not match persisted head");
+    }
+    long cursor = getCursor();
+    if (cursor != range.getLastTxNum() + 1) {
+      throw new ArchiveException("cannot unwind archive block " + range.getBlockNum()
+          + ": not archive head");
+    }
+    if (committedNextTxNum != range.getFirstTxNum()) {
+      throw new ArchiveException("archive txNum unwind cursor " + committedNextTxNum
+          + " does not match range first txNum " + range.getFirstTxNum());
+    }
+  }
+
+  private static boolean sameRange(ArchiveBlockRange left, ArchiveBlockRange right) {
+    return left.getBlockNum() == right.getBlockNum()
+        && left.getFirstTxNum() == right.getFirstTxNum()
+        && left.getLastTxNum() == right.getLastTxNum()
+        && left.getPrepareTxNum() == right.getPrepareTxNum()
+        && left.getFinalizeTxNum() == right.getFinalizeTxNum()
+        && left.getUserTxCount() == right.getUserTxCount()
+        && left.getSource() == right.getSource()
+        && Arrays.equals(left.getBlockHash(), right.getBlockHash())
+        && Arrays.equals(left.getSchemaChecksum(), right.getSchemaChecksum());
+  }
+
+  private static final class ByteArrayKey {
+    private final byte[] bytes;
+
+    private ByteArrayKey(byte[] bytes) {
+      this.bytes = Arrays.copyOf(bytes, bytes.length);
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+      if (this == obj) {
+        return true;
+      }
+      if (!(obj instanceof ByteArrayKey)) {
+        return false;
+      }
+      return Arrays.equals(bytes, ((ByteArrayKey) obj).bytes);
+    }
+
+    @Override
+    public int hashCode() {
+      return Arrays.hashCode(bytes);
     }
   }
 
