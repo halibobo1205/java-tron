@@ -485,7 +485,7 @@ public class NoopArchiveServiceTest {
     RocksDB.loadLibrary();
     try (Options options = new Options().setCreateIfMissing(false);
         RocksDB rawDb = RocksDB.open(options, indexDir.toString())) {
-      rawDb.put(new byte[] {0x01}, Longs.toByteArray(cursor));
+      rawDb.put(new byte[] {0x01, 'c', 'u', 'r', 's', 'o', 'r'}, Longs.toByteArray(cursor));
     } catch (RocksDBException e) {
       throw new ArchiveException("failed to overwrite archive cursor for test", e);
     }
