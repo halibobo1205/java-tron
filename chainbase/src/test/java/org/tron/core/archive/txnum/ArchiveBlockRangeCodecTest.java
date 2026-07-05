@@ -59,9 +59,26 @@ public class ArchiveBlockRangeCodecTest {
 
   @Test
   public void rangeKeyIsPrefixedAndDistinctFromCursor() {
-    assertEquals(ArchiveBlockRangeCodec.RANGE_PREFIX, ArchiveBlockRangeCodec.rangeKey(1)[0]);
+    assertEquals(ArchiveBlockRangeCodec.TXNUM_BLOCK_PREFIX,
+        ArchiveBlockRangeCodec.rangeKey(1)[0]);
     assertEquals(9, ArchiveBlockRangeCodec.rangeKey(1).length); // prefix(1) + blockNum(8)
     assertNotEquals(ArchiveBlockRangeCodec.rangeKey(1)[0], ArchiveBlockRangeCodec.CURSOR_KEY[0]);
+  }
+
+  @Test
+  public void txIdKeyUsesL5PrefixAndLengthPrefix() {
+    byte[] key = ArchiveBlockRangeCodec.txIdKey(new byte[] {1, 2, 3});
+
+    assertEquals(ArchiveBlockRangeCodec.TXNUM_BY_TXID_PREFIX, key[0]);
+    assertArrayEquals(new byte[] {0, 0, 0, 3}, Arrays.copyOfRange(key, 1, 5));
+    assertArrayEquals(new byte[] {1, 2, 3}, Arrays.copyOfRange(key, 5, 8));
+  }
+
+  @Test
+  public void manifestUsesMetaPrefixNotTxNumMetaPrefix() {
+    assertEquals(ArchiveBlockRangeCodec.META_PREFIX, ArchiveBlockRangeCodec.manifestKey()[0]);
+    assertNotEquals(ArchiveBlockRangeCodec.TXNUM_META_PREFIX,
+        ArchiveBlockRangeCodec.manifestKey()[0]);
   }
 
   private static ArchiveBlockRange range(byte[] blockHash) {
