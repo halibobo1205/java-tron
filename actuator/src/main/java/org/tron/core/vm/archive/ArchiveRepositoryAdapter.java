@@ -68,6 +68,7 @@ public class ArchiveRepositoryAdapter implements Repository {
   private final Map<Key, ContractCapsule> contracts = new HashMap<>();
   private final Map<Key, ContractStateCapsule> contractStates = new HashMap<>();
   private final Map<Key, Map<DataWord, DataWord>> storage = new HashMap<>();
+  private final Map<Key, Map<Key, byte[]>> transientStorage = new HashMap<>();
   private final Set<Key> newContracts = new HashSet<>();
 
   public ArchiveRepositoryAdapter(ArchiveStateReader reader, VmDynamicProperties vmProperties) {
@@ -281,6 +282,9 @@ public class ArchiveRepositoryAdapter implements Repository {
     newContracts.forEach(key -> parent.putNewContract(key.getData()));
     storage.forEach((addrKey, slots) ->
         slots.forEach((slot, value) -> parent.putStorageValue(addrKey.getData(), slot, value)));
+    transientStorage.forEach((addrKey, values) ->
+        values.forEach((key, value) -> parent.updateTransientStorageValue(
+            addrKey.getData(), key.getData(), value)));
   }
 
   @Override
@@ -334,12 +338,20 @@ public class ArchiveRepositoryAdapter implements Repository {
 
   @Override
   public byte[] getTransientStorageValue(byte[] address, byte[] key) {
-    throw unsupported("transient storage");
+    Key addressKey = Key.create(address);
+    Key storageKey = Key.create(key);
+    Map<Key, byte[]> values = transientStorage.get(addressKey);
+    if (values != null && values.containsKey(storageKey)) {
+      byte[] value = values.get(storageKey);
+      return value == null ? null : value.clone();
+    }
+    return parent == null ? null : parent.getTransientStorageValue(address, key);
   }
 
   @Override
   public void updateTransientStorageValue(byte[] address, byte[] key, byte[] value) {
-    throw unsupported("transient storage");
+    transientStorage.computeIfAbsent(Key.create(address), k -> new HashMap<>())
+        .put(Key.create(key), value == null ? null : value.clone());
   }
 
   @Override
@@ -560,7 +572,8 @@ public class ArchiveRepositoryAdapter implements Repository {
 
   @Override
   public void putTransientStorageValue(Key address, Key key, Value value) {
-    throw unsupported("putTransientStorageValue");
+    byte[] raw = value == null ? null : (byte[]) value.getValue();
+    updateTransientStorageValue(address.getData(), key.getData(), raw);
   }
 
   @Override

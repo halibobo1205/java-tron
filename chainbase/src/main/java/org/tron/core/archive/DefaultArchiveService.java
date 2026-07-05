@@ -205,6 +205,9 @@ public final class DefaultArchiveService implements ArchiveService {
     if (!record.isSameValue()) {
       return false;
     }
+    if (record.getValue().isDeleted()) {
+      return true;
+    }
     Optional<DomainValue> latest = temporalStore.latest(record.getDomain(),
         record.getCanonicalKey());
     return latest.isPresent() && sameDomainValue(latest.get(), record.getValue());
@@ -266,6 +269,10 @@ public final class DefaultArchiveService implements ArchiveService {
         // Drop the reverted block's already-persisted changes (txNum >= its first txNum) before the
         // index forgets the range, so the temporal store never retains rolled-back state.
         ArchiveBlockRange range = txNumIndex.getHeadBlockRange(block.getNum());
+        if (!Arrays.equals(range.getBlockHash(), block.getBlockId().getBytes())) {
+          throw new ArchiveException("cannot unwind block " + block.getNum()
+              + ": archive block hash mismatch");
+        }
         temporalStore.unwindBlock(range);
         txNumIndex.unwindBlock(block.getNum());
         captureEngine.clear();

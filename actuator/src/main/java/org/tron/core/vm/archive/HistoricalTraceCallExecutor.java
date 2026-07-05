@@ -85,12 +85,6 @@ public final class HistoricalTraceCallExecutor {
           result.getException());
     }
     ProgramTrace trace = program.getTrace();
-    if (!useConstantEnergyCap && result.getException() != null) {
-      throw new HistoricalVmExecutionException(
-          "historical debug_traceTransaction cannot replay VM exception with exact "
-              + "non-constant energy accounting",
-          result.getException());
-    }
     boolean failed = result.getException() != null || result.isRevert()
         || (result.getRuntimeError() != null && !result.getRuntimeError().isEmpty());
     return HistoricalTraceCallResult.of(result.getHReturn(), result.getEnergyUsed(), failed,

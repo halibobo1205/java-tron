@@ -26,7 +26,6 @@ import org.tron.common.runtime.InternalTransaction.TrxType;
 import org.tron.common.runtime.ProgramResult;
 import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.utils.ForkController;
-import org.tron.common.utils.StorageUtils;
 import org.tron.common.utils.StringUtil;
 import org.tron.common.utils.WalletUtil;
 import org.tron.core.ChainBaseManager;
@@ -431,7 +430,7 @@ public class VMActuator implements Actuator2 {
       if (isConstantCall) {
         energyLimit = maxEnergyLimit;
       } else {
-        if (StorageUtils.getEnergyLimitHardFork()) {
+        if (VMConfig.getEnergyLimitHardFork()) {
           if (callValue < 0) {
             throw new ContractValidateException("callValue must be >= 0");
           }
@@ -552,7 +551,7 @@ public class VMActuator implements Actuator2 {
       tokenId = contract.getTokenId();
     }
 
-    if (StorageUtils.getEnergyLimitHardFork()) {
+    if (VMConfig.getEnergyLimitHardFork()) {
       if (callValue < 0) {
         throw new ContractValidateException("callValue must be >= 0");
       }
@@ -711,7 +710,7 @@ public class VMActuator implements Actuator2 {
       return getAccountEnergyLimitWithFixRatio(caller, feeLimit, callValue);
     }
     //  according to version
-    if (StorageUtils.getEnergyLimitHardFork()) {
+    if (VMConfig.getEnergyLimitHardFork()) {
       return getTotalEnergyLimitWithFixRatio(creator, caller, contract, feeLimit, callValue);
     } else {
       return getTotalEnergyLimitWithFloatRatio(creator, caller, contract, feeLimit, callValue);

@@ -61,17 +61,21 @@ public class VMConfigIsolationTest {
   @Test
   public void testLocalConfigDoesNotPolluteGlobalAcrossThreads() throws InterruptedException {
     VMConfig.initAllowTvmOsaka(1);            // global (HEAD) view: activated
+    VMConfig.initVmHardFork(true);
     VMConfig.initPassFork4811(true);
     assertTrue(VMConfig.allowTvmOsaka());     // no thread-local -> reads global
+    assertTrue(VMConfig.getEnergyLimitHardFork());
     assertTrue(VMConfig.passFork4811());
 
     VMConfig.Snapshot local = new VMConfig.Snapshot();
     local.allowTvmOsaka = false;              // simulate a not-yet-solidified snapshot
+    local.energyLimitHardFork = false;
     local.passFork4811 = false;
     VMConfig.setLocalSnapshot(local);
 
     // this thread now sees its own (solidity) view...
     assertFalse(VMConfig.allowTvmOsaka());
+    assertFalse(VMConfig.getEnergyLimitHardFork());
     assertFalse(VMConfig.passFork4811());
 
     // ...but another thread (e.g. block processing) must still see the global HEAD value.
@@ -79,7 +83,7 @@ public class VMConfigIsolationTest {
     AtomicBoolean otherThreadSawFork = new AtomicBoolean(false);
     Thread t = new Thread(() -> {
       otherThreadSaw.set(VMConfig.allowTvmOsaka());
-      otherThreadSawFork.set(VMConfig.passFork4811());
+      otherThreadSawFork.set(VMConfig.getEnergyLimitHardFork() && VMConfig.passFork4811());
     });
     t.start();
     t.join();
@@ -106,9 +110,12 @@ public class VMConfigIsolationTest {
 
     VMConfig.Snapshot head = new VMConfig.Snapshot();
     head.allowTvmOsaka = false;
+    head.energyLimitHardFork = false;
     head.passFork4811 = false;
     VMConfig.setGlobalSnapshot(head);
     assertFalse("setGlobalSnapshot must drop the thread-local view", VMConfig.allowTvmOsaka());
+    assertFalse("setGlobalSnapshot must drop the energy-limit thread-local view",
+        VMConfig.getEnergyLimitHardFork());
     assertFalse("setGlobalSnapshot must drop the fork thread-local view",
         VMConfig.passFork4811());
   }
@@ -143,6 +150,7 @@ public class VMConfigIsolationTest {
     snapshot.allowTvmSelfdestructRestriction = VMConfig.allowTvmSelfdestructRestriction();
     snapshot.allowTvmOsaka = VMConfig.allowTvmOsaka();
     snapshot.allowHardenResourceCalculation = VMConfig.allowHardenResourceCalculation();
+    snapshot.energyLimitHardFork = VMConfig.getEnergyLimitHardFork();
     snapshot.passFork471 = VMConfig.passFork471();
     snapshot.passFork4811 = VMConfig.passFork4811();
     return snapshot;

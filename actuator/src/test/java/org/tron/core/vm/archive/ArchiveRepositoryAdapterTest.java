@@ -1,5 +1,6 @@
 package org.tron.core.vm.archive;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
@@ -276,6 +277,25 @@ public class ArchiveRepositoryAdapterTest {
     DataWord value = new DataWord(new byte[] {0, 9});
     adapter.putStorageValue(ADDR, key, value);
     assertEquals(value, adapter.getStorageValue(ADDR, key));
+  }
+
+  @Test
+  public void transientStorageOverlayMergesFromChildToParent() {
+    byte[] key = new DataWord(new byte[] {7}).getData();
+    byte[] value = new DataWord(new byte[] {9}).getData();
+    ArchiveRepositoryAdapter child = (ArchiveRepositoryAdapter) adapter.newRepositoryChild();
+
+    child.updateTransientStorageValue(ADDR, key, value);
+    value[31] = 0x0A;
+
+    assertArrayEquals(new DataWord(new byte[] {9}).getData(),
+        child.getTransientStorageValue(ADDR, key));
+    assertNull(adapter.getTransientStorageValue(ADDR, key));
+
+    child.commit();
+
+    assertArrayEquals(new DataWord(new byte[] {9}).getData(),
+        adapter.getTransientStorageValue(ADDR, key));
   }
 
   @Test

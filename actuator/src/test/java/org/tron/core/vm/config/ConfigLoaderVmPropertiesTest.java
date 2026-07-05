@@ -30,7 +30,7 @@ public class ConfigLoaderVmPropertiesTest {
     }
 
     public long getLatestBlockHeaderNumber() {
-      return v;
+      return v == 0L ? -1L : v;
     }
 
     public long getLatestBlockHeaderTimestamp() {
@@ -222,6 +222,7 @@ public class ConfigLoaderVmPropertiesTest {
       assertTrue(VMConfig.allowStrictMath());
       assertTrue(VMConfig.allowTvmTransferTrc10());
       assertTrue(VMConfig.allowTvmFreezeV2()); // from supportUnfreezeDelay()
+      assertTrue(VMConfig.getEnergyLimitHardFork());
       assertTrue(VMConfig.passFork471());
       assertTrue(VMConfig.passFork4811());
       assertEquals(1L, VMConfig.getDynamicEnergyThreshold());
@@ -233,6 +234,7 @@ public class ConfigLoaderVmPropertiesTest {
       assertFalse(VMConfig.allowStrictMath());
       assertFalse(VMConfig.allowTvmTransferTrc10());
       assertFalse(VMConfig.allowTvmFreezeV2());
+      assertFalse(VMConfig.getEnergyLimitHardFork());
       assertFalse(VMConfig.passFork471());
       assertFalse(VMConfig.passFork4811());
       assertEquals(0L, VMConfig.getDynamicEnergyThreshold());
