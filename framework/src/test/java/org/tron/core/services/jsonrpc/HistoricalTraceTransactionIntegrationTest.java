@@ -33,6 +33,7 @@ import org.tron.core.exception.jsonrpc.JsonRpcInvalidParamsException;
 import org.tron.core.services.jsonrpc.types.StructLog;
 import org.tron.core.services.jsonrpc.types.TraceResult;
 import org.tron.protos.Protocol.Account;
+import org.tron.protos.Protocol.ResourceReceipt;
 import org.tron.protos.Protocol.Transaction;
 import org.tron.protos.Protocol.Transaction.Contract.ContractType;
 import org.tron.protos.Protocol.TransactionInfo;
@@ -55,6 +56,7 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
   private static final byte[] ADD_CODE = {
       0x60, 0x01, 0x60, 0x02, 0x01, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, (byte) 0xf3
   };
+  private static final byte[] INVALID_CODE = {(byte) 0xfe};
 
   @Override
   protected void afterInit() {
@@ -108,12 +110,18 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
   // then opens block 2, allocates prepare + the traced user tx, and commits. Returns the service.
   private DefaultArchiveService buildArchive(InMemoryArchiveTemporalStore temporal, byte[] contract,
       byte[] txId) {
-    return buildArchive(temporal, contract, txId, blockHash(2));
+    return buildArchive(temporal, contract, txId, blockHash(2), ADD_CODE);
   }
 
   private DefaultArchiveService buildArchive(InMemoryArchiveTemporalStore temporal, byte[] contract,
       byte[] txId, byte[] block2Hash) {
+    return buildArchive(temporal, contract, txId, block2Hash, ADD_CODE);
+  }
+
+  private DefaultArchiveService buildArchive(InMemoryArchiveTemporalStore temporal, byte[] contract,
+      byte[] txId, byte[] block2Hash, byte[] code) {
     DefaultArchiveService svc = new DefaultArchiveService(true, temporal);
+    byte[] caller = addr(0x22);
 
     // Block 0 proves genesis-complete coverage for default dynamic properties.
     svc.getTxNumIndex().beginBlock(0, ArchiveSource.NORMAL);
@@ -126,12 +134,16 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
     svc.getTxNumIndex().allocateSystemTx(1, ArchivePhase.BLOCK_PREPARE);
     ArchiveTxPosition fin1 = svc.getTxNumIndex().allocateSystemTx(1, ArchivePhase.BLOCK_FINALIZE);
     long t1 = fin1.getTxNum();
+    put(temporal, t1, ArchiveDomain.ACCOUNT, caller,
+        Account.newBuilder().setAddress(ByteString.copyFrom(caller))
+            .setBalance(2_000_000_000L).build().toByteArray());
     put(temporal, t1, ArchiveDomain.ACCOUNT, contract,
         Account.newBuilder().setAddress(ByteString.copyFrom(contract)).build().toByteArray());
     put(temporal, t1, ArchiveDomain.CONTRACT, contract,
-        SmartContract.newBuilder().setContractAddress(ByteString.copyFrom(contract)).build()
+        SmartContract.newBuilder().setContractAddress(ByteString.copyFrom(contract))
+            .setOriginAddress(ByteString.copyFrom(caller)).build()
             .toByteArray());
-    put(temporal, t1, ArchiveDomain.CODE, contract, ADD_CODE);
+    put(temporal, t1, ArchiveDomain.CODE, contract, code);
     svc.getTxNumIndex().commitBlock(1, blockHash(1), 0);
 
     // Block 2: prepare, then the traced user tx (txNum t), then finalize.
@@ -192,6 +204,41 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
     assertEquals(java.util.Arrays.asList(word(1), word(2)), logs.get(2).getStack());
     assertEquals(1, logs.get(0).getDepth());
     assertTrue("first op has an empty pre-op stack", logs.get(0).getStack().isEmpty());
+  }
+
+  @Test
+  public void traceTransactionReturnsFailedTraceForVmException() throws Exception {
+    byte[] contract = addr(0x11);
+    byte[] caller = addr(0x22);
+
+    TriggerSmartContract trigger =
+        TvmTestUtils.buildTriggerSmartContract(caller, contract, new byte[0], 0L);
+    TransactionCapsule trxCap =
+        new TransactionCapsule(trigger, ContractType.TriggerSmartContract);
+    trxCap.setFeeLimit(1_000_000_000L);
+    Transaction tx = trxCap.getInstance();
+    byte[] txId = trxCap.getTransactionId().getBytes();
+
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    DefaultArchiveService svc = buildArchive(temporal, contract, txId, blockHash(2), INVALID_CODE);
+
+    Wallet wallet = mock(Wallet.class);
+    when(wallet.getTransactionById(ByteString.copyFrom(txId))).thenReturn(tx);
+    when(wallet.getTransactionInfoById(ByteString.copyFrom(txId)))
+        .thenReturn(TransactionInfo.newBuilder().setBlockNumber(2L)
+            .setReceipt(ResourceReceipt.newBuilder().setEnergyUsageTotal(12_345L)).build());
+    BlockCapsule block = blockCapsule(2);
+    when(wallet.getBlockByNum(2L)).thenReturn(block.getInstance());
+
+    HistoricalTraceSupport support = new HistoricalTraceSupport(wallet, svc);
+    TraceResult result = support.traceTransaction(txId, null);
+
+    assertTrue("VM exception transactions still return a failed opcode trace", result.isFailed());
+    assertEquals("top-level gas must come from the real transaction receipt",
+        12_345L, result.getGas());
+    assertEquals("", result.getReturnValue());
+    assertEquals(1, result.getStructLogs().size());
+    assertEquals("INVALID", result.getStructLogs().get(0).getOp());
   }
 
   @Test

@@ -132,4 +132,18 @@ public class InMemoryArchiveTemporalStoreTest {
     assertTrue(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 100).get().isDeleted());
     assertEquals(0, store.changeCount());
   }
+
+  @Test
+  public void unwindFromZeroClearsLatestOnlyResidue() {
+    store.putChange(change(8, KEY, val(0x0A), val(0x0B)));
+    store.unwind(8);
+    assertArrayEquals(new byte[] {0x0A}, store.latest(ArchiveDomain.ACCOUNT, KEY).get().getValue());
+    assertEquals(0, store.changeCount());
+
+    store.unwind(0);
+
+    assertFalse(store.latest(ArchiveDomain.ACCOUNT, KEY).isPresent());
+    assertFalse(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, Long.MAX_VALUE).isPresent());
+    assertEquals(0, store.changeCount());
+  }
 }

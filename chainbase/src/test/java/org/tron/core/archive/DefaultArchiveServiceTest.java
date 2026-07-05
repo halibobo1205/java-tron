@@ -41,6 +41,12 @@ public class DefaultArchiveServiceTest {
     return new BlockCapsule(num, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY);
   }
 
+  private static BlockCapsule blockWithParentSeed(long num, byte seed) {
+    byte[] parent = new byte[32];
+    parent[31] = seed;
+    return new BlockCapsule(num, Sha256Hash.wrap(parent), 1L, ByteString.EMPTY);
+  }
+
   @Test
   public void disabledServiceIsNoOp() {
     InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
@@ -216,6 +222,31 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
+  public void deleteMissingKeyDoesNotSeedTemporalTombstone() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    DefaultArchiveService service =
+        new DefaultArchiveService(true, index, context, temporal);
+
+    byte[] addr = new byte[21];
+    addr[0] = 0x41;
+    BlockCapsule b = block(5);
+    service.beginBlock(b, ArchiveSource.NORMAL);
+    service.beginSystemTx(b, ArchivePhase.BLOCK_PREPARE);
+    service.getCaptureEngine().captureDelete("account", addr, null);
+    service.endTx();
+    service.beginSystemTx(b, ArchivePhase.BLOCK_FINALIZE);
+    service.endTx();
+
+    service.commitBlock(b);
+
+    assertTrue(index.getBlockRange(5).isPresent());
+    assertEquals(0, temporal.changeCount());
+    assertFalse(temporal.latest(ArchiveDomain.ACCOUNT, addr).isPresent());
+  }
+
+  @Test
   public void abortClearsContextAndDiscardsPending() {
     InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
     ArchiveExecutionContext context = new ArchiveExecutionContext();
@@ -295,6 +326,31 @@ public class DefaultArchiveServiceTest {
     assertThrows(ArchiveException.class, () -> service.unwindBlock(b));
     assertThrows(ArchiveException.class, service::validateAvailable);
     assertThrows(ArchiveException.class, () -> service.beginBlock(block(6), ArchiveSource.NORMAL));
+  }
+
+  @Test
+  public void unwindRejectsSameHeightDifferentHashWithoutDeletingArchiveHead() throws Exception {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    DefaultArchiveService service =
+        new DefaultArchiveService(true, index, context, temporal);
+
+    byte[] addr = new byte[21];
+    addr[0] = 0x41;
+    BlockCapsule b = block(5);
+    service.beginBlock(b, ArchiveSource.NORMAL);
+    service.beginSystemTx(b, ArchivePhase.BLOCK_PREPARE);
+    service.getCaptureEngine().capturePut("account", addr, null, account(1));
+    service.endTx();
+    service.beginSystemTx(b, ArchivePhase.BLOCK_FINALIZE);
+    service.endTx();
+    service.commitBlock(b);
+
+    assertThrows(ArchiveException.class, () -> service.unwindBlock(blockWithParentSeed(5, (byte) 1)));
+
+    assertTrue(index.getBlockRange(5).isPresent());
+    assertEquals(1, balanceOf(temporal.latest(ArchiveDomain.ACCOUNT, addr).get().getValue()));
   }
 
   @Test

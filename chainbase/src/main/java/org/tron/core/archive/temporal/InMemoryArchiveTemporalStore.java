@@ -77,6 +77,10 @@ public final class InMemoryArchiveTemporalStore implements ArchiveTemporalStore 
 
   @Override
   public void unwind(long fromTxNum) {
+    if (fromTxNum == 0) {
+      byDomain.clear();
+      return;
+    }
     for (Map<WrappedByteArray, KeyState> domainMap : byDomain.values()) {
       Iterator<KeyState> states = domainMap.values().iterator();
       while (states.hasNext()) {

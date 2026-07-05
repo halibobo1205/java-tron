@@ -118,6 +118,25 @@ public class RocksDbArchiveTemporalStoreTest {
   }
 
   @Test
+  public void unwindArchiveStartClearsLatestOnlyResidue() {
+    ArchiveBlockRange first = new ArchiveBlockRange(
+        100, 0, 1, 0, 1, blockHash(100), 0, ArchiveSource.NORMAL);
+    ArchiveBlockRange later = new ArchiveBlockRange(
+        101, 2, 3, 2, 3, blockHash(101), 0, ArchiveSource.NORMAL);
+    store.putBlockChanges(first, Collections.emptyList());
+    store.putBlockChanges(later, Collections.singletonList(
+        change(2, DomainValue.present(new byte[] {0x0A}), DomainValue.present(new byte[] {0x0B}))));
+
+    store.unwindBlock(later);
+    assertArrayEquals(new byte[] {0x0A}, store.latest(ArchiveDomain.ACCOUNT, KEY).get().getValue());
+
+    store.unwindBlock(first);
+
+    assertFalse(store.latest(ArchiveDomain.ACCOUNT, KEY).isPresent());
+    assertFalse(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, Long.MAX_VALUE).isPresent());
+  }
+
+  @Test
   public void midChainFirstCapturedChangeServesPrevValueBeforeCoverage() {
     // The key existed before archive coverage as 0x30; the first captured change moves it to 0x31.
     store.putChange(change(6, DomainValue.present(new byte[] {0x30}),

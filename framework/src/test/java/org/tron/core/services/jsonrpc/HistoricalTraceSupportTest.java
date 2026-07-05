@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
+import java.util.Collections;
 import org.junit.After;
 import org.junit.Test;
 import org.tron.common.utils.Sha256Hash;
@@ -45,6 +46,30 @@ public class HistoricalTraceSupportTest {
         new HistoricalTraceSupport(wallet, midChainArchiveService());
     assertThrows(JsonRpcInvalidParamsException.class,
         () -> support.traceTransaction(new byte[] {1}, null));
+  }
+
+  @Test
+  public void traceCallRejectsUnsupportedTraceOptions() {
+    HistoricalTraceSupport support =
+        new HistoricalTraceSupport(mock(Wallet.class), midChainArchiveService());
+
+    JsonRpcInvalidParamsException ex = assertThrows(JsonRpcInvalidParamsException.class,
+        () -> support.traceCall(null, null, 0L, null, "0x5",
+            Collections.singletonMap("tracer", "callTracer")));
+
+    assertTrue(ex.getMessage().contains("only the default struct-log tracer"));
+  }
+
+  @Test
+  public void traceTransactionRejectsUnsupportedTraceOptionsBeforeLookup() {
+    HistoricalTraceSupport support =
+        new HistoricalTraceSupport(mock(Wallet.class), midChainArchiveService());
+
+    JsonRpcInvalidParamsException ex = assertThrows(JsonRpcInvalidParamsException.class,
+        () -> support.traceTransaction(new byte[] {1},
+            Collections.singletonMap("disableStack", Boolean.TRUE)));
+
+    assertTrue(ex.getMessage().contains("only the default struct-log tracer"));
   }
 
   private DefaultArchiveService midChainArchiveService() {
