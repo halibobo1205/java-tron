@@ -25,8 +25,8 @@ import org.tron.core.exception.jsonrpc.JsonRpcInvalidParamsException;
 import org.tron.protos.Protocol.Block;
 
 /**
- * Compatibility gate for the historical eth_get* path: archive-disabled and the {@code latest}
- * tag must never route through the archive, so default-OFF nodes keep their exact latest behaviour.
+ * Compatibility gate for the historical eth_get* path: {@code latest} must stay live, but
+ * historical selectors must never fall back to latest state even when archive is disabled.
  * The cases use a lightweight mocked wallet where block resolution is needed.
  */
 public class ArchiveJsonRpcStateAdapterTest {
@@ -38,12 +38,16 @@ public class ArchiveJsonRpcStateAdapterTest {
   }
 
   @Test
-  public void disabledArchiveNeverRoutesToArchive() {
+  public void disabledArchiveRoutesHistoricalSelectorsToFailClosedAdapter() {
     ArchiveJsonRpcStateAdapter adapter =
         new ArchiveJsonRpcStateAdapter(null, NoopArchiveService.INSTANCE);
     assertFalse(adapter.shouldUseArchive("latest"));
-    assertFalse(adapter.shouldUseArchive("earliest"));
-    assertFalse(adapter.shouldUseArchive("0x10"));
+    assertTrue(adapter.shouldUseArchive("earliest"));
+    assertTrue(adapter.shouldUseArchive("0x10"));
+
+    JsonRpcInternalException ex = assertThrows(JsonRpcInternalException.class,
+        () -> adapter.getBalance("0xabd4b9367799eaa3197fecb144eb71de1e049abc", "0x10"));
+    assertTrue(ex.getMessage().contains("archive is not available"));
   }
 
   @Test

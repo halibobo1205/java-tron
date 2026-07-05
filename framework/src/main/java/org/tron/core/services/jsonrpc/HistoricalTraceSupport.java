@@ -55,9 +55,9 @@ import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
  * block-resolution / reader / historical-config wiring of {@link HistoricalEthCallSupport}; only
  * the executor (trace variant) and the result rendering differ.
  *
- * <p>{@link #shouldUseArchive} mirrors the eth_call gate: a trace is served from the archive only
- * when archiving is enabled and the selector is non-latest. The latest path is out of scope here
- * (java-tron has no latest debug_traceCall yet), so a latest tag is rejected.
+ * <p>{@link #shouldUseArchive} mirrors the eth_call gate: a non-latest trace request must not fall
+ * back to latest state. The latest path is out of scope here (java-tron has no latest
+ * debug_traceCall yet), so a latest tag is rejected.
  */
 public final class HistoricalTraceSupport {
 
@@ -71,10 +71,9 @@ public final class HistoricalTraceSupport {
     this.resolver = new JsonRpcArchiveStatePointResolver(wallet, archiveService);
   }
 
-  /** True when the trace must be served from the archive (enabled + a non-latest selector). */
+  /** True when the trace is historical and must not fall back to latest state. */
   public boolean shouldUseArchive(String blockNumOrTag) {
-    return archiveService.isEnabled()
-        && !JsonRpcApiUtil.LATEST_STR.equalsIgnoreCase(blockNumOrTag);
+    return !JsonRpcApiUtil.LATEST_STR.equalsIgnoreCase(blockNumOrTag);
   }
 
   /** True when archiving is enabled; debug_traceTransaction is archive-only (no block selector). */
@@ -105,6 +104,7 @@ public final class HistoricalTraceSupport {
     if (JsonRpcApiUtil.LATEST_STR.equalsIgnoreCase(blockNumOrTag)) {
       throw new JsonRpcInternalException("historical debug_traceCall invoked for the latest tag");
     }
+    requireArchiveEnabled();
     ResolvedArchiveStatePoint resolved = resolver.resolveBlockEnd(blockNumOrTag);
     if (resolved.isLatest()) {
       throw new JsonRpcInternalException("historical debug_traceCall invoked for the latest tag");
@@ -346,6 +346,12 @@ public final class HistoricalTraceSupport {
       archiveService.validateAvailable();
     } catch (ArchiveException e) {
       throw new JsonRpcInternalException(e.getMessage());
+    }
+  }
+
+  private void requireArchiveEnabled() throws JsonRpcInternalException {
+    if (!archiveService.isEnabled()) {
+      throw new JsonRpcInternalException("archive is not available");
     }
   }
 

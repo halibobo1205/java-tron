@@ -14,6 +14,7 @@ import org.tron.core.Wallet;
 import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveSource;
 import org.tron.core.archive.DefaultArchiveService;
+import org.tron.core.archive.NoopArchiveService;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.exception.jsonrpc.JsonRpcInternalException;
@@ -25,6 +26,16 @@ public class HistoricalTraceSupportTest {
   @After
   public void clearCaptureHolder() {
     ArchiveCaptureHolder.clear();
+  }
+
+  @Test
+  public void disabledArchiveTraceCallFailsClosedAsArchiveUnavailable() {
+    HistoricalTraceSupport support =
+        new HistoricalTraceSupport(null, NoopArchiveService.INSTANCE);
+
+    JsonRpcInternalException ex = assertThrows(JsonRpcInternalException.class,
+        () -> support.traceCall(null, null, 0L, null, "0x10"));
+    assertTrue(ex.getMessage().contains("archive is not available"));
   }
 
   @Test

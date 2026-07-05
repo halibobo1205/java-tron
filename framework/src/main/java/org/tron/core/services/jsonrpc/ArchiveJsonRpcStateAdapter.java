@@ -20,8 +20,9 @@ import org.tron.core.exception.jsonrpc.JsonRpcInvalidParamsException;
 /**
  * Bridges the historical {@code eth_getBalance}/{@code eth_getCode}/{@code eth_getStorageAt} paths
  * to the archive state reader, rendering the typed {@link ArchiveReadResult} into JSON-RPC hex.
- * {@code latest} and archive-disabled are left to the caller's existing latest-only logic
- * ({@link #shouldUseArchive} returns false), so default-OFF behaviour is unchanged.
+ * {@code latest} is left to the caller's existing latest-only logic. Non-latest selectors enter
+ * this adapter even when archive is disabled, so disabled archive fails closed with the archive
+ * error surface rather than being misreported as an unsupported latest-only parameter.
  */
 public final class ArchiveJsonRpcStateAdapter {
 
@@ -39,10 +40,9 @@ public final class ArchiveJsonRpcStateAdapter {
     this.resolver = new JsonRpcArchiveStatePointResolver(wallet, archiveService);
   }
 
-  /** True when the request must be served from the archive (enabled + a non-latest selector). */
+  /** True when the request is historical and must not fall back to latest state. */
   public boolean shouldUseArchive(String blockNumOrTag) {
-    return archiveService.isEnabled()
-        && !JsonRpcApiUtil.LATEST_STR.equalsIgnoreCase(blockNumOrTag);
+    return !JsonRpcApiUtil.LATEST_STR.equalsIgnoreCase(blockNumOrTag);
   }
 
   public String getBalance(String address, String blockNumOrTag)
@@ -89,6 +89,7 @@ public final class ArchiveJsonRpcStateAdapter {
 
   private ArchiveStateReader openReader(String blockNumOrTag)
       throws JsonRpcInvalidParamsException, JsonRpcInternalException {
+    requireArchiveEnabled();
     ResolvedArchiveStatePoint resolved = resolver.resolveBlockEnd(blockNumOrTag);
     if (resolved.isLatest()) {
       // shouldUseArchive already filters latest; reaching here means a caller skipped that guard.
@@ -98,6 +99,12 @@ public final class ArchiveJsonRpcStateAdapter {
       return readerFactory().open(resolved.getPoint());
     } catch (ArchiveReaderException e) {
       throw toInternal(e);
+    }
+  }
+
+  private void requireArchiveEnabled() throws JsonRpcInternalException {
+    if (!archiveService.isEnabled()) {
+      throw new JsonRpcInternalException("archive is not available");
     }
   }
 

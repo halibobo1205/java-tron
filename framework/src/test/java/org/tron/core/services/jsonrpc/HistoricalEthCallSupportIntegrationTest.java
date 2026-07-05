@@ -8,10 +8,12 @@ import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Message;
+import java.nio.charset.StandardCharsets;
 import org.junit.Before;
 import org.junit.Test;
 import org.tron.common.BaseMethodTest;
 import org.tron.common.parameter.CommonParameter;
+import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.Wallet;
 import org.tron.core.archive.ArchivePhase;
@@ -44,6 +46,25 @@ public class HistoricalEthCallSupportIntegrationTest extends BaseMethodTest {
   private static final byte[] SLOAD_CODE = {
       0x60, 0x00, 0x54, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, (byte) 0xf3
   };
+  private static final String[] REQUIRED_VM_DEFAULT_KEYS = {
+      "ALLOW_CREATION_OF_CONTRACTS",
+      "ALLOW_TVM_TRANSFER_TRC10",
+      "ALLOW_TVM_CONSTANTINOPLE",
+      "ALLOW_TVM_SOLIDITY_059",
+      "ALLOW_TVM_ISTANBUL",
+      "ALLOW_TVM_FREEZE",
+      "ALLOW_TVM_VOTE",
+      "ALLOW_TVM_LONDON",
+      "ALLOW_TVM_SHANGHAI",
+      "ALLOW_TVM_CANCUN",
+      "ALLOW_TVM_BLOB",
+      "ALLOW_TVM_COMPATIBLE_EVM",
+      "UNFREEZE_DELAY_DAYS",
+      "ALLOW_NEW_RESOURCE_MODEL",
+      "ALLOW_MULTI_SIGN",
+      "ALLOW_DYNAMIC_ENERGY",
+      "DYNAMIC_ENERGY_THRESHOLD"
+  };
 
   @Override
   protected void afterInit() {
@@ -70,6 +91,17 @@ public class HistoricalEthCallSupportIntegrationTest extends BaseMethodTest {
         new ArchiveTxPosition(txNum, 1, ArchivePhase.BLOCK_FINALIZE,
             ArchiveSource.NORMAL, -1, null),
         domain, canonicalKey, DomainValue.tombstone(), DomainValue.present(valueBytes)));
+  }
+
+  private void putArchiveVmDefaults(InMemoryArchiveTemporalStore temporal, long txNum,
+      boolean supportVm) {
+    for (String key : REQUIRED_VM_DEFAULT_KEYS) {
+      put(temporal, txNum, ArchiveDomain.DYNAMIC_PROPERTIES,
+          key.getBytes(StandardCharsets.US_ASCII), ByteArray.fromLong(0L));
+    }
+    put(temporal, txNum, ArchiveDomain.DYNAMIC_PROPERTIES,
+        "ALLOW_CREATION_OF_CONTRACTS".getBytes(StandardCharsets.US_ASCII),
+        ByteArray.fromLong(supportVm ? 1L : 0L));
   }
 
   @Test
@@ -105,6 +137,7 @@ public class HistoricalEthCallSupportIntegrationTest extends BaseMethodTest {
     storedWord[31] = 0x2a;
     put(temporal, t, ArchiveDomain.CONTRACT_STORAGE,
         ArchiveStorageKeyCodec.contractStorageKey(addr, slot, 0), storedWord);
+    putArchiveVmDefaults(temporal, t, true);
 
     Wallet wallet = mock(Wallet.class);
     BlockCapsule block = blockCapsule(1);

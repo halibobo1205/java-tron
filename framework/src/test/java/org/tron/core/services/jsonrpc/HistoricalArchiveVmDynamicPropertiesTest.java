@@ -23,8 +23,9 @@ import org.tron.core.store.VmDynamicProperties;
 
 /**
  * The archive-backed config view reconstructs the result-affecting hard-fork flags at the target
- * block: an archived (proposal-written) value wins; a MISSING value is the in-memory default when
- * the archive covers genesis, and fails closed for a mid-chain archive.
+ * block: an archived (proposal-written) value wins; a MISSING hard-coded local default is
+ * reconstructed only when the archive covers genesis; deployment-specific genesis flags must be
+ * present in archive history.
  */
 public class HistoricalArchiveVmDynamicPropertiesTest {
 
@@ -33,6 +34,7 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
   @Test
   public void archivedFlagValueOverridesLatest() throws Exception {
     FakeReader reader = new FakeReader();
+    reader.putVmDefaults();
     reader.put("ALLOW_TVM_OSAKA", 1L);                 // proposal activated it as of this block
     VmDynamicProperties latest = mock(VmDynamicProperties.class);
     when(latest.getAllowTvmOsaka()).thenReturn(0L);    // latest disagrees -> archive must win
@@ -48,6 +50,7 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
     // Osaka's live default is a hard-coded 0L. A genesis-complete archive treats MISSING as that
     // default -- NOT the latest value -- the whole point: a block before activation reads 0.
     FakeReader reader = new FakeReader();                // ALLOW_TVM_OSAKA absent -> MISSING
+    reader.putVmDefaults();
     VmDynamicProperties latest = mock(VmDynamicProperties.class);
     when(latest.getAllowTvmOsaka()).thenReturn(1L);      // latest ON; historical block is not
 
@@ -72,6 +75,7 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
   @Test
   public void malformedFlagValueFailsClosed() {
     FakeReader reader = new FakeReader();
+    reader.putVmDefaults();
     reader.putRaw("ALLOW_TVM_OSAKA", new byte[] {1});
     VmDynamicProperties latest = mock(VmDynamicProperties.class);
 
@@ -83,6 +87,7 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
   @Test
   public void tombstonedFlagValueFailsClosed() {
     FakeReader reader = new FakeReader();
+    reader.putVmDefaults();
     reader.putTombstone("ALLOW_TVM_OSAKA");
     VmDynamicProperties latest = mock(VmDynamicProperties.class);
 
@@ -94,6 +99,7 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
   @Test
   public void energyFeeIsHistoricalAndExecutionParamsReconstruct() throws Exception {
     FakeReader reader = new FakeReader();
+    reader.putVmDefaults();
     reader.put("latest_block_header_timestamp", 456L);
     reader.put("MAINTENANCE_TIME_INTERVAL", 1_000L);
     reader.put("CURRENT_CYCLE_NUMBER", 7L);
@@ -203,6 +209,7 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
   @Test
   public void missingExecutionParamsUseDefaultsOrLatestByCoverage() throws Exception {
     FakeReader reader = new FakeReader();
+    reader.putVmDefaults();
     VmDynamicProperties latest = mock(VmDynamicProperties.class);
     when(latest.supportVM()).thenReturn(true);
     when(latest.getMaxFeeLimit()).thenReturn(123L);
@@ -210,23 +217,51 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
 
     HistoricalArchiveVmDynamicProperties genesisComplete =
         new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true);
-    CommonParameter p = CommonParameter.getInstance();
-    assertEquals(p.getAllowCreationOfContracts() == 1L, genesisComplete.supportVM());
+    assertEquals(false, genesisComplete.supportVM());
     assertEquals(43_200_000_000L, genesisComplete.getTotalNetLimit());
     assertEquals(0L, genesisComplete.getTotalNetWeight());
     assertEquals(50_000_000_000L, genesisComplete.getTotalEnergyCurrentLimit());
     assertEquals(0L, genesisComplete.getTotalEnergyWeight());
     assertEquals(0L, genesisComplete.getTotalTronPowerWeight());
     assertEquals(1_000_000_000L, genesisComplete.getMaxFeeLimit());
-    assertEquals(p.getAllowStrictMath(), genesisComplete.getAllowStrictMath());
+    assertEquals(0L, genesisComplete.getAllowStrictMath());
 
     assertThrows(ArchiveReaderException.class,
         () -> new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, false));
   }
 
   @Test
+  public void genesisCompleteMissingRequiredProposalFlagsFailsClosed() {
+    CommonParameter p = CommonParameter.getInstance();
+    long originalAllowCreation = p.getAllowCreationOfContracts();
+    long originalLondon = p.getAllowTvmLondon();
+    long originalCompatibleEvm = p.getAllowTvmCompatibleEvm();
+    long originalStrictMath = p.getAllowStrictMath();
+    long originalDynamicEnergy = p.getAllowDynamicEnergy();
+    try {
+      p.setAllowCreationOfContracts(1L);
+      p.setAllowTvmLondon(1L);
+      p.setAllowTvmCompatibleEvm(1L);
+      p.setAllowStrictMath(1L);
+      p.setAllowDynamicEnergy(1L);
+
+      ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
+          () -> new HistoricalArchiveVmDynamicProperties(mock(VmDynamicProperties.class),
+              ENERGY_FEE, new FakeReader(), true));
+      assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, e.getReason());
+    } finally {
+      p.setAllowCreationOfContracts(originalAllowCreation);
+      p.setAllowTvmLondon(originalLondon);
+      p.setAllowTvmCompatibleEvm(originalCompatibleEvm);
+      p.setAllowStrictMath(originalStrictMath);
+      p.setAllowDynamicEnergy(originalDynamicEnergy);
+    }
+  }
+
+  @Test
   public void genesisCompleteMissingValuesDoNotReadLatest() throws Exception {
     FakeReader reader = new FakeReader();
+    reader.putVmDefaults();
     VmDynamicProperties latest = mock(VmDynamicProperties.class, invocation -> {
       throw new AssertionError("latest must not be read for genesis-complete archive defaults");
     });
@@ -244,6 +279,7 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
     // allowTvmFreezeV2 = (UNFREEZE_DELAY_DAYS > 0) gates FREEZEBALANCEV2 / DELEGATERESOURCE, so it
     // must reconstruct from the archive at block N, not silently use the latest activation.
     FakeReader present = new FakeReader();
+    present.putVmDefaults();
     present.put("UNFREEZE_DELAY_DAYS", 14L);            // activated as of this block
     VmDynamicProperties latestOff = mock(VmDynamicProperties.class);
     when(latestOff.supportUnfreezeDelay()).thenReturn(false);
@@ -262,6 +298,7 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
   @Test
   public void forkStatsReconstructFromArchiveRows() throws Exception {
     FakeReader reader = new FakeReader();
+    reader.putVmDefaults();
     byte[] fork471 = new byte[] {1, 1, 0};
     byte[] fork4811 = new byte[] {1, 1, 1};
     reader.putRaw("FORK_VERSION_27", fork471);
@@ -280,6 +317,7 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
   @Test
   public void tombstonedForkStatsFailClosed() {
     FakeReader reader = new FakeReader();
+    reader.putVmDefaults();
     reader.putTombstone("FORK_VERSION_35");
     VmDynamicProperties latest = mock(VmDynamicProperties.class);
 
@@ -291,9 +329,34 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
   /** Serves configured DYNAMIC_PROPERTIES values by key; everything else MISSING. */
   private static final class FakeReader implements ArchiveStateReader {
     private static final long BLOCK_NUM = 123L;
+    private static final String[] REQUIRED_VM_DEFAULT_KEYS = {
+        "ALLOW_CREATION_OF_CONTRACTS",
+        "ALLOW_TVM_TRANSFER_TRC10",
+        "ALLOW_TVM_CONSTANTINOPLE",
+        "ALLOW_TVM_SOLIDITY_059",
+        "ALLOW_TVM_ISTANBUL",
+        "ALLOW_TVM_FREEZE",
+        "ALLOW_TVM_VOTE",
+        "ALLOW_TVM_LONDON",
+        "ALLOW_TVM_SHANGHAI",
+        "ALLOW_TVM_CANCUN",
+        "ALLOW_TVM_BLOB",
+        "ALLOW_TVM_COMPATIBLE_EVM",
+        "UNFREEZE_DELAY_DAYS",
+        "ALLOW_NEW_RESOURCE_MODEL",
+        "ALLOW_MULTI_SIGN",
+        "ALLOW_DYNAMIC_ENERGY",
+        "DYNAMIC_ENERGY_THRESHOLD"
+    };
 
     private final Map<String, ArchiveReadResult<byte[]>> props = new HashMap<>();
     private final ArchiveStatePoint point = ArchiveStatePoint.blockEnd(BLOCK_NUM, new byte[32], 0);
+
+    void putVmDefaults() {
+      for (String key : REQUIRED_VM_DEFAULT_KEYS) {
+        put(key, 0L);
+      }
+    }
 
     void put(String key, long value) {
       putRaw(key, ByteArray.fromLong(value));

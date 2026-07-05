@@ -21,8 +21,8 @@ import org.tron.core.exception.jsonrpc.JsonRpcInternalException;
 import org.tron.protos.Protocol.Block;
 
 /**
- * Compatibility gate for the historical eth_call path: archive-disabled and the {@code latest} tag
- * must never route to the archive, so default-OFF nodes keep their exact latest-only behaviour.
+ * Compatibility gate for the historical eth_call path: {@code latest} stays on latest handling,
+ * but historical selectors must never fall back to latest execution when archive is disabled.
  * The cases use a lightweight mocked wallet where block resolution is needed.
  */
 public class HistoricalEthCallSupportTest {
@@ -34,12 +34,16 @@ public class HistoricalEthCallSupportTest {
   }
 
   @Test
-  public void disabledArchiveNeverRoutesToArchive() {
+  public void disabledArchiveRoutesHistoricalSelectorsToFailClosedSupport() {
     HistoricalEthCallSupport support =
         new HistoricalEthCallSupport(null, NoopArchiveService.INSTANCE);
     assertFalse(support.shouldUseArchive("latest"));
-    assertFalse(support.shouldUseArchive("earliest"));
-    assertFalse(support.shouldUseArchive("0x10"));
+    assertTrue(support.shouldUseArchive("earliest"));
+    assertTrue(support.shouldUseArchive("0x10"));
+
+    JsonRpcInternalException ex = assertThrows(JsonRpcInternalException.class,
+        () -> support.call(null, null, 0L, null, "0x10"));
+    assertTrue(ex.getMessage().contains("archive is not available"));
   }
 
   @Test
