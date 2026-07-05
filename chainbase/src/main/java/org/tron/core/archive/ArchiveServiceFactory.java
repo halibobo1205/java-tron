@@ -1,6 +1,7 @@
 package org.tron.core.archive;
 
 import java.nio.file.Paths;
+import org.tron.common.arch.Arch;
 import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
 import org.tron.core.archive.temporal.RocksDbArchiveTemporalStore;
 import org.tron.core.archive.txnum.PersistentArchiveTxNumIndex;
@@ -29,6 +30,9 @@ public final class ArchiveServiceFactory {
   public static ArchiveService create(StorageConfig.ArchiveConfig config, String archiveDir) {
     if (config == null || !config.isEnable()) {
       return NoopArchiveService.INSTANCE;
+    }
+    if (!Arch.isArm64()) {
+      throw new ArchiveException("archive is not supported on this build/platform");
     }
     if (config.getTxnum() == null || !config.getTxnum().isEnable()) {
       throw new ArchiveException(

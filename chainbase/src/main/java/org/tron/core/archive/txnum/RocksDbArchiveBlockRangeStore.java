@@ -37,14 +37,52 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
 
   public RocksDbArchiveBlockRangeStore(String path) {
     this.options = new Options().setCreateIfMissing(true);
+    RocksDB opened = null;
     try {
-      this.db = RocksDB.open(options, path);
-      byte[] value = db.get(ArchiveBlockRangeCodec.FIRST_BLOCK_KEY);
+      opened = RocksDB.open(options, path);
+      validateOrInstallManifest(opened);
+      byte[] value = opened.get(ArchiveBlockRangeCodec.FIRST_BLOCK_KEY);
       this.firstArchivedBlock =
           (value == null) ? NO_FIRST_BLOCK : ArchiveBlockRangeCodec.decodeFirstBlock(value);
+      this.db = opened;
     } catch (RocksDBException e) {
+      closeQuietly(opened);
       options.close();
       throw new ArchiveException("failed to open archive block-range store at " + path, e);
+    } catch (RuntimeException e) {
+      closeQuietly(opened);
+      options.close();
+      throw e;
+    }
+  }
+
+  private static void closeQuietly(RocksDB db) {
+    if (db != null) {
+      db.close();
+    }
+  }
+
+  private static void validateOrInstallManifest(RocksDB db) throws RocksDBException {
+    byte[] manifest = db.get(ArchiveBlockRangeCodec.manifestKey());
+    if (manifest != null) {
+      if (!ArchiveBlockRangeCodec.manifestMatches(manifest)) {
+        throw new ArchiveException("archive txNum manifest mismatch");
+      }
+      return;
+    }
+    if (!isEmpty(db)) {
+      throw new ArchiveException("archive txNum store is non-empty but missing manifest");
+    }
+    try (WriteOptions writeOptions = ArchiveRocksDbWriteOptions.create()) {
+      db.put(writeOptions, ArchiveBlockRangeCodec.manifestKey(),
+          ArchiveBlockRangeCodec.manifestValue());
+    }
+  }
+
+  private static boolean isEmpty(RocksDB db) {
+    try (RocksIterator it = db.newIterator()) {
+      it.seekToFirst();
+      return !it.isValid();
     }
   }
 
