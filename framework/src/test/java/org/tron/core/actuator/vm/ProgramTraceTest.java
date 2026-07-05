@@ -54,6 +54,8 @@ public class ProgramTraceTest {
         Assert.assertEquals(3, op.getDeep());
         Assert.assertEquals(2, op.getPc());
         Assert.assertEquals(BigInteger.valueOf(4), op.getEnergy());
+        op.setEnergyCost(BigInteger.valueOf(2));
+        Assert.assertEquals(BigInteger.valueOf(2), op.getEnergyCost());
       } else if (op.getCode() == org.tron.core.vm.Op.SUB) {
         Assert.assertEquals(6, op.getDeep());
         Assert.assertEquals(5, op.getPc());

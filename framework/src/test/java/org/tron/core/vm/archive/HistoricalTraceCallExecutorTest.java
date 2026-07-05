@@ -7,6 +7,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
+import java.math.BigInteger;
 import java.util.List;
 import org.junit.Before;
 import org.junit.Test;
@@ -103,10 +104,13 @@ public class HistoricalTraceCallExecutorTest extends BaseMethodTest {
     assertEquals("op after ADD sees [3] on the stack",
         java.util.Collections.singletonList(word(3)), logs.get(3).getStack());
 
-    // gas is the remaining energy (monotonically non-increasing); gasCost is the drop to next op.
+    // gas is the remaining energy; gasCost is the native opcode charge recorded by VM.play.
     assertTrue("remaining gas decreases across ops",
         logs.get(0).getGas() >= logs.get(1).getGas());
-    assertTrue("a consuming op has non-negative gasCost", logs.get(0).getGasCost() >= 0);
+    assertEquals("PUSH1 native trace records the actual opcode cost",
+        BigInteger.valueOf(3L), result.getTrace().getOps().get(0).getEnergyCost());
+    assertEquals("structLog gasCost uses the recorded opcode cost",
+        3L, logs.get(0).getGasCost());
   }
 
   @Test

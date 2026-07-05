@@ -31,8 +31,9 @@ public class VM {
       }
 
       while (!program.isStopped()) {
+        org.tron.core.vm.trace.Op traceOp = null;
         if (VMConfig.vmTrace()) {
-          program.saveOpTrace();
+          traceOp = program.saveOpTrace();
         }
 
         try {
@@ -82,6 +83,9 @@ public class VM {
             program.spendEnergy(energy, opName);
           }
 
+          if (traceOp != null) {
+            traceOp.setEnergyCost(java.math.BigInteger.valueOf(energy));
+          }
 
           /* check if cpu time out */
           program.checkCPUTimeLimit(opName);
