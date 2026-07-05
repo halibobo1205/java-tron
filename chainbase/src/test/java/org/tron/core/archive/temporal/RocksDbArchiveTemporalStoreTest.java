@@ -172,6 +172,17 @@ public class RocksDbArchiveTemporalStoreTest {
   }
 
   @Test
+  public void manifestUsesCurrentSchemaLayoutMarker() throws Exception {
+    store.close();
+    store = null;
+    try (Options options = new Options().setCreateIfMissing(false);
+        RocksDB db = RocksDB.open(options, dir.toString())) {
+      assertArrayEquals(ArchiveTemporalCodec.manifestValue(),
+          db.get(ArchiveTemporalCodec.manifestKey()));
+    }
+  }
+
+  @Test
   public void nonEmptyStoreWithoutManifestIsRejected() throws Exception {
     store.close();
     store = null;
@@ -389,6 +400,24 @@ public class RocksDbArchiveTemporalStoreTest {
     store.unwind(15);
     assertArrayEquals(new byte[] {0x0A}, store.latest(domain, keyA).get().getValue());
     assertArrayEquals(new byte[] {0x0B}, store.latest(domain, keyB).get().getValue()); // untouched
+  }
+
+  @Test
+  public void largeCanonicalKeyPersistsWithU32Length() {
+    ArchiveDomain domain = ArchiveDomain.DYNAMIC_PROPERTIES;
+    byte[] largeKey = new byte[0x10001];
+    Arrays.fill(largeKey, (byte) 'A');
+    largeKey[largeKey.length - 1] = (byte) 'Z';
+
+    store.putChange(rec(10, domain, largeKey, DomainValue.tombstone(),
+        DomainValue.present(new byte[] {0x0A})));
+    store.putChange(rec(12, domain, largeKey, DomainValue.present(new byte[] {0x0A}),
+        DomainValue.present(new byte[] {0x0B})));
+
+    assertArrayEquals(new byte[] {0x0A}, store.getAsOf(domain, largeKey, 11).get().getValue());
+    assertArrayEquals(new byte[] {0x0B}, store.latest(domain, largeKey).get().getValue());
+    store.unwind(12);
+    assertArrayEquals(new byte[] {0x0A}, store.latest(domain, largeKey).get().getValue());
   }
 
   @Test

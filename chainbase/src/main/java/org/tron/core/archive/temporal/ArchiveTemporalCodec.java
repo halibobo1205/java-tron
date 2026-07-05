@@ -18,28 +18,30 @@ import org.tron.core.archive.txnum.ArchiveBlockRange;
  * without a native RocksDB.
  *
  * <ul>
- *   <li>latest:  {@code 0x00 || domainId(2) || keyLen(2) || canonicalKey} -&gt; value(after)</li>
- *   <li>history: {@code 0x01 || domainId(2) || keyLen(2) || canonicalKey || txNum(8, BE)}
+ *   <li>latest:  {@code 0x20 || domainId(2) || keyLen(4) || canonicalKey} -&gt; value(after)</li>
+ *   <li>history: {@code 0x21 || domainId(2) || keyLen(4) || canonicalKey || txNum(8, BE)}
  *       -&gt; value(before the change)</li>
- *   <li>changeset: {@code 0x02 || txNum(8) || domainId(2) || keyLen(2) || canonicalKey}, for
+ *   <li>changeset: {@code 0x22 || txNum(8) || domainId(2) || keyLen(4) || canonicalKey}, for
  *       unwind</li>
- *   <li>block-commit: {@code 0x03 || blockNum(8, BE)} -&gt; range marker, for startup
- *       validation</li>
+ *   <li>block-commit: {@code 0x01 || "block-commit" || blockNum(8, BE)} -&gt; range
+ *       marker, for startup validation</li>
  *   <li>value:   {@code deletedFlag(1) || valueBytes} (flag 1 = tombstone)</li>
  * </ul>
  * txNum is big-endian so lexicographic key order matches numeric txNum order (forward seek works).
  */
 public final class ArchiveTemporalCodec {
 
-  static final byte LATEST_PREFIX = 0x00;
-  static final byte HISTORY_PREFIX = 0x01;
-  // changeset: 0x02 || txNum(8) || domainId(2) || canonicalKey -> ordered by txNum, for unwind.
-  static final byte CHANGESET_PREFIX = 0x02;
-  static final byte BLOCK_COMMIT_PREFIX = 0x03;
-  static final byte META_PREFIX = 0x7f;
+  static final byte META_PREFIX = 0x01;
+  static final byte LATEST_PREFIX = 0x20;
+  static final byte HISTORY_PREFIX = 0x21;
+  // changeset: 0x22 || txNum(8) || domainId(2) || keyLen(4) || canonicalKey.
+  static final byte CHANGESET_PREFIX = 0x22;
+  private static final byte[] BLOCK_COMMIT_NAME =
+      "block-commit".getBytes(StandardCharsets.US_ASCII);
   private static final byte[] MANIFEST_KEY = new byte[] {META_PREFIX, 'm', 'a', 'n', 'i'};
   private static final byte[] MANIFEST_VALUE =
-      "tron-archive-temporal|schema=2|model=prev-value-v1|block-hash=range-marker"
+      ("tron-archive-temporal|schema=3|model=prev-value-v1"
+          + "|prefix=archive-table-v1|key-len=u32|block-hash=range-marker")
           .getBytes(StandardCharsets.US_ASCII);
 
   private ArchiveTemporalCodec() {
@@ -50,12 +52,11 @@ public final class ArchiveTemporalCodec {
     return new byte[] {(byte) (id >>> 8), (byte) id};
   }
 
-  // 2-byte big-endian length of the canonical key, inserted before the key so that no key can be a
+  // 4-byte big-endian length of the canonical key, inserted before the key so that no key can be a
   // byte prefix of another (the spec's length-prefix requirement); otherwise seekForPrev/startsWith
   // could cross key boundaries for variable-length keys (e.g. DYNAMIC_PROPERTIES property names).
   private static byte[] keyLength(byte[] canonicalKey) {
-    int len = canonicalKey.length;
-    return new byte[] {(byte) (len >>> 8), (byte) len};
+    return Ints.toByteArray(canonicalKey.length);
   }
 
   static byte[] latestKey(ArchiveDomain domain, byte[] canonicalKey) {
@@ -84,7 +85,19 @@ public final class ArchiveTemporalCodec {
   }
 
   static byte[] blockCommitKey(long blockNum) {
-    return Bytes.concat(new byte[] {BLOCK_COMMIT_PREFIX}, Longs.toByteArray(blockNum));
+    return Bytes.concat(new byte[] {META_PREFIX}, BLOCK_COMMIT_NAME, Longs.toByteArray(blockNum));
+  }
+
+  static byte[] blockCommitPrefix() {
+    return Bytes.concat(new byte[] {META_PREFIX}, BLOCK_COMMIT_NAME);
+  }
+
+  static long blockNumOfBlockCommitKey(byte[] key) {
+    byte[] prefix = blockCommitPrefix();
+    if (!startsWith(key, prefix) || key.length != prefix.length + Long.BYTES) {
+      throw new ArchiveException("archive temporal commit marker has invalid key");
+    }
+    return Longs.fromByteArray(Arrays.copyOfRange(key, prefix.length, key.length));
   }
 
   static byte[] manifestKey() {
@@ -190,27 +203,32 @@ public final class ArchiveTemporalCodec {
   }
 
   private static void validateChangesetKey(byte[] key) {
-    if (key == null || key.length < 13 || key[0] != CHANGESET_PREFIX) {
+    if (key == null || key.length < 15 || key[0] != CHANGESET_PREFIX) {
       throw new ArchiveException("archive temporal changeset key is invalid");
     }
-    int keyLen = unsignedShort(key[11], key[12]);
-    if (key.length != 13 + keyLen) {
+    int keyLen = intAt(key, 11);
+    if (key.length != 15 + keyLen) {
       throw new ArchiveException("archive temporal changeset key length is invalid");
     }
   }
 
   private static void validateHistoryKey(byte[] key) {
-    if (key == null || key.length < 13 || key[0] != HISTORY_PREFIX) {
+    if (key == null || key.length < 15 || key[0] != HISTORY_PREFIX) {
       throw new ArchiveException("archive temporal history key is invalid");
     }
-    int keyLen = unsignedShort(key[3], key[4]);
-    if (key.length != 13 + keyLen) {
+    int keyLen = intAt(key, 3);
+    if (key.length != 15 + keyLen) {
       throw new ArchiveException("archive temporal history key length is invalid");
     }
   }
 
-  private static int unsignedShort(byte high, byte low) {
-    return ((high & 0xff) << 8) | (low & 0xff);
+  private static int intAt(byte[] bytes, int offset) {
+    int value = Ints.fromBytes(bytes[offset], bytes[offset + 1], bytes[offset + 2],
+        bytes[offset + 3]);
+    if (value < 0) {
+      throw new ArchiveException("archive temporal key length is negative");
+    }
+    return value;
   }
 
   static byte[] encodeValue(DomainValue value) {

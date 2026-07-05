@@ -1,6 +1,5 @@
 package org.tron.core.archive.temporal;
 
-import com.google.common.primitives.Longs;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -156,15 +155,12 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
 
   /** Fail closed if temporal commit markers refer to blocks absent from the txNum index. */
   public void validateCommitMarkersCovered(LongPredicate hasIndexRange) {
+    byte[] prefix = ArchiveTemporalCodec.blockCommitPrefix();
     try (RocksIterator it = db.newIterator()) {
-      it.seek(new byte[] {ArchiveTemporalCodec.BLOCK_COMMIT_PREFIX});
-      while (it.isValid() && it.key()[0] == ArchiveTemporalCodec.BLOCK_COMMIT_PREFIX) {
+      it.seek(prefix);
+      while (it.isValid() && ArchiveTemporalCodec.startsWith(it.key(), prefix)) {
         byte[] key = it.key();
-        if (key.length != 9) {
-          throw new ArchiveException("archive temporal commit marker has invalid key");
-        }
-        long blockNum = Longs.fromBytes(key[1], key[2], key[3], key[4],
-            key[5], key[6], key[7], key[8]);
+        long blockNum = ArchiveTemporalCodec.blockNumOfBlockCommitKey(key);
         if (!hasIndexRange.test(blockNum)) {
           throw new ArchiveException(
               "archive temporal commit marker has no index range for block " + blockNum);
