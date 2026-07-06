@@ -9,6 +9,7 @@ import static org.junit.Assert.assertTrue;
 import com.google.protobuf.ByteString;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
@@ -25,6 +26,7 @@ import org.tron.core.archive.temporal.ArchiveTemporalStore;
 import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.archive.txnum.ArchiveTxPosition;
+import org.tron.core.archive.txnum.ArchiveTxNumIndex;
 import org.tron.core.archive.txnum.InMemoryArchiveTxNumIndex;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
@@ -497,6 +499,145 @@ public class DefaultArchiveServiceTest {
 
     assertThrows(ArchiveException.class, service::validateAvailable);
     assertThrows(ArchiveException.class, () -> service.beginBlock(block(6), ArchiveSource.NORMAL));
+  }
+
+  @Test
+  public void ownerDriftDuringCommitMarksRepairAndAbortsPendingBlock() {
+    TrackingArchiveTxNumIndex index = new TrackingArchiveTxNumIndex();
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    DefaultArchiveService older =
+        new DefaultArchiveService(true, index, context, new InMemoryArchiveTemporalStore());
+
+    byte[] addr = new byte[21];
+    addr[0] = 0x41;
+    BlockCapsule b = block(5);
+    older.beginBlock(b, ArchiveSource.NORMAL);
+    older.beginSystemTx(b, ArchivePhase.BLOCK_PREPARE);
+    older.getCaptureEngine().capturePut("account", addr, null, account(1));
+    older.endTx();
+    older.beginSystemTx(b, ArchivePhase.BLOCK_FINALIZE);
+    older.endTx();
+    DefaultArchiveService newer = new DefaultArchiveService(true);
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class, () -> older.commitBlock(b));
+
+      assertTrue(ex.getMessage().contains("capture engine is not active"));
+      assertTrue(index.repairReason.contains("capture engine is not active"));
+      assertFalse(index.getBlockRange(5).isPresent());
+      assertFalse(context.current().isPresent());
+      assertTrue(older.getCaptureEngine().records().isEmpty());
+      assertThrows(ArchiveException.class, older::validateAvailable);
+    } finally {
+      newer.close();
+    }
+  }
+
+  @Test
+  public void ownerDriftDuringUnwindMarksRepairWithoutDroppingArchiveRange() {
+    TrackingArchiveTxNumIndex index = new TrackingArchiveTxNumIndex();
+    DefaultArchiveService older =
+        new DefaultArchiveService(true, index, new ArchiveExecutionContext(),
+            new InMemoryArchiveTemporalStore());
+
+    BlockCapsule b = block(5);
+    older.beginBlock(b, ArchiveSource.NORMAL);
+    older.beginSystemTx(b, ArchivePhase.BLOCK_PREPARE);
+    older.endTx();
+    older.beginSystemTx(b, ArchivePhase.BLOCK_FINALIZE);
+    older.endTx();
+    older.commitBlock(b);
+    DefaultArchiveService newer = new DefaultArchiveService(true);
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class, () -> older.unwindBlock(b));
+
+      assertTrue(ex.getMessage().contains("capture engine is not active"));
+      assertTrue(index.repairReason.contains("capture engine is not active"));
+      assertTrue(index.getBlockRange(5).isPresent());
+      assertThrows(ArchiveException.class, older::validateAvailable);
+    } finally {
+      newer.close();
+    }
+  }
+
+  private static final class TrackingArchiveTxNumIndex implements ArchiveTxNumIndex {
+    private final InMemoryArchiveTxNumIndex delegate = new InMemoryArchiveTxNumIndex();
+    private String repairReason = "";
+
+    @Override
+    public void beginBlock(long blockNum, ArchiveSource source) {
+      delegate.beginBlock(blockNum, source);
+    }
+
+    @Override
+    public ArchiveTxPosition allocateSystemTx(long blockNum, ArchivePhase phase) {
+      return delegate.allocateSystemTx(blockNum, phase);
+    }
+
+    @Override
+    public ArchiveTxPosition allocateUserTx(long blockNum, int txIndex, byte[] txId) {
+      return delegate.allocateUserTx(blockNum, txIndex, txId);
+    }
+
+    @Override
+    public ArchiveBlockRange commitBlock(long blockNum, int userTxCount) {
+      return delegate.commitBlock(blockNum, userTxCount);
+    }
+
+    @Override
+    public ArchiveBlockRange commitBlock(long blockNum, byte[] blockHash, int userTxCount,
+        byte[] schemaChecksum) {
+      return delegate.commitBlock(blockNum, blockHash, userTxCount, schemaChecksum);
+    }
+
+    @Override
+    public void abortBlock(long blockNum) {
+      delegate.abortBlock(blockNum);
+    }
+
+    @Override
+    public void unwindBlock(long blockNum) {
+      delegate.unwindBlock(blockNum);
+    }
+
+    @Override
+    public void validateCanonicalHead(long headNum, byte[] headHash) {
+      delegate.validateCanonicalHead(headNum, headHash);
+    }
+
+    @Override
+    public ArchiveBlockRange getHeadBlockRange(long blockNum) {
+      return delegate.getHeadBlockRange(blockNum);
+    }
+
+    @Override
+    public Optional<ArchiveBlockRange> getBlockRange(long blockNum) {
+      return delegate.getBlockRange(blockNum);
+    }
+
+    @Override
+    public Optional<ArchiveTxPosition> getPosition(long txNum) {
+      return delegate.getPosition(txNum);
+    }
+
+    @Override
+    public OptionalLong findTxNumByBlockAndIndex(long blockNum, int txIndex) {
+      return delegate.findTxNumByBlockAndIndex(blockNum, txIndex);
+    }
+
+    @Override
+    public OptionalLong findTxNumByTxId(byte[] txId) {
+      return delegate.findTxNumByTxId(txId);
+    }
+
+    @Override
+    public void markRepairRequired(String reason) {
+      repairReason = reason;
+    }
+
+    @Override
+    public long getFirstArchivedBlock() {
+      return delegate.getFirstArchivedBlock();
+    }
   }
 
   private static final class FailingTemporalStore implements ArchiveTemporalStore {

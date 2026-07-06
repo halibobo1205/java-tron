@@ -37,6 +37,10 @@ public final class DynamicKeyPolicy {
     // --- IN_GLOBAL_ROOT: resource / validation parameters ---
     root("CREATE_NEW_ACCOUNT_BANDWIDTH_RATE", DynamicKeyClass.RESOURCE_PARAMETER);
     root("FREE_NET_LIMIT", DynamicKeyClass.RESOURCE_PARAMETER);
+    root("ONE_DAY_NET_LIMIT", DynamicKeyClass.RESOURCE_PARAMETER);
+    root("PUBLIC_NET_LIMIT", DynamicKeyClass.RESOURCE_PARAMETER);
+    root("PUBLIC_NET_USAGE", DynamicKeyClass.RESOURCE_PARAMETER);
+    root("PUBLIC_NET_TIME", DynamicKeyClass.RESOURCE_PARAMETER);
     root("TOTAL_ENERGY_LIMIT", DynamicKeyClass.RESOURCE_PARAMETER);
     root("TOTAL_NET_LIMIT", DynamicKeyClass.RESOURCE_PARAMETER);
     root("TOTAL_ENERGY_CURRENT_LIMIT", DynamicKeyClass.RESOURCE_PARAMETER);
@@ -54,10 +58,18 @@ public final class DynamicKeyPolicy {
     root("MAX_DELEGATE_LOCK_PERIOD", DynamicKeyClass.RESOURCE_PARAMETER);
     root("MAX_CREATE_ACCOUNT_TX_SIZE", DynamicKeyClass.RESOURCE_PARAMETER);
     root("SHIELDED_TRANSACTION_FEE", DynamicKeyClass.RESOURCE_PARAMETER);
+    root("SHIELDED_TRANSACTION_CREATE_ACCOUNT_FEE", DynamicKeyClass.RESOURCE_PARAMETER);
+    root("TOTAL_SHIELDED_POOL_VALUE", DynamicKeyClass.RESOURCE_PARAMETER);
 
     // --- IN_GLOBAL_ROOT: governance / protocol validation knobs ---
     root("NEXT_MAINTENANCE_TIME", DynamicKeyClass.GOVERNANCE_PARAMETER);
     root("MAINTENANCE_TIME_INTERVAL", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("MAX_FROZEN_TIME", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("MIN_FROZEN_TIME", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("MAX_FROZEN_SUPPLY_NUMBER", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("MAX_FROZEN_SUPPLY_TIME", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("MIN_FROZEN_SUPPLY_TIME", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    root("WITNESS_ALLOWANCE_FROZEN_TIME", DynamicKeyClass.GOVERNANCE_PARAMETER);
     root("ACCOUNT_UPGRADE_COST", DynamicKeyClass.GOVERNANCE_PARAMETER);
     root("WITNESS_PAY_PER_BLOCK", DynamicKeyClass.GOVERNANCE_PARAMETER);
     root("WITNESS_127_PAY_PER_BLOCK", DynamicKeyClass.GOVERNANCE_PARAMETER);
@@ -80,6 +92,7 @@ public final class DynamicKeyPolicy {
     root("ALLOW_ACCOUNT_ASSET_OPTIMIZATION", DynamicKeyClass.GOVERNANCE_PARAMETER);
     root("ALLOW_ASSET_OPTIMIZATION", DynamicKeyClass.GOVERNANCE_PARAMETER);
     root("ALLOW_NEW_REWARD", DynamicKeyClass.GOVERNANCE_PARAMETER);
+    rootInternal("NEW_REWARD_ALGORITHM_EFFECTIVE_CYCLE", DynamicKeyClass.GOVERNANCE_PARAMETER);
     root("ALLOW_DELEGATE_OPTIMIZATION", DynamicKeyClass.GOVERNANCE_PARAMETER);
     root("ALLOW_CANCEL_ALL_UNFREEZE_V2", DynamicKeyClass.GOVERNANCE_PARAMETER);
     root("ALLOW_OLD_REWARD_OPT", DynamicKeyClass.GOVERNANCE_PARAMETER);
@@ -129,9 +142,10 @@ public final class DynamicKeyPolicy {
     root("ALLOW_MULTI_SIGN", DynamicKeyClass.VM_CONFIG);
     root("AVAILABLE_CONTRACT_TYPE", DynamicKeyClass.VM_CONFIG);
     root("ACTIVE_DEFAULT_OPERATIONS", DynamicKeyClass.VM_CONFIG);
+    rootInternal("BLOCK_HASH_HISTORY_INSTALLED", DynamicKeyClass.VM_CONFIG);
 
     // --- HISTORY_ONLY: header cursors + price history ---
-    historyOnly("latest_block_header_timestamp", DynamicKeyClass.HEADER_CURSOR);
+    historyVm("latest_block_header_timestamp", DynamicKeyClass.HEADER_CURSOR);
     historyOnly("latest_block_header_number", DynamicKeyClass.HEADER_CURSOR);
     historyOnly("latest_block_header_hash", DynamicKeyClass.HEADER_CURSOR);
     historyOnly("LATEST_SOLIDIFIED_BLOCK_NUM", DynamicKeyClass.HEADER_CURSOR);
@@ -144,7 +158,6 @@ public final class DynamicKeyPolicy {
     excluded("ENERGY_PRICE_HISTORY_DONE", DynamicKeyClass.MIGRATION_MARKER);
     excluded("BANDWIDTH_PRICE_HISTORY_DONE", DynamicKeyClass.MIGRATION_MARKER);
     excluded("TURKISH_KEY_MIGRATION_DONE", DynamicKeyClass.MIGRATION_MARKER);
-    excluded("BLOCK_HASH_HISTORY_INSTALLED", DynamicKeyClass.MIGRATION_MARKER);
     excluded("state_flag", DynamicKeyClass.INDEX_CURSOR);
     excluded("TOTAL_TRANSACTION_COST", DynamicKeyClass.STATISTIC);
     excluded("TOTAL_CREATE_ACCOUNT_COST", DynamicKeyClass.STATISTIC);
@@ -160,9 +173,19 @@ public final class DynamicKeyPolicy {
         RootPolicy.IN_GLOBAL_ROOT, HistoryPolicy.FULL_HISTORY, ReaderPolicy.HISTORICAL_VM));
   }
 
+  private void rootInternal(String key, DynamicKeyClass keyClass) {
+    decisions.put(key, new DynamicKeyDecision(key, keyClass,
+        RootPolicy.IN_GLOBAL_ROOT, HistoryPolicy.FULL_HISTORY, ReaderPolicy.INTERNAL_ONLY));
+  }
+
   private void historyOnly(String key, DynamicKeyClass keyClass) {
     decisions.put(key, new DynamicKeyDecision(key, keyClass,
         RootPolicy.HISTORY_ONLY, HistoryPolicy.FULL_HISTORY, ReaderPolicy.INTERNAL_ONLY));
+  }
+
+  private void historyVm(String key, DynamicKeyClass keyClass) {
+    decisions.put(key, new DynamicKeyDecision(key, keyClass,
+        RootPolicy.HISTORY_ONLY, HistoryPolicy.FULL_HISTORY, ReaderPolicy.HISTORICAL_VM));
   }
 
   private void excluded(String key, DynamicKeyClass keyClass) {
@@ -177,11 +200,25 @@ public final class DynamicKeyPolicy {
     if (decision != null) {
       return decision;
     }
-    if (name.startsWith("FORK_VERSION_")) {
+    if (isForkVersionKey(name)) {
       return new DynamicKeyDecision(name, DynamicKeyClass.VM_CONFIG,
           RootPolicy.IN_GLOBAL_ROOT, HistoryPolicy.FULL_HISTORY, ReaderPolicy.HISTORICAL_VM);
     }
     return unknownDecision(name);
+  }
+
+  private static boolean isForkVersionKey(String name) {
+    String prefix = "FORK_VERSION_";
+    if (!name.startsWith(prefix) || name.length() == prefix.length()) {
+      return false;
+    }
+    for (int i = prefix.length(); i < name.length(); i++) {
+      char c = name.charAt(i);
+      if (c < '0' || c > '9') {
+        return false;
+      }
+    }
+    return true;
   }
 
   DynamicKeyDecision unknownDecisionForChecksum() {

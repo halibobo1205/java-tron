@@ -22,7 +22,6 @@ import org.tron.core.archive.domain.DefaultArchiveDomainCatalog;
 import org.tron.core.archive.domain.DefaultArchiveDomainRegistry;
 import org.tron.core.archive.domain.DynamicKeyPolicy;
 import org.tron.core.archive.reader.ArchiveReaderException;
-import org.tron.core.archive.reader.ArchiveStatePoint;
 import org.tron.core.archive.reader.ArchiveStateReaderFactory;
 import org.tron.core.archive.reader.DefaultArchiveStateReaderFactory;
 import org.tron.core.archive.temporal.ArchiveTemporalStore;
@@ -87,7 +86,7 @@ public final class DefaultArchiveService implements ArchiveService {
           executionContext);
       this.temporalStore = temporalStore;
       this.readerFactory = new DefaultArchiveStateReaderFactory(temporalStore, catalog,
-          this::validateReaderPoint);
+          txNumIndex, this::validateAvailableForRead);
       ArchiveCaptureHolder.set(captureEngine);
     } else {
       ArchiveCaptureHolder.clear();
@@ -174,9 +173,9 @@ public final class DefaultArchiveService implements ArchiveService {
   }
 
   private void commitBlockLocked(BlockCapsule block, int userTxCount) {
-    validateAvailable();
     boolean txNumCommitted = false;
     try {
+      validateAvailable();
       if (captureEngine.failure().isPresent()) {
         throw captureEngine.failure().get();
       }
@@ -241,43 +240,6 @@ public final class DefaultArchiveService implements ArchiveService {
         record.getCanonicalKey()));
   }
 
-  private void validateReaderPoint(ArchiveStatePoint point) throws ArchiveReaderException {
-    validateAvailableForRead();
-    ArchiveBlockRange range = txNumIndex.getBlockRange(point.getBlockNum())
-        .orElseThrow(() -> new ArchiveReaderException(
-            ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
-            "archive block " + point.getBlockNum() + " is not covered"));
-    validateReaderPointTxNum(point, range);
-    byte[] blockHash = point.getBlockHash();
-    if (blockHash == null || blockHash.length != ArchiveBlockRange.BLOCK_HASH_LENGTH
-        || !Arrays.equals(blockHash, range.getBlockHash())) {
-      throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
-          "archive point block hash does not match committed range");
-    }
-  }
-
-  private static void validateReaderPointTxNum(ArchiveStatePoint point, ArchiveBlockRange range)
-      throws ArchiveReaderException {
-    if (point.getKind() == ArchiveStatePoint.Kind.BLOCK_END) {
-      if (point.getTxNum() == range.getFinalizeTxNum()) {
-        return;
-      }
-      throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
-          "archive block-end point txNum does not match block finalize txNum");
-    }
-    if (point.getKind() == ArchiveStatePoint.Kind.TX_BEFORE) {
-      if (range.getUserTxCount() > 0
-          && point.getTxNum() >= range.getPrepareTxNum()
-          && point.getTxNum() <= range.getFinalizeTxNum() - 2) {
-        return;
-      }
-      throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
-          "archive tx-before point txNum is outside committed block range");
-    }
-    throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
-        "archive reader point kind is not supported: " + point.getKind());
-  }
-
   private void validateAvailableForRead() throws ArchiveReaderException {
     try {
       validateAvailable();
@@ -317,8 +279,8 @@ public final class DefaultArchiveService implements ArchiveService {
     Lock writeLock = consistencyLock.writeLock();
     writeLock.lock();
     try {
-      validateAvailable();
       try {
+        validateAvailable();
         Optional<ArchiveBlockRange> committed = txNumIndex.getBlockRange(block.getNum());
         long firstArchivedBlock = txNumIndex.getFirstArchivedBlock();
         if (!committed.isPresent()
