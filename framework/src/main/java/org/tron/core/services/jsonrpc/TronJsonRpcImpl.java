@@ -458,11 +458,14 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
   }
 
   @Override
-  public String getTrxBalance(String address, String blockNumOrTag)
+  public String getTrxBalance(String address, Object blockParamObj)
       throws JsonRpcInvalidParamsException, JsonRpcInternalException {
+    ResolvedBlockParam blockParam = resolveGetterBlockParam(blockParamObj);
+    String blockNumOrTag = blockParam.getBlockNumOrTag();
     if (archiveJsonRpcStateAdapter != null
         && archiveJsonRpcStateAdapter.shouldUseArchive(blockNumOrTag)) {
-      return archiveJsonRpcStateAdapter.getBalance(address, blockNumOrTag);
+      return archiveJsonRpcStateAdapter.getBalance(
+          address, blockNumOrTag, blockParam.getRequestedBlockHash());
     }
     requireLatestBlockTag(blockNumOrTag);
 
@@ -616,11 +619,14 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
   }
 
   @Override
-  public String getStorageAt(String address, String storageIdx, String blockNumOrTag)
+  public String getStorageAt(String address, String storageIdx, Object blockParamObj)
       throws JsonRpcInvalidParamsException, JsonRpcInternalException {
+    ResolvedBlockParam blockParam = resolveGetterBlockParam(blockParamObj);
+    String blockNumOrTag = blockParam.getBlockNumOrTag();
     if (archiveJsonRpcStateAdapter != null
         && archiveJsonRpcStateAdapter.shouldUseArchive(blockNumOrTag)) {
-      return archiveJsonRpcStateAdapter.getStorageAt(address, storageIdx, blockNumOrTag);
+      return archiveJsonRpcStateAdapter.getStorageAt(
+          address, storageIdx, blockNumOrTag, blockParam.getRequestedBlockHash());
     }
     requireLatestBlockTag(blockNumOrTag);
 
@@ -655,11 +661,14 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
   }
 
   @Override
-  public String getABIOfSmartContract(String contractAddress, String blockNumOrTag)
+  public String getABIOfSmartContract(String contractAddress, Object blockParamObj)
       throws JsonRpcInvalidParamsException, JsonRpcInternalException {
+    ResolvedBlockParam blockParam = resolveGetterBlockParam(blockParamObj);
+    String blockNumOrTag = blockParam.getBlockNumOrTag();
     if (archiveJsonRpcStateAdapter != null
         && archiveJsonRpcStateAdapter.shouldUseArchive(blockNumOrTag)) {
-      return archiveJsonRpcStateAdapter.getCode(contractAddress, blockNumOrTag);
+      return archiveJsonRpcStateAdapter.getCode(
+          contractAddress, blockNumOrTag, blockParam.getRequestedBlockHash());
     }
     requireLatestBlockTag(blockNumOrTag);
 
@@ -1025,7 +1034,8 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
       throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
       JsonRpcInternalException {
 
-    String blockNumOrTag = resolveBlockParam(blockParamObj);
+    ResolvedBlockParam blockParam = resolveBlockParam(blockParamObj);
+    String blockNumOrTag = blockParam.getBlockNumOrTag();
 
     if (historicalEthCallSupport != null
         && historicalEthCallSupport.shouldUseArchive(blockNumOrTag)) {
@@ -1034,7 +1044,8 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
           addressCompatibleToByteArray(transactionCall.getTo()),
           transactionCall.parseValue(),
           ByteArray.fromHexString(transactionCall.resolveData()),
-          blockNumOrTag);
+          blockNumOrTag,
+          blockParam.getRequestedBlockHash());
     }
     requireLatestBlockTag(blockNumOrTag);
 
@@ -1050,7 +1061,8 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
       Object traceOptions) throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
       JsonRpcInternalException {
     // Only the default struct-log tracer is implemented; unsupported options fail closed below.
-    String blockNumOrTag = resolveBlockParam(blockParamObj);
+    ResolvedBlockParam blockParam = resolveBlockParam(blockParamObj);
+    String blockNumOrTag = blockParam.getBlockNumOrTag();
     if (historicalTraceSupport == null
         || !historicalTraceSupport.shouldUseArchive(blockNumOrTag)) {
       // No latest debug_traceCall yet: a latest tag (or archive disabled) has no handler here.
@@ -1063,7 +1075,8 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
         transactionCall.parseValue(),
         ByteArray.fromHexString(transactionCall.resolveData()),
         blockNumOrTag,
-        traceOptions);
+        traceOptions,
+        blockParam.getRequestedBlockHash());
   }
 
   @Override
@@ -1081,12 +1094,13 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
 
   /**
    * Normalises the JSON-RPC block parameter (string tag, or the object form with blockNumber /
-   * blockHash) to a block-number-or-tag string.
+   * blockHash) while preserving object-form blockHash binding for historical archive calls.
    */
-  private String resolveBlockParam(Object blockParamObj) throws JsonRpcInvalidParamsException,
-      JsonRpcInvalidRequestException, JsonRpcInternalException {
+  private ResolvedBlockParam resolveBlockParam(Object blockParamObj)
+      throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
+      JsonRpcInternalException {
     if (blockParamObj instanceof String) {
-      return (String) blockParamObj;
+      return ResolvedBlockParam.of((String) blockParamObj);
     }
     if (blockParamObj instanceof Map) {
       Map<?, ?> paramMap = (Map<?, ?>) blockParamObj;
@@ -1103,7 +1117,7 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
         if (wallet.getBlockByNum(parseObjectBlockNumber(blockNumOrTag)) == null) {
           throw new JsonRpcInternalException(NO_BLOCK_HEADER);
         }
-        return blockNumOrTag;
+        return ResolvedBlockParam.of(blockNumOrTag);
       }
       validateRequireCanonical(paramMap);
       String blockHash = getObjectBlockParamString(paramMap, "blockHash");
@@ -1111,9 +1125,52 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
       if (objectFormBlock == null || !isCanonicalBlock(objectFormBlock)) {
         throw new JsonRpcInternalException(NO_BLOCK_HEADER_BY_HASH);
       }
-      return ByteArray.toJsonHex(objectFormBlock.getBlockHeader().getRawData().getNumber());
+      return ResolvedBlockParam.of(
+          ByteArray.toJsonHex(objectFormBlock.getBlockHeader().getRawData().getNumber()),
+          hashToByteArray(blockHash));
     }
     throw new JsonRpcInvalidRequestException(JSON_ERROR);
+  }
+
+  private ResolvedBlockParam resolveGetterBlockParam(Object blockParamObj)
+      throws JsonRpcInvalidParamsException, JsonRpcInternalException {
+    try {
+      return resolveBlockParam(blockParamObj);
+    } catch (JsonRpcInvalidRequestException e) {
+      throw new JsonRpcInvalidParamsException(
+          e.getMessage() == null ? JSON_ERROR : e.getMessage());
+    }
+  }
+
+  private static final class ResolvedBlockParam {
+
+    private final String blockNumOrTag;
+    private final byte[] requestedBlockHash;
+
+    private ResolvedBlockParam(String blockNumOrTag, byte[] requestedBlockHash) {
+      this.blockNumOrTag = blockNumOrTag;
+      this.requestedBlockHash = requestedBlockHash == null
+          ? null
+          : Arrays.copyOf(requestedBlockHash, requestedBlockHash.length);
+    }
+
+    static ResolvedBlockParam of(String blockNumOrTag) {
+      return new ResolvedBlockParam(blockNumOrTag, null);
+    }
+
+    static ResolvedBlockParam of(String blockNumOrTag, byte[] requestedBlockHash) {
+      return new ResolvedBlockParam(blockNumOrTag, requestedBlockHash);
+    }
+
+    String getBlockNumOrTag() {
+      return blockNumOrTag;
+    }
+
+    byte[] getRequestedBlockHash() {
+      return requestedBlockHash == null
+          ? null
+          : Arrays.copyOf(requestedBlockHash, requestedBlockHash.length);
+    }
   }
 
   private String getObjectBlockParamString(Map<?, ?> paramMap, String key)

@@ -97,6 +97,12 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
   @Override
   public synchronized ArchiveBlockRange commitBlock(long blockNum, byte[] blockHash,
       int userTxCount) {
+    return commitBlock(blockNum, blockHash, userTxCount, new byte[0]);
+  }
+
+  @Override
+  public synchronized ArchiveBlockRange commitBlock(long blockNum, byte[] blockHash,
+      int userTxCount, byte[] schemaChecksum) {
     requirePending(blockNum);
     long prepareTxNum = -1;
     long finalizeTxNum = -1;
@@ -129,7 +135,7 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
     long lastTxNum = workingNextTxNum - 1;
     ArchiveBlockRange range = new ArchiveBlockRange(
         blockNum, firstTxNum, lastTxNum, prepareTxNum, finalizeTxNum, blockHash, userTxCount,
-        pendingSource);
+        pendingSource, schemaChecksum);
     validateAppendOnlyCommit(range);
     blockRanges.put(blockNum, range);
     lastCommittedBlock = blockNum;
@@ -240,6 +246,16 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
     }
     Long txNum = txNumByTxId.get(ByteArray.toHexString(txId));
     return (txNum == null) ? OptionalLong.empty() : OptionalLong.of(txNum);
+  }
+
+  @Override
+  public synchronized long getNextTxNum() {
+    return committedNextTxNum;
+  }
+
+  @Override
+  public synchronized long getLastArchivedBlock() {
+    return lastCommittedBlock;
   }
 
   @Override

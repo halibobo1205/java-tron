@@ -28,6 +28,14 @@ public interface ArchiveService {
     commitBlock(block);
   }
 
+  /**
+   * Publish all committed in-flight archive blocks up to {@code solidifiedBlockNum}. Before this
+   * boundary, {@link #commitBlock(BlockCapsule)} only records the block in memory so historical
+   * readers never observe reversible tip state.
+   */
+  default void publishSolidifiedBlocks(long solidifiedBlockNum) {
+  }
+
   void abortBlock(BlockCapsule block);
 
   void unwindBlock(BlockCapsule block);

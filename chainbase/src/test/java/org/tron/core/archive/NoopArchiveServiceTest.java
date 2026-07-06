@@ -179,10 +179,45 @@ public class NoopArchiveServiceTest {
       service.beginSystemTx(block, ArchivePhase.BLOCK_FINALIZE);
       service.endTx();
       service.commitBlock(block);
+      service.publishSolidifiedBlocks(1);
       service.close();
 
       DefaultArchiveService reopened =
           (DefaultArchiveService) createArchive(config, dir.toString());
+      reopened.close();
+    } finally {
+      deleteRecursively(dir.toFile());
+    }
+  }
+
+  @Test
+  public void factoryReopensPersistentInFlightBlockAndPublishesIt() throws Exception {
+    StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
+    config.setEnable(true);
+    Path dir = Files.createTempDirectory("archive-factory-inflight-reopen-test");
+    byte[] address = new byte[21];
+    address[0] = 0x41;
+    try {
+      DefaultArchiveService service =
+          (DefaultArchiveService) createArchive(config, dir.toString());
+      BlockCapsule block = new BlockCapsule(1, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY);
+      service.beginBlock(block, ArchiveSource.NORMAL);
+      service.beginSystemTx(block, ArchivePhase.BLOCK_PREPARE);
+      service.getCaptureEngine().capturePut(
+          "account", address, null, Account.newBuilder().setBalance(7).build().toByteArray());
+      service.endTx();
+      service.beginSystemTx(block, ArchivePhase.BLOCK_FINALIZE);
+      service.endTx();
+      service.commitBlock(block);
+      assertFalse(service.getTxNumIndex().getBlockRange(1).isPresent());
+      service.close();
+
+      DefaultArchiveService reopened =
+          (DefaultArchiveService) createArchive(config, dir.toString());
+      assertFalse(reopened.getTxNumIndex().getBlockRange(1).isPresent());
+      reopened.publishSolidifiedBlocks(1);
+      assertTrue(reopened.getTxNumIndex().getBlockRange(1).isPresent());
+      assertTrue(reopened.getTemporalStore().latest(ArchiveDomain.ACCOUNT, address).isPresent());
       reopened.close();
     } finally {
       deleteRecursively(dir.toFile());
@@ -422,7 +457,7 @@ public class NoopArchiveServiceTest {
 
       ArchiveException ex = assertThrows(ArchiveException.class,
           () -> createArchive(config, dir.toString()));
-      assertTrue(ex.getMessage().contains("history txNum"));
+      assertTrue(ex.getMessage(), ex.getMessage().contains("temporal"));
     } finally {
       deleteRecursively(dir.toFile());
     }
@@ -492,7 +527,8 @@ public class NoopArchiveServiceTest {
     service.getCaptureEngine().capturePut(
         "account", new byte[21], null, Account.newBuilder().setBalance(1).build().toByteArray());
     service.endTx();
-    assertThrows(ArchiveException.class, () -> service.commitBlock(block));
+    service.commitBlock(block);
+    assertThrows(ArchiveException.class, () -> service.publishSolidifiedBlocks(1));
     service.close();
 
     try {

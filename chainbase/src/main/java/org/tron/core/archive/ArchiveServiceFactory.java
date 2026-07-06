@@ -24,9 +24,9 @@ import org.tron.core.config.args.StorageConfig;
  *
  * <p>When an archive directory is supplied and {@code storage.archive.temporal.enable} is set, the
  * service is backed by persistent RocksDB stores under that directory ({@code temporal/} for the
- * state history, {@code index/} for the block-to-txNum index), both surviving restart and running
- * on the RocksDB shipped for either architecture. Otherwise in-memory stores are used (tests /
- * non-persistent runs).
+ * state history, {@code index/} for the reader-visible block-to-txNum index, {@code inflight/} for
+ * committed but not-yet-solidified blocks), all surviving restart. Otherwise in-memory stores are
+ * used (tests / non-persistent runs).
  */
 public final class ArchiveServiceFactory {
 
@@ -64,11 +64,14 @@ public final class ArchiveServiceFactory {
         throw new ArchiveException("failed to create archive directory " + archiveDir, e);
       }
       RocksDbArchiveTemporalStore temporalStore = null;
+      RocksDbArchiveInFlightStore inFlightStore = null;
       RocksDbArchiveBlockRangeStore blockRangeStore = null;
       PersistentArchiveTxNumIndex txNumIndex = null;
       try {
         temporalStore = new RocksDbArchiveTemporalStore(
             archivePath.resolve("temporal").toString());
+        inFlightStore = new RocksDbArchiveInFlightStore(
+            archivePath.resolve("inflight").toString());
         blockRangeStore =
             new RocksDbArchiveBlockRangeStore(archivePath.resolve("index").toString());
         txNumIndex = new PersistentArchiveTxNumIndex(blockRangeStore, schemaChecksum);
@@ -83,8 +86,9 @@ public final class ArchiveServiceFactory {
         blockRangeStore.validateCommittedRanges(temporalStore::validateCommittedBlock);
         temporalStore.validateTxNumsCovered(committedIndex::hasCommittedTxNum);
         return new DefaultArchiveService(true, txNumIndex,
-            ArchiveExecutionContextHolder.get(), temporalStore, registry, catalog);
+            ArchiveExecutionContextHolder.get(), temporalStore, inFlightStore, registry, catalog);
       } catch (RuntimeException e) {
+        closeOnFailure(inFlightStore, e);
         closeOnFailure(temporalStore, e);
         if (txNumIndex == null) {
           closeOnFailure(blockRangeStore, e);

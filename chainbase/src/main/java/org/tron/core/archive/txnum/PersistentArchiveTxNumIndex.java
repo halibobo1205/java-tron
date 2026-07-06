@@ -144,6 +144,18 @@ public final class PersistentArchiveTxNumIndex implements ArchiveTxNumIndex, Aut
   }
 
   @Override
+  public long getNextTxNum() {
+    return store.getCursor();
+  }
+
+  @Override
+  public long getLastArchivedBlock() {
+    return store.getLastRange()
+        .map(ArchiveBlockRange::getBlockNum)
+        .orElse(-1L);
+  }
+
+  @Override
   public void markRepairRequired(String reason) {
     store.markRepairRequired(reason);
   }
