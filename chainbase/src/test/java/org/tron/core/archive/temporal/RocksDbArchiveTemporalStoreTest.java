@@ -230,6 +230,21 @@ public class RocksDbArchiveTemporalStoreTest {
   }
 
   @Test
+  public void unknownExistingKeyPrefixIsRejectedOnOpen() throws Exception {
+    store.close();
+    store = null;
+    try (Options options = new Options().setCreateIfMissing(true);
+        RocksDB db = RocksDB.open(options, dir.toString());
+        WriteBatch batch = new WriteBatch();
+        WriteOptions writeOptions = new WriteOptions()) {
+      batch.put(new byte[] {0x7f}, new byte[] {1});
+      db.write(writeOptions, batch);
+    }
+
+    assertThrows(ArchiveException.class, () -> new RocksDbArchiveTemporalStore(dir.toString()));
+  }
+
+  @Test
   public void blockCommitMarkerSurvivesRestartAndValidatesRange() {
     ArchiveBlockRange range = new ArchiveBlockRange(
         3, 10, 11, 10, 11, blockHash(3), 0, ArchiveSource.NORMAL);
@@ -263,9 +278,9 @@ public class RocksDbArchiveTemporalStoreTest {
       batch.put(ArchiveTemporalCodec.blockCommitKey(range.getBlockNum()), legacyMarker);
       db.write(writeOptions, batch);
     }
-    store = new RocksDbArchiveTemporalStore(dir.toString());
+    store = null;
 
-    assertThrows(ArchiveException.class, () -> store.validateCommittedBlock(range));
+    assertThrows(ArchiveException.class, () -> new RocksDbArchiveTemporalStore(dir.toString()));
   }
 
   @Test
@@ -375,9 +390,9 @@ public class RocksDbArchiveTemporalStoreTest {
           new byte[] {2, 0x0B});
       db.write(writeOptions, batch);
     }
-    store = new RocksDbArchiveTemporalStore(dir.toString());
+    store = null;
 
-    assertThrows(ArchiveException.class, () -> store.latest(ArchiveDomain.ACCOUNT, KEY));
+    assertThrows(ArchiveException.class, () -> new RocksDbArchiveTemporalStore(dir.toString()));
   }
 
   @Test
@@ -391,9 +406,9 @@ public class RocksDbArchiveTemporalStoreTest {
           new byte[] {2, 0x0B});
       db.write(writeOptions, batch);
     }
-    store = new RocksDbArchiveTemporalStore(dir.toString());
+    store = null;
 
-    assertThrows(ArchiveException.class, () -> store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 5));
+    assertThrows(ArchiveException.class, () -> new RocksDbArchiveTemporalStore(dir.toString()));
   }
 
   @Test

@@ -149,6 +149,16 @@ public final class ArchiveTemporalCodec {
     return Arrays.equals(Arrays.copyOfRange(encoded, 36, 36 + blockHashLen), blockHash);
   }
 
+  static void validateBlockCommitValue(byte[] encoded) {
+    if (encoded == null || encoded.length != 36 + ArchiveBlockRange.BLOCK_HASH_LENGTH) {
+      throw new ArchiveException("archive temporal commit marker value is invalid");
+    }
+    int blockHashLen = Ints.fromBytes(encoded[32], encoded[33], encoded[34], encoded[35]);
+    if (blockHashLen != ArchiveBlockRange.BLOCK_HASH_LENGTH) {
+      throw new ArchiveException("archive temporal commit marker hash length is invalid");
+    }
+  }
+
   static long txNumOfChangeset(byte[] changesetKey) {
     validateChangesetKey(changesetKey);
     return Longs.fromByteArray(Arrays.copyOfRange(changesetKey, 1, 9));

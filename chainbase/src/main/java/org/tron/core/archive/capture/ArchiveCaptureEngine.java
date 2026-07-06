@@ -119,6 +119,10 @@ public final class ArchiveCaptureEngine {
     }
   }
 
+  public boolean hasCurrentPosition() {
+    return context.current().isPresent();
+  }
+
   private static DomainValue prevDomainValue(ArchiveDomainDescriptor descriptor, byte[] prevValue) {
     // A null prev means the key did not exist before this change -> tombstone (Erigon creation).
     return (prevValue == null)

@@ -63,6 +63,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
       if (!ArchiveTemporalCodec.manifestMatches(manifest)) {
         throw new ArchiveException("archive temporal manifest mismatch");
       }
+      validateCurrentKeyspace(db);
       return;
     }
     if (!isEmpty(db)) {
@@ -78,6 +79,51 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
     try (RocksIterator it = db.newIterator()) {
       it.seekToFirst();
       return !it.isValid();
+    }
+  }
+
+  private static void validateCurrentKeyspace(RocksDB db) {
+    byte[] manifestKey = ArchiveTemporalCodec.manifestKey();
+    byte[] blockCommitPrefix = ArchiveTemporalCodec.blockCommitPrefix();
+    try (RocksIterator it = db.newIterator()) {
+      it.seekToFirst();
+      while (it.isValid()) {
+        byte[] key = it.key();
+        byte[] value = it.value();
+        if (Arrays.equals(key, manifestKey)) {
+          it.next();
+          continue;
+        }
+        if (ArchiveTemporalCodec.startsWith(key, blockCommitPrefix)) {
+          ArchiveTemporalCodec.blockNumOfBlockCommitKey(key);
+          ArchiveTemporalCodec.validateBlockCommitValue(value);
+          it.next();
+          continue;
+        }
+        if (key == null || key.length == 0) {
+          throw new ArchiveException("archive temporal key is empty");
+        }
+        switch (key[0]) {
+          case ArchiveTemporalCodec.LATEST_PREFIX:
+            ArchiveTemporalCodec.historyPrefixOfLatest(key);
+            ArchiveTemporalCodec.decodeValue(value);
+            break;
+          case ArchiveTemporalCodec.HISTORY_PREFIX:
+            ArchiveTemporalCodec.txNumOfHistory(key);
+            ArchiveTemporalCodec.decodeValue(value);
+            break;
+          case ArchiveTemporalCodec.CHANGESET_PREFIX:
+            ArchiveTemporalCodec.txNumOfChangeset(key);
+            if (value.length != 0) {
+              throw new ArchiveException("archive temporal changeset value is invalid");
+            }
+            break;
+          default:
+            throw new ArchiveException("archive temporal store has unknown key prefix "
+                + key[0]);
+        }
+        it.next();
+      }
     }
   }
 
