@@ -68,6 +68,12 @@ public final class HistoricalEthCallSupport {
   public String call(byte[] ownerAddress, byte[] contractAddress, long callValue, byte[] data,
       String blockNumOrTag) throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
       JsonRpcInternalException {
+    return call(ownerAddress, contractAddress, callValue, data, blockNumOrTag, null);
+  }
+
+  public String call(byte[] ownerAddress, byte[] contractAddress, long callValue, byte[] data,
+      String blockNumOrTag, byte[] requestedBlockHash) throws JsonRpcInvalidParamsException,
+      JsonRpcInvalidRequestException, JsonRpcInternalException {
     if (JsonRpcApiUtil.LATEST_STR.equalsIgnoreCase(blockNumOrTag)) {
       throw new JsonRpcInternalException("historical eth_call invoked for the latest tag");
     }
@@ -79,6 +85,9 @@ public final class HistoricalEthCallSupport {
         throw new JsonRpcInternalException("historical eth_call invoked for the latest tag");
       }
       ArchiveStatePoint point = resolved.getPoint();
+      if (requestedBlockHash != null) {
+        requireResolvedBlockHash(point, requestedBlockHash);
+      }
       boolean genesisComplete = isGenesisComplete();
 
       Block block = wallet.getBlockByNum(point.getBlockNum());

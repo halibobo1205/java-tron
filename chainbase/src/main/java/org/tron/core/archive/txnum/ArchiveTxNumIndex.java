@@ -45,6 +45,12 @@ public interface ArchiveTxNumIndex {
 
   OptionalLong findTxNumByTxId(byte[] txId);
 
+  /** Next txNum after the highest committed range currently published by this index. */
+  long getNextTxNum();
+
+  /** Highest block currently published by this index, or a negative sentinel when empty. */
+  long getLastArchivedBlock();
+
   default void markRepairRequired(String reason) {
   }
 

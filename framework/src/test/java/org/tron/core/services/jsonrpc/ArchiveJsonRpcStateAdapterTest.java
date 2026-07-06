@@ -1,5 +1,6 @@
 package org.tron.core.services.jsonrpc;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
@@ -113,6 +114,41 @@ public class ArchiveJsonRpcStateAdapterTest {
   }
 
   @Test
+  public void historicalStateRejectsBlockHashChangedAfterResolution() {
+    DefaultArchiveService svc = new DefaultArchiveService(true);
+    svc.getTxNumIndex().beginBlock(5, ArchiveSource.NORMAL);
+    svc.getTxNumIndex().allocateSystemTx(5, ArchivePhase.BLOCK_PREPARE);
+    svc.getTxNumIndex().allocateSystemTx(5, ArchivePhase.BLOCK_FINALIZE);
+    svc.getTxNumIndex().commitBlock(5, blockHash(5, 1), 0);
+    Wallet wallet = mock(Wallet.class);
+    when(wallet.getBlockByNum(5)).thenReturn(block(5, 1), block(5, 2));
+    ArchiveJsonRpcStateAdapter adapter = new ArchiveJsonRpcStateAdapter(wallet, svc);
+
+    JsonRpcInternalException ex = assertThrows(JsonRpcInternalException.class,
+        () -> adapter.getBalance("0xabd4b9367799eaa3197fecb144eb71de1e049abc", "0x5"));
+
+    assertEquals("archive history hash mismatch for block 5", ex.getMessage());
+  }
+
+  @Test
+  public void historicalGetterRejectsRequestedBlockHashMismatch() {
+    DefaultArchiveService svc = new DefaultArchiveService(true);
+    svc.getTxNumIndex().beginBlock(5, ArchiveSource.NORMAL);
+    svc.getTxNumIndex().allocateSystemTx(5, ArchivePhase.BLOCK_PREPARE);
+    svc.getTxNumIndex().allocateSystemTx(5, ArchivePhase.BLOCK_FINALIZE);
+    svc.getTxNumIndex().commitBlock(5, blockHash(5, 1), 0);
+    Wallet wallet = mock(Wallet.class);
+    when(wallet.getBlockByNum(5)).thenReturn(block(5, 1));
+    ArchiveJsonRpcStateAdapter adapter = new ArchiveJsonRpcStateAdapter(wallet, svc);
+
+    JsonRpcInternalException ex = assertThrows(JsonRpcInternalException.class,
+        () -> adapter.getBalance("0xabd4b9367799eaa3197fecb144eb71de1e049abc", "0x5",
+            blockHash(5, 2)));
+
+    assertEquals("archive history hash mismatch for block 5", ex.getMessage());
+  }
+
+  @Test
   public void historicalRpcFailsClosedAfterArchiveFatalError() {
     DefaultArchiveService svc = new DefaultArchiveService(true);
     BlockCapsule archiveBlock = blockCapsule(5);
@@ -144,11 +180,23 @@ public class ArchiveJsonRpcStateAdapterTest {
     return blockCapsule(num).getInstance();
   }
 
+  private static Block block(long num, long timestamp) {
+    return blockCapsule(num, timestamp).getInstance();
+  }
+
   private static byte[] blockHash(long num) {
     return blockCapsule(num).getBlockId().getBytes();
   }
 
+  private static byte[] blockHash(long num, long timestamp) {
+    return blockCapsule(num, timestamp).getBlockId().getBytes();
+  }
+
   private static BlockCapsule blockCapsule(long num) {
-    return new BlockCapsule(num, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY);
+    return blockCapsule(num, 1L);
+  }
+
+  private static BlockCapsule blockCapsule(long num, long timestamp) {
+    return new BlockCapsule(num, Sha256Hash.ZERO_HASH, timestamp, ByteString.EMPTY);
   }
 }

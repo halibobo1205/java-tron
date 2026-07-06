@@ -1,5 +1,6 @@
 package org.tron.core.services.jsonrpc;
 
+import java.util.Arrays;
 import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.Wallet;
@@ -9,13 +10,17 @@ import org.tron.core.archive.DefaultArchiveService;
 import org.tron.core.archive.reader.ArchiveReadResult;
 import org.tron.core.archive.reader.ArchiveReadResult.Status;
 import org.tron.core.archive.reader.ArchiveReaderException;
+import org.tron.core.archive.reader.ArchiveStatePoint;
 import org.tron.core.archive.reader.ArchiveStateReader;
 import org.tron.core.archive.reader.ArchiveStateReaderFactory;
 import org.tron.core.archive.reader.JsonRpcArchiveStatePointResolver;
 import org.tron.core.archive.reader.ResolvedArchiveStatePoint;
+import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.capsule.AccountCapsule;
+import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.exception.jsonrpc.JsonRpcInternalException;
 import org.tron.core.exception.jsonrpc.JsonRpcInvalidParamsException;
+import org.tron.protos.Protocol.Block;
 
 /**
  * Bridges the historical {@code eth_getBalance}/{@code eth_getCode}/{@code eth_getStorageAt} paths
@@ -34,8 +39,10 @@ public final class ArchiveJsonRpcStateAdapter {
 
   private final ArchiveService archiveService;
   private final JsonRpcArchiveStatePointResolver resolver;
+  private final Wallet wallet;
 
   public ArchiveJsonRpcStateAdapter(Wallet wallet, ArchiveService archiveService) {
+    this.wallet = wallet;
     this.archiveService = archiveService;
     this.resolver = new JsonRpcArchiveStatePointResolver(wallet, archiveService);
   }
@@ -47,9 +54,14 @@ public final class ArchiveJsonRpcStateAdapter {
 
   public String getBalance(String address, String blockNumOrTag)
       throws JsonRpcInvalidParamsException, JsonRpcInternalException {
+    return getBalance(address, blockNumOrTag, null);
+  }
+
+  public String getBalance(String address, String blockNumOrTag, byte[] requestedBlockHash)
+      throws JsonRpcInvalidParamsException, JsonRpcInternalException {
     byte[] address21 = JsonRpcApiUtil.addressCompatibleToByteArray(address);
     try (ArchiveService.ReadGuard ignored = readGuard();
-        ArchiveStateReader reader = openReader(blockNumOrTag)) {
+        ArchiveStateReader reader = openReader(blockNumOrTag, requestedBlockHash)) {
       ArchiveReadResult<AccountCapsule> account = reader.getAccount(address21);
       requireKnown(account, "account");
       return account.isPresent()
@@ -62,9 +74,14 @@ public final class ArchiveJsonRpcStateAdapter {
 
   public String getCode(String address, String blockNumOrTag)
       throws JsonRpcInvalidParamsException, JsonRpcInternalException {
+    return getCode(address, blockNumOrTag, null);
+  }
+
+  public String getCode(String address, String blockNumOrTag, byte[] requestedBlockHash)
+      throws JsonRpcInvalidParamsException, JsonRpcInternalException {
     byte[] address21 = JsonRpcApiUtil.addressCompatibleToByteArray(address);
     try (ArchiveService.ReadGuard ignored = readGuard();
-        ArchiveStateReader reader = openReader(blockNumOrTag)) {
+        ArchiveStateReader reader = openReader(blockNumOrTag, requestedBlockHash)) {
       ArchiveReadResult<byte[]> code = reader.getCode(address21);
       requireKnown(code, "code");
       return code.isPresent() ? ByteArray.toJsonHex(code.getValue()) : EMPTY_CODE;
@@ -75,10 +92,15 @@ public final class ArchiveJsonRpcStateAdapter {
 
   public String getStorageAt(String address, String storageIdx, String blockNumOrTag)
       throws JsonRpcInvalidParamsException, JsonRpcInternalException {
+    return getStorageAt(address, storageIdx, blockNumOrTag, null);
+  }
+
+  public String getStorageAt(String address, String storageIdx, String blockNumOrTag,
+      byte[] requestedBlockHash) throws JsonRpcInvalidParamsException, JsonRpcInternalException {
     byte[] address21 = JsonRpcApiUtil.addressCompatibleToByteArray(address);
     byte[] slot32 = normalizeSlot(storageIdx);
     try (ArchiveService.ReadGuard ignored = readGuard();
-        ArchiveStateReader reader = openReader(blockNumOrTag)) {
+        ArchiveStateReader reader = openReader(blockNumOrTag, requestedBlockHash)) {
       ArchiveReadResult<byte[]> value = reader.getStorage(address21, slot32);
       requireKnown(value, "storage");
       return value.isPresent() ? ByteArray.toJsonHex(leftPad32(value.getValue())) : ZERO_WORD;
@@ -89,16 +111,47 @@ public final class ArchiveJsonRpcStateAdapter {
 
   private ArchiveStateReader openReader(String blockNumOrTag)
       throws JsonRpcInvalidParamsException, JsonRpcInternalException {
+    return openReader(blockNumOrTag, null);
+  }
+
+  private ArchiveStateReader openReader(String blockNumOrTag, byte[] requestedBlockHash)
+      throws JsonRpcInvalidParamsException, JsonRpcInternalException {
     requireArchiveEnabled();
     ResolvedArchiveStatePoint resolved = resolver.resolveBlockEnd(blockNumOrTag);
     if (resolved.isLatest()) {
       // shouldUseArchive already filters latest; reaching here means a caller skipped that guard.
       throw new JsonRpcInternalException("archive adapter invoked for the latest tag");
     }
+    ArchiveStatePoint point = resolved.getPoint();
+    if (requestedBlockHash != null) {
+      requireResolvedBlockHash(point, requestedBlockHash);
+    }
+    requireResolvedBlockHash(point);
     try {
-      return readerFactory().open(resolved.getPoint());
+      return readerFactory().open(point);
     } catch (ArchiveReaderException e) {
       throw toInternal(e);
+    }
+  }
+
+  private void requireResolvedBlockHash(ArchiveStatePoint point) throws JsonRpcInternalException {
+    Block block = wallet.getBlockByNum(point.getBlockNum());
+    if (block == null) {
+      throw new JsonRpcInternalException("archive history unavailable for block "
+          + point.getBlockNum());
+    }
+    byte[] blockHash = new BlockCapsule(block).getBlockId().getBytes();
+    requireResolvedBlockHash(point, blockHash);
+  }
+
+  private static void requireResolvedBlockHash(ArchiveStatePoint point, byte[] blockHash)
+      throws JsonRpcInternalException {
+    byte[] pointHash = point.getBlockHash();
+    if (pointHash == null || pointHash.length != ArchiveBlockRange.BLOCK_HASH_LENGTH
+        || blockHash == null || blockHash.length != ArchiveBlockRange.BLOCK_HASH_LENGTH
+        || !Arrays.equals(pointHash, blockHash)) {
+      throw new JsonRpcInternalException(
+          "archive history hash mismatch for block " + point.getBlockNum());
     }
   }
 

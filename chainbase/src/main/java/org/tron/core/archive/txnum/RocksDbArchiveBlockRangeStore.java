@@ -411,20 +411,17 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
 
   public Optional<ArchiveBlockRange> getLastRange() {
     try (RocksIterator it = db.newIterator()) {
-      it.seekToLast();
-      while (it.isValid()
-          && unsigned(it.key()[0]) > unsigned(ArchiveBlockRangeCodec.TXNUM_BLOCK_PREFIX)) {
+      it.seek(new byte[] {ArchiveBlockRangeCodec.TXNUM_BY_TXID_PREFIX});
+      if (it.isValid()) {
         it.prev();
+      } else {
+        it.seekToLast();
       }
       if (!it.isValid() || it.key()[0] != ArchiveBlockRangeCodec.TXNUM_BLOCK_PREFIX) {
         return Optional.empty();
       }
       return Optional.of(ArchiveBlockRangeCodec.decodeRange(it.value()));
     }
-  }
-
-  private static int unsigned(byte value) {
-    return value & 0xff;
   }
 
   public void validateCanonicalHead(long headNum, byte[] headHash) {

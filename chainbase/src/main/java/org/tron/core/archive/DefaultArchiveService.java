@@ -8,13 +8,16 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.NavigableMap;
 import java.util.Optional;
+import java.util.TreeMap;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import org.tron.core.archive.capture.ArchiveCaptureEngine;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
 import org.tron.core.archive.codec.DomainValue;
+import org.tron.core.archive.domain.ArchiveDomain;
 import org.tron.core.archive.domain.ArchiveDomainCatalog;
 import org.tron.core.archive.domain.ArchiveDomainRegistry;
 import org.tron.core.archive.domain.ArchiveSchemaChecksum;
@@ -27,6 +30,7 @@ import org.tron.core.archive.reader.DefaultArchiveStateReaderFactory;
 import org.tron.core.archive.temporal.ArchiveTemporalStore;
 import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
+import org.tron.core.archive.txnum.ArchiveTxPosition;
 import org.tron.core.archive.txnum.ArchiveTxNumIndex;
 import org.tron.core.archive.txnum.InMemoryArchiveTxNumIndex;
 import org.tron.core.capsule.BlockCapsule;
@@ -43,13 +47,19 @@ import org.tron.core.db2.common.WrappedByteArray;
 public final class DefaultArchiveService implements ArchiveService {
 
   private final boolean enabled;
+  /** Published, durable archive index visible to readers. */
   private final ArchiveTxNumIndex txNumIndex;
+  /** Execution-only txNum allocator for canonical but not-yet-solidified blocks. */
+  private InMemoryArchiveTxNumIndex executionTxNumIndex;
   private final ArchiveExecutionContext executionContext;
   private final ArchiveCaptureEngine captureEngine;
   private final ArchiveTemporalStore temporalStore;
+  private final ArchiveInFlightStore inFlightStore;
   private final ArchiveStateReaderFactory readerFactory;
   private final byte[] schemaChecksum;
   private final ReentrantReadWriteLock consistencyLock = new ReentrantReadWriteLock(true);
+  private final NavigableMap<Long, ArchiveInFlightBlock> inFlightBlocks = new TreeMap<>();
+  private final Map<WrappedByteArray, DomainValue> inFlightLatest = new LinkedHashMap<>();
   private volatile RuntimeException fatalFailure;
 
   public DefaultArchiveService(boolean enabled) {
@@ -70,13 +80,21 @@ public final class DefaultArchiveService implements ArchiveService {
 
   DefaultArchiveService(boolean enabled, ArchiveTxNumIndex txNumIndex,
       ArchiveExecutionContext executionContext, ArchiveTemporalStore temporalStore) {
-    this(enabled, txNumIndex, executionContext, temporalStore,
+    this(enabled, txNumIndex, executionContext, temporalStore, new InMemoryArchiveInFlightStore(),
         new DefaultArchiveDomainRegistry(), new DefaultArchiveDomainCatalog());
   }
 
   DefaultArchiveService(boolean enabled, ArchiveTxNumIndex txNumIndex,
       ArchiveExecutionContext executionContext, ArchiveTemporalStore temporalStore,
       ArchiveDomainRegistry registry, ArchiveDomainCatalog catalog) {
+    this(enabled, txNumIndex, executionContext, temporalStore, new InMemoryArchiveInFlightStore(),
+        registry, catalog);
+  }
+
+  DefaultArchiveService(boolean enabled, ArchiveTxNumIndex txNumIndex,
+      ArchiveExecutionContext executionContext, ArchiveTemporalStore temporalStore,
+      ArchiveInFlightStore inFlightStore, ArchiveDomainRegistry registry,
+      ArchiveDomainCatalog catalog) {
     this.enabled = enabled;
     this.txNumIndex = txNumIndex;
     this.executionContext = executionContext;
@@ -85,6 +103,9 @@ public final class DefaultArchiveService implements ArchiveService {
       this.captureEngine = new ArchiveCaptureEngine(registry, catalog, new DynamicKeyPolicy(),
           executionContext);
       this.temporalStore = temporalStore;
+      this.inFlightStore = inFlightStore;
+      this.executionTxNumIndex = new InMemoryArchiveTxNumIndex(txNumIndex.getNextTxNum());
+      loadInFlightBlocks();
       this.readerFactory = new DefaultArchiveStateReaderFactory(temporalStore, catalog,
           txNumIndex, this::validateAvailableForRead);
       ArchiveCaptureHolder.set(captureEngine);
@@ -93,12 +114,51 @@ public final class DefaultArchiveService implements ArchiveService {
       this.schemaChecksum = new byte[0];
       this.captureEngine = null;
       this.temporalStore = null;
+      this.inFlightStore = null;
+      this.executionTxNumIndex = null;
       this.readerFactory = null;
     }
   }
 
   public ArchiveTxNumIndex getTxNumIndex() {
     return txNumIndex;
+  }
+
+  private void loadInFlightBlocks() {
+    for (ArchiveInFlightBlock block : inFlightStore.loadBlocks()) {
+      ArchiveBlockRange range = block.getRange();
+      Optional<ArchiveBlockRange> published = txNumIndex.getBlockRange(range.getBlockNum());
+      if (published.isPresent()) {
+        validatePublishedRange(range, published.get());
+        temporalStore.validateCommittedBlock(published.get());
+        inFlightStore.deleteBlock(range.getBlockNum());
+        continue;
+      }
+      validateInFlightAppend(block);
+      replayExecutionInFlightBlock(block);
+      rememberInFlightInMemory(block);
+    }
+  }
+
+  private void replayExecutionInFlightBlock(ArchiveInFlightBlock block) {
+    ArchiveBlockRange range = block.getRange();
+    executionTxNumIndex.beginBlock(range.getBlockNum(), range.getSource());
+    try {
+      for (ArchiveTxPosition position : block.getPositions()) {
+        ArchiveTxPosition allocated = allocateExecutionPosition(position);
+        validatePublishedPosition(position, allocated);
+      }
+      ArchiveBlockRange replayed = executionTxNumIndex.commitBlock(
+          range.getBlockNum(), range.getBlockHash(), range.getUserTxCount(), schemaChecksum);
+      validatePublishedRange(range, replayed);
+    } catch (RuntimeException e) {
+      try {
+        executionTxNumIndex.abortBlock(range.getBlockNum());
+      } catch (RuntimeException cleanupFailure) {
+        e.addSuppressed(cleanupFailure);
+      }
+      throw e;
+    }
   }
 
   public ArchiveCaptureEngine getCaptureEngine() {
@@ -125,7 +185,7 @@ public final class DefaultArchiveService implements ArchiveService {
       return;
     }
     validateAvailable();
-    txNumIndex.beginBlock(block.getNum(), source);
+    executionTxNumIndex.beginBlock(block.getNum(), source);
     captureEngine.clear();
   }
 
@@ -135,7 +195,7 @@ public final class DefaultArchiveService implements ArchiveService {
       return;
     }
     validateAvailable();
-    executionContext.enter(txNumIndex.allocateSystemTx(block.getNum(), phase));
+    executionContext.enter(executionTxNumIndex.allocateSystemTx(block.getNum(), phase));
   }
 
   @Override
@@ -145,7 +205,7 @@ public final class DefaultArchiveService implements ArchiveService {
     }
     validateAvailable();
     byte[] txId = (tx == null) ? null : tx.getTransactionId().getBytes();
-    executionContext.enter(txNumIndex.allocateUserTx(block.getNum(), txIndex, txId));
+    executionContext.enter(executionTxNumIndex.allocateUserTx(block.getNum(), txIndex, txId));
   }
 
   @Override
@@ -172,8 +232,112 @@ public final class DefaultArchiveService implements ArchiveService {
     }
   }
 
+  @Override
+  public void publishSolidifiedBlocks(long solidifiedBlockNum) {
+    if (!enabled) {
+      return;
+    }
+    Lock writeLock = consistencyLock.writeLock();
+    writeLock.lock();
+    try {
+      try {
+        validateAvailable();
+        while (!inFlightBlocks.isEmpty()
+            && inFlightBlocks.firstKey() <= solidifiedBlockNum) {
+          ArchiveInFlightBlock block = inFlightBlocks.firstEntry().getValue();
+          publishInFlightBlock(block);
+          inFlightBlocks.remove(block.getRange().getBlockNum());
+        }
+        rebuildInFlightLatest();
+      } catch (RuntimeException e) {
+        markFatal(e);
+        throw e;
+      }
+    } finally {
+      writeLock.unlock();
+    }
+  }
+
+  private void publishInFlightBlock(ArchiveInFlightBlock block) {
+    ArchiveBlockRange range = block.getRange();
+    boolean indexPublished = false;
+    boolean temporalPublished = false;
+    try {
+      txNumIndex.beginBlock(range.getBlockNum(), range.getSource());
+      for (ArchiveTxPosition position : block.getPositions()) {
+        ArchiveTxPosition allocated = allocatePublishedPosition(position);
+        validatePublishedPosition(position, allocated);
+      }
+      ArchiveBlockRange publishedRange = txNumIndex.commitBlock(
+          range.getBlockNum(), range.getBlockHash(), range.getUserTxCount(), schemaChecksum);
+      indexPublished = true;
+      validatePublishedRange(range, publishedRange);
+      temporalStore.putBlockChanges(publishedRange, block.getRecords());
+      temporalPublished = true;
+      inFlightStore.deleteBlock(range.getBlockNum());
+    } catch (RuntimeException e) {
+      if (!temporalPublished) {
+        try {
+          if (indexPublished) {
+            txNumIndex.unwindBlock(range.getBlockNum());
+          } else {
+            txNumIndex.abortBlock(range.getBlockNum());
+          }
+        } catch (RuntimeException cleanupFailure) {
+          e.addSuppressed(cleanupFailure);
+        }
+      }
+      throw e;
+    }
+  }
+
+  private ArchiveTxPosition allocatePublishedPosition(ArchiveTxPosition position) {
+    if (position.getPhase() == ArchivePhase.USER_TX) {
+      return txNumIndex.allocateUserTx(
+          position.getBlockNum(), position.getTxIndex(), position.getTxId());
+    }
+    return txNumIndex.allocateSystemTx(position.getBlockNum(), position.getPhase());
+  }
+
+  private ArchiveTxPosition allocateExecutionPosition(ArchiveTxPosition position) {
+    if (position.getPhase() == ArchivePhase.USER_TX) {
+      return executionTxNumIndex.allocateUserTx(
+          position.getBlockNum(), position.getTxIndex(), position.getTxId());
+    }
+    return executionTxNumIndex.allocateSystemTx(position.getBlockNum(), position.getPhase());
+  }
+
+  private static void validatePublishedPosition(ArchiveTxPosition expected,
+      ArchiveTxPosition actual) {
+    if (expected.getTxNum() != actual.getTxNum()
+        || expected.getBlockNum() != actual.getBlockNum()
+        || expected.getPhase() != actual.getPhase()
+        || expected.getSource() != actual.getSource()
+        || expected.getTxIndex() != actual.getTxIndex()
+        || !Arrays.equals(expected.getTxId(), actual.getTxId())) {
+      throw new ArchiveException("published archive tx-position does not match in-flight block "
+          + expected.getBlockNum());
+    }
+  }
+
+  private static void validatePublishedRange(ArchiveBlockRange expected,
+      ArchiveBlockRange actual) {
+    if (expected.getBlockNum() != actual.getBlockNum()
+        || expected.getFirstTxNum() != actual.getFirstTxNum()
+        || expected.getLastTxNum() != actual.getLastTxNum()
+        || expected.getPrepareTxNum() != actual.getPrepareTxNum()
+        || expected.getFinalizeTxNum() != actual.getFinalizeTxNum()
+        || expected.getUserTxCount() != actual.getUserTxCount()
+        || expected.getSource() != actual.getSource()
+        || !Arrays.equals(expected.getBlockHash(), actual.getBlockHash())
+        || !Arrays.equals(expected.getSchemaChecksum(), actual.getSchemaChecksum())) {
+      throw new ArchiveException("published archive block range does not match in-flight block "
+          + expected.getBlockNum());
+    }
+  }
+
   private void commitBlockLocked(BlockCapsule block, int userTxCount) {
-    boolean txNumCommitted = false;
+    boolean executionCommitted = false;
     try {
       validateAvailable();
       if (captureEngine.failure().isPresent()) {
@@ -193,16 +357,17 @@ public final class DefaultArchiveService implements ArchiveService {
       }
       List<ArchiveChangeRecord> records = new ArrayList<>(merged.values());
       records.removeIf(this::isKnownNoop);
-      ArchiveBlockRange range = txNumIndex.commitBlock(
+      ArchiveBlockRange range = executionTxNumIndex.commitBlock(
           block.getNum(), block.getBlockId().getBytes(), userTxCount, schemaChecksum);
-      txNumCommitted = true;
-      temporalStore.putBlockChanges(range, records);
+      executionCommitted = true;
+      List<ArchiveTxPosition> positions = positionsOf(range, executionTxNumIndex);
+      rememberInFlight(new ArchiveInFlightBlock(range, positions, records));
     } catch (RuntimeException e) {
       try {
-        if (txNumCommitted) {
-          txNumIndex.unwindBlock(block.getNum());
+        if (executionCommitted) {
+          executionTxNumIndex.unwindBlock(block.getNum());
         } else {
-          txNumIndex.abortBlock(block.getNum());
+          executionTxNumIndex.abortBlock(block.getNum());
         }
       } catch (RuntimeException cleanupFailure) {
         e.addSuppressed(cleanupFailure);
@@ -222,9 +387,79 @@ public final class DefaultArchiveService implements ArchiveService {
     if (record.getValue().isDeleted()) {
       return true;
     }
-    Optional<DomainValue> latest = temporalStore.latest(record.getDomain(),
+    Optional<DomainValue> latest = latestWithInFlight(record.getDomain(),
         record.getCanonicalKey());
     return latest.isPresent() && sameDomainValue(latest.get(), record.getValue());
+  }
+
+  private Optional<DomainValue> latestWithInFlight(ArchiveDomain domain, byte[] canonicalKey) {
+    DomainValue inFlight = inFlightLatest.get(latestKey(domain, canonicalKey));
+    return inFlight == null ? temporalStore.latest(domain, canonicalKey) : Optional.of(inFlight);
+  }
+
+  private void rememberInFlight(ArchiveInFlightBlock block) {
+    validateInFlightAppend(block);
+    inFlightStore.putBlock(block);
+    rememberInFlightInMemory(block);
+  }
+
+  private void rememberInFlightInMemory(ArchiveInFlightBlock block) {
+    inFlightBlocks.put(block.getRange().getBlockNum(), block);
+    applyInFlightLatest(block);
+  }
+
+  private void validateInFlightAppend(ArchiveInFlightBlock block) {
+    long blockNum = block.getRange().getBlockNum();
+    if (inFlightBlocks.containsKey(blockNum)) {
+      throw new ArchiveException("archive in-flight block already exists for block "
+          + blockNum);
+    }
+    long previousBlock = inFlightBlocks.isEmpty()
+        ? txNumIndex.getLastArchivedBlock()
+        : inFlightBlocks.lastKey();
+    if (previousBlock >= 0 && blockNum != previousBlock + 1) {
+      throw new ArchiveException("non-contiguous archive in-flight block: expected block "
+          + (previousBlock + 1) + " but got " + blockNum);
+    }
+    long expectedFirstTxNum = inFlightBlocks.isEmpty()
+        ? txNumIndex.getNextTxNum()
+        : inFlightBlocks.lastEntry().getValue().getRange().getLastTxNum() + 1;
+    if (block.getRange().getFirstTxNum() != expectedFirstTxNum) {
+      throw new ArchiveException("non-contiguous archive in-flight txNum: expected "
+          + expectedFirstTxNum + " but got " + block.getRange().getFirstTxNum());
+    }
+  }
+
+  private void applyInFlightLatest(ArchiveInFlightBlock block) {
+    for (ArchiveChangeRecord record : block.getRecords()) {
+      inFlightLatest.put(latestKey(record.getDomain(), record.getCanonicalKey()),
+          record.getValue());
+    }
+  }
+
+  private void rebuildInFlightLatest() {
+    inFlightLatest.clear();
+    for (ArchiveInFlightBlock block : inFlightBlocks.values()) {
+      applyInFlightLatest(block);
+    }
+  }
+
+  private static WrappedByteArray latestKey(ArchiveDomain domain, byte[] canonicalKey) {
+    return WrappedByteArray.copyOf(Bytes.concat(
+        Ints.toByteArray(domain.getId()), canonicalKey));
+  }
+
+  private static List<ArchiveTxPosition> positionsOf(ArchiveBlockRange range,
+      ArchiveTxNumIndex index) {
+    List<ArchiveTxPosition> positions = new ArrayList<>();
+    for (long txNum = range.getFirstTxNum(); txNum <= range.getLastTxNum(); txNum++) {
+      Optional<ArchiveTxPosition> position = index.getPosition(txNum);
+      if (!position.isPresent()) {
+        throw new ArchiveException("archive tx-position missing for txNum " + txNum);
+      }
+      positions.add(position.get());
+    }
+    return positions;
   }
 
   private static boolean sameDomainValue(DomainValue left, DomainValue right) {
@@ -265,7 +500,7 @@ public final class DefaultArchiveService implements ArchiveService {
         failure = e;
       }
       try {
-        txNumIndex.abortBlock(block.getNum());
+        executionTxNumIndex.abortBlock(block.getNum());
       } catch (RuntimeException e) {
         if (failure == null) {
           failure = e;
@@ -294,23 +529,31 @@ public final class DefaultArchiveService implements ArchiveService {
     try {
       try {
         validateAvailable();
-        Optional<ArchiveBlockRange> committed = txNumIndex.getBlockRange(block.getNum());
-        long firstArchivedBlock = txNumIndex.getFirstArchivedBlock();
-        if (!committed.isPresent()
-            && (firstArchivedBlock < 0 || block.getNum() < firstArchivedBlock)) {
-          executionContext.clear();
-          captureEngine.clear();
-          return;
-        }
-        // Drop the reverted block's already-persisted changes (txNum >= its first txNum) before the
-        // index forgets the range, so the temporal store never retains rolled-back state.
-        ArchiveBlockRange range = txNumIndex.getHeadBlockRange(block.getNum());
-        if (!Arrays.equals(range.getBlockHash(), block.getBlockId().getBytes())) {
+        ArchiveInFlightBlock inFlight = inFlightBlocks.get(block.getNum());
+        if (inFlight != null) {
+          if (!Arrays.equals(inFlight.getRange().getBlockHash(), block.getBlockId().getBytes())) {
+            throw new ArchiveException("cannot unwind block " + block.getNum()
+                + ": archive in-flight block hash mismatch");
+          }
+          inFlightStore.deleteBlock(block.getNum());
+          inFlightBlocks.remove(block.getNum());
+          executionTxNumIndex.unwindBlock(block.getNum());
+          rebuildInFlightLatest();
+        } else {
+          Optional<ArchiveBlockRange> committed = txNumIndex.getBlockRange(block.getNum());
+          long firstArchivedBlock = txNumIndex.getFirstArchivedBlock();
+          if (committed.isPresent()) {
+            throw new ArchiveException("cannot unwind published archive block " + block.getNum());
+          }
+          if (!committed.isPresent()
+              && (firstArchivedBlock < 0 || block.getNum() < firstArchivedBlock)) {
+            executionContext.clear();
+            captureEngine.clear();
+            return;
+          }
           throw new ArchiveException("cannot unwind block " + block.getNum()
-              + ": archive block hash mismatch");
+              + ": not in archive in-flight head");
         }
-        temporalStore.unwindBlock(range);
-        txNumIndex.unwindBlock(block.getNum());
         captureEngine.clear();
       } catch (RuntimeException e) {
         markFatal(e);
@@ -327,10 +570,6 @@ public final class DefaultArchiveService implements ArchiveService {
       return;
     }
     validateAvailable();
-    if (!txNumIndex.getBlockRange(canonicalHead.getNum()).isPresent()) {
-      throw new ArchiveException("archive enabled but canonical head block "
-          + canonicalHead.getNum() + " is not covered by archive");
-    }
     txNumIndex.validateCanonicalHead(
         canonicalHead.getNum(), canonicalHead.getBlockId().getBytes());
   }
@@ -375,6 +614,7 @@ public final class DefaultArchiveService implements ArchiveService {
   public void close() {
     ArchiveCaptureHolder.clearIf(captureEngine);
     RuntimeException failure = null;
+    failure = closeResource(inFlightStore, "in-flight store", failure);
     failure = closeResource(temporalStore, "temporal store", failure);
     failure = closeResource(txNumIndex, "txNum index", failure);
     if (failure != null) {
