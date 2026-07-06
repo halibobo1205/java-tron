@@ -60,9 +60,20 @@ public class RocksDbArchiveTemporalStoreTest {
 
   private static ArchiveChangeRecord rec(long txNum, ArchiveDomain domain, byte[] key,
       DomainValue prev, DomainValue value) {
+    return rec(txNum, 1, ArchiveSource.NORMAL, domain, key, prev, value);
+  }
+
+  private static ArchiveChangeRecord rec(long txNum, long blockNum, ArchiveSource source,
+      ArchiveDomain domain, byte[] key, DomainValue prev, DomainValue value) {
     return new ArchiveChangeRecord(
-        new ArchiveTxPosition(txNum, 1, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, null),
+        new ArchiveTxPosition(txNum, blockNum, ArchivePhase.USER_TX, source, 0, null),
         domain, key, prev, value);
+  }
+
+  private static ArchiveChangeRecord changeInRange(ArchiveBlockRange range, long txNum,
+      DomainValue prev, DomainValue value) {
+    return rec(txNum, range.getBlockNum(), range.getSource(), ArchiveDomain.ACCOUNT, KEY,
+        prev, value);
   }
 
   @Test
@@ -108,7 +119,8 @@ public class RocksDbArchiveTemporalStoreTest {
     ArchiveBlockRange range = new ArchiveBlockRange(
         3, 0, 0, 0, 0, blockHash(3), 0, ArchiveSource.NORMAL);
     store.putBlockChanges(range, Collections.singletonList(
-        change(0, DomainValue.present(new byte[] {1}), DomainValue.present(new byte[] {1}))));
+        changeInRange(range, 0, DomainValue.present(new byte[] {1}),
+            DomainValue.present(new byte[] {1}))));
     assertArrayEquals(new byte[] {1}, store.latest(ArchiveDomain.ACCOUNT, KEY).get().getValue());
 
     store.unwindBlock(range);
@@ -125,10 +137,11 @@ public class RocksDbArchiveTemporalStoreTest {
         101, 2, 3, 2, 3, blockHash(101), 0, ArchiveSource.NORMAL);
     store.putBlockChanges(first, Collections.emptyList());
     store.putBlockChanges(later, Collections.singletonList(
-        change(2, DomainValue.present(new byte[] {0x0A}), DomainValue.present(new byte[] {0x0B}))));
+        changeInRange(later, 2, DomainValue.present(new byte[] {0x0A}),
+            DomainValue.present(new byte[] {0x0B}))));
 
     store.unwindBlock(later);
-    assertArrayEquals(new byte[] {0x0A}, store.latest(ArchiveDomain.ACCOUNT, KEY).get().getValue());
+    assertFalse(store.latest(ArchiveDomain.ACCOUNT, KEY).isPresent());
 
     store.unwindBlock(first);
 
@@ -272,13 +285,14 @@ public class RocksDbArchiveTemporalStoreTest {
     ArchiveBlockRange range = new ArchiveBlockRange(
         3, 10, 10, 10, 10, blockHash(3), 0, ArchiveSource.NORMAL);
     store.putBlockChanges(range, Collections.singletonList(
-        change(10, DomainValue.tombstone(), DomainValue.present(new byte[] {0x0A}))));
+        changeInRange(range, 10, DomainValue.tombstone(),
+            DomainValue.present(new byte[] {0x0A}))));
     store.putChange(rec(12, ArchiveDomain.ACCOUNT, laterKey, DomainValue.tombstone(),
         DomainValue.present(new byte[] {0x0C})));
 
     store.unwindBlock(range);
 
-    assertTrue(store.latest(ArchiveDomain.ACCOUNT, KEY).get().isDeleted());
+    assertFalse(store.latest(ArchiveDomain.ACCOUNT, KEY).isPresent());
     assertArrayEquals(new byte[] {0x0C},
         store.latest(ArchiveDomain.ACCOUNT, laterKey).get().getValue());
     assertArrayEquals(new byte[] {0x0C},
@@ -309,8 +323,8 @@ public class RocksDbArchiveTemporalStoreTest {
   public void unwindCreatedKeyRestoresToTombstone() {
     store.putChange(change(8, DomainValue.tombstone(), DomainValue.present(new byte[] {0x0B})));
     store.unwind(8);
-    assertTrue(store.latest(ArchiveDomain.ACCOUNT, KEY).get().isDeleted());
-    assertTrue(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 100).get().isDeleted());
+    assertFalse(store.latest(ArchiveDomain.ACCOUNT, KEY).isPresent());
+    assertFalse(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 100).isPresent());
   }
 
   @Test
@@ -447,6 +461,45 @@ public class RocksDbArchiveTemporalStoreTest {
         () -> store.validateTxNumsCovered(txNum -> true));
 
     assertTrue(ex.getMessage().contains("history missing"));
+  }
+
+  @Test
+  public void validateTxNumsCoveredRejectsLatestWithoutHistory() throws Exception {
+    store.close();
+    try (Options options = new Options().setCreateIfMissing(false);
+        RocksDB db = RocksDB.open(options, dir.toString());
+        WriteBatch batch = new WriteBatch();
+        WriteOptions writeOptions = new WriteOptions()) {
+      batch.put(ArchiveTemporalCodec.latestKey(ArchiveDomain.ACCOUNT, KEY),
+          ArchiveTemporalCodec.encodeValue(DomainValue.present(new byte[] {0x0B})));
+      db.write(writeOptions, batch);
+    }
+    store = new RocksDbArchiveTemporalStore(dir.toString());
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> store.validateTxNumsCovered(txNum -> true));
+
+    assertTrue(ex.getMessage().contains("latest has no history"));
+  }
+
+  @Test
+  public void putBlockChangesRejectsRecordOutsideRange() {
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        3, 10, 11, 10, 11, blockHash(3), 0, ArchiveSource.NORMAL);
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> store.putBlockChanges(range, Collections.singletonList(
+            change(8, DomainValue.tombstone(), DomainValue.present(new byte[] {1})))));
+
+    assertTrue(ex.getMessage().contains("outside committed block range"));
+  }
+
+  @Test
+  public void unwindBlockFailsWithoutCommitMarker() {
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        3, 10, 11, 10, 11, blockHash(3), 0, ArchiveSource.NORMAL);
+
+    assertThrows(ArchiveException.class, () -> store.unwindBlock(range));
   }
 
   private static void deleteRecursively(File f) {

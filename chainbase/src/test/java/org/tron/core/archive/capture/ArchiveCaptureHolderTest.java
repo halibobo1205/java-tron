@@ -49,7 +49,10 @@ public class ArchiveCaptureHolderTest {
     ArchiveCaptureEngine older = engineWithActiveContext();
     ArchiveCaptureEngine newer = engineWithActiveContext();
     ArchiveCaptureHolder.set(older);
+    assertTrue(ArchiveCaptureHolder.isCurrent(older));
     ArchiveCaptureHolder.set(newer);
+    assertFalse(ArchiveCaptureHolder.isCurrent(older));
+    assertTrue(ArchiveCaptureHolder.isCurrent(newer));
 
     ArchiveCaptureHolder.clearIf(older);
     assertTrue(ArchiveCaptureHolder.isActive());

@@ -9,9 +9,11 @@ import java.util.NavigableMap;
 import java.util.Optional;
 import java.util.SortedMap;
 import java.util.TreeMap;
+import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
+import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.db2.common.WrappedByteArray;
 
 /**
@@ -55,6 +57,14 @@ public final class InMemoryArchiveTemporalStore implements ArchiveTemporalStore 
   }
 
   @Override
+  public void putBlockChanges(ArchiveBlockRange range, List<ArchiveChangeRecord> records) {
+    for (ArchiveChangeRecord record : records) {
+      validateRecordInRange(range, record);
+      putChange(record);
+    }
+  }
+
+  @Override
   public Optional<DomainValue> getAsOf(ArchiveDomain domain, byte[] canonicalKey, long txNum) {
     KeyState state = stateOf(domain, canonicalKey);
     if (state == null) {
@@ -87,9 +97,11 @@ public final class InMemoryArchiveTemporalStore implements ArchiveTemporalStore 
         KeyState state = states.next();
         SortedMap<Long, DomainValue> dropped = state.history.tailMap(fromTxNum);
         if (!dropped.isEmpty()) {
-          // Restore latest to the smallest dropped change's pre-value = value at end of
-          // (fromTxNum - 1); independent of any surviving (older) history.
-          state.latest = fromTxNum == 0 ? null : dropped.get(dropped.firstKey());
+          // Restore only when older history anchors the key; otherwise drop latest too so the
+          // in-memory contract matches the persistent fail-closed startup invariant.
+          state.latest = fromTxNum == 0 || state.history.headMap(fromTxNum).isEmpty()
+              ? null
+              : dropped.get(dropped.firstKey());
           dropped.clear();
         }
         if (state.history.isEmpty() && state.latest == null) {
@@ -113,5 +125,18 @@ public final class InMemoryArchiveTemporalStore implements ArchiveTemporalStore 
   private KeyState stateOf(ArchiveDomain domain, byte[] canonicalKey) {
     Map<WrappedByteArray, KeyState> domainMap = byDomain.get(domain);
     return (domainMap == null) ? null : domainMap.get(WrappedByteArray.of(canonicalKey));
+  }
+
+  private static void validateRecordInRange(ArchiveBlockRange range, ArchiveChangeRecord record) {
+    long txNum = record.getTxNum();
+    if (txNum < range.getFirstTxNum() || txNum > range.getLastTxNum()) {
+      throw new ArchiveException("archive temporal change txNum " + txNum
+          + " is outside committed block range " + range.getBlockNum());
+    }
+    if (record.getPosition().getBlockNum() != range.getBlockNum()
+        || record.getPosition().getSource() != range.getSource()) {
+      throw new ArchiveException("archive temporal change position does not match block range "
+          + range.getBlockNum());
+    }
   }
 }

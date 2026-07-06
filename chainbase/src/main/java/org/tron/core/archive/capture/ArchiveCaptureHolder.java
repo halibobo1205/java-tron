@@ -39,6 +39,10 @@ public final class ArchiveCaptureHolder {
     return engine != null;
   }
 
+  public static boolean isCurrent(ArchiveCaptureEngine captureEngine) {
+    return engine == captureEngine;
+  }
+
   public static void recordFailure(String operation, Exception cause) {
     ArchiveCaptureEngine active = engine;
     if (active == null) {

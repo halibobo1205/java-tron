@@ -278,6 +278,38 @@ public class PersistentArchiveTxNumIndexTest {
   }
 
   @Test
+  public void storeRejectsCurrentManifestWithLegacyRows() throws Exception {
+    index.close();
+    index = null;
+    store = null;
+    try (Options options = new Options().setCreateIfMissing(false);
+        RocksDB rawDb = RocksDB.open(options, dir.toString())) {
+      rawDb.put(ArchiveBlockRangeCodec.legacyManifestKey(), legacySchemaOneManifest());
+    }
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> new RocksDbArchiveBlockRangeStore(dir.toString()));
+
+    assertTrue(ex.getMessage().contains("legacy schema row"));
+  }
+
+  @Test
+  public void storeRejectsCurrentManifestWithUnknownPrefixRows() throws Exception {
+    index.close();
+    index = null;
+    store = null;
+    try (Options options = new Options().setCreateIfMissing(false);
+        RocksDB rawDb = RocksDB.open(options, dir.toString())) {
+      rawDb.put(new byte[] {0x7f}, new byte[] {1});
+    }
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> new RocksDbArchiveBlockRangeStore(dir.toString()));
+
+    assertTrue(ex.getMessage().contains("unknown key prefix"));
+  }
+
+  @Test
   public void firstArchivedBlockIsLowestCommittedAndSurvivesRestart() {
     assertEquals(RocksDbArchiveBlockRangeStore.NO_FIRST_BLOCK, index.getFirstArchivedBlock());
     pushBlock(7); // a mid-chain start: the first commit records 7 as the coverage floor
@@ -555,6 +587,30 @@ public class PersistentArchiveTxNumIndexTest {
 
     assertTrue(ex.getMessage().contains("duplicate txId"));
     assertFalse(store.getRange(1).isPresent());
+  }
+
+  @Test
+  public void storeRejectsDuplicateTxIdAlreadyCommitted() {
+    ArchiveBlockRange first = new ArchiveBlockRange(
+        1, 0, 2, 0, 2, blockHash(1), 1, ArchiveSource.NORMAL);
+    store.commitRange(withChecksum(first), 3, Arrays.asList(
+        new ArchiveTxPosition(0, 1, ArchivePhase.BLOCK_PREPARE, ArchiveSource.NORMAL, -1, null),
+        new ArchiveTxPosition(1, 1, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, TX_A),
+        new ArchiveTxPosition(2, 1, ArchivePhase.BLOCK_FINALIZE, ArchiveSource.NORMAL, -1,
+            null)));
+    ArchiveBlockRange second = new ArchiveBlockRange(
+        2, 3, 5, 3, 5, blockHash(2), 1, ArchiveSource.NORMAL);
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> store.commitRange(withChecksum(second), 6, Arrays.asList(
+            new ArchiveTxPosition(3, 2, ArchivePhase.BLOCK_PREPARE, ArchiveSource.NORMAL, -1,
+                null),
+            new ArchiveTxPosition(4, 2, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, TX_A),
+            new ArchiveTxPosition(5, 2, ArchivePhase.BLOCK_FINALIZE, ArchiveSource.NORMAL, -1,
+                null))));
+
+    assertTrue(ex.getMessage().contains("duplicate txId already committed"));
+    assertFalse(store.getRange(2).isPresent());
   }
 
   @Test

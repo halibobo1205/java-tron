@@ -9,13 +9,26 @@ import org.tron.core.archive.temporal.ArchiveTemporalStore;
  */
 public final class DefaultArchiveStateReaderFactory implements ArchiveStateReaderFactory {
 
+  @FunctionalInterface
+  public interface PointValidator {
+    void validate(ArchiveStatePoint point) throws ArchiveReaderException;
+  }
+
   private final ArchiveTemporalStore temporalStore;
   private final ArchiveDomainCatalog catalog;
+  private final PointValidator pointValidator;
 
   public DefaultArchiveStateReaderFactory(ArchiveTemporalStore temporalStore,
       ArchiveDomainCatalog catalog) {
+    this(temporalStore, catalog, point -> {
+    });
+  }
+
+  public DefaultArchiveStateReaderFactory(ArchiveTemporalStore temporalStore,
+      ArchiveDomainCatalog catalog, PointValidator pointValidator) {
     this.temporalStore = temporalStore;
     this.catalog = catalog;
+    this.pointValidator = pointValidator;
   }
 
   @Override
@@ -28,6 +41,7 @@ public final class DefaultArchiveStateReaderFactory implements ArchiveStateReade
       throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
           "no resolved archive state point");
     }
+    pointValidator.validate(point);
     return new DefaultArchiveStateReader(temporalStore, catalog, point);
   }
 }
