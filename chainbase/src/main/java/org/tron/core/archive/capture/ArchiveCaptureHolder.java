@@ -39,6 +39,11 @@ public final class ArchiveCaptureHolder {
     return engine != null;
   }
 
+  public static boolean isCapturingCurrentTx() {
+    ArchiveCaptureEngine active = engine;
+    return active != null && active.hasCurrentPosition();
+  }
+
   public static boolean isCurrent(ArchiveCaptureEngine captureEngine) {
     return engine == captureEngine;
   }

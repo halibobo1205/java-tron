@@ -90,7 +90,7 @@ public class AccountStore extends TronStoreWithRevoking<AccountCapsule> {
     }
     // L4c: read the pre-put account so ACCOUNT_ASSET can value-diff assetV2 (gated to avoid the
     // extra read + serialize when archive is off).
-    boolean archiveActive = ArchiveCaptureHolder.isActive();
+    boolean archiveActive = ArchiveCaptureHolder.isCapturingCurrentTx();
     byte[] oldArchiveValue = archiveActive
         ? accountAssetDiffValue(revokingDB.getUnchecked(key)) : null;
     byte[] newArchiveValue = archiveActive ? accountAssetDiffValue(item.getData()) : null;
@@ -137,7 +137,7 @@ public class AccountStore extends TronStoreWithRevoking<AccountCapsule> {
         accountTraceStore.recordBalanceWithBlock(key, blockId.getNum(), 0);
       }
     }
-    boolean archiveActive = ArchiveCaptureHolder.isActive();
+    boolean archiveActive = ArchiveCaptureHolder.isCapturingCurrentTx();
     byte[] oldArchiveValue = archiveActive
         ? accountAssetDiffValue(revokingDB.getUnchecked(key)) : null;
     super.delete(key);

@@ -13,6 +13,7 @@ import java.util.Optional;
 import java.util.TreeMap;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.function.LongFunction;
 import org.tron.core.archive.capture.ArchiveCaptureEngine;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
@@ -242,19 +243,68 @@ public final class DefaultArchiveService implements ArchiveService {
     try {
       try {
         validateAvailable();
-        while (!inFlightBlocks.isEmpty()
-            && inFlightBlocks.firstKey() <= solidifiedBlockNum) {
-          ArchiveInFlightBlock block = inFlightBlocks.firstEntry().getValue();
-          publishInFlightBlock(block);
-          inFlightBlocks.remove(block.getRange().getBlockNum());
-        }
-        rebuildInFlightLatest();
+        publishSolidifiedBlocksLocked(solidifiedBlockNum);
       } catch (RuntimeException e) {
         markFatal(e);
         throw e;
       }
     } finally {
       writeLock.unlock();
+    }
+  }
+
+  @Override
+  public void reconcileInFlightOnStartup(long solidifiedBlockNum,
+      LongFunction<BlockCapsule> canonicalBlockProvider) {
+    if (!enabled) {
+      return;
+    }
+    Lock writeLock = consistencyLock.writeLock();
+    writeLock.lock();
+    try {
+      try {
+        validateAvailable();
+        if (canonicalBlockProvider == null) {
+          throw new ArchiveException("archive startup reconciliation requires canonical blocks");
+        }
+        for (ArchiveInFlightBlock block : inFlightBlocks.values()) {
+          validateInFlightMatchesCanonical(block, canonicalBlockProvider);
+        }
+        publishSolidifiedBlocksLocked(solidifiedBlockNum);
+      } catch (RuntimeException e) {
+        markFatal(e);
+        throw e;
+      }
+    } finally {
+      writeLock.unlock();
+    }
+  }
+
+  private void publishSolidifiedBlocksLocked(long solidifiedBlockNum) {
+    while (!inFlightBlocks.isEmpty()
+        && inFlightBlocks.firstKey() <= solidifiedBlockNum) {
+      ArchiveInFlightBlock block = inFlightBlocks.firstEntry().getValue();
+      publishInFlightBlock(block);
+      inFlightBlocks.remove(block.getRange().getBlockNum());
+    }
+    rebuildInFlightLatest();
+  }
+
+  private static void validateInFlightMatchesCanonical(ArchiveInFlightBlock block,
+      LongFunction<BlockCapsule> canonicalBlockProvider) {
+    ArchiveBlockRange range = block.getRange();
+    BlockCapsule canonical = canonicalBlockProvider.apply(range.getBlockNum());
+    if (canonical == null) {
+      throw new ArchiveException("archive in-flight block " + range.getBlockNum()
+          + " has no canonical block");
+    }
+    if (canonical.getNum() != range.getBlockNum()) {
+      throw new ArchiveException("archive in-flight block " + range.getBlockNum()
+          + " resolved to canonical block " + canonical.getNum());
+    }
+    if (!Arrays.equals(canonical.getBlockId().getBytes(), range.getBlockHash())) {
+      throw new ArchiveException("archive in-flight block " + range.getBlockNum()
+          + " hash mismatch with canonical block");
     }
   }
 
