@@ -27,14 +27,30 @@ public class ArchiveCaptureHolderTest {
         new DefaultArchiveDomainCatalog(), new DynamicKeyPolicy(), context);
   }
 
+  private static ArchiveCaptureEngine engineWithoutActiveContext() {
+    return new ArchiveCaptureEngine(new DefaultArchiveDomainRegistry(),
+        new DefaultArchiveDomainCatalog(), new DynamicKeyPolicy(), new ArchiveExecutionContext());
+  }
+
   @Test
   public void noEngineSetIsNoOp() {
     ArchiveCaptureHolder.clear();
     assertFalse(ArchiveCaptureHolder.isActive());
+    assertFalse(ArchiveCaptureHolder.isCapturingCurrentTx());
     assertFalse(ArchiveCaptureHolder.capturesStore("account")); // false without an engine
     // must not throw even with garbage input
     ArchiveCaptureHolder.capturePut("account", new byte[5], null, new byte[] {(byte) 0xff});
     ArchiveCaptureHolder.captureDelete("account", new byte[5], null);
+  }
+
+  @Test
+  public void txCaptureStateRequiresCurrentExecutionPosition() {
+    ArchiveCaptureHolder.set(engineWithoutActiveContext());
+    assertTrue(ArchiveCaptureHolder.isActive());
+    assertFalse(ArchiveCaptureHolder.isCapturingCurrentTx());
+
+    ArchiveCaptureHolder.set(engineWithActiveContext());
+    assertTrue(ArchiveCaptureHolder.isCapturingCurrentTx());
   }
 
   @Test

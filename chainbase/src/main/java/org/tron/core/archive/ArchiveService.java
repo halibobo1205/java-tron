@@ -1,5 +1,6 @@
 package org.tron.core.archive;
 
+import java.util.function.LongFunction;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
 
@@ -34,6 +35,16 @@ public interface ArchiveService {
    * readers never observe reversible tip state.
    */
   default void publishSolidifiedBlocks(long solidifiedBlockNum) {
+  }
+
+  /**
+   * Startup recovery hook: validate durable in-flight blocks against the canonical hot window, then
+   * publish any that are already solidified. Implementations may fail closed if the in-flight
+   * journal no longer matches canonical block storage.
+   */
+  default void reconcileInFlightOnStartup(long solidifiedBlockNum,
+      LongFunction<BlockCapsule> canonicalBlockProvider) {
+    publishSolidifiedBlocks(solidifiedBlockNum);
   }
 
   void abortBlock(BlockCapsule block);

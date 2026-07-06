@@ -531,6 +531,8 @@ public class Manager {
       this.khaosDb.start(canonicalHead);
       long solidifiedNum = Math.min(
           getDynamicPropertiesStore().getLatestSolidifiedBlockNum(), canonicalHead.getNum());
+      archiveService.reconcileInFlightOnStartup(solidifiedNum,
+          blockNum -> getArchiveCanonicalBlock(blockNum, canonicalHead));
       BlockCapsule archiveValidationHead = solidifiedNum == canonicalHead.getNum()
           ? canonicalHead
           : chainBaseManager.getBlockByNum(solidifiedNum);
@@ -633,6 +635,11 @@ public class Manager {
 
     if (chainBaseManager.containBlock(genesisBlock.getBlockId())) {
       Args.getInstance().setChainId(genesisBlock.getBlockId().toString());
+      long solidifiedNum = Math.min(
+          chainBaseManager.getDynamicPropertiesStore().getLatestSolidifiedBlockNum(),
+          genesisBlock.getNum());
+      archiveService.reconcileInFlightOnStartup(solidifiedNum,
+          blockNum -> getArchiveCanonicalBlock(blockNum, genesisBlock));
       validateGenesisArchiveCoverage();
     } else {
       if (chainBaseManager.hasBlocks()) {
@@ -692,6 +699,18 @@ public class Manager {
           throw t;
         }
       }
+    }
+  }
+
+  private BlockCapsule getArchiveCanonicalBlock(long blockNum, BlockCapsule knownHead) {
+    if (knownHead != null && knownHead.getNum() == blockNum) {
+      return knownHead;
+    }
+    try {
+      return chainBaseManager.getBlockByNum(blockNum);
+    } catch (ItemNotFoundException | BadItemException e) {
+      throw new IllegalStateException("cannot load canonical block " + blockNum
+          + " for archive startup reconciliation", e);
     }
   }
 
@@ -2055,25 +2074,29 @@ public class Manager {
       int txIndex = 0;
       for (TransactionCapsule transactionCapsule : block.getTransactions()) {
         archiveService.beginUserTx(block, txIndex, transactionCapsule);
-        rejectExchangeTransaction(transactionCapsule.getInstance());
-        if (chainBaseManager.getDynamicPropertiesStore().allowConsensusLogicOptimization()
-            && transactionCapsule.retCountIsGreatThanContractCount()) {
-          throw new BadBlockException(String.format("The result count %d of this transaction %s is "
-                  + "greater than its contract count %d", transactionCapsule.getRetCount(),
-              transactionCapsule.getTransactionId(), transactionCapsule.getContractCount()));
+        try {
+          rejectExchangeTransaction(transactionCapsule.getInstance());
+          if (chainBaseManager.getDynamicPropertiesStore().allowConsensusLogicOptimization()
+              && transactionCapsule.retCountIsGreatThanContractCount()) {
+            throw new BadBlockException(String.format(
+                "The result count %d of this transaction %s is greater than its contract count %d",
+                transactionCapsule.getRetCount(), transactionCapsule.getTransactionId(),
+                transactionCapsule.getContractCount()));
+          }
+          transactionCapsule.setBlockNum(num);
+          if (block.generatedByMyself) {
+            transactionCapsule.setVerified(true);
+          }
+          accountStateCallBack.preExeTrans();
+          TransactionInfo result = processTransaction(transactionCapsule, block);
+          accountStateCallBack.exeTransFinish();
+          if (Objects.nonNull(result)) {
+            results.add(result);
+          }
+        } finally {
+          archiveService.endTx();
+          txIndex++;
         }
-        transactionCapsule.setBlockNum(num);
-        if (block.generatedByMyself) {
-          transactionCapsule.setVerified(true);
-        }
-        accountStateCallBack.preExeTrans();
-        TransactionInfo result = processTransaction(transactionCapsule, block);
-        accountStateCallBack.exeTransFinish();
-        if (Objects.nonNull(result)) {
-          results.add(result);
-        }
-        archiveService.endTx();
-        txIndex++;
       }
       transactionRetCapsule.addAllTransactionInfos(results);
       accountStateCallBack.executePushFinish();

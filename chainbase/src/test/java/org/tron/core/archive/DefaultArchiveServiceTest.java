@@ -20,6 +20,8 @@ import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
+import org.tron.core.archive.domain.DefaultArchiveDomainCatalog;
+import org.tron.core.archive.domain.DefaultArchiveDomainRegistry;
 import org.tron.core.archive.reader.ArchiveReaderException;
 import org.tron.core.archive.reader.ArchiveStatePoint;
 import org.tron.core.archive.temporal.ArchiveTemporalStore;
@@ -239,6 +241,64 @@ public class DefaultArchiveServiceTest {
     service.beginSystemTx(block, ArchivePhase.BLOCK_FINALIZE);
     service.endTx();
     service.commitBlock(block);
+  }
+
+  private static DefaultArchiveService serviceWithInFlightStore(ArchiveTxNumIndex index,
+      ArchiveExecutionContext context, ArchiveTemporalStore temporal,
+      ArchiveInFlightStore inFlightStore) {
+    return new DefaultArchiveService(true, index, context, temporal, inFlightStore,
+        new DefaultArchiveDomainRegistry(), new DefaultArchiveDomainCatalog());
+  }
+
+  @Test
+  public void startupReconcilePublishesSolidifiedInFlightBlocks() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    BlockCapsule b = blockWithParentSeed(5, (byte) 5);
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    commitEmptyBlock(service, b);
+    assertFalse(index.getBlockRange(5).isPresent());
+    assertEquals(1, inFlightStore.loadBlocks().size());
+    service.close();
+
+    DefaultArchiveService restarted = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    try {
+      restarted.reconcileInFlightOnStartup(5, blockNum -> b);
+
+      assertTrue(index.getBlockRange(5).isPresent());
+      assertEquals(0, inFlightStore.loadBlocks().size());
+    } finally {
+      restarted.close();
+    }
+  }
+
+  @Test
+  public void startupReconcileRejectsCanonicalHashMismatch() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    BlockCapsule b = blockWithParentSeed(5, (byte) 5);
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    commitEmptyBlock(service, b);
+    service.close();
+
+    DefaultArchiveService restarted = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> restarted.reconcileInFlightOnStartup(5,
+              blockNum -> blockWithParentSeed(5, (byte) 9)));
+
+      assertTrue(ex.getMessage().contains("hash mismatch"));
+      assertFalse(index.getBlockRange(5).isPresent());
+      assertThrows(ArchiveException.class, restarted::validateAvailable);
+    } finally {
+      restarted.close();
+    }
   }
 
   @Test
