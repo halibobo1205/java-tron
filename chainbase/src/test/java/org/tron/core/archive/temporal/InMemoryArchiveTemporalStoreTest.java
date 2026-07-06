@@ -124,12 +124,12 @@ public class InMemoryArchiveTemporalStoreTest {
   }
 
   @Test
-  public void unwindCreatedKeyRestoresToTombstone() {
-    // created at tx8; unwinding tx8 reverts latest to its pre-value (a tombstone = absent again).
+  public void unwindCreatedKeyDropsLatestWhenNoOlderHistory() {
+    // created at tx8; unwinding tx8 drops both history and latest so no latest-only row remains.
     store.putChange(change(8, KEY, tomb(), val(0x0B)));
     store.unwind(8);
-    assertTrue(store.latest(ArchiveDomain.ACCOUNT, KEY).get().isDeleted());
-    assertTrue(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 100).get().isDeleted());
+    assertFalse(store.latest(ArchiveDomain.ACCOUNT, KEY).isPresent());
+    assertFalse(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 100).isPresent());
     assertEquals(0, store.changeCount());
   }
 
@@ -137,7 +137,7 @@ public class InMemoryArchiveTemporalStoreTest {
   public void unwindFromZeroClearsLatestOnlyResidue() {
     store.putChange(change(8, KEY, val(0x0A), val(0x0B)));
     store.unwind(8);
-    assertArrayEquals(new byte[] {0x0A}, store.latest(ArchiveDomain.ACCOUNT, KEY).get().getValue());
+    assertFalse(store.latest(ArchiveDomain.ACCOUNT, KEY).isPresent());
     assertEquals(0, store.changeCount());
 
     store.unwind(0);
