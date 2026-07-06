@@ -34,7 +34,6 @@ import org.tron.core.store.VmDynamicProperties;
  */
 final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProperties {
 
-  private static final long DEFAULT_MAINTENANCE_TIME_INTERVAL = 21_600_000L;
   private final long latestBlockHeaderNumber;
   private final long latestBlockHeaderTimestamp;
   private final long maintenanceTimeInterval;
@@ -85,8 +84,7 @@ final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProp
     this.latestBlockHeaderNumber = reader.getPoint().getBlockNum();
     this.latestBlockHeaderTimestamp = resolve(reader, "latest_block_header_timestamp",
         genesisComplete, 0L);
-    this.maintenanceTimeInterval = resolve(reader, "MAINTENANCE_TIME_INTERVAL", genesisComplete,
-        DEFAULT_MAINTENANCE_TIME_INTERVAL);
+    this.maintenanceTimeInterval = resolveArchived(reader, "MAINTENANCE_TIME_INTERVAL");
     this.currentCycleNumber = resolve(reader, "CURRENT_CYCLE_NUMBER", genesisComplete,
         0L);
     this.totalNetLimit = resolve(reader, "TOTAL_NET_LIMIT", genesisComplete,
@@ -120,21 +118,19 @@ final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProp
     this.allowTvmSelfdestructRestriction = resolve(reader, "ALLOW_TVM_SELFDESTRUCT_RESTRICTION",
         genesisComplete, 0L);
     this.allowTvmCompatibleEvm = resolveArchived(reader, "ALLOW_TVM_COMPATIBLE_EVM");
-    this.allowOptimizedReturnValueOfChainId = resolve(reader,
-        "ALLOW_OPTIMIZED_RETURN_VALUE_OF_CHAIN_ID", genesisComplete, 0L);
+    this.allowOptimizedReturnValueOfChainId =
+        resolveArchived(reader, "ALLOW_OPTIMIZED_RETURN_VALUE_OF_CHAIN_ID");
     this.unfreezeDelayDays = resolveArchived(reader, "UNFREEZE_DELAY_DAYS");
     this.allowNewResourceModel = resolveArchived(reader, "ALLOW_NEW_RESOURCE_MODEL");
     this.allowShieldedTRC20Transaction =
         resolveArchived(reader, "ALLOW_SHIELDED_TRC20_TRANSACTION");
     this.allowMultiSign = resolveArchived(reader, "ALLOW_MULTI_SIGN");
-    this.allowHigherLimitForMaxCpuTimeOfOneTx = resolve(reader,
-        "ALLOW_HIGHER_LIMIT_FOR_MAX_CPU_TIME_OF_ONE_TX", genesisComplete, 0L);
+    this.allowHigherLimitForMaxCpuTimeOfOneTx =
+        resolveArchived(reader, "ALLOW_HIGHER_LIMIT_FOR_MAX_CPU_TIME_OF_ONE_TX");
     this.allowDynamicEnergy = resolveArchived(reader, "ALLOW_DYNAMIC_ENERGY");
     this.dynamicEnergyThreshold = resolveArchived(reader, "DYNAMIC_ENERGY_THRESHOLD");
-    this.dynamicEnergyIncreaseFactor = resolve(reader, "DYNAMIC_ENERGY_INCREASE_FACTOR",
-        genesisComplete, 0L);
-    this.dynamicEnergyMaxFactor = resolve(reader, "DYNAMIC_ENERGY_MAX_FACTOR", genesisComplete,
-        0L);
+    this.dynamicEnergyIncreaseFactor = resolveArchived(reader, "DYNAMIC_ENERGY_INCREASE_FACTOR");
+    this.dynamicEnergyMaxFactor = resolveArchived(reader, "DYNAMIC_ENERGY_MAX_FACTOR");
     this.allowEnergyAdjustment = resolveArchived(reader, "ALLOW_ENERGY_ADJUSTMENT");
     this.allowStrictMath = resolveArchived(reader, "ALLOW_STRICT_MATH");
     this.consensusLogicOptimization = resolveArchived(reader, "CONSENSUS_LOGIC_OPTIMIZATION");

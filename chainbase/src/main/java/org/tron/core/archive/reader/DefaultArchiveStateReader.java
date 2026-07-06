@@ -32,7 +32,7 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
   private final ArchiveDomainCatalog catalog;
   private final ArchiveStatePoint point;
 
-  public DefaultArchiveStateReader(ArchiveTemporalStore temporalStore,
+  DefaultArchiveStateReader(ArchiveTemporalStore temporalStore,
       ArchiveDomainCatalog catalog, ArchiveStatePoint point) {
     this.temporalStore = temporalStore;
     this.catalog = catalog;

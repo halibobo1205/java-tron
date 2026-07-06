@@ -72,6 +72,19 @@ public class HistoricalTraceSupportTest {
   }
 
   @Test
+  public void traceCallRejectsBlockHashChangedAfterResolution() {
+    Wallet wallet = mock(Wallet.class);
+    when(wallet.getBlockByNum(5)).thenReturn(block(5), blockWithParentSeed(5, (byte) 9));
+    HistoricalTraceSupport support =
+        new HistoricalTraceSupport(wallet, midChainArchiveService());
+
+    JsonRpcInternalException ex = assertThrows(JsonRpcInternalException.class,
+        () -> support.traceCall(null, null, 0L, null, "0x5"));
+
+    assertTrue(ex.getMessage().contains("hash mismatch"));
+  }
+
+  @Test
   public void traceTransactionRejectsUnsupportedTraceOptionsBeforeLookup() {
     HistoricalTraceSupport support =
         new HistoricalTraceSupport(mock(Wallet.class), midChainArchiveService());
@@ -94,6 +107,12 @@ public class HistoricalTraceSupportTest {
 
   private static Block block(long num) {
     return new BlockCapsule(num, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY).getInstance();
+  }
+
+  private static Block blockWithParentSeed(long num, byte seed) {
+    byte[] parent = new byte[32];
+    parent[31] = seed;
+    return new BlockCapsule(num, Sha256Hash.wrap(parent), 1L, ByteString.EMPTY).getInstance();
   }
 
   private static byte[] blockHash(long num) {

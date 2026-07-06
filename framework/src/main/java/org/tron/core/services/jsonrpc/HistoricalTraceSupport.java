@@ -117,6 +117,7 @@ public final class HistoricalTraceSupport {
           + point.getBlockNum());
     }
     BlockCapsule historicalBlock = new BlockCapsule(block);
+    requireResolvedBlockHash(point, historicalBlock.getBlockId().getBytes());
     TriggerSmartContract trigger =
         triggerCallContract(ownerAddress, contractAddress, callValue, data, 0, null);
     TransactionCapsule trxCap;
@@ -231,7 +232,7 @@ public final class HistoricalTraceSupport {
     }
     // The pre-tx state is read as-of t - 1 (getAsOf inclusive-after; t is the tx's own txNum whose
     // writes must NOT be included). The reader reads getAsOf(point.getTxNum()).
-    ArchiveStatePoint point = ArchiveStatePoint.blockEnd(blockNum, blockHash, t - 1);
+    ArchiveStatePoint point = ArchiveStatePoint.txBefore(blockNum, blockHash, t - 1);
     // Reuse the real transaction so feeLimit (hence the energy limit) is preserved.
     TransactionCapsule trxCap = new TransactionCapsule(tx);
     return runTrace(historicalBlock, point, trxCap, false, "historical debug_traceTransaction",
@@ -242,6 +243,17 @@ public final class HistoricalTraceSupport {
       throws JsonRpcInternalException {
     if (blockHash == null || blockHash.length != ArchiveBlockRange.BLOCK_HASH_LENGTH) {
       throw new JsonRpcInternalException(source + " has invalid block hash for block " + blockNum);
+    }
+  }
+
+  private static void requireResolvedBlockHash(ArchiveStatePoint point, byte[] blockHash)
+      throws JsonRpcInternalException {
+    byte[] pointHash = point.getBlockHash();
+    requireBlockHash(pointHash, "archive point", point.getBlockNum());
+    requireBlockHash(blockHash, "canonical block", point.getBlockNum());
+    if (!Arrays.equals(pointHash, blockHash)) {
+      throw new JsonRpcInternalException(
+          "archive history hash mismatch for block " + point.getBlockNum());
     }
   }
 

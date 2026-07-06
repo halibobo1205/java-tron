@@ -3,6 +3,7 @@ package org.tron.core.services.jsonrpc;
 import static org.tron.core.Wallet.CONTRACT_VALIDATE_ERROR;
 import static org.tron.core.services.jsonrpc.JsonRpcApiUtil.triggerCallContract;
 
+import java.util.Arrays;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.Wallet;
 import org.tron.core.archive.ArchiveException;
@@ -14,6 +15,7 @@ import org.tron.core.archive.reader.ArchiveStateReader;
 import org.tron.core.archive.reader.ArchiveStateReaderFactory;
 import org.tron.core.archive.reader.JsonRpcArchiveStatePointResolver;
 import org.tron.core.archive.reader.ResolvedArchiveStatePoint;
+import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.exception.ContractExeException;
@@ -85,6 +87,7 @@ public final class HistoricalEthCallSupport {
             + point.getBlockNum());
       }
       BlockCapsule historicalBlock = new BlockCapsule(block);
+      requireResolvedBlockHash(point, historicalBlock.getBlockId().getBytes());
       DynamicPropertiesStore latestStore =
           StoreFactory.getInstance().getChainBaseManager().getDynamicPropertiesStore();
       TriggerSmartContract trigger =
@@ -168,6 +171,17 @@ public final class HistoricalEthCallSupport {
   private void requireArchiveEnabled() throws JsonRpcInternalException {
     if (!archiveService.isEnabled()) {
       throw new JsonRpcInternalException("archive is not available");
+    }
+  }
+
+  private static void requireResolvedBlockHash(ArchiveStatePoint point, byte[] blockHash)
+      throws JsonRpcInternalException {
+    byte[] pointHash = point.getBlockHash();
+    if (pointHash == null || pointHash.length != ArchiveBlockRange.BLOCK_HASH_LENGTH
+        || blockHash == null || blockHash.length != ArchiveBlockRange.BLOCK_HASH_LENGTH
+        || !Arrays.equals(pointHash, blockHash)) {
+      throw new JsonRpcInternalException(
+          "archive history hash mismatch for block " + point.getBlockNum());
     }
   }
 

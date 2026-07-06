@@ -355,12 +355,17 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
         "ALLOW_TVM_CANCUN",
         "ALLOW_TVM_BLOB",
         "ALLOW_TVM_COMPATIBLE_EVM",
+        "ALLOW_OPTIMIZED_RETURN_VALUE_OF_CHAIN_ID",
+        "MAINTENANCE_TIME_INTERVAL",
         "UNFREEZE_DELAY_DAYS",
         "ALLOW_NEW_RESOURCE_MODEL",
         "ALLOW_SHIELDED_TRC20_TRANSACTION",
         "ALLOW_MULTI_SIGN",
+        "ALLOW_HIGHER_LIMIT_FOR_MAX_CPU_TIME_OF_ONE_TX",
         "ALLOW_DYNAMIC_ENERGY",
         "DYNAMIC_ENERGY_THRESHOLD",
+        "DYNAMIC_ENERGY_INCREASE_FACTOR",
+        "DYNAMIC_ENERGY_MAX_FACTOR",
         "ALLOW_ENERGY_ADJUSTMENT",
         "ALLOW_STRICT_MATH",
         "CONSENSUS_LOGIC_OPTIMIZATION",
@@ -374,6 +379,7 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
       for (String key : REQUIRED_VM_DEFAULT_KEYS) {
         put(key, 0L);
       }
+      put("MAINTENANCE_TIME_INTERVAL", 21_600_000L);
     }
 
     void put(String key, long value) {
