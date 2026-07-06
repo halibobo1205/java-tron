@@ -90,6 +90,8 @@ public class DefaultArchiveServiceTest {
     service.endTx();
 
     service.commitBlock(b); // userTxCount = block.getTransactions().size() = 0
+    assertFalse(index.getBlockRange(5).isPresent());
+    service.publishSolidifiedBlocks(5);
     ArchiveBlockRange range = index.getBlockRange(5).orElseThrow(AssertionError::new);
     assertEquals(0, range.getFirstTxNum());
     assertEquals(1, range.getLastTxNum());
@@ -112,6 +114,7 @@ public class DefaultArchiveServiceTest {
     service.beginSystemTx(b, ArchivePhase.BLOCK_FINALIZE);
     service.endTx();
     service.commitBlock(b, 1);
+    service.publishSolidifiedBlocks(5);
     ArchiveBlockRange range = index.getBlockRange(5).orElseThrow(AssertionError::new);
 
     service.getReaderFactory().open(ArchiveStatePoint.blockEnd(
@@ -144,6 +147,40 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
+  public void commitBlockDoesNotExposeReaderStateUntilPublish() throws Exception {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    DefaultArchiveService service =
+        new DefaultArchiveService(true, index, context, temporal);
+
+    byte[] addr = new byte[21];
+    addr[0] = 0x41;
+    BlockCapsule b = blockWithParentSeed(5, (byte) 5);
+    service.beginBlock(b, ArchiveSource.NORMAL);
+    service.beginSystemTx(b, ArchivePhase.BLOCK_PREPARE);
+    service.endTx();
+    service.beginSystemTx(b, ArchivePhase.BLOCK_FINALIZE);
+    long finalizeTxNum = context.current().orElseThrow(AssertionError::new).getTxNum();
+    service.getCaptureEngine().capturePut("account", addr, null, account(1));
+    service.endTx();
+    service.commitBlock(b);
+
+    assertFalse(index.getBlockRange(5).isPresent());
+    assertEquals(0, temporal.changeCount());
+    ArchiveReaderException unpublished = assertThrows(ArchiveReaderException.class,
+        () -> service.getReaderFactory().open(ArchiveStatePoint.blockEnd(
+            5, b.getBlockId().getBytes(), finalizeTxNum)));
+    assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, unpublished.getReason());
+
+    service.publishSolidifiedBlocks(5);
+    assertTrue(index.getBlockRange(5).isPresent());
+    assertEquals(1, temporal.changeCount());
+    service.getReaderFactory().open(ArchiveStatePoint.blockEnd(
+        5, b.getBlockId().getBytes(), finalizeTxNum)).close();
+  }
+
+  @Test
   public void explicitUserTxCountAllowsGenesisSyntheticTransactions() {
     InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
     ArchiveExecutionContext context = new ArchiveExecutionContext();
@@ -158,6 +195,7 @@ public class DefaultArchiveServiceTest {
     service.endTx();
 
     service.commitBlock(b, 0);
+    service.publishSolidifiedBlocks(0);
 
     ArchiveBlockRange range = index.getBlockRange(0).orElseThrow(AssertionError::new);
     assertEquals(0, range.getUserTxCount());
@@ -194,6 +232,15 @@ public class DefaultArchiveServiceTest {
     return Account.parseFrom(accountBytes).getBalance();
   }
 
+  private static void commitEmptyBlock(DefaultArchiveService service, BlockCapsule block) {
+    service.beginBlock(block, ArchiveSource.NORMAL);
+    service.beginSystemTx(block, ArchivePhase.BLOCK_PREPARE);
+    service.endTx();
+    service.beginSystemTx(block, ArchivePhase.BLOCK_FINALIZE);
+    service.endTx();
+    service.commitBlock(block);
+  }
+
   @Test
   public void commitCollapsesSameKeySameTxToFirstPrevLastNew() throws Exception {
     // Two captures of the same account within one user tx (10 -> 20 -> 30): the drain must keep the
@@ -219,6 +266,7 @@ public class DefaultArchiveServiceTest {
     service.getCaptureEngine().capturePut("account", addr, account(20), account(30));
     service.endTx();
     service.commitBlock(b);
+    service.publishSolidifiedBlocks(5);
 
     // exactly one history entry for the key (the two captures collapsed into one change).
     assertEquals(1, temporal.changeCount());
@@ -251,6 +299,9 @@ public class DefaultArchiveServiceTest {
     service.endTx();
 
     service.commitBlock(b);
+    assertFalse(index.getBlockRange(5).isPresent());
+    assertEquals(0, temporal.changeCount());
+    service.publishSolidifiedBlocks(5);
 
     assertTrue(index.getBlockRange(5).isPresent());
     assertEquals(1, temporal.changeCount());
@@ -266,9 +317,30 @@ public class DefaultArchiveServiceTest {
     service.beginSystemTx(b2, ArchivePhase.BLOCK_FINALIZE);
     service.endTx();
     service.commitBlock(b2);
+    service.publishSolidifiedBlocks(6);
 
     assertTrue(index.getBlockRange(6).isPresent());
     assertEquals(1, temporal.changeCount());
+  }
+
+  @Test
+  public void publishSolidifiedBlocksPublishesOnlyThroughSolidNum() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    DefaultArchiveService service = new DefaultArchiveService(true, index, context);
+
+    BlockCapsule b5 = blockWithParentSeed(5, (byte) 5);
+    commitEmptyBlock(service, b5);
+    BlockCapsule b6 = blockWithParentSeed(6, (byte) 6);
+    commitEmptyBlock(service, b6);
+    BlockCapsule b7 = blockWithParentSeed(7, (byte) 7);
+    commitEmptyBlock(service, b7);
+
+    service.publishSolidifiedBlocks(6);
+
+    assertTrue(index.getBlockRange(5).isPresent());
+    assertTrue(index.getBlockRange(6).isPresent());
+    assertFalse(index.getBlockRange(7).isPresent());
   }
 
   @Test
@@ -290,10 +362,37 @@ public class DefaultArchiveServiceTest {
     service.endTx();
 
     service.commitBlock(b);
+    service.publishSolidifiedBlocks(5);
 
     assertTrue(index.getBlockRange(5).isPresent());
     assertEquals(0, temporal.changeCount());
     assertFalse(temporal.latest(ArchiveDomain.ACCOUNT, addr).isPresent());
+  }
+
+  @Test
+  public void unwindUnpublishedHeadDropsOnlyInFlightState() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    DefaultArchiveService service =
+        new DefaultArchiveService(true, index, context, temporal);
+
+    byte[] addr = new byte[21];
+    addr[0] = 0x41;
+    BlockCapsule b = blockWithParentSeed(5, (byte) 5);
+    service.beginBlock(b, ArchiveSource.NORMAL);
+    service.beginSystemTx(b, ArchivePhase.BLOCK_PREPARE);
+    service.getCaptureEngine().capturePut("account", addr, null, account(1));
+    service.endTx();
+    service.beginSystemTx(b, ArchivePhase.BLOCK_FINALIZE);
+    service.endTx();
+    service.commitBlock(b);
+
+    service.unwindBlock(b);
+    service.publishSolidifiedBlocks(5);
+
+    assertFalse(index.getBlockRange(5).isPresent());
+    assertEquals(0, temporal.changeCount());
   }
 
   @Test
@@ -336,7 +435,7 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
-  public void temporalBatchFailureUnwindsCommittedIndex() {
+  public void temporalBatchFailureDuringPublishUnwindsCommittedIndex() {
     InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
     ArchiveExecutionContext context = new ArchiveExecutionContext();
     DefaultArchiveService service =
@@ -352,18 +451,21 @@ public class DefaultArchiveServiceTest {
     service.beginSystemTx(b, ArchivePhase.BLOCK_FINALIZE);
     service.endTx();
 
-    assertThrows(ArchiveException.class, () -> service.commitBlock(b));
+    service.commitBlock(b);
+    assertFalse(index.getBlockRange(5).isPresent());
+
+    assertThrows(ArchiveException.class, () -> service.publishSolidifiedBlocks(5));
     assertThrows(ArchiveException.class, service::validateAvailable);
     assertThrows(ArchiveException.class, () -> service.beginBlock(block(6), ArchiveSource.NORMAL));
     assertFalse(index.getBlockRange(5).isPresent());
   }
 
   @Test
-  public void unwindFailureMarksArchiveUnavailable() {
+  public void publishedUnwindMarksArchiveUnavailable() {
     InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
     ArchiveExecutionContext context = new ArchiveExecutionContext();
     DefaultArchiveService service =
-        new DefaultArchiveService(true, index, context, new FailingUnwindTemporalStore());
+        new DefaultArchiveService(true, index, context, new InMemoryArchiveTemporalStore());
 
     BlockCapsule b = block(5);
     service.beginBlock(b, ArchiveSource.NORMAL);
@@ -372,6 +474,7 @@ public class DefaultArchiveServiceTest {
     service.beginSystemTx(b, ArchivePhase.BLOCK_FINALIZE);
     service.endTx();
     service.commitBlock(b);
+    service.publishSolidifiedBlocks(5);
 
     assertThrows(ArchiveException.class, () -> service.unwindBlock(b));
     assertThrows(ArchiveException.class, service::validateAvailable);
@@ -379,7 +482,7 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
-  public void unwindRejectsSameHeightDifferentHashWithoutDeletingArchiveHead() throws Exception {
+  public void unwindRejectsSameHeightDifferentHashAndFailsClosed() throws Exception {
     InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
     ArchiveExecutionContext context = new ArchiveExecutionContext();
     InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
@@ -397,14 +500,16 @@ public class DefaultArchiveServiceTest {
     service.endTx();
     service.commitBlock(b);
 
-    assertThrows(ArchiveException.class, () -> service.unwindBlock(blockWithParentSeed(5, (byte) 1)));
+    assertThrows(ArchiveException.class,
+        () -> service.unwindBlock(blockWithParentSeed(5, (byte) 1)));
 
-    assertTrue(index.getBlockRange(5).isPresent());
-    assertEquals(1, balanceOf(temporal.latest(ArchiveDomain.ACCOUNT, addr).get().getValue()));
+    assertFalse(index.getBlockRange(5).isPresent());
+    assertEquals(0, temporal.changeCount());
+    assertThrows(ArchiveException.class, service::validateAvailable);
   }
 
   @Test
-  public void readGuardBlocksCommitPublication() throws Exception {
+  public void readGuardBlocksSolidifiedPublication() throws Exception {
     InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
     ArchiveExecutionContext context = new ArchiveExecutionContext();
     DefaultArchiveService service = new DefaultArchiveService(true, index, context);
@@ -416,21 +521,22 @@ public class DefaultArchiveServiceTest {
     service.beginSystemTx(b, ArchivePhase.BLOCK_FINALIZE);
     service.endTx();
 
+    service.commitBlock(b);
     ArchiveService.ReadGuard guard = service.acquireReadGuard();
     CountDownLatch started = new CountDownLatch(1);
-    FutureTask<Void> commit = new FutureTask<>(() -> {
+    FutureTask<Void> publish = new FutureTask<>(() -> {
       started.countDown();
-      service.commitBlock(b);
+      service.publishSolidifiedBlocks(5);
       return null;
     });
-    Thread t = new Thread(commit);
+    Thread t = new Thread(publish);
     t.start();
 
     assertTrue(started.await(1, TimeUnit.SECONDS));
     Thread.sleep(100);
     assertFalse(index.getBlockRange(5).isPresent());
     guard.close();
-    commit.get(1, TimeUnit.SECONDS);
+    publish.get(1, TimeUnit.SECONDS);
     assertTrue(index.getBlockRange(5).isPresent());
   }
 
@@ -458,21 +564,19 @@ public class DefaultArchiveServiceTest {
     service.beginSystemTx(b, ArchivePhase.BLOCK_FINALIZE);
     service.endTx();
     service.commitBlock(b);
+    service.publishSolidifiedBlocks(5);
 
     service.validateCanonicalHead(b);
     assertThrows(ArchiveException.class, () -> service.validateCanonicalHead(block(6)));
   }
 
   @Test
-  public void enabledServiceRejectsCanonicalHeadWithoutArchiveCoverage() {
+  public void enabledServiceAllowsEmptyArchiveCanonicalHead() {
     InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
     ArchiveExecutionContext context = new ArchiveExecutionContext();
     DefaultArchiveService service = new DefaultArchiveService(true, index, context);
 
-    ArchiveException ex = assertThrows(ArchiveException.class,
-        () -> service.validateCanonicalHead(block(5)));
-
-    assertTrue(ex.getMessage().contains("canonical head block 5 is not covered by archive"));
+    service.validateCanonicalHead(block(5));
   }
 
   @Test
@@ -563,7 +667,7 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
-  public void ownerDriftDuringAbortSuppressesCleanupFailure() {
+  public void ownerDriftDuringAbortDoesNotTouchPublishedIndex() {
     FailingAbortArchiveTxNumIndex index = new FailingAbortArchiveTxNumIndex();
     ArchiveExecutionContext context = new ArchiveExecutionContext();
     DefaultArchiveService older =
@@ -580,13 +684,10 @@ public class DefaultArchiveServiceTest {
       ArchiveException ex = assertThrows(ArchiveException.class, () -> older.abortBlock(b));
 
       assertTrue(ex.getMessage().contains("capture engine is not active"));
-      assertEquals(1, ex.getSuppressed().length);
-      assertTrue(ex.getSuppressed()[0].getMessage().contains("abort cleanup failed"));
+      assertEquals(0, ex.getSuppressed().length);
       assertTrue(index.repairReason.contains("capture engine is not active"));
       assertFalse(context.current().isPresent());
       assertTrue(older.getCaptureEngine().records().isEmpty());
-      index.delegate.beginBlock(6L, ArchiveSource.NORMAL);
-      index.delegate.abortBlock(6L);
     } finally {
       newer.close();
     }
@@ -606,6 +707,7 @@ public class DefaultArchiveServiceTest {
     older.beginSystemTx(b, ArchivePhase.BLOCK_FINALIZE);
     older.endTx();
     older.commitBlock(b);
+    older.publishSolidifiedBlocks(5);
     DefaultArchiveService newer = new DefaultArchiveService(true);
     try {
       ArchiveException ex = assertThrows(ArchiveException.class, () -> older.unwindBlock(b));
@@ -699,6 +801,16 @@ public class DefaultArchiveServiceTest {
     }
 
     @Override
+    public long getNextTxNum() {
+      return delegate.getNextTxNum();
+    }
+
+    @Override
+    public long getLastArchivedBlock() {
+      return delegate.getLastArchivedBlock();
+    }
+
+    @Override
     public void markRepairRequired(String reason) {
       repairReason = reason;
     }
@@ -736,25 +848,4 @@ public class DefaultArchiveServiceTest {
     }
   }
 
-  private static final class FailingUnwindTemporalStore implements ArchiveTemporalStore {
-
-    @Override
-    public void putChange(ArchiveChangeRecord record) {
-    }
-
-    @Override
-    public Optional<DomainValue> getAsOf(ArchiveDomain domain, byte[] canonicalKey, long txNum) {
-      return Optional.empty();
-    }
-
-    @Override
-    public Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey) {
-      return Optional.empty();
-    }
-
-    @Override
-    public void unwind(long fromTxNum) {
-      throw new ArchiveException("unwind failed");
-    }
-  }
 }

@@ -529,7 +529,12 @@ public class Manager {
       BlockCapsule canonicalHead = chainBaseManager.getBlockById(
           getDynamicPropertiesStore().getLatestBlockHeaderHash());
       this.khaosDb.start(canonicalHead);
-      archiveService.validateCanonicalHead(canonicalHead);
+      long solidifiedNum = Math.min(
+          getDynamicPropertiesStore().getLatestSolidifiedBlockNum(), canonicalHead.getNum());
+      BlockCapsule archiveValidationHead = solidifiedNum == canonicalHead.getNum()
+          ? canonicalHead
+          : chainBaseManager.getBlockByNum(solidifiedNum);
+      archiveService.validateCanonicalHead(archiveValidationHead);
     } catch (ItemNotFoundException e) {
       logger.error(
           "Can not find Dynamic highest block from DB! \nnumber={} \nhash={}",
@@ -673,6 +678,8 @@ public class Manager {
             archiveService.endTx();
           }
           archiveService.commitBlock(genesisBlock, 0);
+          archiveService.publishSolidifiedBlocks(
+              chainBaseManager.getDynamicPropertiesStore().getLatestSolidifiedBlockNum());
           archivePending = false;
         } catch (RuntimeException | Error t) {
           if (archivePending) {
@@ -1145,6 +1152,8 @@ public class Manager {
   void commitArchiveBlockOrFailStop(BlockCapsule block, String action) {
     try {
       archiveService.commitBlock(block);
+      archiveService.publishSolidifiedBlocks(
+          getDynamicPropertiesStore().getLatestSolidifiedBlockNum());
     } catch (RuntimeException e) {
       throw archiveRuntimeError(action, block, e);
     }

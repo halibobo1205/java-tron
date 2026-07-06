@@ -91,15 +91,24 @@ public final class HistoricalTraceSupport {
       byte[] data, String blockNumOrTag, Object traceOptions)
       throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
       JsonRpcInternalException {
+    return traceCall(ownerAddress, contractAddress, callValue, data, blockNumOrTag, traceOptions,
+        null);
+  }
+
+  public TraceResult traceCall(byte[] ownerAddress, byte[] contractAddress, long callValue,
+      byte[] data, String blockNumOrTag, Object traceOptions, byte[] requestedBlockHash)
+      throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
+      JsonRpcInternalException {
     try (ArchiveService.ReadGuard ignored = readGuard()) {
       return traceCallLocked(ownerAddress, contractAddress, callValue, data, blockNumOrTag,
-          traceOptions);
+          traceOptions, requestedBlockHash);
     }
   }
 
   private TraceResult traceCallLocked(byte[] ownerAddress, byte[] contractAddress, long callValue,
-      byte[] data, String blockNumOrTag, Object traceOptions) throws JsonRpcInvalidParamsException,
-      JsonRpcInvalidRequestException, JsonRpcInternalException {
+      byte[] data, String blockNumOrTag, Object traceOptions, byte[] requestedBlockHash)
+      throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
+      JsonRpcInternalException {
     validateTraceOptions(traceOptions);
     if (JsonRpcApiUtil.LATEST_STR.equalsIgnoreCase(blockNumOrTag)) {
       throw new JsonRpcInternalException("historical debug_traceCall invoked for the latest tag");
@@ -110,6 +119,9 @@ public final class HistoricalTraceSupport {
       throw new JsonRpcInternalException("historical debug_traceCall invoked for the latest tag");
     }
     ArchiveStatePoint point = resolved.getPoint();
+    if (requestedBlockHash != null) {
+      requireResolvedBlockHash(point, requestedBlockHash);
+    }
 
     Block block = wallet.getBlockByNum(point.getBlockNum());
     if (block == null) {

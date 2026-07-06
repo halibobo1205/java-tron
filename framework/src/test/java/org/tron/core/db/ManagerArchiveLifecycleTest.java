@@ -31,7 +31,6 @@ import org.tron.core.archive.DefaultArchiveService;
 import org.tron.core.archive.capture.ArchiveCaptureEngine;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
-import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.WitnessCapsule;
@@ -159,28 +158,25 @@ public class ManagerArchiveLifecycleTest extends BaseMethodTest {
   }
 
   @Test
-  public void pushBlockAllocatesTxNumRangeAndEraseUnwinds() throws Exception {
+  public void pushBlockKeepsUnsolidifiedArchiveInFlightAndEraseDropsIt() throws Exception {
     BlockCapsule block = signedEmptyBlock();
 
     dbManager.pushBlock(block);
     assertEquals(1, chainManager.getDynamicPropertiesStore().getLatestBlockHeaderNumber());
 
-    // Archive committed a range for block 1: prepare + finalize system tx, no user tx.
-    ArchiveBlockRange range = archiveService.getTxNumIndex().getBlockRange(1)
-        .orElseThrow(() -> new AssertionError("archive has no committed range for block 1"));
-    assertEquals(1, range.getBlockNum());
-    assertEquals(0, range.getUserTxCount());
-    assertTrue("finalize txNum must follow prepare txNum",
-        range.getFinalizeTxNum() > range.getPrepareTxNum());
+    // Block 1 is canonical but not solidified yet, so archive keeps it in-flight and does not
+    // expose a reader-visible range or temporal rows.
+    assertFalse(archiveService.getTxNumIndex().getBlockRange(1).isPresent());
+    assertEquals(0,
+        ((InMemoryArchiveTemporalStore) archiveService.getTemporalStore()).changeCount());
     // Execution context is clean once the block has been applied and committed.
     assertFalse(ArchiveExecutionContextHolder.get().current().isPresent());
 
-    // eraseBlock unwinds the archive range after canonical fastPop.
+    // eraseBlock drops the in-flight archive block after canonical fastPop.
     while (chainManager.getDynamicPropertiesStore().getLatestBlockHeaderNumber() > 0) {
       dbManager.eraseBlock();
     }
     assertFalse(archiveService.getTxNumIndex().getBlockRange(1).isPresent());
-    // eraseBlock also unwinds the temporal store: block 1's drained changes are gone.
     assertEquals(0,
         ((InMemoryArchiveTemporalStore) archiveService.getTemporalStore()).changeCount());
   }
@@ -200,19 +196,22 @@ public class ManagerArchiveLifecycleTest extends BaseMethodTest {
 
     dbManager.pushBlock(signedEmptyBlock());
 
-    // commitBlock drains the per-block capture buffer into the temporal store and clears it.
+    // commitBlock clears the per-block capture buffer but keeps the block unpublished.
     assertTrue("capture buffer must be drained at commit", captureEngine.records().isEmpty());
     InMemoryArchiveTemporalStore temporalStore =
         (InMemoryArchiveTemporalStore) archiveService.getTemporalStore();
-    assertTrue("block apply must persist at least one domain change to the temporal store",
+    assertEquals(0, temporalStore.changeCount());
+
+    archiveService.publishSolidifiedBlocks(1);
+    assertTrue("solidified publish must persist at least one domain change to the temporal store",
         temporalStore.changeCount() > 0);
   }
 
   @Test
   public void historicalGetBalanceReadsCapturedAccountThroughAdapter() throws Exception {
     // Drive one captured block that writes an account balance, exactly as the Manager would:
-    // beginBlock -> BLOCK_PREPARE (account write captured) -> BLOCK_FINALIZE -> commitBlock (drains
-    // into the temporal store and commits the txNum range).
+    // beginBlock -> BLOCK_PREPARE (account write captured) -> BLOCK_FINALIZE -> commitBlock
+    // (in-flight) -> solidified publish (reader-visible range + temporal rows).
     BlockCapsule block = signedEmptyBlock();
     byte[] addr = new byte[21];
     addr[0] = 0x41;
@@ -229,6 +228,7 @@ public class ManagerArchiveLifecycleTest extends BaseMethodTest {
     archiveService.beginSystemTx(block, ArchivePhase.BLOCK_FINALIZE);
     archiveService.endTx();
     archiveService.commitBlock(block);
+    archiveService.publishSolidifiedBlocks(block.getNum());
 
     // The resolver resolves a quantity tag without touching the wallet, then fetches the block by
     // number; a mock supplies that single block so the test needs no live block store.

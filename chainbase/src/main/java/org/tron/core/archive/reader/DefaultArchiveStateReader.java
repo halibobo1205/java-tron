@@ -20,8 +20,8 @@ import org.tron.protos.contract.SmartContractOuterClass.SmartContract;
 /**
  * Reads historical state from an {@link ArchiveTemporalStore} at a fixed {@link ArchiveStatePoint},
  * mapping the store's PRESENT/TOMBSTONE/MISSING outcome (via {@code getAsOf}, inclusive-after) to a
- * typed {@link ArchiveReadResult}. It never consults live state, so absence in the archive is
- * MISSING -- not the current value (the "no fallback to latest" invariant).
+ * typed {@link ArchiveReadResult}. It never consults live state, so archive reads cannot leak a
+ * newer canonical head into an older historical point.
  */
 public final class DefaultArchiveStateReader implements ArchiveStateReader {
 
@@ -172,7 +172,10 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
     if (!stored.isPresent()) {
       return ArchiveReadResult.missing();
     }
-    DomainValue value = stored.get();
+    return toReadResult(stored.get());
+  }
+
+  private ArchiveReadResult<byte[]> toReadResult(DomainValue value) {
     return value.isDeleted()
         ? ArchiveReadResult.tombstone()
         : ArchiveReadResult.present(value.getValue());
