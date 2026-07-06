@@ -1014,23 +1014,104 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule>
   }
 
   /**
-   * Re-publishes constructor-seeded VM dynamic properties while the genesis archive context is
-   * active, so a genesis-complete archive has explicit block-0 rows for historical call/trace.
+   * Re-publishes constructor-seeded rooted dynamic properties while the genesis archive context is
+   * active, so a genesis-complete archive has explicit block-0 rows for every rooted key.
    */
   public void saveGenesisArchiveDynamicProperties() {
+    saveLatestBlockHeaderTimestamp(getLatestBlockHeaderTimestamp());
+    saveGenesisArchiveFeeProperties();
+    saveGenesisArchiveResourceProperties();
+    saveGenesisArchiveGovernanceProperties();
+    saveGenesisArchiveVmProperties();
+  }
+
+  private void saveGenesisArchiveFeeProperties() {
     saveEnergyFee(getEnergyFee());
-    saveMaintenanceTimeInterval(getMaintenanceTimeInterval());
-    saveCurrentCycleNumber(getCurrentCycleNumber());
-    saveTotalNetLimit(getTotalNetLimit());
-    saveTotalNetWeight(getTotalNetWeight());
-    saveTotalEnergyCurrentLimit(getTotalEnergyCurrentLimit());
-    saveTotalEnergyWeight(getTotalEnergyWeight());
-    saveTotalTronPowerWeight(getTotalTronPowerWeight());
-    saveAllowCreationOfContracts(getAllowCreationOfContracts());
-    saveNewRewardAlgorithmEffectiveCycle(getNewRewardAlgorithmEffectiveCycle());
-    saveBlockHashHistoryInstalled(getBlockHashHistoryInstalled());
+    saveTransactionFee(getTransactionFee());
     saveMaxFeeLimit(getMaxFeeLimit());
     saveMaxCpuTimeOfOneTx(getMaxCpuTimeOfOneTx());
+    saveMemoFee(getMemoFee());
+    saveCreateAccountFee(getCreateAccountFee());
+    saveCreateNewAccountFeeInSystemContract(getCreateNewAccountFeeInSystemContract());
+    saveAssetIssueFee(getAssetIssueFee());
+    saveUpdateAccountPermissionFee(getUpdateAccountPermissionFee());
+    saveMultiSignFee(getMultiSignFee());
+    saveExchangeCreateFee(getExchangeCreateFee());
+    saveMarketSellFee(getMarketSellFee());
+    saveMarketCancelFee(getMarketCancelFee());
+  }
+
+  private void saveGenesisArchiveResourceProperties() {
+    saveCreateNewAccountBandwidthRate(getCreateNewAccountBandwidthRate());
+    saveFreeNetLimit(getFreeNetLimit());
+    saveOneDayNetLimit(getOneDayNetLimit());
+    savePublicNetLimit(getPublicNetLimit());
+    savePublicNetUsage(getPublicNetUsage());
+    savePublicNetTime(getPublicNetTime());
+    put(DynamicResourceProperties.TOTAL_ENERGY_LIMIT,
+        new BytesCapsule(ByteArray.fromLong(getTotalEnergyLimit())));
+    saveTotalNetLimit(getTotalNetLimit());
+    saveTotalEnergyCurrentLimit(getTotalEnergyCurrentLimit());
+    saveTotalEnergyTargetLimit(getTotalEnergyTargetLimit());
+    saveTotalEnergyAverageUsage(getTotalEnergyAverageUsage());
+    saveTotalEnergyAverageTime(getTotalEnergyAverageTime());
+    saveBlockEnergyUsage(getBlockEnergyUsage());
+    saveAdaptiveResourceLimitTargetRatio(getAdaptiveResourceLimitTargetRatio());
+    saveAdaptiveResourceLimitMultiplier(getAdaptiveResourceLimitMultiplier());
+    saveTotalNetWeight(getTotalNetWeight());
+    saveTotalEnergyWeight(getTotalEnergyWeight());
+    saveTotalTronPowerWeight(getTotalTronPowerWeight());
+    saveExchangeBalanceLimit(getExchangeBalanceLimit());
+    saveMarketQuantityLimit(getMarketQuantityLimit());
+    saveMaxDelegateLockPeriod(getMaxDelegateLockPeriod());
+    saveMaxCreateAccountTxSize(getMaxCreateAccountTxSize());
+    saveShieldedTransactionFee(getShieldedTransactionFee());
+    saveShieldedTransactionCreateAccountFee(getShieldedTransactionCreateAccountFee());
+    saveTotalShieldedPoolValue(getTotalShieldedPoolValue());
+  }
+
+  private void saveGenesisArchiveGovernanceProperties() {
+    saveNextMaintenanceTime(getNextMaintenanceTime());
+    saveMaintenanceTimeInterval(getMaintenanceTimeInterval());
+    saveMaxFrozenTime(getMaxFrozenTime());
+    saveMinFrozenTime(getMinFrozenTime());
+    saveMaxFrozenSupplyNumber(getMaxFrozenSupplyNumber());
+    saveMaxFrozenSupplyTime(getMaxFrozenSupplyTime());
+    saveMinFrozenSupplyTime(getMinFrozenSupplyTime());
+    saveWitnessAllowanceFrozenTime(getWitnessAllowanceFrozenTime());
+    saveAccountUpgradeCost(getAccountUpgradeCost());
+    saveWitnessPayPerBlock(getWitnessPayPerBlock());
+    saveWitness127PayPerBlock(getWitness127PayPerBlock());
+    saveWitnessStandbyAllowance(getWitnessStandbyAllowance());
+    saveRemoveThePowerOfTheGr(getRemoveThePowerOfTheGr());
+    saveAllowUpdateAccountName(getAllowUpdateAccountName());
+    saveAllowSameTokenName(getAllowSameTokenName());
+    saveAllowDelegateResource(getAllowDelegateResource());
+    saveAllowAdaptiveEnergy(getAllowAdaptiveEnergy());
+    saveAllowProtoFilterNum(getAllowProtoFilterNum());
+    saveAllowAccountStateRoot(getAllowAccountStateRoot());
+    saveChangeDelegation(getChangeDelegation());
+    saveForbidTransferToContract(getForbidTransferToContract());
+    saveAllowPBFT(getAllowPBFT());
+    saveAllowMarketTransaction(getAllowMarketTransaction());
+    saveAllowTransactionFeePool(getAllowTransactionFeePool());
+    saveAllowBlackHoleOptimization(getAllowBlackHoleOptimization());
+    setAllowAccountAssetOptimization(getAllowAccountAssetOptimization());
+    setAllowAssetOptimization(getAllowAssetOptimization());
+    saveAllowNewReward(getAllowNewReward());
+    saveNewRewardAlgorithmEffectiveCycle(getNewRewardAlgorithmEffectiveCycle());
+    saveAllowDelegateOptimization(getAllowDelegateOptimization());
+    saveAllowCancelAllUnfreezeV2(getAllowCancelAllUnfreezeV2());
+    saveAllowOldRewardOpt(getAllowOldRewardOpt());
+    saveProposalExpireTime(getProposalExpireTime());
+    saveLatestProposalNum(getLatestProposalNum());
+    saveLatestExchangeNum(getLatestExchangeNum());
+    saveTotalSignNum(getTotalSignNum());
+    saveTokenIdNum(getTokenIdNum());
+  }
+
+  private void saveGenesisArchiveVmProperties() {
+    saveAllowCreationOfContracts(getAllowCreationOfContracts());
     saveAllowTvmTransferTrc10(getAllowTvmTransferTrc10());
     saveAllowTvmConstantinople(getAllowTvmConstantinople());
     saveAllowTvmSolidity059(getAllowTvmSolidity059());
@@ -1042,12 +1123,16 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule>
     saveAllowTvmCancun(getAllowTvmCancun());
     saveAllowTvmBlob(getAllowTvmBlob());
     saveAllowTvmOsaka(getAllowTvmOsaka());
+    saveAllowTvmPrague(getAllowTvmPrague());
     saveAllowTvmSelfdestructRestriction(getAllowTvmSelfdestructRestriction());
     saveAllowTvmCompatibleEvm(getAllowTvmCompatibleEvm());
     saveAllowOptimizedReturnValueOfChainId(getAllowOptimizedReturnValueOfChainId());
+    saveCurrentCycleNumber(getCurrentCycleNumber());
+    saveLatestVersion(getLatestVersion());
     saveUnfreezeDelayDays(getUnfreezeDelayDays());
     saveAllowNewResourceModel(getAllowNewResourceModel());
     saveAllowShieldedTRC20Transaction(getAllowShieldedTRC20Transaction());
+    saveAllowShieldedTransaction(getAllowShieldedTransaction());
     saveAllowMultiSign(getAllowMultiSign());
     saveAllowHigherLimitForMaxCpuTimeOfOneTx(getAllowHigherLimitForMaxCpuTimeOfOneTx());
     saveAllowDynamicEnergy(getAllowDynamicEnergy());
@@ -1058,6 +1143,10 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule>
     saveAllowStrictMath(getAllowStrictMath());
     saveConsensusLogicOptimization(getConsensusLogicOptimization());
     saveAllowHardenResourceCalculation(getAllowHardenResourceCalculation());
+    saveAllowHardenExchangeCalculation(getAllowHardenExchangeCalculation());
+    saveAvailableContractType(getAvailableContractType());
+    saveActiveDefaultOperations(getActiveDefaultOperations());
+    saveBlockHashHistoryInstalled(getBlockHashHistoryInstalled());
   }
 
   public void saveTokenIdNum(long num) {

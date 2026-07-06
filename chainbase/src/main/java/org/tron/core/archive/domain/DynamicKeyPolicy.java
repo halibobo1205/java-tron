@@ -17,6 +17,7 @@ import java.util.Map;
 public final class DynamicKeyPolicy {
 
   private final Map<String, DynamicKeyDecision> decisions = new LinkedHashMap<>();
+  private final List<DynamicKeyDecision> patternDecisions = new ArrayList<>();
 
   public DynamicKeyPolicy() {
     // --- IN_GLOBAL_ROOT: fee parameters ---
@@ -116,7 +117,7 @@ public final class DynamicKeyPolicy {
     root("ALLOW_OPTIMIZED_RETURN_VALUE_OF_CHAIN_ID", DynamicKeyClass.VM_CONFIG);
     root("CURRENT_CYCLE_NUMBER", DynamicKeyClass.VM_CONFIG);
     root("VERSION_NUMBER", DynamicKeyClass.VM_CONFIG);
-    root("FORK_VERSION_*", DynamicKeyClass.VM_CONFIG);
+    rootPattern("FORK_VERSION_<numeric>", DynamicKeyClass.VM_CONFIG);
     root("ALLOW_DYNAMIC_ENERGY", DynamicKeyClass.VM_CONFIG);
     root("DYNAMIC_ENERGY_THRESHOLD", DynamicKeyClass.VM_CONFIG);
     root("DYNAMIC_ENERGY_INCREASE_FACTOR", DynamicKeyClass.VM_CONFIG);
@@ -178,6 +179,11 @@ public final class DynamicKeyPolicy {
         RootPolicy.IN_GLOBAL_ROOT, HistoryPolicy.FULL_HISTORY, ReaderPolicy.INTERNAL_ONLY));
   }
 
+  private void rootPattern(String pattern, DynamicKeyClass keyClass) {
+    patternDecisions.add(new DynamicKeyDecision(pattern, keyClass,
+        RootPolicy.IN_GLOBAL_ROOT, HistoryPolicy.FULL_HISTORY, ReaderPolicy.HISTORICAL_VM));
+  }
+
   private void historyOnly(String key, DynamicKeyClass keyClass) {
     decisions.put(key, new DynamicKeyDecision(key, keyClass,
         RootPolicy.HISTORY_ONLY, HistoryPolicy.FULL_HISTORY, ReaderPolicy.INTERNAL_ONLY));
@@ -196,6 +202,9 @@ public final class DynamicKeyPolicy {
   /** Decision for a dynamic property key (ASCII bytes). */
   public DynamicKeyDecision decision(byte[] key) {
     String name = new String(key, StandardCharsets.US_ASCII);
+    if ("FORK_VERSION_*".equals(name)) {
+      return unknownDecision(name);
+    }
     DynamicKeyDecision decision = decisions.get(name);
     if (decision != null) {
       return decision;
@@ -232,5 +241,9 @@ public final class DynamicKeyPolicy {
 
   public List<DynamicKeyDecision> allDecisions() {
     return Collections.unmodifiableList(new ArrayList<>(decisions.values()));
+  }
+
+  List<DynamicKeyDecision> patternDecisionsForChecksum() {
+    return Collections.unmodifiableList(new ArrayList<>(patternDecisions));
   }
 }

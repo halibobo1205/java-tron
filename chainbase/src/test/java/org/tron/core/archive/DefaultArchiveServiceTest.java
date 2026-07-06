@@ -533,6 +533,66 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
+  public void ownerDriftDuringAbortMarksRepairAndClearsPendingBlock() {
+    TrackingArchiveTxNumIndex index = new TrackingArchiveTxNumIndex();
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    DefaultArchiveService older =
+        new DefaultArchiveService(true, index, context, new InMemoryArchiveTemporalStore());
+
+    byte[] addr = new byte[21];
+    addr[0] = 0x41;
+    BlockCapsule b = block(5);
+    older.beginBlock(b, ArchiveSource.NORMAL);
+    older.beginSystemTx(b, ArchivePhase.BLOCK_PREPARE);
+    older.getCaptureEngine().capturePut("account", addr, null, account(1));
+    DefaultArchiveService newer = new DefaultArchiveService(true);
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class, () -> older.abortBlock(b));
+
+      assertTrue(ex.getMessage().contains("capture engine is not active"));
+      assertTrue(index.repairReason.contains("capture engine is not active"));
+      assertFalse(index.getBlockRange(5).isPresent());
+      assertFalse(context.current().isPresent());
+      assertTrue(older.getCaptureEngine().records().isEmpty());
+      index.beginBlock(6L, ArchiveSource.NORMAL);
+      index.abortBlock(6L);
+      assertThrows(ArchiveException.class, older::validateAvailable);
+    } finally {
+      newer.close();
+    }
+  }
+
+  @Test
+  public void ownerDriftDuringAbortSuppressesCleanupFailure() {
+    FailingAbortArchiveTxNumIndex index = new FailingAbortArchiveTxNumIndex();
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    DefaultArchiveService older =
+        new DefaultArchiveService(true, index, context, new InMemoryArchiveTemporalStore());
+
+    byte[] addr = new byte[21];
+    addr[0] = 0x41;
+    BlockCapsule b = block(5);
+    older.beginBlock(b, ArchiveSource.NORMAL);
+    older.beginSystemTx(b, ArchivePhase.BLOCK_PREPARE);
+    older.getCaptureEngine().capturePut("account", addr, null, account(1));
+    DefaultArchiveService newer = new DefaultArchiveService(true);
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class, () -> older.abortBlock(b));
+
+      assertTrue(ex.getMessage().contains("capture engine is not active"));
+      assertEquals(1, ex.getSuppressed().length);
+      assertTrue(ex.getSuppressed()[0].getMessage().contains("abort cleanup failed"));
+      assertTrue(index.repairReason.contains("capture engine is not active"));
+      assertFalse(context.current().isPresent());
+      assertTrue(older.getCaptureEngine().records().isEmpty());
+      index.delegate.beginBlock(6L, ArchiveSource.NORMAL);
+      index.delegate.abortBlock(6L);
+    } finally {
+      newer.close();
+    }
+  }
+
+  @Test
   public void ownerDriftDuringUnwindMarksRepairWithoutDroppingArchiveRange() {
     TrackingArchiveTxNumIndex index = new TrackingArchiveTxNumIndex();
     DefaultArchiveService older =
@@ -559,9 +619,18 @@ public class DefaultArchiveServiceTest {
     }
   }
 
-  private static final class TrackingArchiveTxNumIndex implements ArchiveTxNumIndex {
-    private final InMemoryArchiveTxNumIndex delegate = new InMemoryArchiveTxNumIndex();
-    private String repairReason = "";
+  private static final class FailingAbortArchiveTxNumIndex extends TrackingArchiveTxNumIndex {
+
+    @Override
+    public void abortBlock(long blockNum) {
+      delegate.abortBlock(blockNum);
+      throw new ArchiveException("abort cleanup failed");
+    }
+  }
+
+  private static class TrackingArchiveTxNumIndex implements ArchiveTxNumIndex {
+    protected final InMemoryArchiveTxNumIndex delegate = new InMemoryArchiveTxNumIndex();
+    protected String repairReason = "";
 
     @Override
     public void beginBlock(long blockNum, ArchiveSource source) {

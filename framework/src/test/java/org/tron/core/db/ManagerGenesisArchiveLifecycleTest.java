@@ -55,6 +55,13 @@ public class ManagerGenesisArchiveLifecycleTest extends BaseMethodTest {
     assertArchivedLong(reader, "ENERGY_FEE",
         chainBaseManager.getDynamicPropertiesStore().getEnergyFee());
     assertArchivedLong(reader, "latest_block_header_timestamp", genesis.getTimeStamp());
+    assertArchivedLong(reader, "TRANSACTION_FEE",
+        chainBaseManager.getDynamicPropertiesStore().getTransactionFee());
+    assertArchivedLong(reader, "NEXT_MAINTENANCE_TIME",
+        chainBaseManager.getDynamicPropertiesStore().getNextMaintenanceTime());
+    assertArchivedLong(reader, "ALLOW_TVM_PRAGUE",
+        chainBaseManager.getDynamicPropertiesStore().getAllowTvmPrague());
+    assertArchivedPresent(reader, "ACTIVE_DEFAULT_OPERATIONS");
   }
 
   private static void assertArchivedLong(ArchiveStateReader reader, String key, long expected)
@@ -63,5 +70,12 @@ public class ManagerGenesisArchiveLifecycleTest extends BaseMethodTest {
         reader.getDynamicProperty(key.getBytes(StandardCharsets.US_ASCII));
     assertTrue("expected archived dynamic property " + key, result.isPresent());
     assertEquals(expected, ByteArray.toLong(result.getValue()));
+  }
+
+  private static void assertArchivedPresent(ArchiveStateReader reader, String key)
+      throws Exception {
+    ArchiveReadResult<byte[]> result =
+        reader.getDynamicProperty(key.getBytes(StandardCharsets.US_ASCII));
+    assertTrue("expected archived dynamic property " + key, result.isPresent());
   }
 }

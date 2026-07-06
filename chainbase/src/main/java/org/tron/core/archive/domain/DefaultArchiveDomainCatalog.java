@@ -176,6 +176,11 @@ public final class DefaultArchiveDomainCatalog implements ArchiveDomainCatalog {
           .append(dec.getRootPolicy()).append('|').append(dec.getHistoryPolicy()).append('|')
           .append(dec.getReaderPolicy()).append('\n');
     }
+    for (DynamicKeyDecision dec : dynamicKeyPolicy.patternDecisionsForChecksum()) {
+      sb.append("dyn-pattern|").append(dec.getKey()).append('|').append(dec.getKeyClass())
+          .append('|').append(dec.getRootPolicy()).append('|').append(dec.getHistoryPolicy())
+          .append('|').append(dec.getReaderPolicy()).append('\n');
+    }
     DynamicKeyDecision unknown = dynamicKeyPolicy.unknownDecisionForChecksum();
     sb.append("dyn|").append(unknown.getKey()).append('|').append(unknown.getKeyClass())
         .append('|').append(unknown.getRootPolicy()).append('|')

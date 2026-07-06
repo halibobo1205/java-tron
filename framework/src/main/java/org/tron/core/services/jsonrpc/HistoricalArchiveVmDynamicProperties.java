@@ -34,6 +34,122 @@ import org.tron.core.store.VmDynamicProperties;
  */
 public final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProperties {
 
+  static final String[] STRICT_GENESIS_LONG_KEYS = {
+      "latest_block_header_timestamp",
+      "ENERGY_FEE",
+      "TRANSACTION_FEE",
+      "MAX_FEE_LIMIT",
+      "MAX_CPU_TIME_OF_ONE_TX",
+      "MEMO_FEE",
+      "CREATE_ACCOUNT_FEE",
+      "CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT",
+      "ASSET_ISSUE_FEE",
+      "UPDATE_ACCOUNT_PERMISSION_FEE",
+      "MULTI_SIGN_FEE",
+      "EXCHANGE_CREATE_FEE",
+      "MARKET_SELL_FEE",
+      "MARKET_CANCEL_FEE",
+      "CREATE_NEW_ACCOUNT_BANDWIDTH_RATE",
+      "FREE_NET_LIMIT",
+      "ONE_DAY_NET_LIMIT",
+      "PUBLIC_NET_LIMIT",
+      "PUBLIC_NET_USAGE",
+      "PUBLIC_NET_TIME",
+      "TOTAL_ENERGY_LIMIT",
+      "TOTAL_NET_LIMIT",
+      "TOTAL_ENERGY_CURRENT_LIMIT",
+      "TOTAL_ENERGY_TARGET_LIMIT",
+      "TOTAL_ENERGY_AVERAGE_USAGE",
+      "TOTAL_ENERGY_AVERAGE_TIME",
+      "BLOCK_ENERGY_USAGE",
+      "ADAPTIVE_RESOURCE_LIMIT_TARGET_RATIO",
+      "ADAPTIVE_RESOURCE_LIMIT_MULTIPLIER",
+      "TOTAL_NET_WEIGHT",
+      "TOTAL_ENERGY_WEIGHT",
+      "TOTAL_TRON_POWER_WEIGHT",
+      "EXCHANGE_BALANCE_LIMIT",
+      "MARKET_QUANTITY_LIMIT",
+      "MAX_DELEGATE_LOCK_PERIOD",
+      "MAX_CREATE_ACCOUNT_TX_SIZE",
+      "SHIELDED_TRANSACTION_FEE",
+      "SHIELDED_TRANSACTION_CREATE_ACCOUNT_FEE",
+      "TOTAL_SHIELDED_POOL_VALUE",
+      "NEXT_MAINTENANCE_TIME",
+      "MAINTENANCE_TIME_INTERVAL",
+      "ACCOUNT_UPGRADE_COST",
+      "WITNESS_PAY_PER_BLOCK",
+      "WITNESS_127_PAY_PER_BLOCK",
+      "WITNESS_STANDBY_ALLOWANCE",
+      "REMOVE_THE_POWER_OF_THE_GR",
+      "ALLOW_UPDATE_ACCOUNT_NAME",
+      " ALLOW_SAME_TOKEN_NAME",
+      "ALLOW_DELEGATE_RESOURCE",
+      "ALLOW_ADAPTIVE_ENERGY",
+      "ALLOW_PROTO_FILTER_NUM",
+      "ALLOW_ACCOUNT_STATE_ROOT",
+      "CHANGE_DELEGATION",
+      "FORBID_TRANSFER_TO_CONTRACT",
+      "ALLOW_PBFT",
+      "ALLOW_MARKET_TRANSACTION",
+      "ALLOW_TRANSACTION_FEE_POOL",
+      "ALLOW_BLACKHOLE_OPTIMIZATION",
+      "ALLOW_ACCOUNT_ASSET_OPTIMIZATION",
+      "ALLOW_ASSET_OPTIMIZATION",
+      "ALLOW_NEW_REWARD",
+      "ALLOW_DELEGATE_OPTIMIZATION",
+      "ALLOW_CANCEL_ALL_UNFREEZE_V2",
+      "ALLOW_OLD_REWARD_OPT",
+      "PROPOSAL_EXPIRE_TIME",
+      "LATEST_PROPOSAL_NUM",
+      "LATEST_EXCHANGE_NUM",
+      "TOKEN_ID_NUM",
+      "ALLOW_CREATION_OF_CONTRACTS",
+      "ALLOW_TVM_TRANSFER_TRC10",
+      "ALLOW_TVM_CONSTANTINOPLE",
+      "ALLOW_TVM_SOLIDITY_059",
+      "ALLOW_TVM_ISTANBUL",
+      "ALLOW_TVM_FREEZE",
+      "ALLOW_TVM_VOTE",
+      "ALLOW_TVM_LONDON",
+      "ALLOW_TVM_COMPATIBLE_EVM",
+      "ALLOW_HIGHER_LIMIT_FOR_MAX_CPU_TIME_OF_ONE_TX",
+      "ALLOW_OPTIMIZED_RETURN_VALUE_OF_CHAIN_ID",
+      "CURRENT_CYCLE_NUMBER",
+      "ALLOW_DYNAMIC_ENERGY",
+      "DYNAMIC_ENERGY_THRESHOLD",
+      "DYNAMIC_ENERGY_INCREASE_FACTOR",
+      "DYNAMIC_ENERGY_MAX_FACTOR",
+      "ALLOW_TVM_SHANGHAI",
+      "ALLOW_ENERGY_ADJUSTMENT",
+      "ALLOW_STRICT_MATH",
+      "ALLOW_TVM_CANCUN",
+      "CONSENSUS_LOGIC_OPTIMIZATION",
+      "ALLOW_TVM_BLOB",
+      "ALLOW_TVM_SELFDESTRUCT_RESTRICTION",
+      "ALLOW_TVM_OSAKA",
+      "ALLOW_TVM_PRAGUE",
+      "ALLOW_HARDEN_RESOURCE_CALCULATION",
+      "ALLOW_HARDEN_EXCHANGE_CALCULATION",
+      "ALLOW_NEW_RESOURCE_MODEL",
+      "UNFREEZE_DELAY_DAYS",
+      "ALLOW_SHIELDED_TRC20_TRANSACTION",
+      "ALLOW_SHIELDED_TRANSACTION",
+      "ALLOW_MULTI_SIGN"
+  };
+
+  static final String[] STRICT_GENESIS_PRESENT_KEYS = {
+      "MAX_FROZEN_TIME",
+      "MIN_FROZEN_TIME",
+      "MAX_FROZEN_SUPPLY_NUMBER",
+      "MAX_FROZEN_SUPPLY_TIME",
+      "MIN_FROZEN_SUPPLY_TIME",
+      "WITNESS_ALLOWANCE_FROZEN_TIME",
+      "TOTAL_SIGN_NUM",
+      "VERSION_NUMBER",
+      "AVAILABLE_CONTRACT_TYPE",
+      "ACTIVE_DEFAULT_OPERATIONS"
+  };
+
   private final long latestBlockHeaderNumber;
   private final long latestBlockHeaderTimestamp;
   private final long maintenanceTimeInterval;
@@ -148,8 +264,42 @@ public final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDyna
 
   public static void validateGenesisArchiveRows(VmDynamicProperties latest,
       ArchiveStateReader reader) throws ArchiveReaderException {
-    long energyFee = resolveEnergyFee(reader, true);
+    long energyFee = 0L;
+    for (String key : STRICT_GENESIS_LONG_KEYS) {
+      long value = requirePresentLong(reader, key);
+      if ("ENERGY_FEE".equals(key)) {
+        energyFee = value;
+      }
+    }
+    for (String key : STRICT_GENESIS_PRESENT_KEYS) {
+      requirePresent(reader, key);
+    }
     new HistoricalArchiveVmDynamicProperties(latest, energyFee, reader, true);
+  }
+
+  private static long requirePresentLong(ArchiveStateReader reader, String key)
+      throws ArchiveReaderException {
+    byte[] value = requirePresent(reader, key).getValue();
+    if (value.length != Long.BYTES) {
+      throw new ArchiveReaderException(ArchiveReaderException.Reason.CORRUPT_VALUE,
+          "archive dynamic property " + key + " has invalid length " + value.length);
+    }
+    return ByteArray.toLong(value);
+  }
+
+  private static ArchiveReadResult<byte[]> requirePresent(ArchiveStateReader reader, String key)
+      throws ArchiveReaderException {
+    byte[] canonicalKey = key.getBytes(StandardCharsets.US_ASCII);
+    ArchiveReadResult<byte[]> r = reader.getDynamicProperty(canonicalKey);
+    if (r.isPresent()) {
+      return r;
+    }
+    if (r.getStatus() == Status.TOMBSTONE) {
+      throw new ArchiveReaderException(ArchiveReaderException.Reason.CORRUPT_VALUE,
+          "archive dynamic property " + key + " is tombstoned");
+    }
+    throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
+        "archive dynamic property " + key + " is missing from genesis archive");
   }
 
   private static long resolve(ArchiveStateReader reader, String key, boolean genesisComplete,

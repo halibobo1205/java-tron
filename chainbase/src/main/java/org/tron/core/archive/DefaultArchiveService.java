@@ -258,13 +258,26 @@ public final class DefaultArchiveService implements ArchiveService {
     Lock writeLock = consistencyLock.writeLock();
     writeLock.lock();
     try {
-      validateAvailable();
+      RuntimeException failure = null;
+      try {
+        validateAvailable();
+      } catch (RuntimeException e) {
+        failure = e;
+      }
       try {
         txNumIndex.abortBlock(block.getNum());
-        captureEngine.clear();
       } catch (RuntimeException e) {
-        markFatal(e);
-        throw e;
+        if (failure == null) {
+          failure = e;
+        } else {
+          failure.addSuppressed(e);
+        }
+      } finally {
+        captureEngine.clear();
+      }
+      if (failure != null) {
+        markFatal(failure);
+        throw failure;
       }
     } finally {
       writeLock.unlock();

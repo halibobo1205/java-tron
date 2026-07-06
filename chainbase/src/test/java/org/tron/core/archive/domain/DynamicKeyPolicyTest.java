@@ -1,6 +1,8 @@
 package org.tron.core.archive.domain;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 import java.nio.charset.StandardCharsets;
 import org.junit.Test;
@@ -202,6 +204,18 @@ public class DynamicKeyPolicyTest {
     DynamicKeyDecision nonNumeric = decide("FORK_VERSION_SECRET");
     assertEquals(RootPolicy.EXCLUDED, nonNumeric.getRootPolicy());
     assertEquals(ReaderPolicy.INTERNAL_ONLY, nonNumeric.getReaderPolicy());
+
+    DynamicKeyDecision emptySuffix = decide("FORK_VERSION_");
+    assertEquals(RootPolicy.EXCLUDED, emptySuffix.getRootPolicy());
+    assertEquals(ReaderPolicy.INTERNAL_ONLY, emptySuffix.getReaderPolicy());
+
+    DynamicKeyDecision literalWildcard = decide("FORK_VERSION_*");
+    assertEquals(RootPolicy.EXCLUDED, literalWildcard.getRootPolicy());
+    assertEquals(ReaderPolicy.INTERNAL_ONLY, literalWildcard.getReaderPolicy());
+    assertFalse(policy.allDecisions().stream()
+        .anyMatch(d -> "FORK_VERSION_*".equals(d.getKey())));
+    assertTrue(policy.patternDecisionsForChecksum().stream()
+        .anyMatch(d -> "FORK_VERSION_<numeric>".equals(d.getKey())));
   }
 
   @Test
