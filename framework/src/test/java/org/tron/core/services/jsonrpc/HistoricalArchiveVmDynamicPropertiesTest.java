@@ -207,6 +207,37 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
   }
 
   @Test
+  public void validateGenesisArchiveRowsRequiresExplicitDefaultBackedRows() {
+    for (String key : new String[] {
+        "ENERGY_FEE",
+        "TOTAL_NET_LIMIT",
+        "latest_block_header_timestamp"}) {
+      FakeReader reader = new FakeReader();
+      reader.putStrictGenesisDefaults();
+      reader.remove(key);
+
+      ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
+          () -> HistoricalArchiveVmDynamicProperties.validateGenesisArchiveRows(
+              mock(VmDynamicProperties.class), reader));
+
+      assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, e.getReason());
+    }
+  }
+
+  @Test
+  public void validateGenesisArchiveRowsRejectsMalformedDefaultBackedRows() {
+    FakeReader reader = new FakeReader();
+    reader.putStrictGenesisDefaults();
+    reader.putRaw("TOTAL_NET_LIMIT", new byte[] {1});
+
+    ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
+        () -> HistoricalArchiveVmDynamicProperties.validateGenesisArchiveRows(
+            mock(VmDynamicProperties.class), reader));
+
+    assertEquals(ArchiveReaderException.Reason.CORRUPT_VALUE, e.getReason());
+  }
+
+  @Test
   public void missingExecutionParamsUseDefaultsOrLatestByCoverage() throws Exception {
     FakeReader reader = new FakeReader();
     reader.putVmDefaults();
@@ -380,6 +411,15 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
         put(key, 0L);
       }
       put("MAINTENANCE_TIME_INTERVAL", 21_600_000L);
+    }
+
+    void putStrictGenesisDefaults() {
+      for (String key : HistoricalArchiveVmDynamicProperties.STRICT_GENESIS_LONG_KEYS) {
+        put(key, 1L);
+      }
+      for (String key : HistoricalArchiveVmDynamicProperties.STRICT_GENESIS_PRESENT_KEYS) {
+        putRaw(key, new byte[] {1});
+      }
     }
 
     void put(String key, long value) {

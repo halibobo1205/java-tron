@@ -689,21 +689,25 @@ public class Manager {
   }
 
   private void validateGenesisArchiveCoverage() {
-    if (!archiveService.isEnabled()
-        || chainBaseManager.getDynamicPropertiesStore().getLatestBlockHeaderNumber() != 0L) {
+    if (!archiveService.isEnabled()) {
       return;
     }
-    if (!archiveService.hasCommittedBlock(0L)) {
-      String msg = String.format("Archive enabled but genesis block was not captured, please "
-              + "delete archive database directory(%s) and restart from an empty archive-enabled "
-              + "database.",
-          Args.getInstance().getOutputDirectory());
-      throw new TronError(msg, TronError.ErrCode.GENESIS_BLOCK_INIT);
-    }
     if (!(archiveService instanceof DefaultArchiveService)) {
+      if (chainBaseManager.getDynamicPropertiesStore().getLatestBlockHeaderNumber() == 0L
+          && !archiveService.hasCommittedBlock(0L)) {
+        throwGenesisArchiveMissing();
+      }
       return;
     }
     DefaultArchiveService defaultArchiveService = (DefaultArchiveService) archiveService;
+    long latestBlockHeaderNumber =
+        chainBaseManager.getDynamicPropertiesStore().getLatestBlockHeaderNumber();
+    if (defaultArchiveService.getTxNumIndex().getFirstArchivedBlock() != 0L) {
+      if (latestBlockHeaderNumber == 0L) {
+        throwGenesisArchiveMissing();
+      }
+      return;
+    }
     ArchiveBlockRange range = defaultArchiveService.getTxNumIndex().getBlockRange(0L)
         .orElseThrow(() -> new TronError("Archive enabled but genesis block range is unavailable",
             TronError.ErrCode.GENESIS_BLOCK_INIT));
@@ -719,6 +723,14 @@ public class Manager {
           Args.getInstance().getOutputDirectory());
       throw new TronError(msg, e, TronError.ErrCode.GENESIS_BLOCK_INIT);
     }
+  }
+
+  private void throwGenesisArchiveMissing() {
+    String msg = String.format("Archive enabled but genesis block was not captured, please "
+            + "delete archive database directory(%s) and restart from an empty archive-enabled "
+            + "database.",
+        Args.getInstance().getOutputDirectory());
+    throw new TronError(msg, TronError.ErrCode.GENESIS_BLOCK_INIT);
   }
 
   /**
