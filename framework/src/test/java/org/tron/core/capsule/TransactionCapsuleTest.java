@@ -1,5 +1,6 @@
 package org.tron.core.capsule;
 
+import static org.tron.core.capsule.TransactionCapsule.SLOW_SIG_VERIFY_MS;
 import static org.tron.protos.Protocol.Transaction.Result.contractResult.BAD_JUMP_DESTINATION;
 import static org.tron.protos.Protocol.Transaction.Result.contractResult.PRECOMPILED_CONTRACT;
 import static org.tron.protos.Protocol.Transaction.Result.contractResult.SUCCESS;
@@ -88,7 +89,7 @@ public class TransactionCapsuleTest extends BaseTest {
     capsuleLogger.addAppender(appender);
     try {
       TransactionCapsule cap = new TransactionCapsule(Transaction.newBuilder().build());
-      long startNs = System.nanoTime() - TimeUnit.MILLISECONDS.toNanos(51);
+      long startNs = System.nanoTime() - TimeUnit.MILLISECONDS.toNanos(SLOW_SIG_VERIFY_MS + 1);
       cap.logSlowSigVerify(startNs);
 
       List<ILoggingEvent> warns = appender.list.stream()

@@ -96,8 +96,10 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
       .newFixedThreadPool(esName, CommonParameter.getInstance()
           .getValidContractProtoThreadNum());
   private static final String OWNER_ADDRESS = "ownerAddress_";
-  // 2-6 ms in general, so we set 50 ms as the threshold for slow signature verification.
-  private static final long SLOW_SIG_VERIFY_MS = 50;
+  // 2-6 ms in general, so we set 10 ms as the threshold for slow signature verification.
+  static final long SLOW_SIG_VERIFY_MS = 10;
+  static final long SLOW_CHECK_WEIGHT_MS = 5;
+  static final long SLOW_GET_ACCOUNT_MS = 10;
 
   private Transaction transaction;
   @Setter
@@ -471,7 +473,9 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
     Transaction.Contract contract = transaction.getRawData().getContractList().get(0);
     int permissionId = contract.getPermissionId();
     byte[] owner = getOwner(contract);
+    long startNs = System.nanoTime();
     AccountCapsule account = accountStore.get(owner);
+    logSlowGetAccount(startNs, hash, owner);
     Permission permission = null;
     if (account == null) {
       if (permissionId == 0) {
@@ -488,7 +492,9 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
       throw new PermissionException("permission isn't exit");
     }
     checkPermission(permissionId, permission, contract);
+    startNs = System.nanoTime();
     long weight = checkWeight(permission, transaction.getSignatureList(), hash, null);
+    logSlowGetWeight(startNs, hash, owner);
     if (weight >= permission.getThreshold()) {
       return true;
     }
@@ -689,6 +695,22 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
     if (costMs > SLOW_SIG_VERIFY_MS) {
       logger.warn("slow verify: txId={}, sigCount={}, cost={} ms",
           getTransactionId(), this.transaction.getSignatureCount(), costMs);
+    }
+  }
+
+  static void logSlowGetAccount(long startNs, byte[] hash, byte[] owner) {
+    long costMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs);
+    if (costMs > SLOW_GET_ACCOUNT_MS) {
+      logger.warn("slow getAccount: txId={}, owner={}, cost={} ms",
+          ByteArray.toHexString(hash), ByteArray.toHexString(owner), costMs);
+    }
+  }
+
+  static void logSlowGetWeight(long startNs, byte[] hash, byte[] owner) {
+    long costMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs);
+    if (costMs > SLOW_CHECK_WEIGHT_MS) {
+      logger.warn("slow getWeight: txId={}, owner={}, cost={} ms",
+          ByteArray.toHexString(hash), ByteArray.toHexString(owner), costMs);
     }
   }
 
