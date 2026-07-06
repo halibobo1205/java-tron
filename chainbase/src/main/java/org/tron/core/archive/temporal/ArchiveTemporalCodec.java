@@ -190,6 +190,13 @@ public final class ArchiveTemporalCodec {
     return Bytes.concat(new byte[] {HISTORY_PREFIX}, domainAndKeyOfChangeset(changesetKey));
   }
 
+  static byte[] historyPrefixOfLatest(byte[] latestKey) {
+    validateLatestKey(latestKey);
+    byte[] historyPrefix = Arrays.copyOf(latestKey, latestKey.length);
+    historyPrefix[0] = HISTORY_PREFIX;
+    return historyPrefix;
+  }
+
   static boolean startsWith(byte[] array, byte[] prefix) {
     if (array == null || array.length < prefix.length) {
       return false;
@@ -219,6 +226,16 @@ public final class ArchiveTemporalCodec {
     int keyLen = intAt(key, 3);
     if (key.length != 15 + keyLen) {
       throw new ArchiveException("archive temporal history key length is invalid");
+    }
+  }
+
+  private static void validateLatestKey(byte[] key) {
+    if (key == null || key.length < 7 || key[0] != LATEST_PREFIX) {
+      throw new ArchiveException("archive temporal latest key is invalid");
+    }
+    int keyLen = intAt(key, 3);
+    if (key.length != 7 + keyLen) {
+      throw new ArchiveException("archive temporal latest key length is invalid");
     }
   }
 

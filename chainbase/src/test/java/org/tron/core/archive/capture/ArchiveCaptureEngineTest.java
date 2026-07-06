@@ -9,6 +9,8 @@ import static org.junit.Assert.assertTrue;
 import com.google.common.primitives.Bytes;
 import com.google.protobuf.ByteString;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
+import java.util.List;
 import org.junit.Before;
 import org.junit.Test;
 import org.tron.core.archive.ArchiveExecutionContext;
@@ -16,6 +18,8 @@ import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveSource;
 import org.tron.core.archive.domain.ArchiveDomain;
+import org.tron.core.archive.domain.ArchiveDomainCatalog;
+import org.tron.core.archive.domain.ArchiveDomainDescriptor;
 import org.tron.core.archive.domain.DefaultArchiveDomainCatalog;
 import org.tron.core.archive.domain.DefaultArchiveDomainRegistry;
 import org.tron.core.archive.domain.DynamicKeyPolicy;
@@ -265,5 +269,60 @@ public class ArchiveCaptureEngineTest {
   public void semanticCaptureNoOpOutsideContext() {
     engine.captureSemanticPut(ArchiveDomain.CONTRACT_STORAGE, new byte[54], null, new byte[32]);
     assertTrue(engine.records().isEmpty());
+  }
+
+  @Test
+  public void rawCapturedDomainMissingDescriptorFailsClosed() {
+    ArchiveCaptureEngine missingCatalogEngine = new ArchiveCaptureEngine(
+        new DefaultArchiveDomainRegistry(), new MissingCatalog(), new DynamicKeyPolicy(), context);
+    enterTx(1);
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> missingCatalogEngine.capturePut("account", new byte[21], null, account(1)));
+
+    assertTrue(ex.getMessage().contains("missing descriptor"));
+  }
+
+  @Test
+  public void semanticCapturedDomainMissingDescriptorFailsClosed() {
+    ArchiveCaptureEngine missingCatalogEngine = new ArchiveCaptureEngine(
+        new DefaultArchiveDomainRegistry(), new MissingCatalog(), new DynamicKeyPolicy(), context);
+    enterTx(1);
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> missingCatalogEngine.captureSemanticPut(
+            ArchiveDomain.CONTRACT_STORAGE, new byte[54], null, new byte[32]));
+
+    assertTrue(ex.getMessage().contains("missing descriptor"));
+  }
+
+  @Test
+  public void accountAssetMissingDescriptorFailsClosed() {
+    ArchiveCaptureEngine missingCatalogEngine = new ArchiveCaptureEngine(
+        new DefaultArchiveDomainRegistry(), new MissingCatalog(), new DynamicKeyPolicy(), context);
+    enterTx(1);
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> missingCatalogEngine.captureAccountAsset(new byte[21], null, acct("1", 50L)));
+
+    assertTrue(ex.getMessage().contains("missing descriptor"));
+  }
+
+  private static final class MissingCatalog implements ArchiveDomainCatalog {
+    public ArchiveDomainDescriptor descriptorFor(ArchiveDomain domain) {
+      return null;
+    }
+
+    public List<ArchiveDomainDescriptor> allDescriptors() {
+      return Collections.emptyList();
+    }
+
+    public List<ArchiveDomainDescriptor> rootDescriptors() {
+      return Collections.emptyList();
+    }
+
+    public byte[] checksum() {
+      return new byte[32];
+    }
   }
 }

@@ -19,6 +19,8 @@ import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
+import org.tron.core.archive.reader.ArchiveReaderException;
+import org.tron.core.archive.reader.ArchiveStatePoint;
 import org.tron.core.archive.temporal.ArchiveTemporalStore;
 import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
@@ -91,6 +93,43 @@ public class DefaultArchiveServiceTest {
     assertEquals(1, range.getLastTxNum());
     assertEquals(0, range.getUserTxCount());
     assertEquals(ArchiveSource.NORMAL, range.getSource());
+  }
+
+  @Test
+  public void readerFactoryRejectsUncoveredOrMismatchedPoints() throws Exception {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    DefaultArchiveService service = new DefaultArchiveService(true, index, context);
+
+    BlockCapsule b = blockWithParentSeed(5, (byte) 5);
+    service.beginBlock(b, ArchiveSource.NORMAL);
+    service.beginSystemTx(b, ArchivePhase.BLOCK_PREPARE);
+    service.endTx();
+    service.beginSystemTx(b, ArchivePhase.BLOCK_FINALIZE);
+    service.endTx();
+    service.commitBlock(b);
+    ArchiveBlockRange range = index.getBlockRange(5).orElseThrow(AssertionError::new);
+
+    service.getReaderFactory().open(ArchiveStatePoint.blockEnd(
+        5, range.getBlockHash(), range.getFinalizeTxNum())).close();
+    ArchiveReaderException wrongTxNum = assertThrows(ArchiveReaderException.class,
+        () -> service.getReaderFactory().open(ArchiveStatePoint.blockEnd(
+            5, range.getBlockHash(), range.getFinalizeTxNum() + 1)));
+    assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, wrongTxNum.getReason());
+    byte[] wrongBlockHash = range.getBlockHash();
+    wrongBlockHash[0] ^= 1;
+    ArchiveReaderException wrongHash = assertThrows(ArchiveReaderException.class,
+        () -> service.getReaderFactory().open(ArchiveStatePoint.blockEnd(
+            5, wrongBlockHash, range.getFinalizeTxNum())));
+    assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, wrongHash.getReason());
+    ArchiveReaderException missingHash = assertThrows(ArchiveReaderException.class,
+        () -> service.getReaderFactory().open(ArchiveStatePoint.blockEnd(
+            5, null, range.getFinalizeTxNum())));
+    assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, missingHash.getReason());
+    ArchiveReaderException uncovered = assertThrows(ArchiveReaderException.class,
+        () -> service.getReaderFactory().open(ArchiveStatePoint.blockEnd(
+            6, null, range.getFinalizeTxNum())));
+    assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, uncovered.getReason());
   }
 
   @Test

@@ -35,4 +35,19 @@ public class ArchiveStateReaderFactoryTest {
         () -> disabled.open(ArchiveStatePoint.blockEnd(1, null, 1)));
     assertEquals(ArchiveReaderException.Reason.ARCHIVE_DISABLED, e.getReason());
   }
+
+  @Test
+  public void pointValidatorCanRejectUncoveredPoint() {
+    ArchiveStateReaderFactory guarded = new DefaultArchiveStateReaderFactory(
+        new InMemoryArchiveTemporalStore(), new DefaultArchiveDomainCatalog(),
+        point -> {
+          throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
+              "uncovered");
+        });
+
+    ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
+        () -> guarded.open(ArchiveStatePoint.blockEnd(1, null, 1)));
+
+    assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, e.getReason());
+  }
 }

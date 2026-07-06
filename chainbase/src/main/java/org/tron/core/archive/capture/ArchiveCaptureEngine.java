@@ -89,7 +89,7 @@ public final class ArchiveCaptureEngine {
     }
     ArchiveDomainDescriptor descriptor = catalog.descriptorFor(domain);
     if (descriptor == null) {
-      return;
+      throw missingDescriptor(domain);
     }
     byte[] key = descriptor.getKeyCodec().normalize(canonicalKey);
     DomainValue prev = prevDomainValue(descriptor, prevValue);
@@ -146,7 +146,7 @@ public final class ArchiveCaptureEngine {
     }
     ArchiveDomainDescriptor descriptor = catalog.descriptorFor(ArchiveDomain.ACCOUNT_ASSET);
     if (descriptor == null) {
-      return;
+      throw missingDescriptor(ArchiveDomain.ACCOUNT_ASSET);
     }
     Set<String> assetIds = new TreeSet<>(); // sorted for deterministic capture order
     assetIds.addAll(oldAssets.keySet());
@@ -194,7 +194,7 @@ public final class ArchiveCaptureEngine {
     }
     ArchiveDomainDescriptor descriptor = catalog.descriptorFor(binding.getDomain().get());
     if (descriptor == null) {
-      return; // captured binding with no descriptor: defensive, treat as not captured
+      throw missingDescriptor(binding.getDomain().get());
     }
     byte[] canonicalKey = descriptor.getKeyCodec().normalize(key);
     DomainValue prev = prevDomainValue(descriptor, prevValue);
@@ -234,6 +234,11 @@ public final class ArchiveCaptureEngine {
     if (!binding.isKnown() && context.current().isPresent()) {
       throw new ArchiveException("archive store dbName is not classified: " + binding.getDbName());
     }
+  }
+
+  private static ArchiveException missingDescriptor(ArchiveDomain domain) {
+    return new ArchiveException("archive catalog missing descriptor for captured domain: "
+        + domain);
   }
 
   /** Captured records in capture order (append-only); L5 builds latest/history/changesets. */

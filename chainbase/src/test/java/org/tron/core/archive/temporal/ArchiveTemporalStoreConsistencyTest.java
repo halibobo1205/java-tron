@@ -1,6 +1,7 @@
 package org.tron.core.archive.temporal;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import java.io.File;
@@ -98,17 +99,18 @@ public class ArchiveTemporalStoreConsistencyTest {
       assertParity(k, 12);
     }
 
-    // Fork unwind at tx6: drops K1@9, K2@7, K3@6. K1 reverts to 0x0B (pre-value of tx9), K2 to 0x21
-    // (pre-value of tx7), K3 to its mid-chain pre-value 0x30. Both stores must agree.
+    // Fork unwind at tx6: drops K1@9, K2@7, K3@6. K1 reverts to 0x0B (pre-value of tx9), K2 to
+    // 0x21 (pre-value of tx7). K3's only canonical history row is dropped, so latest is removed
+    // instead of retained as an unanchored latest-only value. Both stores must agree.
     mem.unwind(6);
     rocks.unwind(6);
     for (byte[] k : List.of(K1, K2, K3)) {
       assertParity(k, 12);
     }
-    // spot-check the restored values are exactly the pre-values, not the dropped ones.
+    // spot-check the restored values are exactly the anchored pre-values, not the dropped ones.
     assertTrue(Arrays.equals(new byte[] {0x0B}, mem.latest(DOMAIN, K1).get().getValue()));
     assertTrue(Arrays.equals(new byte[] {0x21}, mem.latest(DOMAIN, K2).get().getValue()));
-    assertTrue(Arrays.equals(new byte[] {0x30}, mem.latest(DOMAIN, K3).get().getValue()));
+    assertFalse(mem.latest(DOMAIN, K3).isPresent());
   }
 
   private static void deleteRecursively(File f) {

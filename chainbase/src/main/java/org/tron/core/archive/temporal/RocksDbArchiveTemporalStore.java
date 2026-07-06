@@ -116,6 +116,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
     try (WriteBatch batch = new WriteBatch();
          WriteOptions writeOptions = ArchiveRocksDbWriteOptions.create()) {
       for (ArchiveChangeRecord record : records) {
+        validateRecordInRange(range, record);
         putChange(batch, record);
       }
       batch.put(ArchiveTemporalCodec.blockCommitKey(range.getBlockNum()),
@@ -208,6 +209,21 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
     } catch (RocksDBException e) {
       throw new ArchiveException("archive temporal changeset validation failed", e);
     }
+    try (RocksIterator it = db.newIterator()) {
+      it.seek(new byte[] {ArchiveTemporalCodec.LATEST_PREFIX});
+      while (it.isValid() && it.key()[0] == ArchiveTemporalCodec.LATEST_PREFIX) {
+        byte[] latestKey = it.key();
+        byte[] historyPrefix = ArchiveTemporalCodec.historyPrefixOfLatest(latestKey);
+        try (RocksIterator history = db.newIterator()) {
+          history.seek(historyPrefix);
+          if (!history.isValid()
+              || !ArchiveTemporalCodec.startsWith(history.key(), historyPrefix)) {
+            throw new ArchiveException("archive temporal latest has no history row");
+          }
+        }
+        it.next();
+      }
+    }
   }
 
   private static void putChange(WriteBatch batch, ArchiveChangeRecord record)
@@ -259,14 +275,15 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
 
   @Override
   public void unwindBlock(ArchiveBlockRange range) {
+    validateCommittedBlock(range);
     unwind(range.getFirstTxNum(), range.getLastTxNum(), range.getBlockNum(), true);
   }
 
   private void unwind(long fromTxNum, long toTxNum, long blockNum, boolean deleteBlockMarker) {
     // One atomic batch: delete each reverted change's history + changeset entry, and reset each
-    // affected key's latest to the prevValue of its SMALLEST dropped change (= the key's value at
-    // the end of fromTxNum-1), computed against the pre-deletion state so a crash can never leave
-    // latest pointing at a deleted entry.
+    // affected key's latest to the prevValue of its SMALLEST dropped change only when older history
+    // remains. If this was the first canonical capture for the key, delete latest too; otherwise a
+    // restart would see an unanchored latest-only row.
     Map<WrappedByteArray, byte[]> affectedPrefix = new LinkedHashMap<>();
     Map<WrappedByteArray, byte[]> restore = new HashMap<>();
     try (WriteBatch batch = new WriteBatch();
@@ -300,7 +317,11 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
       for (Map.Entry<WrappedByteArray, byte[]> e : affectedPrefix.entrySet()) {
         byte[] latestKey = e.getValue().clone();
         latestKey[0] = ArchiveTemporalCodec.LATEST_PREFIX;
-        batch.put(latestKey, restore.get(e.getKey()));
+        if (hasHistoryBefore(e.getValue(), fromTxNum)) {
+          batch.put(latestKey, restore.get(e.getKey()));
+        } else {
+          batch.delete(latestKey);
+        }
       }
       if (fromTxNum == 0) {
         deleteAllLatest(batch);
@@ -321,6 +342,33 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
         batch.delete(it.key().clone());
         it.next();
       }
+    }
+  }
+
+  private boolean hasHistoryBefore(byte[] historyPrefix, long txNum) {
+    try (RocksIterator it = db.newIterator()) {
+      it.seek(historyPrefix);
+      while (it.isValid() && ArchiveTemporalCodec.startsWith(it.key(), historyPrefix)) {
+        long historyTxNum = ArchiveTemporalCodec.txNumOfHistory(it.key());
+        if (historyTxNum >= txNum) {
+          return false;
+        }
+        return true;
+      }
+      return false;
+    }
+  }
+
+  private static void validateRecordInRange(ArchiveBlockRange range, ArchiveChangeRecord record) {
+    long txNum = record.getTxNum();
+    if (txNum < range.getFirstTxNum() || txNum > range.getLastTxNum()) {
+      throw new ArchiveException("archive temporal change txNum " + txNum
+          + " is outside committed block range " + range.getBlockNum());
+    }
+    if (record.getPosition().getBlockNum() != range.getBlockNum()
+        || record.getPosition().getSource() != range.getSource()) {
+      throw new ArchiveException("archive temporal change position does not match block range "
+          + range.getBlockNum());
     }
   }
 
