@@ -18,7 +18,7 @@ public final class DefaultArchiveStateReaderFactory implements ArchiveStateReade
   private final ArchiveDomainCatalog catalog;
   private final PointValidator pointValidator;
 
-  public DefaultArchiveStateReaderFactory(ArchiveTemporalStore temporalStore,
+  DefaultArchiveStateReaderFactory(ArchiveTemporalStore temporalStore,
       ArchiveDomainCatalog catalog) {
     this(temporalStore, catalog, point -> {
     });

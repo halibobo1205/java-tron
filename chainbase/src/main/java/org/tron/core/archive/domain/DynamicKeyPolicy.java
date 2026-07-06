@@ -41,6 +41,9 @@ public final class DynamicKeyPolicy {
     root("TOTAL_NET_LIMIT", DynamicKeyClass.RESOURCE_PARAMETER);
     root("TOTAL_ENERGY_CURRENT_LIMIT", DynamicKeyClass.RESOURCE_PARAMETER);
     root("TOTAL_ENERGY_TARGET_LIMIT", DynamicKeyClass.RESOURCE_PARAMETER);
+    root("TOTAL_ENERGY_AVERAGE_USAGE", DynamicKeyClass.RESOURCE_PARAMETER);
+    root("TOTAL_ENERGY_AVERAGE_TIME", DynamicKeyClass.RESOURCE_PARAMETER);
+    root("BLOCK_ENERGY_USAGE", DynamicKeyClass.RESOURCE_PARAMETER);
     root("ADAPTIVE_RESOURCE_LIMIT_TARGET_RATIO", DynamicKeyClass.RESOURCE_PARAMETER);
     root("ADAPTIVE_RESOURCE_LIMIT_MULTIPLIER", DynamicKeyClass.RESOURCE_PARAMETER);
     root("TOTAL_NET_WEIGHT", DynamicKeyClass.RESOURCE_PARAMETER);
@@ -99,6 +102,8 @@ public final class DynamicKeyPolicy {
     root("ALLOW_HIGHER_LIMIT_FOR_MAX_CPU_TIME_OF_ONE_TX", DynamicKeyClass.VM_CONFIG);
     root("ALLOW_OPTIMIZED_RETURN_VALUE_OF_CHAIN_ID", DynamicKeyClass.VM_CONFIG);
     root("CURRENT_CYCLE_NUMBER", DynamicKeyClass.VM_CONFIG);
+    root("VERSION_NUMBER", DynamicKeyClass.VM_CONFIG);
+    root("FORK_VERSION_*", DynamicKeyClass.VM_CONFIG);
     root("ALLOW_DYNAMIC_ENERGY", DynamicKeyClass.VM_CONFIG);
     root("DYNAMIC_ENERGY_THRESHOLD", DynamicKeyClass.VM_CONFIG);
     root("DYNAMIC_ENERGY_INCREASE_FACTOR", DynamicKeyClass.VM_CONFIG);
@@ -171,6 +176,10 @@ public final class DynamicKeyPolicy {
     DynamicKeyDecision decision = decisions.get(name);
     if (decision != null) {
       return decision;
+    }
+    if (name.startsWith("FORK_VERSION_")) {
+      return new DynamicKeyDecision(name, DynamicKeyClass.VM_CONFIG,
+          RootPolicy.IN_GLOBAL_ROOT, HistoryPolicy.FULL_HISTORY, ReaderPolicy.HISTORICAL_VM);
     }
     return unknownDecision(name);
   }

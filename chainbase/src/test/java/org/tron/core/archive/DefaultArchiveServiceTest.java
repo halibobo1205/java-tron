@@ -105,17 +105,26 @@ public class DefaultArchiveServiceTest {
     service.beginBlock(b, ArchiveSource.NORMAL);
     service.beginSystemTx(b, ArchivePhase.BLOCK_PREPARE);
     service.endTx();
+    service.beginUserTx(b, 0, new TransactionCapsule(Transaction.getDefaultInstance()));
+    service.endTx();
     service.beginSystemTx(b, ArchivePhase.BLOCK_FINALIZE);
     service.endTx();
-    service.commitBlock(b);
+    service.commitBlock(b, 1);
     ArchiveBlockRange range = index.getBlockRange(5).orElseThrow(AssertionError::new);
 
     service.getReaderFactory().open(ArchiveStatePoint.blockEnd(
         5, range.getBlockHash(), range.getFinalizeTxNum())).close();
+    service.getReaderFactory().open(ArchiveStatePoint.txBefore(
+        5, range.getBlockHash(), range.getPrepareTxNum())).close();
     ArchiveReaderException wrongTxNum = assertThrows(ArchiveReaderException.class,
         () -> service.getReaderFactory().open(ArchiveStatePoint.blockEnd(
             5, range.getBlockHash(), range.getFinalizeTxNum() + 1)));
     assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, wrongTxNum.getReason());
+    ArchiveReaderException txBeforeAtFinalize = assertThrows(ArchiveReaderException.class,
+        () -> service.getReaderFactory().open(ArchiveStatePoint.txBefore(
+            5, range.getBlockHash(), range.getFinalizeTxNum() - 1)));
+    assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
+        txBeforeAtFinalize.getReason());
     byte[] wrongBlockHash = range.getBlockHash();
     wrongBlockHash[0] ^= 1;
     ArchiveReaderException wrongHash = assertThrows(ArchiveReaderException.class,

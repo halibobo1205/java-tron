@@ -243,24 +243,39 @@ public final class DefaultArchiveService implements ArchiveService {
 
   private void validateReaderPoint(ArchiveStatePoint point) throws ArchiveReaderException {
     validateAvailableForRead();
-    if (point.getKind() != ArchiveStatePoint.Kind.BLOCK_END) {
-      throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
-          "archive reader point kind is not supported: " + point.getKind());
-    }
     ArchiveBlockRange range = txNumIndex.getBlockRange(point.getBlockNum())
         .orElseThrow(() -> new ArchiveReaderException(
             ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
             "archive block " + point.getBlockNum() + " is not covered"));
-    if (point.getTxNum() != range.getFinalizeTxNum()) {
-      throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
-          "archive point txNum does not match block finalize txNum");
-    }
+    validateReaderPointTxNum(point, range);
     byte[] blockHash = point.getBlockHash();
     if (blockHash == null || blockHash.length != ArchiveBlockRange.BLOCK_HASH_LENGTH
         || !Arrays.equals(blockHash, range.getBlockHash())) {
       throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
           "archive point block hash does not match committed range");
     }
+  }
+
+  private static void validateReaderPointTxNum(ArchiveStatePoint point, ArchiveBlockRange range)
+      throws ArchiveReaderException {
+    if (point.getKind() == ArchiveStatePoint.Kind.BLOCK_END) {
+      if (point.getTxNum() == range.getFinalizeTxNum()) {
+        return;
+      }
+      throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
+          "archive block-end point txNum does not match block finalize txNum");
+    }
+    if (point.getKind() == ArchiveStatePoint.Kind.TX_BEFORE) {
+      if (range.getUserTxCount() > 0
+          && point.getTxNum() >= range.getPrepareTxNum()
+          && point.getTxNum() <= range.getFinalizeTxNum() - 2) {
+        return;
+      }
+      throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
+          "archive tx-before point txNum is outside committed block range");
+    }
+    throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
+        "archive reader point kind is not supported: " + point.getKind());
   }
 
   private void validateAvailableForRead() throws ArchiveReaderException {

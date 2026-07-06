@@ -74,11 +74,21 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
       "ALLOW_TVM_CANCUN",
       "ALLOW_TVM_BLOB",
       "ALLOW_TVM_COMPATIBLE_EVM",
+      "ALLOW_OPTIMIZED_RETURN_VALUE_OF_CHAIN_ID",
+      "MAINTENANCE_TIME_INTERVAL",
       "UNFREEZE_DELAY_DAYS",
       "ALLOW_NEW_RESOURCE_MODEL",
+      "ALLOW_SHIELDED_TRC20_TRANSACTION",
       "ALLOW_MULTI_SIGN",
+      "ALLOW_HIGHER_LIMIT_FOR_MAX_CPU_TIME_OF_ONE_TX",
       "ALLOW_DYNAMIC_ENERGY",
-      "DYNAMIC_ENERGY_THRESHOLD"
+      "DYNAMIC_ENERGY_THRESHOLD",
+      "DYNAMIC_ENERGY_INCREASE_FACTOR",
+      "DYNAMIC_ENERGY_MAX_FACTOR",
+      "ALLOW_ENERGY_ADJUSTMENT",
+      "ALLOW_STRICT_MATH",
+      "CONSENSUS_LOGIC_OPTIMIZATION",
+      "ALLOW_HARDEN_RESOURCE_CALCULATION"
   };
 
   @Override
@@ -135,6 +145,9 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
       put(temporal, txNum, ArchiveDomain.DYNAMIC_PROPERTIES,
           key.getBytes(StandardCharsets.US_ASCII), ByteArray.fromLong(0L));
     }
+    put(temporal, txNum, ArchiveDomain.DYNAMIC_PROPERTIES,
+        "MAINTENANCE_TIME_INTERVAL".getBytes(StandardCharsets.US_ASCII),
+        ByteArray.fromLong(21_600_000L));
     put(temporal, txNum, ArchiveDomain.DYNAMIC_PROPERTIES,
         "ALLOW_CREATION_OF_CONTRACTS".getBytes(StandardCharsets.US_ASCII),
         ByteArray.fromLong(supportVm ? 1L : 0L));

@@ -41,6 +41,13 @@ public final class ArchiveStatePoint {
     return new ArchiveStatePoint(Kind.BLOCK_END, blockNum, blockHash, finalizeTxNum);
   }
 
+  /**
+   * State immediately before a transaction in {@code blockNum}, read with the caller's as-of txNum.
+   */
+  public static ArchiveStatePoint txBefore(long blockNum, byte[] blockHash, long asOfTxNum) {
+    return new ArchiveStatePoint(Kind.TX_BEFORE, blockNum, blockHash, asOfTxNum);
+  }
+
   public Kind getKind() {
     return kind;
   }
