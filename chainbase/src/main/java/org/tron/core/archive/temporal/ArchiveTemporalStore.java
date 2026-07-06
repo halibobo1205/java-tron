@@ -64,10 +64,10 @@ public interface ArchiveTemporalStore {
   Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey);
 
   /**
-   * Drop every change with {@code txNum >= fromTxNum} and restore each affected key's latest value
-   * to the prevValue of its smallest dropped change (= that key's value at the end of
-   * {@code fromTxNum - 1}). Used when a committed block is reverted (fork switch / eraseBlock) so
-   * the store never retains rolled-back state.
+   * Drop every change with {@code txNum >= fromTxNum}. If an affected key still has older canonical
+   * history, restore latest to the prevValue of its smallest dropped change (= that key's value at
+   * the end of {@code fromTxNum - 1}); otherwise delete latest too so the store does not retain an
+   * unanchored latest-only value after a reverted first capture.
    */
   void unwind(long fromTxNum);
 

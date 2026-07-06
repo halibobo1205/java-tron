@@ -145,16 +145,7 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
   private ArchiveReadResult<byte[]> getStorageRaw(byte[] address, byte[] slot, int contractVersion)
       throws ArchiveReaderException {
     byte[] primaryKey = ArchiveStorageKeyCodec.contractStorageKey(address, slot, contractVersion);
-    ArchiveReadResult<byte[]> primary = getRaw(ArchiveDomain.CONTRACT_STORAGE, primaryKey);
-    if (primary.isPresent() || primary.getStatus() == ArchiveReadResult.Status.TOMBSTONE) {
-      return primary;
-    }
-
-    int alternateVersion = contractVersion == 1 ? 0 : 1;
-    byte[] alternateKey =
-        ArchiveStorageKeyCodec.contractStorageKey(address, slot, alternateVersion);
-    ArchiveReadResult<byte[]> alternate = getRaw(ArchiveDomain.CONTRACT_STORAGE, alternateKey);
-    return alternate;
+    return getRaw(ArchiveDomain.CONTRACT_STORAGE, primaryKey);
   }
 
   private ArchiveReadResult<byte[]> getRaw(ArchiveDomain domain, byte[] canonicalKey)

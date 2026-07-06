@@ -259,6 +259,19 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
   }
 
   @Test
+  public void genesisCompleteMissingDeploymentSpecificVmFlagFailsClosed() {
+    FakeReader reader = new FakeReader();
+    reader.putVmDefaults();
+    reader.remove("ALLOW_SHIELDED_TRC20_TRANSACTION");
+
+    ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
+        () -> new HistoricalArchiveVmDynamicProperties(mock(VmDynamicProperties.class),
+            ENERGY_FEE, reader, true));
+
+    assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, e.getReason());
+  }
+
+  @Test
   public void genesisCompleteMissingValuesDoNotReadLatest() throws Exception {
     FakeReader reader = new FakeReader();
     reader.putVmDefaults();
@@ -344,9 +357,14 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
         "ALLOW_TVM_COMPATIBLE_EVM",
         "UNFREEZE_DELAY_DAYS",
         "ALLOW_NEW_RESOURCE_MODEL",
+        "ALLOW_SHIELDED_TRC20_TRANSACTION",
         "ALLOW_MULTI_SIGN",
         "ALLOW_DYNAMIC_ENERGY",
-        "DYNAMIC_ENERGY_THRESHOLD"
+        "DYNAMIC_ENERGY_THRESHOLD",
+        "ALLOW_ENERGY_ADJUSTMENT",
+        "ALLOW_STRICT_MATH",
+        "CONSENSUS_LOGIC_OPTIMIZATION",
+        "ALLOW_HARDEN_RESOURCE_CALCULATION"
     };
 
     private final Map<String, ArchiveReadResult<byte[]>> props = new HashMap<>();
@@ -364,6 +382,10 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
 
     void putRaw(String key, byte[] value) {
       props.put(key, ArchiveReadResult.present(value));
+    }
+
+    void remove(String key) {
+      props.remove(key);
     }
 
     void putTombstone(String key) {

@@ -93,6 +93,7 @@ public class NoopArchiveServiceTest {
     ArchiveService newer = createArchive(config);
     try {
       assertTrue(ArchiveCaptureHolder.isActive());
+      assertThrows(ArchiveException.class, older::validateAvailable);
       older.close();
       assertTrue(ArchiveCaptureHolder.isActive());
     } finally {

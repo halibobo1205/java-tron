@@ -124,8 +124,8 @@ final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProp
         "ALLOW_OPTIMIZED_RETURN_VALUE_OF_CHAIN_ID", genesisComplete, 0L);
     this.unfreezeDelayDays = resolveArchived(reader, "UNFREEZE_DELAY_DAYS");
     this.allowNewResourceModel = resolveArchived(reader, "ALLOW_NEW_RESOURCE_MODEL");
-    this.allowShieldedTRC20Transaction = resolve(reader, "ALLOW_SHIELDED_TRC20_TRANSACTION",
-        genesisComplete, 0L);
+    this.allowShieldedTRC20Transaction =
+        resolveArchived(reader, "ALLOW_SHIELDED_TRC20_TRANSACTION");
     this.allowMultiSign = resolveArchived(reader, "ALLOW_MULTI_SIGN");
     this.allowHigherLimitForMaxCpuTimeOfOneTx = resolve(reader,
         "ALLOW_HIGHER_LIMIT_FOR_MAX_CPU_TIME_OF_ONE_TX", genesisComplete, 0L);
@@ -135,14 +135,11 @@ final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProp
         genesisComplete, 0L);
     this.dynamicEnergyMaxFactor = resolve(reader, "DYNAMIC_ENERGY_MAX_FACTOR", genesisComplete,
         0L);
-    this.allowEnergyAdjustment = resolve(reader, "ALLOW_ENERGY_ADJUSTMENT", genesisComplete,
-        0L);
-    this.allowStrictMath = resolve(reader, "ALLOW_STRICT_MATH", genesisComplete,
-        0L);
-    this.consensusLogicOptimization = resolve(reader, "CONSENSUS_LOGIC_OPTIMIZATION",
-        genesisComplete, 0L);
-    this.allowHardenResourceCalculation = resolve(reader, "ALLOW_HARDEN_RESOURCE_CALCULATION",
-        genesisComplete, 0L);
+    this.allowEnergyAdjustment = resolveArchived(reader, "ALLOW_ENERGY_ADJUSTMENT");
+    this.allowStrictMath = resolveArchived(reader, "ALLOW_STRICT_MATH");
+    this.consensusLogicOptimization = resolveArchived(reader, "CONSENSUS_LOGIC_OPTIMIZATION");
+    this.allowHardenResourceCalculation =
+        resolveArchived(reader, "ALLOW_HARDEN_RESOURCE_CALCULATION");
     this.forkStatsByVersion = resolveForkStats(reader, genesisComplete,
         ForkBlockVersionEnum.VERSION_4_7_1, ForkBlockVersionEnum.VERSION_4_8_1_1);
   }

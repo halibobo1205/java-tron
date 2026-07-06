@@ -67,6 +67,7 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
     byte[] manifest = db.get(ArchiveBlockRangeCodec.manifestKey());
     if (manifest != null) {
       if (ArchiveBlockRangeCodec.manifestMatches(manifest)) {
+        validateCurrentKeyspace(db);
         return;
       }
       if (ArchiveBlockRangeCodec.legacySchemaThreeManifestMatches(manifest)) {
@@ -127,6 +128,46 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
   private static boolean hasSecondRow(RocksIterator it) {
     it.next();
     return it.isValid();
+  }
+
+  private static void validateCurrentKeyspace(RocksDB db) {
+    try (RocksIterator it = db.newIterator()) {
+      it.seekToFirst();
+      while (it.isValid()) {
+        validateCurrentKey(it.key());
+        it.next();
+      }
+    }
+  }
+
+  private static void validateCurrentKey(byte[] key) {
+    if (Arrays.equals(key, ArchiveBlockRangeCodec.manifestKey())
+        || Arrays.equals(key, ArchiveBlockRangeCodec.CURSOR_KEY)
+        || Arrays.equals(key, ArchiveBlockRangeCodec.FIRST_BLOCK_KEY)
+        || Arrays.equals(key, ArchiveBlockRangeCodec.REPAIR_REQUIRED_KEY)) {
+      return;
+    }
+    if (key == null || key.length == 0) {
+      throw new ArchiveException("archive txNum store has empty key");
+    }
+    switch (key[0]) {
+      case ArchiveBlockRangeCodec.TXNUM_BLOCK_PREFIX:
+        if (key.length != 1 + Long.BYTES) {
+          throw new ArchiveException("archive txNum block-range key is invalid");
+        }
+        return;
+      case ArchiveBlockRangeCodec.TXNUM_BY_TXID_PREFIX:
+        ArchiveBlockRangeCodec.txIdFromKey(key);
+        return;
+      case ArchiveBlockRangeCodec.TXNUM_META_PREFIX:
+        if (Arrays.equals(key, ArchiveBlockRangeCodec.legacyManifestKey())) {
+          throw new ArchiveException("archive txNum legacy schema row requires rebuild or resync");
+        }
+        ArchiveBlockRangeCodec.txNumFromPositionKey(key);
+        return;
+      default:
+        throw new ArchiveException("archive txNum store has unknown key prefix " + key[0]);
+    }
   }
 
   /** Fail closed after a prior post-canonical archive failure until manual repair clears the DB. */
@@ -626,6 +667,10 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
       byte[] txId = position.getTxId();
       if (txId.length > 0 && !txIds.add(new ByteArrayKey(txId))) {
         throw new ArchiveException("archive duplicate txId in block " + range.getBlockNum());
+      }
+      if (txId.length > 0 && findRawTxNumByTxId(txId).isPresent()) {
+        throw new ArchiveException("archive duplicate txId already committed in block "
+            + range.getBlockNum());
       }
     }
   }
