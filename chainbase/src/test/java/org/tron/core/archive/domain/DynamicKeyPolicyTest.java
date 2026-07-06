@@ -77,7 +77,13 @@ public class DynamicKeyPolicyTest {
         "TOTAL_ENERGY_WEIGHT",
         "TOTAL_TRON_POWER_WEIGHT",
         "FREE_NET_LIMIT",
+        "ONE_DAY_NET_LIMIT",
+        "PUBLIC_NET_LIMIT",
+        "PUBLIC_NET_USAGE",
+        "PUBLIC_NET_TIME",
         "SHIELDED_TRANSACTION_FEE",
+        "SHIELDED_TRANSACTION_CREATE_ACCOUNT_FEE",
+        "TOTAL_SHIELDED_POOL_VALUE",
         "EXCHANGE_BALANCE_LIMIT",
         "MAX_DELEGATE_LOCK_PERIOD",
         "MAX_CREATE_ACCOUNT_TX_SIZE"}) {
@@ -110,6 +116,12 @@ public class DynamicKeyPolicyTest {
   public void proposalValidationAndGovernanceKeysAreRooted() {
     for (String key : new String[] {
         "MAINTENANCE_TIME_INTERVAL",
+        "MAX_FROZEN_TIME",
+        "MIN_FROZEN_TIME",
+        "MAX_FROZEN_SUPPLY_NUMBER",
+        "MAX_FROZEN_SUPPLY_TIME",
+        "MIN_FROZEN_SUPPLY_TIME",
+        "WITNESS_ALLOWANCE_FROZEN_TIME",
         "ACCOUNT_UPGRADE_COST",
         "WITNESS_PAY_PER_BLOCK",
         "WITNESS_127_PAY_PER_BLOCK",
@@ -170,7 +182,34 @@ public class DynamicKeyPolicyTest {
   }
 
   @Test
+  public void internalExecutionControlKeysAreRootedButNotReaderAccessible() {
+    for (String key : new String[] {
+        "NEW_REWARD_ALGORITHM_EFFECTIVE_CYCLE",
+        "BLOCK_HASH_HISTORY_INSTALLED"}) {
+      DynamicKeyDecision decision = decide(key);
+      assertEquals(RootPolicy.IN_GLOBAL_ROOT, decision.getRootPolicy());
+      assertEquals(HistoryPolicy.FULL_HISTORY, decision.getHistoryPolicy());
+      assertEquals(ReaderPolicy.INTERNAL_ONLY, decision.getReaderPolicy());
+    }
+  }
+
+  @Test
+  public void forkVersionWildcardOnlyAcceptsNumericSuffix() {
+    DynamicKeyDecision numeric = decide("FORK_VERSION_27");
+    assertEquals(RootPolicy.IN_GLOBAL_ROOT, numeric.getRootPolicy());
+    assertEquals(ReaderPolicy.HISTORICAL_VM, numeric.getReaderPolicy());
+
+    DynamicKeyDecision nonNumeric = decide("FORK_VERSION_SECRET");
+    assertEquals(RootPolicy.EXCLUDED, nonNumeric.getRootPolicy());
+    assertEquals(ReaderPolicy.INTERNAL_ONLY, nonNumeric.getReaderPolicy());
+  }
+
+  @Test
   public void headerCursorsAndPriceHistoryAreHistoryOnly() {
+    DynamicKeyDecision timestamp = decide("latest_block_header_timestamp");
+    assertEquals(RootPolicy.HISTORY_ONLY, timestamp.getRootPolicy());
+    assertEquals(ReaderPolicy.HISTORICAL_VM, timestamp.getReaderPolicy());
+
     assertEquals(RootPolicy.HISTORY_ONLY, decide("latest_block_header_number").getRootPolicy());
     assertEquals(RootPolicy.HISTORY_ONLY, decide("ENERGY_PRICE_HISTORY").getRootPolicy());
   }

@@ -32,7 +32,7 @@ import org.tron.core.store.VmDynamicProperties;
  * MISSING-means-default exact under genesis coverage. Execution-affecting keys are explicitly
  * rooted in {@code DynamicKeyPolicy}.
  */
-final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProperties {
+public final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProperties {
 
   private final long latestBlockHeaderNumber;
   private final long latestBlockHeaderTimestamp;
@@ -144,6 +144,12 @@ final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProp
       throws ArchiveReaderException {
     return resolve(reader, "ENERGY_FEE", genesisComplete,
         HistoricalVmDynamicProperties.DEFAULT_ENERGY_FEE);
+  }
+
+  public static void validateGenesisArchiveRows(VmDynamicProperties latest,
+      ArchiveStateReader reader) throws ArchiveReaderException {
+    long energyFee = resolveEnergyFee(reader, true);
+    new HistoricalArchiveVmDynamicProperties(latest, energyFee, reader, true);
   }
 
   private static long resolve(ArchiveStateReader reader, String key, boolean genesisComplete,

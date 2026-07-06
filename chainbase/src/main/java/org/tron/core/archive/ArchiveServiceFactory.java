@@ -1,5 +1,8 @@
 package org.tron.core.archive;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import org.tron.common.arch.Arch;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
@@ -54,14 +57,20 @@ public final class ArchiveServiceFactory {
     ArchiveDomainCatalog catalog = new DefaultArchiveDomainCatalog();
     byte[] schemaChecksum = ArchiveSchemaChecksum.of(registry, catalog);
     if (archiveDir != null && config.getTemporal().isEnable()) {
+      Path archivePath = Paths.get(archiveDir);
+      try {
+        Files.createDirectories(archivePath);
+      } catch (IOException e) {
+        throw new ArchiveException("failed to create archive directory " + archiveDir, e);
+      }
       RocksDbArchiveTemporalStore temporalStore = null;
       RocksDbArchiveBlockRangeStore blockRangeStore = null;
       PersistentArchiveTxNumIndex txNumIndex = null;
       try {
         temporalStore = new RocksDbArchiveTemporalStore(
-            Paths.get(archiveDir, "temporal").toString());
+            archivePath.resolve("temporal").toString());
         blockRangeStore =
-            new RocksDbArchiveBlockRangeStore(Paths.get(archiveDir, "index").toString());
+            new RocksDbArchiveBlockRangeStore(archivePath.resolve("index").toString());
         txNumIndex = new PersistentArchiveTxNumIndex(blockRangeStore, schemaChecksum);
         if (!blockRangeStore.getLastRange().isPresent()
             && temporalStore.hasDataBeyondManifest()) {
