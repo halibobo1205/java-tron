@@ -93,6 +93,11 @@ import org.tron.core.actuator.ActuatorCreator;
 import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveService;
 import org.tron.core.archive.ArchiveSource;
+import org.tron.core.archive.DefaultArchiveService;
+import org.tron.core.archive.reader.ArchiveReaderException;
+import org.tron.core.archive.reader.ArchiveStatePoint;
+import org.tron.core.archive.reader.ArchiveStateReader;
+import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockBalanceTraceCapsule;
 import org.tron.core.capsule.BlockCapsule;
@@ -146,6 +151,7 @@ import org.tron.core.metrics.MetricsUtil;
 import org.tron.core.service.MortgageService;
 import org.tron.core.service.RewardViCalService;
 import org.tron.core.services.event.exception.EventException;
+import org.tron.core.services.jsonrpc.HistoricalArchiveVmDynamicProperties;
 import org.tron.core.services.jsonrpc.TronJsonRpcImpl;
 import org.tron.core.store.AccountAssetStore;
 import org.tron.core.store.AccountIdIndexStore;
@@ -649,6 +655,9 @@ public class Manager {
                 genesisBlock.getBlockId().getByteString());
             chainBaseManager.getDynamicPropertiesStore().saveLatestBlockHeaderTimestamp(
                 genesisBlock.getTimeStamp());
+            if (archiveService.isEnabled()) {
+              chainBaseManager.getDynamicPropertiesStore().saveGenesisArchiveDynamicProperties();
+            }
             this.initAccount();
             this.initWitness();
             this.khaosDb.start(genesisBlock);
@@ -690,6 +699,25 @@ public class Manager {
               + "database.",
           Args.getInstance().getOutputDirectory());
       throw new TronError(msg, TronError.ErrCode.GENESIS_BLOCK_INIT);
+    }
+    if (!(archiveService instanceof DefaultArchiveService)) {
+      return;
+    }
+    DefaultArchiveService defaultArchiveService = (DefaultArchiveService) archiveService;
+    ArchiveBlockRange range = defaultArchiveService.getTxNumIndex().getBlockRange(0L)
+        .orElseThrow(() -> new TronError("Archive enabled but genesis block range is unavailable",
+            TronError.ErrCode.GENESIS_BLOCK_INIT));
+    try (ArchiveStateReader reader = defaultArchiveService.getReaderFactory().open(
+        ArchiveStatePoint.blockEnd(0L, chainBaseManager.getGenesisBlock().getBlockId().getBytes(),
+            range.getFinalizeTxNum()))) {
+      HistoricalArchiveVmDynamicProperties.validateGenesisArchiveRows(
+          chainBaseManager.getDynamicPropertiesStore(), reader);
+    } catch (ArchiveReaderException e) {
+      String msg = String.format("Archive enabled but genesis VM dynamic properties are incomplete,"
+              + " please delete archive database directory(%s) and restart from an empty "
+              + "archive-enabled database.",
+          Args.getInstance().getOutputDirectory());
+      throw new TronError(msg, e, TronError.ErrCode.GENESIS_BLOCK_INIT);
     }
   }
 

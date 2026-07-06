@@ -7,6 +7,7 @@ import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
 import org.tron.core.archive.domain.ArchiveDomainCatalog;
 import org.tron.core.archive.domain.ArchiveDomainDescriptor;
+import org.tron.core.archive.domain.DynamicKeyPolicy;
 import org.tron.core.archive.domain.ReaderPolicy;
 import org.tron.core.archive.temporal.ArchiveTemporalStore;
 import org.tron.core.capsule.AccountCapsule;
@@ -30,6 +31,7 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
 
   private final ArchiveTemporalStore temporalStore;
   private final ArchiveDomainCatalog catalog;
+  private final DynamicKeyPolicy dynamicKeyPolicy = new DynamicKeyPolicy();
   private final ArchiveStatePoint point;
 
   DefaultArchiveStateReader(ArchiveTemporalStore temporalStore,
@@ -138,6 +140,11 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
   public ArchiveReadResult<byte[]> getDynamicProperty(byte[] key) throws ArchiveReaderException {
     if (key == null || key.length == 0) {
       throw new IllegalArgumentException("dynamic property key must be non-empty");
+    }
+    ReaderPolicy keyPolicy = dynamicKeyPolicy.decision(key).getReaderPolicy();
+    if (keyPolicy != ReaderPolicy.PUBLIC_STATE && keyPolicy != ReaderPolicy.HISTORICAL_VM) {
+      throw new ArchiveReaderException(ArchiveReaderException.Reason.DOMAIN_UNSUPPORTED,
+          "dynamic property not readable by archive state reader");
     }
     return getRaw(ArchiveDomain.DYNAMIC_PROPERTIES, key);
   }

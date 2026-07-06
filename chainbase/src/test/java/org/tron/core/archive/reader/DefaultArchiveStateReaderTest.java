@@ -71,6 +71,39 @@ public class DefaultArchiveStateReaderTest {
         "ALLOW_TVM_CANCUN".getBytes(StandardCharsets.US_ASCII)).getStatus());
   }
 
+  @Test
+  public void internalOnlyDynamicPropertiesAreRejectedByReaderPolicy() {
+    byte[] header = "latest_block_header_number".getBytes(StandardCharsets.US_ASCII);
+    put(ArchiveDomain.DYNAMIC_PROPERTIES, header, DomainValue.present(ByteArray.fromLong(1L)), 5);
+    ArchiveStateReader reader = readerAt(5);
+
+    ArchiveReaderException headerEx = assertThrows(ArchiveReaderException.class,
+        () -> reader.getDynamicProperty(header));
+    assertEquals(ArchiveReaderException.Reason.DOMAIN_UNSUPPORTED, headerEx.getReason());
+
+    byte[] unknown = "SOME_FUTURE_KEY".getBytes(StandardCharsets.US_ASCII);
+    ArchiveReaderException unknownEx = assertThrows(ArchiveReaderException.class,
+        () -> reader.getDynamicProperty(unknown));
+    assertEquals(ArchiveReaderException.Reason.DOMAIN_UNSUPPORTED, unknownEx.getReason());
+
+    byte[] internalRoot = "BLOCK_HASH_HISTORY_INSTALLED".getBytes(StandardCharsets.US_ASCII);
+    ArchiveReaderException internalRootEx = assertThrows(ArchiveReaderException.class,
+        () -> reader.getDynamicProperty(internalRoot));
+    assertEquals(ArchiveReaderException.Reason.DOMAIN_UNSUPPORTED, internalRootEx.getReason());
+  }
+
+  @Test
+  public void historicalVmDynamicPropertiesRemainReadableByKeyPolicy() throws Exception {
+    byte[] timestamp = "latest_block_header_timestamp".getBytes(StandardCharsets.US_ASCII);
+    put(ArchiveDomain.DYNAMIC_PROPERTIES, timestamp,
+        DomainValue.present(ByteArray.fromLong(123L)), 5);
+
+    ArchiveReadResult<byte[]> result = readerAt(5).getDynamicProperty(timestamp);
+
+    assertEquals(Status.PRESENT, result.getStatus());
+    assertEquals(123L, ByteArray.toLong(result.getValue()));
+  }
+
   private static byte[] addr(int last) {
     byte[] a = new byte[21];
     a[0] = 0x41;
@@ -137,8 +170,8 @@ public class DefaultArchiveStateReaderTest {
 
   @Test
   public void midChainReaderUsesCapturedPrevButLeavesUncapturedKeysMissing() throws Exception {
-    byte[] existing = "MID_CHAIN_EXISTING".getBytes(StandardCharsets.US_ASCII);
-    byte[] gap = "MID_CHAIN_GAP".getBytes(StandardCharsets.US_ASCII);
+    byte[] existing = "TOTAL_NET_LIMIT".getBytes(StandardCharsets.US_ASCII);
+    byte[] gap = "TOTAL_ENERGY_LIMIT".getBytes(StandardCharsets.US_ASCII);
     put(ArchiveDomain.DYNAMIC_PROPERTIES, existing,
         DomainValue.present(new byte[] {0x30}), DomainValue.present(new byte[] {0x31}), 6);
 

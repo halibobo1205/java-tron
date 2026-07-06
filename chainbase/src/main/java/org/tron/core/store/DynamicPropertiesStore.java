@@ -1013,6 +1013,53 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule>
     return result;
   }
 
+  /**
+   * Re-publishes constructor-seeded VM dynamic properties while the genesis archive context is
+   * active, so a genesis-complete archive has explicit block-0 rows for historical call/trace.
+   */
+  public void saveGenesisArchiveDynamicProperties() {
+    saveEnergyFee(getEnergyFee());
+    saveMaintenanceTimeInterval(getMaintenanceTimeInterval());
+    saveCurrentCycleNumber(getCurrentCycleNumber());
+    saveTotalNetLimit(getTotalNetLimit());
+    saveTotalNetWeight(getTotalNetWeight());
+    saveTotalEnergyCurrentLimit(getTotalEnergyCurrentLimit());
+    saveTotalEnergyWeight(getTotalEnergyWeight());
+    saveTotalTronPowerWeight(getTotalTronPowerWeight());
+    saveAllowCreationOfContracts(getAllowCreationOfContracts());
+    saveNewRewardAlgorithmEffectiveCycle(getNewRewardAlgorithmEffectiveCycle());
+    saveBlockHashHistoryInstalled(getBlockHashHistoryInstalled());
+    saveMaxFeeLimit(getMaxFeeLimit());
+    saveMaxCpuTimeOfOneTx(getMaxCpuTimeOfOneTx());
+    saveAllowTvmTransferTrc10(getAllowTvmTransferTrc10());
+    saveAllowTvmConstantinople(getAllowTvmConstantinople());
+    saveAllowTvmSolidity059(getAllowTvmSolidity059());
+    saveAllowTvmIstanbul(getAllowTvmIstanbul());
+    saveAllowTvmFreeze(getAllowTvmFreeze());
+    saveAllowTvmVote(getAllowTvmVote());
+    saveAllowTvmLondon(getAllowTvmLondon());
+    saveAllowTvmShangHai(getAllowTvmShangHai());
+    saveAllowTvmCancun(getAllowTvmCancun());
+    saveAllowTvmBlob(getAllowTvmBlob());
+    saveAllowTvmOsaka(getAllowTvmOsaka());
+    saveAllowTvmSelfdestructRestriction(getAllowTvmSelfdestructRestriction());
+    saveAllowTvmCompatibleEvm(getAllowTvmCompatibleEvm());
+    saveAllowOptimizedReturnValueOfChainId(getAllowOptimizedReturnValueOfChainId());
+    saveUnfreezeDelayDays(getUnfreezeDelayDays());
+    saveAllowNewResourceModel(getAllowNewResourceModel());
+    saveAllowShieldedTRC20Transaction(getAllowShieldedTRC20Transaction());
+    saveAllowMultiSign(getAllowMultiSign());
+    saveAllowHigherLimitForMaxCpuTimeOfOneTx(getAllowHigherLimitForMaxCpuTimeOfOneTx());
+    saveAllowDynamicEnergy(getAllowDynamicEnergy());
+    saveDynamicEnergyThreshold(getDynamicEnergyThreshold());
+    saveDynamicEnergyIncreaseFactor(getDynamicEnergyIncreaseFactor());
+    saveDynamicEnergyMaxFactor(getDynamicEnergyMaxFactor());
+    saveAllowEnergyAdjustment(getAllowEnergyAdjustment());
+    saveAllowStrictMath(getAllowStrictMath());
+    saveConsensusLogicOptimization(getConsensusLogicOptimization());
+    saveAllowHardenResourceCalculation(getAllowHardenResourceCalculation());
+  }
+
   public void saveTokenIdNum(long num) {
     this.put(TOKEN_ID_NUM,
         new BytesCapsule(ByteArray.fromLong(num)));
@@ -2568,9 +2615,13 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule>
   public void saveNewRewardAlgorithmEffectiveCycle() {
     if (getNewRewardAlgorithmEffectiveCycle() == Long.MAX_VALUE) {
       long currentCycle = getCurrentCycleNumber();
-      this.put(NEW_REWARD_ALGORITHM_EFFECTIVE_CYCLE,
-          new BytesCapsule(ByteArray.fromLong(currentCycle + 1)));
+      saveNewRewardAlgorithmEffectiveCycle(currentCycle + 1);
     }
+  }
+
+  public void saveNewRewardAlgorithmEffectiveCycle(long value) {
+    this.put(NEW_REWARD_ALGORITHM_EFFECTIVE_CYCLE,
+        new BytesCapsule(ByteArray.fromLong(value)));
   }
 
   public long getNewRewardAlgorithmEffectiveCycle() {
