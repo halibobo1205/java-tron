@@ -408,6 +408,26 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
+  public void startupReconcileAllowsEmptyArchiveAtMidChainActivation() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    try {
+      service.reconcileInFlightOnStartup(
+          9, 10, blockNum -> blockWithParentSeed(blockNum, (byte) 1));
+
+      service.validateAvailable();
+      assertEquals(-1L, index.getFirstArchivedBlock());
+      assertEquals(-1L, index.getLastArchivedBlock());
+      assertEquals(0, inFlightStore.loadBlocks().size());
+    } finally {
+      service.close();
+    }
+  }
+
+  @Test
   public void closeClearsThreadLocalContextAndCaptureBuffer() {
     InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
     ArchiveExecutionContext context = new ArchiveExecutionContext();
