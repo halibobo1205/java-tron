@@ -193,6 +193,14 @@ public class StorageConfig {
         throw new IllegalArgumentException(
             "storage.archive.warnUnclassifiedStoreWrites cannot be false in P0");
       }
+      if (enable && commitment != null && commitment.isEnable()) {
+        throw new IllegalArgumentException(
+            "storage.archive.commitment.enable is not supported in P0");
+      }
+      if (enable && commitment != null && commitment.isPersistTxRoots()) {
+        throw new IllegalArgumentException(
+            "storage.archive.commitment.persistTxRoots cannot be true in P0");
+      }
     }
 
     @Getter

@@ -74,6 +74,25 @@ public class ArchiveJsonRpcStateAdapterTest {
   }
 
   @Test
+  public void resolverAcceptsDecimalHistoricalBlockNumber() throws Exception {
+    DefaultArchiveService svc = new DefaultArchiveService(true);
+    svc.getTxNumIndex().beginBlock(16, ArchiveSource.NORMAL);
+    svc.getTxNumIndex().allocateSystemTx(16, ArchivePhase.BLOCK_PREPARE);
+    svc.getTxNumIndex().allocateSystemTx(16, ArchivePhase.BLOCK_FINALIZE);
+    svc.getTxNumIndex().commitBlock(16, blockHash(16), 0);
+    Wallet wallet = mock(Wallet.class);
+    when(wallet.getBlockByNum(16)).thenReturn(block(16));
+    JsonRpcArchiveStatePointResolver resolver =
+        new JsonRpcArchiveStatePointResolver(wallet, svc);
+
+    ResolvedArchiveStatePoint resolved = resolver.resolveBlockEnd("16");
+
+    assertFalse(resolved.isLatest());
+    assertEquals(16L, resolved.getPoint().getBlockNum());
+    assertEquals(1L, resolved.getPoint().getTxNum());
+  }
+
+  @Test
   public void midChainArchiveRejectsMissingStateWithoutReadingLatest() throws Exception {
     DefaultArchiveService svc = new DefaultArchiveService(true);
     svc.getTxNumIndex().beginBlock(5, ArchiveSource.NORMAL);
