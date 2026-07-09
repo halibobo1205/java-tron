@@ -4,7 +4,10 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
@@ -23,12 +26,13 @@ import org.tron.core.archive.reader.ResolvedArchiveStatePoint;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.exception.jsonrpc.JsonRpcInternalException;
 import org.tron.core.exception.jsonrpc.JsonRpcInvalidParamsException;
+import org.tron.protos.Protocol.Account;
 import org.tron.protos.Protocol.Block;
 
 /**
  * Compatibility gate for the historical eth_get* path: {@code latest} must stay live, but
- * historical selectors must never fall back to latest state even when archive is disabled.
- * The cases use a lightweight mocked wallet where block resolution is needed.
+ * historical selectors only enter the archive adapter when archive is enabled. The cases use a
+ * lightweight mocked wallet where block resolution is needed.
  */
 public class ArchiveJsonRpcStateAdapterTest {
 
@@ -39,16 +43,12 @@ public class ArchiveJsonRpcStateAdapterTest {
   }
 
   @Test
-  public void disabledArchiveRoutesHistoricalSelectorsToFailClosedAdapter() {
+  public void disabledArchiveDoesNotRouteHistoricalSelectorsToAdapter() {
     ArchiveJsonRpcStateAdapter adapter =
         new ArchiveJsonRpcStateAdapter(null, NoopArchiveService.INSTANCE);
     assertFalse(adapter.shouldUseArchive("latest"));
-    assertTrue(adapter.shouldUseArchive("earliest"));
-    assertTrue(adapter.shouldUseArchive("0x10"));
-
-    JsonRpcInternalException ex = assertThrows(JsonRpcInternalException.class,
-        () -> adapter.getBalance("0xabd4b9367799eaa3197fecb144eb71de1e049abc", "0x10"));
-    assertTrue(ex.getMessage().contains("archive is not available"));
+    assertFalse(adapter.shouldUseArchive("earliest"));
+    assertFalse(adapter.shouldUseArchive("0x10"));
   }
 
   @Test
@@ -74,7 +74,7 @@ public class ArchiveJsonRpcStateAdapterTest {
   }
 
   @Test
-  public void midChainArchiveRejectsMissingStateInsideCoverage() throws Exception {
+  public void midChainArchiveRejectsMissingStateWithoutReadingLatest() throws Exception {
     DefaultArchiveService svc = new DefaultArchiveService(true);
     svc.getTxNumIndex().beginBlock(5, ArchiveSource.NORMAL);
     svc.getTxNumIndex().allocateSystemTx(5, ArchivePhase.BLOCK_PREPARE);
@@ -82,18 +82,20 @@ public class ArchiveJsonRpcStateAdapterTest {
     svc.getTxNumIndex().commitBlock(5, blockHash(5), 0); // first archived block = 5 -> mid-chain
     Wallet wallet = mock(Wallet.class);
     when(wallet.getBlockByNum(5)).thenReturn(block(5));
+    when(wallet.getAccount(any(Account.class))).thenReturn(
+        Account.newBuilder().setBalance(7L).build());
     ArchiveJsonRpcStateAdapter adapter = new ArchiveJsonRpcStateAdapter(wallet, svc);
     String addr = "0xabd4b9367799eaa3197fecb144eb71de1e049abc";
 
     JsonRpcInternalException balance = assertThrows(JsonRpcInternalException.class,
         () -> adapter.getBalance(addr, "0x5"));
-    assertTrue(balance.getMessage().contains(
-        "archive account is unknown before mid-chain coverage"));
+    assertEquals("archive account is unknown before mid-chain coverage", balance.getMessage());
 
     JsonRpcInternalException code = assertThrows(JsonRpcInternalException.class,
         () -> adapter.getCode(addr, "0x5"));
-    assertTrue(code.getMessage().contains(
-        "archive code is unknown before mid-chain coverage"));
+    assertEquals("archive code is unknown before mid-chain coverage", code.getMessage());
+
+    verify(wallet, never()).getAccount(any(Account.class));
   }
 
   @Test

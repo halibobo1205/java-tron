@@ -2,10 +2,11 @@ package org.tron.core.db;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
-import static org.junit.Assume.assumeTrue;
+import static org.mockito.Mockito.mockStatic;
 
 import java.nio.charset.StandardCharsets;
 import org.junit.Test;
+import org.mockito.MockedStatic;
 import org.tron.common.BaseMethodTest;
 import org.tron.common.arch.Arch;
 import org.tron.common.parameter.CommonParameter;
@@ -21,12 +22,21 @@ import org.tron.core.services.jsonrpc.HistoricalArchiveVmDynamicProperties;
 
 public class ManagerGenesisArchiveLifecycleTest extends BaseMethodTest {
 
+  private MockedStatic<Arch> arch;
   private DefaultArchiveService archiveService;
 
   @Override
   protected void beforeContext() {
-    assumeTrue("persistent archive is supported only on arm64", Arch.isArm64());
+    arch = mockStatic(Arch.class);
+    arch.when(Arch::isArm64).thenReturn(true);
     CommonParameter.getInstance().getStorage().getArchive().setEnable(true);
+  }
+
+  @Override
+  protected void beforeDestroy() {
+    if (arch != null) {
+      arch.close();
+    }
   }
 
   @Override

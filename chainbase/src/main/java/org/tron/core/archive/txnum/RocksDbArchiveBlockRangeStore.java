@@ -134,17 +134,29 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
     try (RocksIterator it = db.newIterator()) {
       it.seekToFirst();
       while (it.isValid()) {
-        validateCurrentKey(it.key());
+        validateCurrentRow(it.key(), it.value());
         it.next();
       }
     }
   }
 
-  private static void validateCurrentKey(byte[] key) {
-    if (Arrays.equals(key, ArchiveBlockRangeCodec.manifestKey())
-        || Arrays.equals(key, ArchiveBlockRangeCodec.CURSOR_KEY)
-        || Arrays.equals(key, ArchiveBlockRangeCodec.FIRST_BLOCK_KEY)
-        || Arrays.equals(key, ArchiveBlockRangeCodec.REPAIR_REQUIRED_KEY)) {
+  private static void validateCurrentRow(byte[] key, byte[] value) {
+    if (Arrays.equals(key, ArchiveBlockRangeCodec.manifestKey())) {
+      if (!ArchiveBlockRangeCodec.manifestMatches(value)) {
+        throw new ArchiveException("archive txNum manifest mismatch");
+      }
+      return;
+    }
+    if (Arrays.equals(key, ArchiveBlockRangeCodec.CURSOR_KEY)) {
+      ArchiveBlockRangeCodec.decodeCursor(value);
+      return;
+    }
+    if (Arrays.equals(key, ArchiveBlockRangeCodec.FIRST_BLOCK_KEY)) {
+      ArchiveBlockRangeCodec.decodeFirstBlock(value);
+      return;
+    }
+    if (Arrays.equals(key, ArchiveBlockRangeCodec.REPAIR_REQUIRED_KEY)) {
+      ArchiveBlockRangeCodec.decodeRepairRequired(value);
       return;
     }
     if (key == null || key.length == 0) {
@@ -155,15 +167,19 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
         if (key.length != 1 + Long.BYTES) {
           throw new ArchiveException("archive txNum block-range key is invalid");
         }
+        ArchiveBlockRangeCodec.blockNumFromRangeKey(key);
+        ArchiveBlockRangeCodec.decodeRange(value);
         return;
       case ArchiveBlockRangeCodec.TXNUM_BY_TXID_PREFIX:
         ArchiveBlockRangeCodec.txIdFromKey(key);
+        ArchiveBlockRangeCodec.decodeCursor(value);
         return;
       case ArchiveBlockRangeCodec.TXNUM_META_PREFIX:
         if (Arrays.equals(key, ArchiveBlockRangeCodec.legacyManifestKey())) {
           throw new ArchiveException("archive txNum legacy schema row requires rebuild or resync");
         }
         ArchiveBlockRangeCodec.txNumFromPositionKey(key);
+        ArchiveBlockRangeCodec.decodePosition(value);
         return;
       default:
         throw new ArchiveException("archive txNum store has unknown key prefix " + key[0]);
@@ -385,21 +401,24 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
         || position.getTxIndex() >= range.getUserTxCount()) {
       throw new ArchiveException("archive user tx-position mismatch for txNum " + txNum);
     }
+    ArchiveBlockRangeCodec.requirePositionTxId(position.getPhase(), position.getTxId(),
+        "archive tx-position");
     long expectedTxNum = range.getFirstTxNum() + 1 + position.getTxIndex();
     if (position.getTxNum() != expectedTxNum) {
       throw new ArchiveException("archive user tx-position order mismatch for txNum " + txNum);
     }
     byte[] txId = position.getTxId();
-    if (txId.length > 0) {
-      OptionalLong byTxId = findRawTxNumByTxId(txId);
-      if (!byTxId.isPresent() || byTxId.getAsLong() != txNum) {
-        throw new ArchiveException("archive txId index missing for committed txNum " + txNum);
-      }
+    OptionalLong byTxId = findRawTxNumByTxId(txId);
+    if (!byTxId.isPresent() || byTxId.getAsLong() != txNum) {
+      throw new ArchiveException("archive txId index missing for committed txNum " + txNum);
     }
     return position;
   }
 
   public Optional<ArchiveBlockRange> getRange(long blockNum) {
+    if (blockNum < 0) {
+      throw new ArchiveException("archive block range block number must be non-negative");
+    }
     try {
       byte[] value = db.get(ArchiveBlockRangeCodec.rangeKey(blockNum));
       return (value == null) ? Optional.empty()
@@ -425,6 +444,9 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
   }
 
   public void validateCanonicalHead(long headNum, byte[] headHash) {
+    if (headNum < 0) {
+      throw new ArchiveException("archive head block number must be non-negative");
+    }
     Optional<ArchiveBlockRange> lastRange = getLastRange();
     if (!lastRange.isPresent()) {
       return;
@@ -443,6 +465,9 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
   }
 
   public Optional<ArchiveTxPosition> getPosition(long txNum) {
+    if (txNum < 0) {
+      throw new ArchiveException("archive tx-position txNum must be non-negative");
+    }
     Optional<ArchiveTxPosition> stored = getRawPosition(txNum);
     if (!stored.isPresent()) {
       return Optional.empty();
@@ -454,6 +479,9 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
   }
 
   private Optional<ArchiveTxPosition> getRawPosition(long txNum) {
+    if (txNum < 0) {
+      throw new ArchiveException("archive tx-position txNum must be non-negative");
+    }
     try {
       byte[] value = db.get(ArchiveBlockRangeCodec.positionKey(txNum));
       return (value == null) ? Optional.empty()
@@ -464,6 +492,9 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
   }
 
   public boolean hasCommittedTxNum(long txNum) {
+    if (txNum < 0) {
+      throw new ArchiveException("archive tx-position txNum must be non-negative");
+    }
     Optional<ArchiveTxPosition> position = getRawPosition(txNum);
     if (!position.isPresent()) {
       return false;
@@ -481,6 +512,9 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
   }
 
   public OptionalLong findTxNumByBlockAndIndex(long blockNum, int txIndex) {
+    if (blockNum < 0) {
+      throw new ArchiveException("archive block range block number must be non-negative");
+    }
     if (txIndex < 0) {
       return OptionalLong.empty();
     }
@@ -510,6 +544,7 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
     if (txId == null || txId.length == 0) {
       return OptionalLong.empty();
     }
+    ArchiveBlockRangeCodec.requireTxId(txId, "archive txId lookup");
     OptionalLong txNum = findRawTxNumByTxId(txId);
     if (!txNum.isPresent()) {
       return OptionalLong.empty();
@@ -527,6 +562,9 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
   }
 
   private OptionalLong findRawTxNumByTxId(byte[] txId) {
+    if (txId == null || txId.length == 0) {
+      return OptionalLong.empty();
+    }
     try {
       byte[] value = db.get(ArchiveBlockRangeCodec.txIdKey(txId));
       return (value == null) ? OptionalLong.empty()
@@ -614,6 +652,15 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
     ArchiveBlockRangeCodec.requireBlockHash(range.getBlockHash(), "archive block range");
     ArchiveBlockRangeCodec.requireSchemaChecksum(range.getSchemaChecksum(),
         "archive block range");
+    if (range.getBlockNum() < 0) {
+      throw new ArchiveException("archive block range has negative block number "
+          + range.getBlockNum());
+    }
+    if (range.getFirstTxNum() < 0 || range.getLastTxNum() < 0
+        || range.getPrepareTxNum() < 0 || range.getFinalizeTxNum() < 0) {
+      throw new ArchiveException("archive block range has negative txNum for block "
+          + range.getBlockNum());
+    }
     if (range.getFirstTxNum() > range.getLastTxNum()) {
       throw new ArchiveException("archive block range has inverted txNum bounds for block "
           + range.getBlockNum());
@@ -703,6 +750,8 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
     if (position.getPhase() != ArchivePhase.USER_TX || position.getTxIndex() != expectedTxIndex) {
       throw new ArchiveException("archive user tx-position mismatch for commit txNum " + txNum);
     }
+    ArchiveBlockRangeCodec.requirePositionTxId(position.getPhase(), position.getTxId(),
+        "archive tx-position");
   }
 
   private void validateNoOrphanIndexRows() {

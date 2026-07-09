@@ -109,9 +109,10 @@ public final class DefaultArchiveService implements ArchiveService {
       loadInFlightBlocks();
       this.readerFactory = new DefaultArchiveStateReaderFactory(temporalStore, catalog,
           txNumIndex, this::validateAvailableForRead);
+      executionContext.clear();
+      captureEngine.clear();
       ArchiveCaptureHolder.set(captureEngine);
     } else {
-      ArchiveCaptureHolder.clear();
       this.schemaChecksum = new byte[0];
       this.captureEngine = null;
       this.temporalStore = null;
@@ -132,7 +133,7 @@ public final class DefaultArchiveService implements ArchiveService {
       if (published.isPresent()) {
         validatePublishedRange(range, published.get());
         temporalStore.validateCommittedBlock(published.get());
-        inFlightStore.deleteBlock(range.getBlockNum());
+        deletePublishedInFlightBlock(range.getBlockNum());
         continue;
       }
       validateInFlightAppend(block);
@@ -187,7 +188,7 @@ public final class DefaultArchiveService implements ArchiveService {
     }
     validateAvailable();
     executionTxNumIndex.beginBlock(block.getNum(), source);
-    captureEngine.clear();
+    captureEngine.beginBlockCapture();
   }
 
   @Override
@@ -211,7 +212,10 @@ public final class DefaultArchiveService implements ArchiveService {
 
   @Override
   public void endTx() {
-    executionContext.clear();
+    if (!enabled) {
+      return;
+    }
+    clearExecutionContextIfCurrent();
   }
 
   @Override
@@ -256,6 +260,12 @@ public final class DefaultArchiveService implements ArchiveService {
   @Override
   public void reconcileInFlightOnStartup(long solidifiedBlockNum,
       LongFunction<BlockCapsule> canonicalBlockProvider) {
+    reconcileInFlightOnStartup(solidifiedBlockNum, -1L, canonicalBlockProvider);
+  }
+
+  @Override
+  public void reconcileInFlightOnStartup(long solidifiedBlockNum, long canonicalHeadNum,
+      LongFunction<BlockCapsule> canonicalBlockProvider) {
     if (!enabled) {
       return;
     }
@@ -268,8 +278,10 @@ public final class DefaultArchiveService implements ArchiveService {
           throw new ArchiveException("archive startup reconciliation requires canonical blocks");
         }
         for (ArchiveInFlightBlock block : inFlightBlocks.values()) {
+          validateInFlightNotAfterCanonicalHead(block, canonicalHeadNum);
           validateInFlightMatchesCanonical(block, canonicalBlockProvider);
         }
+        validateCanonicalTailCovered(canonicalHeadNum, canonicalBlockProvider);
         publishSolidifiedBlocksLocked(solidifiedBlockNum);
       } catch (RuntimeException e) {
         markFatal(e);
@@ -278,6 +290,39 @@ public final class DefaultArchiveService implements ArchiveService {
     } finally {
       writeLock.unlock();
     }
+  }
+
+  private static void validateInFlightNotAfterCanonicalHead(ArchiveInFlightBlock block,
+      long canonicalHeadNum) {
+    if (canonicalHeadNum < 0) {
+      return;
+    }
+    long blockNum = block.getRange().getBlockNum();
+    if (blockNum > canonicalHeadNum) {
+      throw new ArchiveException("archive in-flight block " + blockNum
+          + " is after canonical head " + canonicalHeadNum);
+    }
+  }
+
+  private void validateCanonicalTailCovered(long canonicalHeadNum,
+      LongFunction<BlockCapsule> canonicalBlockProvider) {
+    if (canonicalHeadNum < 0) {
+      return;
+    }
+    long archiveTail = inFlightBlocks.isEmpty()
+        ? txNumIndex.getLastArchivedBlock()
+        : inFlightBlocks.lastKey();
+    if (archiveTail < 0 || archiveTail >= canonicalHeadNum) {
+      return;
+    }
+    long missingBlock = archiveTail + 1;
+    BlockCapsule canonical = canonicalBlockProvider.apply(missingBlock);
+    if (canonical == null || canonical.getNum() != missingBlock) {
+      throw new ArchiveException("archive startup cannot load canonical block " + missingBlock
+          + " after archive tail " + archiveTail);
+    }
+    throw new ArchiveException("archive in-flight journal missing for canonical block "
+        + missingBlock + " after archive tail " + archiveTail);
   }
 
   private void publishSolidifiedBlocksLocked(long solidifiedBlockNum) {
@@ -324,7 +369,7 @@ public final class DefaultArchiveService implements ArchiveService {
       validatePublishedRange(range, publishedRange);
       temporalStore.putBlockChanges(publishedRange, block.getRecords());
       temporalPublished = true;
-      inFlightStore.deleteBlock(range.getBlockNum());
+      deletePublishedInFlightBlock(range.getBlockNum());
     } catch (RuntimeException e) {
       if (!temporalPublished) {
         try {
@@ -338,6 +383,15 @@ public final class DefaultArchiveService implements ArchiveService {
         }
       }
       throw e;
+    }
+  }
+
+  private void deletePublishedInFlightBlock(long blockNum) {
+    try {
+      inFlightStore.deleteBlock(blockNum);
+    } catch (RuntimeException deleteFailure) {
+      // The reader-visible index and temporal rows are already durable. Leave the journal row for
+      // startup cleanup instead of marking the archive repair-required.
     }
   }
 
@@ -425,7 +479,7 @@ public final class DefaultArchiveService implements ArchiveService {
       markFatal(e);
       throw e;
     } finally {
-      executionContext.clear();
+      clearExecutionContextIfCurrent();
       captureEngine.clear();
     }
   }
@@ -536,7 +590,6 @@ public final class DefaultArchiveService implements ArchiveService {
 
   @Override
   public void abortBlock(BlockCapsule block) {
-    executionContext.clear();
     if (!enabled) {
       return;
     }
@@ -546,6 +599,7 @@ public final class DefaultArchiveService implements ArchiveService {
       RuntimeException failure = null;
       try {
         validateAvailable();
+        clearExecutionContextIfCurrent();
       } catch (RuntimeException e) {
         failure = e;
       }
@@ -585,6 +639,11 @@ public final class DefaultArchiveService implements ArchiveService {
             throw new ArchiveException("cannot unwind block " + block.getNum()
                 + ": archive in-flight block hash mismatch");
           }
+          if (inFlightBlocks.isEmpty() || inFlightBlocks.lastKey() != block.getNum()) {
+            throw new ArchiveException("cannot unwind block " + block.getNum()
+                + ": not archive in-flight head");
+          }
+          executionTxNumIndex.getHeadBlockRange(block.getNum());
           inFlightStore.deleteBlock(block.getNum());
           inFlightBlocks.remove(block.getNum());
           executionTxNumIndex.unwindBlock(block.getNum());
@@ -597,7 +656,7 @@ public final class DefaultArchiveService implements ArchiveService {
           }
           if (!committed.isPresent()
               && (firstArchivedBlock < 0 || block.getNum() < firstArchivedBlock)) {
-            executionContext.clear();
+            clearExecutionContextIfCurrent();
             captureEngine.clear();
             return;
           }
@@ -662,6 +721,14 @@ public final class DefaultArchiveService implements ArchiveService {
 
   @Override
   public void close() {
+    boolean currentCaptureEngine =
+        captureEngine != null && ArchiveCaptureHolder.isCurrent(captureEngine);
+    if (currentCaptureEngine) {
+      executionContext.clear();
+    }
+    if (captureEngine != null) {
+      captureEngine.clear();
+    }
     ArchiveCaptureHolder.clearIf(captureEngine);
     RuntimeException failure = null;
     failure = closeResource(inFlightStore, "in-flight store", failure);
@@ -669,6 +736,12 @@ public final class DefaultArchiveService implements ArchiveService {
     failure = closeResource(txNumIndex, "txNum index", failure);
     if (failure != null) {
       throw failure;
+    }
+  }
+
+  private void clearExecutionContextIfCurrent() {
+    if (captureEngine != null && ArchiveCaptureHolder.isCurrent(captureEngine)) {
+      executionContext.clear();
     }
   }
 

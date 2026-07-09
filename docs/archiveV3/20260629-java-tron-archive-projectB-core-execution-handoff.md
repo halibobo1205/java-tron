@@ -18,12 +18,14 @@ worktree：`/Users/boson/IdeaProjects/java-tron/.claude/worktrees/vibrant-borg-d
 - **写**：键 `K` 在 txNum `T` 从 old→new：
   - `history[domain,K,T] = oldVal`（变更**前**的值，对应 Erigon `AddPrevValue`）
   - `latest[domain,K] = newVal`
-  - `changeset[T,domain,K] = oldVal`（unwind 用）
+  - `changeset[T,domain,K] = newVal`（txNum 顺序的受影响 key 索引；schema=5 保存
+    after-value 用于 startup 校验 latest，oldVal 已在 history 行）
 - **读** `getAsOf(domain,K,T)`（契约不变：返回 T 时的值）：
   - 前向 seek 第一条 `history(domain,K,C)`，`C >= T`：命中且仍属 `(domain,K)` → 返回其值（=oldVal(C)=T 时值）。
   - 无命中（K 在 T 之后无任何捕获变更）→ 返回 `latest(domain,K)`（没改过=最新值，**原生 fall-to-latest**）。
   - 命中值是 tombstone → T 之后第一次变更是"创建"→ T 时不存在 → MISSING。
-- **unwind**：回退 txNum T 的变更，`latest[K]` 还原为 T 之前的值（即 `history[K,T]` 的内容）。
+- **unwind**：回退 txNum T 的变更，changeset 定位受影响 key，`latest[K]` 还原为 T
+  之前的值（即 `history[K,T]` 的内容）。
 
 ## 2. 代码触点（本会话已核实的现状，file:line 为 2026-06-29）
 
@@ -36,7 +38,7 @@ worktree：`/Users/boson/IdeaProjects/java-tron/.claude/worktrees/vibrant-borg-d
 | `chainbase/.../archive/capture/ArchiveChangeRecord.java` | 字段 `(position,domain,canonicalKey,value:DomainValue)`(15-18) | 加 `prevValue`(history 用)；`value` 留作 latest(newVal) |
 | `chainbase/.../archive/temporal/RocksDbArchiveTemporalStore.java` | `putChange`(~49-55) latest+history **写同一新值**；`getAsOf`(~67) `seekForPrev` | putChange: history=prevValue、latest=newValue；getAsOf: **前向 iterator.seek(historyKey(d,k,T)) + 前缀判断 + fall-to-latest**；unwind 适配 |
 | `chainbase/.../archive/temporal/InMemoryArchiveTemporalStore.java` | `putChange`(~30-35) NavigableMap；`getAsOf`(~39-44) `floorEntry` | 同上：history 存 prevValue、getAsOf `ceilingEntry`(>= T) + fall-to-latest；两实现须语义一致 |
-| `chainbase/.../archive/temporal/ArchiveTemporalCodec.java` | latest `0x00`、history `0x01\|\|domainId\|\|key\|\|txNum(8,BE)`、changeset `0x02\|\|txNum\|\|domainId\|\|key` | value 布局如需区分 prev/new 则升版本号 |
+| `chainbase/.../archive/temporal/ArchiveTemporalCodec.java` | latest/history/changeset 单 CF keyspace；当前 RocksDB schema=5 的 changeset value 保存 after-value | value 布局非兼容变化必须 bump manifest schema |
 | `captureSemanticPut/Delete` 调用点 | **未枚举，新会话先 grep** `captureSemanticPut\|captureSemanticDelete`（CONTRACT_STORAGE 等）| 各调用点提供 oldVal |
 | `chainbase/.../archive/reader/DefaultArchiveStateReader.java` | `getRaw → temporalStore.getAsOf` | **不改**（契约不变）；getStorage 的双 version 探测(本会话已改为优先 PRESENT)保留 |
 

@@ -160,10 +160,13 @@ public class StorageConfig {
   }
 
   // Archive (transaction-level historical state) sidecar config. Default disabled = pure no-op.
-  // Nested beans bind 1:1 via ConfigBeanFactory; keys/defaults mirror reference.conf storage.archive.
+  // Nested beans bind 1:1 via ConfigBeanFactory; keys/defaults mirror
+  // reference.conf storage.archive.
   @Getter
   @Setter
   public static class ArchiveConfig {
+
+    private static final String SUPPORTED_COVERAGE = "TVM_STATE_ONLY";
 
     private boolean enable = false;
     private DbConfig db = new DbConfig();
@@ -180,6 +183,15 @@ public class StorageConfig {
       }
       if (coverage == null || coverage.trim().isEmpty()) {
         throw new IllegalArgumentException("storage.archive.coverage must not be empty");
+      }
+      coverage = coverage.trim();
+      if (!SUPPORTED_COVERAGE.equals(coverage)) {
+        throw new IllegalArgumentException(
+            "storage.archive.coverage supports only " + SUPPORTED_COVERAGE + " in P0");
+      }
+      if (!warnUnclassifiedStoreWrites) {
+        throw new IllegalArgumentException(
+            "storage.archive.warnUnclassifiedStoreWrites cannot be false in P0");
       }
     }
 

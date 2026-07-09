@@ -104,7 +104,7 @@ public class ArchiveStateReaderFactoryTest {
     index.beginBlock(blockNum, ArchiveSource.NORMAL);
     index.allocateSystemTx(blockNum, ArchivePhase.BLOCK_PREPARE);
     for (int i = 0; i < userTxCount; i++) {
-      index.allocateUserTx(blockNum, i, null);
+      index.allocateUserTx(blockNum, i, txId(i));
     }
     index.allocateSystemTx(blockNum, ArchivePhase.BLOCK_FINALIZE);
     index.commitBlock(blockNum, blockHash, userTxCount);
@@ -115,5 +115,11 @@ public class ArchiveStateReaderFactoryTest {
     byte[] hash = new byte[ArchiveBlockRange.BLOCK_HASH_LENGTH];
     hash[ArchiveBlockRange.BLOCK_HASH_LENGTH - 1] = (byte) seed;
     return hash;
+  }
+
+  private static byte[] txId(int seed) {
+    byte[] txId = new byte[ArchiveBlockRange.BLOCK_HASH_LENGTH];
+    txId[txId.length - 1] = (byte) seed;
+    return txId;
   }
 }

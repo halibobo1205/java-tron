@@ -5,6 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.bouncycastle.util.encoders.Hex;
+import org.tron.common.math.StrictMathWrapper;
 import org.tron.core.services.jsonrpc.types.StructLog;
 import org.tron.core.vm.Op;
 import org.tron.core.vm.trace.OpActions;
@@ -188,7 +189,7 @@ public final class StructLogReconstructor {
     int size = memory.size();
     for (int off = 0; off < size; off += WORD_BYTES) {
       byte[] word = new byte[WORD_BYTES];
-      int end = Math.min(off + WORD_BYTES, size);
+      int end = StrictMathWrapper.min(off + WORD_BYTES, size);
       for (int k = off; k < end; k++) {
         word[k - off] = memory.get(k);
       }

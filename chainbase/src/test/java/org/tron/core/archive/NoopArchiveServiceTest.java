@@ -69,7 +69,7 @@ public class NoopArchiveServiceTest {
   }
 
   @Test
-  public void factoryClearsCaptureHolderWhenDisabled() {
+  public void disabledFactoryDoesNotClearLiveCaptureHolder() {
     StorageConfig.ArchiveConfig enabledConfig = new StorageConfig.ArchiveConfig();
     enabledConfig.setEnable(true);
     ArchiveService enabled = createArchive(enabledConfig);
@@ -79,7 +79,8 @@ public class NoopArchiveServiceTest {
       StorageConfig.ArchiveConfig disabledConfig = new StorageConfig.ArchiveConfig();
       assertSame(NoopArchiveService.INSTANCE, ArchiveServiceFactory.create(disabledConfig));
 
-      assertFalse(ArchiveCaptureHolder.isActive());
+      assertTrue(ArchiveCaptureHolder.isActive());
+      enabled.validateAvailable();
     } finally {
       enabled.close();
     }
@@ -96,6 +97,27 @@ public class NoopArchiveServiceTest {
       assertThrows(ArchiveException.class, older::validateAvailable);
       older.close();
       assertTrue(ArchiveCaptureHolder.isActive());
+    } finally {
+      newer.close();
+    }
+  }
+
+  @Test
+  public void closingOlderEnabledServiceDoesNotClearNewerActiveTxContext() {
+    StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
+    config.setEnable(true);
+    ArchiveService older = createArchive(config);
+    ArchiveService newer = createArchive(config);
+    BlockCapsule block = new BlockCapsule(1, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY);
+    try {
+      newer.beginBlock(block, ArchiveSource.NORMAL);
+      newer.beginSystemTx(block, ArchivePhase.BLOCK_PREPARE);
+      assertTrue(ArchiveCaptureHolder.isCapturingCurrentTx());
+
+      older.close();
+
+      assertTrue(ArchiveCaptureHolder.isCapturingCurrentTx());
+      newer.endTx();
     } finally {
       newer.close();
     }
@@ -145,6 +167,24 @@ public class NoopArchiveServiceTest {
     config.setEnable(true);
     config.getTemporal().setEnable(false);
     assertThrows(ArchiveException.class, () -> createArchive(config));
+  }
+
+  @Test
+  public void factoryRejectsUnsupportedCoverageProfile() {
+    StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
+    config.setEnable(true);
+    config.setCoverage("FULL");
+    ArchiveException ex = assertThrows(ArchiveException.class, () -> createArchive(config));
+    assertTrue(ex.getMessage().contains("supports only TVM_STATE_ONLY"));
+  }
+
+  @Test
+  public void factoryRejectsWarnUnclassifiedDisabled() {
+    StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
+    config.setEnable(true);
+    config.setWarnUnclassifiedStoreWrites(false);
+    ArchiveException ex = assertThrows(ArchiveException.class, () -> createArchive(config));
+    assertTrue(ex.getMessage().contains("cannot be false"));
   }
 
   @Test
@@ -242,6 +282,245 @@ public class NoopArchiveServiceTest {
       ArchiveException ex = assertThrows(ArchiveException.class,
           () -> createArchive(config, dir.toString()));
       assertTrue(ex.getMessage().contains("commit marker missing"));
+    } finally {
+      deleteRecursively(dir.toFile());
+    }
+  }
+
+  @Test
+  public void factoryRecoversPublishedIndexFromInFlightWhenTemporalMarkerMissing()
+      throws Exception {
+    StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
+    config.setEnable(true);
+    Path dir = Files.createTempDirectory("archive-factory-index-first-recovery-test");
+    byte[] address = new byte[21];
+    address[0] = 0x41;
+    try {
+      DefaultArchiveService service =
+          (DefaultArchiveService) createArchive(config, dir.toString());
+      BlockCapsule block = new BlockCapsule(1, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY);
+      service.beginBlock(block, ArchiveSource.NORMAL);
+      service.beginSystemTx(block, ArchivePhase.BLOCK_PREPARE);
+      service.getCaptureEngine().capturePut(
+          "account", address, null, Account.newBuilder().setBalance(7).build().toByteArray());
+      service.endTx();
+      service.beginSystemTx(block, ArchivePhase.BLOCK_FINALIZE);
+      service.endTx();
+      service.commitBlock(block);
+      service.close();
+
+      ArchiveInFlightBlock journal;
+      try (RocksDbArchiveInFlightStore inFlight =
+          new RocksDbArchiveInFlightStore(dir.resolve("inflight").toString())) {
+        journal = inFlight.loadBlocks().get(0);
+      }
+      try (RocksDbArchiveBlockRangeStore index =
+          new RocksDbArchiveBlockRangeStore(dir.resolve("index").toString())) {
+        index.commitRange(journal.getRange(), journal.getRange().getLastTxNum() + 1,
+            journal.getPositions());
+      }
+
+      DefaultArchiveService recovered =
+          (DefaultArchiveService) createArchive(config, dir.toString());
+      assertTrue(recovered.getTxNumIndex().getBlockRange(1).isPresent());
+      assertTrue(recovered.getTemporalStore().latest(ArchiveDomain.ACCOUNT, address).isPresent());
+      recovered.close();
+      try (RocksDbArchiveInFlightStore inFlight =
+          new RocksDbArchiveInFlightStore(dir.resolve("inflight").toString())) {
+        assertTrue(inFlight.loadBlocks().isEmpty());
+      }
+    } finally {
+      deleteRecursively(dir.toFile());
+    }
+  }
+
+  @Test
+  public void factoryDoesNotRecoverPublishedInFlightOverUnanchoredLatestResidue()
+      throws Exception {
+    StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
+    config.setEnable(true);
+    Path dir = Files.createTempDirectory("archive-factory-latest-residue-test");
+    byte[] address = new byte[21];
+    address[0] = 0x41;
+    try {
+      DefaultArchiveService service =
+          (DefaultArchiveService) createArchive(config, dir.toString());
+      BlockCapsule block = new BlockCapsule(1, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY);
+      service.beginBlock(block, ArchiveSource.NORMAL);
+      service.beginSystemTx(block, ArchivePhase.BLOCK_PREPARE);
+      service.getCaptureEngine().capturePut(
+          "account", address, null, Account.newBuilder().setBalance(7).build().toByteArray());
+      service.endTx();
+      service.beginSystemTx(block, ArchivePhase.BLOCK_FINALIZE);
+      service.endTx();
+      service.commitBlock(block);
+      service.close();
+
+      ArchiveInFlightBlock journal;
+      try (RocksDbArchiveInFlightStore inFlight =
+          new RocksDbArchiveInFlightStore(dir.resolve("inflight").toString())) {
+        journal = inFlight.loadBlocks().get(0);
+      }
+      try (RocksDbArchiveBlockRangeStore index =
+          new RocksDbArchiveBlockRangeStore(dir.resolve("index").toString())) {
+        index.commitRange(journal.getRange(), journal.getRange().getLastTxNum() + 1,
+            journal.getPositions());
+      }
+      overwriteTemporalLatest(dir.resolve("temporal"), address,
+          Account.newBuilder().setBalance(99).build().toByteArray());
+
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> createArchive(config, dir.toString()));
+      assertTrue(ex.getMessage().contains("baseline marker"));
+    } finally {
+      deleteRecursively(dir.toFile());
+    }
+  }
+
+  @Test
+  public void factoryDoesNotRecoverPublishedInFlightOverTemporalHistoryResidue()
+      throws Exception {
+    StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
+    config.setEnable(true);
+    Path dir = Files.createTempDirectory("archive-factory-history-residue-test");
+    byte[] address = new byte[21];
+    address[0] = 0x41;
+    try {
+      DefaultArchiveService service =
+          (DefaultArchiveService) createArchive(config, dir.toString());
+      BlockCapsule block = new BlockCapsule(1, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY);
+      service.beginBlock(block, ArchiveSource.NORMAL);
+      service.beginSystemTx(block, ArchivePhase.BLOCK_PREPARE);
+      service.getCaptureEngine().capturePut(
+          "account", address, null, Account.newBuilder().setBalance(7).build().toByteArray());
+      service.endTx();
+      service.beginSystemTx(block, ArchivePhase.BLOCK_FINALIZE);
+      service.endTx();
+      service.commitBlock(block);
+      service.close();
+
+      ArchiveInFlightBlock journal;
+      try (RocksDbArchiveInFlightStore inFlight =
+          new RocksDbArchiveInFlightStore(dir.resolve("inflight").toString())) {
+        journal = inFlight.loadBlocks().get(0);
+      }
+      try (RocksDbArchiveBlockRangeStore index =
+          new RocksDbArchiveBlockRangeStore(dir.resolve("index").toString())) {
+        index.commitRange(journal.getRange(), journal.getRange().getLastTxNum() + 1,
+            journal.getPositions());
+      }
+      putRawTemporalHistory(dir.resolve("temporal"), address, journal.getRange().getFirstTxNum(),
+          Account.newBuilder().setBalance(99).build().toByteArray());
+
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> createArchive(config, dir.toString()));
+      assertTrue(ex.getMessage().contains("commit marker missing"));
+    } finally {
+      deleteRecursively(dir.toFile());
+    }
+  }
+
+  @Test
+  public void factoryRejectsPublishedInFlightPositionMismatch() throws Exception {
+    StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
+    config.setEnable(true);
+    Path dir = Files.createTempDirectory("archive-factory-position-mismatch-test");
+    ArchiveBlockRange range = withChecksum(new ArchiveBlockRange(
+        7, 0, 2, 0, 2, blockHash(7), 1, ArchiveSource.NORMAL));
+    List<ArchiveTxPosition> publishedPositions = Arrays.asList(
+        new ArchiveTxPosition(0, 7, ArchivePhase.BLOCK_PREPARE, ArchiveSource.NORMAL, -1, null),
+        new ArchiveTxPosition(1, 7, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, txId(1)),
+        new ArchiveTxPosition(2, 7, ArchivePhase.BLOCK_FINALIZE, ArchiveSource.NORMAL, -1, null));
+    List<ArchiveTxPosition> journalPositions = Arrays.asList(
+        new ArchiveTxPosition(0, 7, ArchivePhase.BLOCK_PREPARE, ArchiveSource.NORMAL, -1, null),
+        new ArchiveTxPosition(1, 7, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, txId(2)),
+        new ArchiveTxPosition(2, 7, ArchivePhase.BLOCK_FINALIZE, ArchiveSource.NORMAL, -1, null));
+    try {
+      try (RocksDbArchiveBlockRangeStore index =
+          new RocksDbArchiveBlockRangeStore(dir.resolve("index").toString())) {
+        index.commitRange(range, range.getLastTxNum() + 1, publishedPositions);
+      }
+      try (RocksDbArchiveInFlightStore inFlight =
+          new RocksDbArchiveInFlightStore(dir.resolve("inflight").toString())) {
+        inFlight.putBlock(new ArchiveInFlightBlock(
+            range, journalPositions, Collections.emptyList()));
+      }
+
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> createArchive(config, dir.toString()));
+      assertTrue(ex.getMessage().contains("position does not match published index"));
+    } finally {
+      deleteRecursively(dir.toFile());
+    }
+  }
+
+  @Test
+  public void factoryRejectsTemporalRowsWithInvalidDomainValue() throws IOException {
+    StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
+    config.setEnable(true);
+    Path dir = Files.createTempDirectory("archive-factory-domain-codec-test");
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        7, 0, 1, 0, 1, blockHash(7), 0, ArchiveSource.NORMAL);
+    byte[] address = new byte[21];
+    address[0] = 0x41;
+    RocksDbArchiveBlockRangeStore index =
+        new RocksDbArchiveBlockRangeStore(dir.resolve("index").toString());
+    RocksDbArchiveTemporalStore temporal =
+        new RocksDbArchiveTemporalStore(dir.resolve("temporal").toString());
+    try {
+      index.commitRange(withChecksum(range), 2);
+      ArchiveChangeRecord badAccountValue = new ArchiveChangeRecord(
+          new ArchiveTxPosition(0, range.getBlockNum(), ArchivePhase.BLOCK_PREPARE,
+              ArchiveSource.NORMAL, -1, null),
+          ArchiveDomain.ACCOUNT, address, DomainValue.tombstone(),
+          DomainValue.present(new byte[] {1}));
+      temporal.putBlockChanges(withChecksum(range), Collections.singletonList(badAccountValue));
+    } finally {
+      temporal.close();
+      index.close();
+    }
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> createArchive(config, dir.toString()));
+      assertTrue(ex.getMessage().contains("account-capsule-canonical-v1"));
+    } finally {
+      deleteRecursively(dir.toFile());
+    }
+  }
+
+  @Test
+  public void factoryRejectsTemporalLatestValueMismatch() throws IOException {
+    StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
+    config.setEnable(true);
+    Path dir = Files.createTempDirectory("archive-factory-latest-mismatch-test");
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        7, 0, 1, 0, 1, blockHash(7), 0, ArchiveSource.NORMAL);
+    byte[] address = new byte[21];
+    address[0] = 0x41;
+    ArchiveChangeRecord change = new ArchiveChangeRecord(
+        new ArchiveTxPosition(0, range.getBlockNum(), ArchivePhase.BLOCK_PREPARE,
+            ArchiveSource.NORMAL, -1, null),
+        ArchiveDomain.ACCOUNT, address, DomainValue.tombstone(), DomainValue.present(
+            Account.newBuilder().setBalance(1).build().toByteArray()));
+    RocksDbArchiveBlockRangeStore index =
+        new RocksDbArchiveBlockRangeStore(dir.resolve("index").toString());
+    RocksDbArchiveTemporalStore temporal =
+        new RocksDbArchiveTemporalStore(dir.resolve("temporal").toString());
+    try {
+      index.commitRange(withChecksum(range), 2);
+      temporal.putBlockChanges(withChecksum(range), Collections.singletonList(change));
+    } finally {
+      temporal.close();
+      index.close();
+    }
+
+    overwriteTemporalLatest(dir.resolve("temporal"), address,
+        Account.newBuilder().setBalance(2).build().toByteArray());
+
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> createArchive(config, dir.toString()));
+      assertTrue(ex.getMessage().contains("latest value mismatch"));
     } finally {
       deleteRecursively(dir.toFile());
     }
@@ -581,6 +860,12 @@ public class NoopArchiveServiceTest {
     return hash;
   }
 
+  private static byte[] txId(int seed) {
+    byte[] txId = new byte[ArchiveBlockRange.BLOCK_HASH_LENGTH];
+    txId[ArchiveBlockRange.BLOCK_HASH_LENGTH - 1] = (byte) seed;
+    return txId;
+  }
+
   private static ArchiveBlockRange withChecksum(ArchiveBlockRange range) {
     return withChecksum(range, SCHEMA_CHECKSUM);
   }
@@ -605,6 +890,69 @@ public class NoopArchiveServiceTest {
     } catch (RocksDBException e) {
       throw new ArchiveException("failed to overwrite archive cursor for test", e);
     }
+  }
+
+  private static void overwriteTemporalLatest(Path temporalDir, byte[] canonicalKey,
+      byte[] value) {
+    RocksDB.loadLibrary();
+    try (Options options = new Options().setCreateIfMissing(false);
+        RocksDB rawDb = RocksDB.open(options, temporalDir.toString())) {
+      rawDb.put(rawTemporalLatestKey(ArchiveDomain.ACCOUNT, canonicalKey), encodedPresent(value));
+    } catch (RocksDBException e) {
+      throw new ArchiveException("failed to overwrite archive temporal latest for test", e);
+    }
+  }
+
+  private static void putRawTemporalHistory(Path temporalDir, byte[] canonicalKey, long txNum,
+      byte[] value) {
+    RocksDB.loadLibrary();
+    try (Options options = new Options().setCreateIfMissing(false);
+        RocksDB rawDb = RocksDB.open(options, temporalDir.toString())) {
+      rawDb.put(rawTemporalHistoryKey(ArchiveDomain.ACCOUNT, canonicalKey, txNum),
+          encodedPresent(value));
+    } catch (RocksDBException e) {
+      throw new ArchiveException("failed to write archive temporal history for test", e);
+    }
+  }
+
+  private static byte[] rawTemporalLatestKey(ArchiveDomain domain, byte[] canonicalKey) {
+    byte[] key = new byte[1 + Short.BYTES + Integer.BYTES + canonicalKey.length];
+    key[0] = 0x20;
+    int domainId = domain.getId();
+    key[1] = (byte) (domainId >>> 8);
+    key[2] = (byte) domainId;
+    int len = canonicalKey.length;
+    key[3] = (byte) (len >>> 24);
+    key[4] = (byte) (len >>> 16);
+    key[5] = (byte) (len >>> 8);
+    key[6] = (byte) len;
+    System.arraycopy(canonicalKey, 0, key, 7, canonicalKey.length);
+    return key;
+  }
+
+  private static byte[] rawTemporalHistoryKey(ArchiveDomain domain, byte[] canonicalKey,
+      long txNum) {
+    byte[] key = new byte[1 + Short.BYTES + Integer.BYTES + canonicalKey.length + Long.BYTES];
+    key[0] = 0x21;
+    int domainId = domain.getId();
+    key[1] = (byte) (domainId >>> 8);
+    key[2] = (byte) domainId;
+    int len = canonicalKey.length;
+    key[3] = (byte) (len >>> 24);
+    key[4] = (byte) (len >>> 16);
+    key[5] = (byte) (len >>> 8);
+    key[6] = (byte) len;
+    System.arraycopy(canonicalKey, 0, key, 7, canonicalKey.length);
+    byte[] txNumBytes = Longs.toByteArray(txNum);
+    System.arraycopy(txNumBytes, 0, key, 7 + canonicalKey.length, Long.BYTES);
+    return key;
+  }
+
+  private static byte[] encodedPresent(byte[] value) {
+    byte[] encoded = new byte[value.length + 1];
+    encoded[0] = 0;
+    System.arraycopy(value, 0, encoded, 1, value.length);
+    return encoded;
   }
 
   private static final class FailingTemporalStore

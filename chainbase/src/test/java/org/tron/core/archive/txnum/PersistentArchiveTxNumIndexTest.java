@@ -25,8 +25,8 @@ import org.tron.core.archive.ArchiveSource;
 
 public class PersistentArchiveTxNumIndexTest {
 
-  private static final byte[] TX_A = new byte[] {0x01, 0x02, 0x03};
-  private static final byte[] TX_B = new byte[] {0x04, 0x05, 0x06};
+  private static final byte[] TX_A = txId(1);
+  private static final byte[] TX_B = txId(2);
   private static final byte[] HASH_A = blockHash(4);
   private static final byte[] HASH_B = blockHash(6);
   private static final byte[] SCHEMA_CHECKSUM = checksum(9);
@@ -163,8 +163,34 @@ public class PersistentArchiveTxNumIndexTest {
   }
 
   @Test
+  public void storeRejectsUserPositionWithoutFullTxId() {
+    ArchiveBlockRange corruptRange = new ArchiveBlockRange(
+        1, 0, 2, 0, 2, blockHash(1), 1, ArchiveSource.NORMAL);
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> store.commitRange(withChecksum(corruptRange), 3, Arrays.asList(
+            new ArchiveTxPosition(0, 1, ArchivePhase.BLOCK_PREPARE, ArchiveSource.NORMAL, -1,
+                null),
+            new ArchiveTxPosition(1, 1, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, null),
+            new ArchiveTxPosition(2, 1, ArchivePhase.BLOCK_FINALIZE, ArchiveSource.NORMAL, -1,
+                null))));
+
+    assertTrue(ex.getMessage().contains("32-byte txId"));
+    assertFalse(store.getRange(1).isPresent());
+  }
+
+  @Test
   public void missingBlockIsEmpty() {
     assertFalse(index.getBlockRange(99).isPresent());
+  }
+
+  @Test
+  public void negativeReadCoordinatesRejected() {
+    assertThrows(ArchiveException.class, () -> index.getBlockRange(-1));
+    assertThrows(ArchiveException.class, () -> index.getPosition(-1));
+    assertThrows(ArchiveException.class, () -> index.findTxNumByBlockAndIndex(-1, 0));
+    assertThrows(ArchiveException.class, () -> index.validateCanonicalHead(-1, HASH_A));
+    assertThrows(ArchiveException.class, () -> index.unwindBlock(-1));
   }
 
   @Test
@@ -310,6 +336,149 @@ public class PersistentArchiveTxNumIndexTest {
   }
 
   @Test
+  public void storeRejectsCurrentManifestWithCorruptCursorValue() throws Exception {
+    index.close();
+    index = null;
+    store = null;
+    putRawTxNumRow(ArchiveBlockRangeCodec.CURSOR_KEY, new byte[] {1});
+
+    assertStoreOpenFails("cursor value");
+  }
+
+  @Test
+  public void storeRejectsCurrentManifestWithNegativeCursorValue() throws Exception {
+    index.close();
+    index = null;
+    store = null;
+    putRawTxNumRow(ArchiveBlockRangeCodec.CURSOR_KEY, rawLong(-1));
+
+    assertStoreOpenFails("cursor value");
+  }
+
+  @Test
+  public void storeRejectsCurrentManifestWithCorruptFirstBlockValue() throws Exception {
+    index.close();
+    index = null;
+    store = null;
+    putRawTxNumRow(ArchiveBlockRangeCodec.FIRST_BLOCK_KEY, new byte[] {1});
+
+    assertStoreOpenFails("first-block value");
+  }
+
+  @Test
+  public void storeRejectsCurrentManifestWithNegativeFirstBlockValue() throws Exception {
+    index.close();
+    index = null;
+    store = null;
+    putRawTxNumRow(ArchiveBlockRangeCodec.FIRST_BLOCK_KEY, rawLong(-1));
+
+    assertStoreOpenFails("first-block value");
+  }
+
+  @Test
+  public void storeRejectsCurrentManifestWithCorruptRepairMarkerValue() throws Exception {
+    index.close();
+    index = null;
+    store = null;
+    putRawTxNumRow(ArchiveBlockRangeCodec.REPAIR_REQUIRED_KEY,
+        new byte[] {(byte) 0xc3, 0x28});
+
+    assertStoreOpenFails("repair marker value");
+  }
+
+  @Test
+  public void storeRejectsCurrentManifestWithCorruptRangeValue() throws Exception {
+    index.close();
+    index = null;
+    store = null;
+    putRawTxNumRow(ArchiveBlockRangeCodec.rangeKey(1), new byte[] {1});
+
+    assertStoreOpenFails("block range value");
+  }
+
+  @Test
+  public void storeRejectsCurrentManifestWithNegativeRangeKey() throws Exception {
+    index.close();
+    index = null;
+    store = null;
+    byte[] key = new byte[1 + Long.BYTES];
+    key[0] = ArchiveBlockRangeCodec.TXNUM_BLOCK_PREFIX;
+    putLong(key, 1, -1L);
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        1, 0, 1, 0, 1, blockHash(1), 0, ArchiveSource.NORMAL);
+    putRawTxNumRow(key, ArchiveBlockRangeCodec.encodeRange(withChecksum(range)));
+
+    assertStoreOpenFails("block number");
+  }
+
+  @Test
+  public void storeRejectsCurrentManifestWithNegativeRangeTxNum() throws Exception {
+    index.close();
+    index = null;
+    store = null;
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        1, 0, 1, 0, 1, blockHash(1), 0, ArchiveSource.NORMAL);
+    byte[] encoded = ArchiveBlockRangeCodec.encodeRange(withChecksum(range));
+    putLong(encoded, 1 + 4 * Long.BYTES, -1L);
+    putRawTxNumRow(ArchiveBlockRangeCodec.rangeKey(1), encoded);
+
+    ArchiveException ex = assertThrows(ArchiveException.class, () -> {
+      try (RocksDbArchiveBlockRangeStore corruptedStore =
+          new RocksDbArchiveBlockRangeStore(dir.toString())) {
+        persistent(corruptedStore);
+      }
+    });
+    assertTrue(ex.getMessage(), ex.getMessage().contains("non-negative"));
+  }
+
+  @Test
+  public void storeRejectsCurrentManifestWithCorruptPositionValue() throws Exception {
+    index.close();
+    index = null;
+    store = null;
+    putRawTxNumRow(ArchiveBlockRangeCodec.positionKey(0), new byte[] {1});
+
+    assertStoreOpenFails("tx-position value");
+  }
+
+  @Test
+  public void storeRejectsCurrentManifestWithUserPositionMissingTxId() throws Exception {
+    index.close();
+    index = null;
+    store = null;
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        1, 0, 2, 0, 2, blockHash(1), 1, ArchiveSource.NORMAL);
+    byte[] encoded = ArchiveBlockRangeCodec.encodePosition(new ArchiveTxPosition(
+        1, 1, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, TX_A, blockHash(1)));
+    putInt(encoded, 23, 0);
+    byte[] truncated = Arrays.copyOf(encoded, encoded.length - TX_A.length);
+    putRawTxNumRow(ArchiveBlockRangeCodec.rangeKey(1),
+        ArchiveBlockRangeCodec.encodeRange(withChecksum(range)));
+    putRawTxNumRow(ArchiveBlockRangeCodec.CURSOR_KEY, ArchiveBlockRangeCodec.encodeCursor(3));
+    putRawTxNumRow(ArchiveBlockRangeCodec.FIRST_BLOCK_KEY,
+        ArchiveBlockRangeCodec.encodeFirstBlock(1));
+    putRawTxNumRow(ArchiveBlockRangeCodec.positionKey(0),
+        ArchiveBlockRangeCodec.encodePosition(new ArchiveTxPosition(
+            0, 1, ArchivePhase.BLOCK_PREPARE, ArchiveSource.NORMAL, -1, null, blockHash(1))));
+    putRawTxNumRow(ArchiveBlockRangeCodec.positionKey(1), truncated);
+    putRawTxNumRow(ArchiveBlockRangeCodec.positionKey(2),
+        ArchiveBlockRangeCodec.encodePosition(new ArchiveTxPosition(
+            2, 1, ArchivePhase.BLOCK_FINALIZE, ArchiveSource.NORMAL, -1, null, blockHash(1))));
+
+    assertStoreOpenFails("32-byte txId");
+  }
+
+  @Test
+  public void storeRejectsCurrentManifestWithCorruptTxIdValue() throws Exception {
+    index.close();
+    index = null;
+    store = null;
+    putRawTxNumRow(ArchiveBlockRangeCodec.txIdKey(TX_A), new byte[] {1});
+
+    assertStoreOpenFails("cursor value");
+  }
+
+  @Test
   public void firstArchivedBlockIsLowestCommittedAndSurvivesRestart() {
     assertEquals(RocksDbArchiveBlockRangeStore.NO_FIRST_BLOCK, index.getFirstArchivedBlock());
     pushBlock(7); // a mid-chain start: the first commit records 7 as the coverage floor
@@ -428,6 +597,17 @@ public class PersistentArchiveTxNumIndexTest {
         () -> store.commitRange(corruptRange, 2));
     assertTrue(ex.getMessage().contains("32-byte schema checksum"));
     assertFalse(store.getRange(1).isPresent());
+  }
+
+  @Test
+  public void storeRejectsNegativeBlockNumber() {
+    ArchiveBlockRange corruptRange = new ArchiveBlockRange(
+        -1, 0, 1, 0, 1, blockHash(1), 0, ArchiveSource.NORMAL);
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> store.commitRange(withChecksum(corruptRange), 2));
+    assertTrue(ex.getMessage().contains("negative block number"));
+    assertThrows(ArchiveException.class, () -> store.getRange(-1));
   }
 
   @Test
@@ -824,6 +1004,23 @@ public class PersistentArchiveTxNumIndexTest {
     }
   }
 
+  private void putRawTxNumRow(byte[] key, byte[] value) throws RocksDBException {
+    RocksDB.loadLibrary();
+    try (Options options = new Options().setCreateIfMissing(false);
+        RocksDB rawDb = RocksDB.open(options, dir.toString())) {
+      rawDb.put(key, value);
+    }
+  }
+
+  private void assertStoreOpenFails(String expectedMessage) {
+    ArchiveException ex = assertThrows(ArchiveException.class, () -> {
+      try (RocksDbArchiveBlockRangeStore ignored =
+          new RocksDbArchiveBlockRangeStore(dir.toString())) {
+      }
+    });
+    assertTrue(ex.getMessage().contains(expectedMessage));
+  }
+
   private void verifyManifestOnlyLegacyStoreUpgrades(byte[] manifestKey, byte[] manifest)
       throws IOException, RocksDBException {
     index.close();
@@ -918,10 +1115,22 @@ public class PersistentArchiveTxNumIndexTest {
     }
   }
 
+  private static byte[] rawLong(long value) {
+    byte[] bytes = new byte[Long.BYTES];
+    putLong(bytes, 0, value);
+    return bytes;
+  }
+
   private static byte[] blockHash(long seed) {
     byte[] hash = new byte[ArchiveBlockRange.BLOCK_HASH_LENGTH];
     hash[ArchiveBlockRange.BLOCK_HASH_LENGTH - 1] = (byte) seed;
     return hash;
+  }
+
+  private static byte[] txId(int seed) {
+    byte[] txId = new byte[ArchiveBlockRangeCodec.TX_ID_LENGTH];
+    txId[txId.length - 1] = (byte) seed;
+    return txId;
   }
 
   private static byte[] checksum(int seed) {

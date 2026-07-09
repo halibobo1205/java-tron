@@ -3,6 +3,7 @@ package org.tron.core.services.jsonrpc;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
@@ -39,6 +40,19 @@ public class HistoricalTraceSupportTest {
   }
 
   @Test
+  public void disabledArchiveTraceTransactionFailsClosedBeforeWalletLookup() {
+    Wallet wallet = mock(Wallet.class);
+    HistoricalTraceSupport support =
+        new HistoricalTraceSupport(wallet, NoopArchiveService.INSTANCE);
+
+    JsonRpcInternalException ex = assertThrows(JsonRpcInternalException.class,
+        () -> support.traceTransaction(new byte[32], null));
+
+    assertTrue(ex.getMessage().contains("archive is not available"));
+    verifyNoInteractions(wallet);
+  }
+
+  @Test
   public void midChainArchiveRejectsTraceCallBeforeCoverage() {
     Wallet wallet = mock(Wallet.class);
     when(wallet.getBlockByNum(4)).thenReturn(block(4));
@@ -51,12 +65,29 @@ public class HistoricalTraceSupportTest {
   }
 
   @Test
-  public void midChainTraceTransactionLooksUpTransactionBeforeArchivePosition() {
+  public void traceTransactionChecksArchivePositionBeforeWalletLookup() {
     Wallet wallet = mock(Wallet.class);
     HistoricalTraceSupport support =
         new HistoricalTraceSupport(wallet, midChainArchiveService());
-    assertThrows(JsonRpcInvalidParamsException.class,
+
+    JsonRpcInternalException ex = assertThrows(JsonRpcInternalException.class,
+        () -> support.traceTransaction(new byte[32], null));
+
+    assertTrue(ex.getMessage().contains("transaction not in archive"));
+    verifyNoInteractions(wallet);
+  }
+
+  @Test
+  public void traceTransactionRejectsMalformedTxIdBeforeWalletLookup() {
+    Wallet wallet = mock(Wallet.class);
+    HistoricalTraceSupport support =
+        new HistoricalTraceSupport(wallet, midChainArchiveService());
+
+    JsonRpcInvalidParamsException ex = assertThrows(JsonRpcInvalidParamsException.class,
         () -> support.traceTransaction(new byte[] {1}, null));
+
+    assertTrue(ex.getMessage().contains("invalid transaction hash"));
+    verifyNoInteractions(wallet);
   }
 
   @Test

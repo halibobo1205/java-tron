@@ -1,6 +1,7 @@
 package org.tron.core.vm.archive;
 
 import java.util.Arrays;
+import org.tron.common.math.StrictMathWrapper;
 import org.tron.common.runtime.ProgramResult;
 import org.tron.core.actuator.VMActuator;
 import org.tron.core.archive.reader.ArchiveStateReader;
@@ -187,6 +188,6 @@ public final class HistoricalTraceCallExecutor {
     if (balanceAvailable <= 0) {
       return 0L;
     }
-    return Math.min(feeLimit, balanceAvailable) / energyFee;
+    return StrictMathWrapper.min(feeLimit, balanceAvailable) / energyFee;
   }
 }

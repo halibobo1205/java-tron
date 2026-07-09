@@ -798,7 +798,7 @@ public class JsonrpcServiceTest extends BaseTest {
         () -> tronJsonRpc.getCall(null, decimalParams));
     Assert.assertEquals("invalid block number", decimalEx.getMessage());
 
-    // requireCanonical only applies to blockHash object-form selectors.
+    // requireCanonical is outside the P0 object-form selector surface.
     HashMap<String, Object> requireCanonicalNumberParams = new HashMap<>();
     requireCanonicalNumberParams.put("blockNumber", ByteArray.toJsonHex(blockCapsule1.getNum()));
     requireCanonicalNumberParams.put("requireCanonical", Boolean.TRUE);
@@ -856,17 +856,15 @@ public class JsonrpcServiceTest extends BaseTest {
     canonicalHashParams.put("requireCanonical", Boolean.TRUE);
     Exception canonicalHashEx = Assert.assertThrows(Exception.class,
         () -> tronJsonRpc.getCall(null, canonicalHashParams));
-    Assert.assertEquals(
-        "QUANTITY not supported, just support TAG as latest", canonicalHashEx.getMessage());
+    Assert.assertEquals("invalid json request", canonicalHashEx.getMessage());
 
     BlockCapsule forkBlock = new BlockCapsule(blockCapsule1.getNum(), Sha256Hash.wrap(
         ByteString.copyFrom(ByteArray.fromHexString(
             "1304f784e4e7bae517bcab94c3e0c9214fb4ac7ff9d7d5a937d1f40031f87b81"))),
         blockCapsule1.getTimeStamp() + 1, ByteString.copyFromUtf8("forkAddress"));
     dbManager.getBlockStore().put(forkBlock.getBlockId().getBytes(), forkBlock);
-    HashMap<String, Object> nonCanonicalHashParams = new HashMap<>();
+    HashMap<String, String> nonCanonicalHashParams = new HashMap<>();
     nonCanonicalHashParams.put("blockHash", "0x" + forkBlock.getBlockId().toString());
-    nonCanonicalHashParams.put("requireCanonical", Boolean.TRUE);
     Exception nonCanonicalHashEx = Assert.assertThrows(Exception.class,
         () -> tronJsonRpc.getCall(null, nonCanonicalHashParams));
     Assert.assertEquals("header for hash not found", nonCanonicalHashEx.getMessage());

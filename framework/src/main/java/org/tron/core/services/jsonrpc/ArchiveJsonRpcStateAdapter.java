@@ -25,9 +25,7 @@ import org.tron.protos.Protocol.Block;
 /**
  * Bridges the historical {@code eth_getBalance}/{@code eth_getCode}/{@code eth_getStorageAt} paths
  * to the archive state reader, rendering the typed {@link ArchiveReadResult} into JSON-RPC hex.
- * {@code latest} is left to the caller's existing latest-only logic. Non-latest selectors enter
- * this adapter even when archive is disabled, so disabled archive fails closed with the archive
- * error surface rather than being misreported as an unsupported latest-only parameter.
+ * {@code latest} and archive-disabled requests are left to the caller's existing latest-only logic.
  */
 public final class ArchiveJsonRpcStateAdapter {
 
@@ -49,7 +47,11 @@ public final class ArchiveJsonRpcStateAdapter {
 
   /** True when the request is historical and must not fall back to latest state. */
   public boolean shouldUseArchive(String blockNumOrTag) {
-    return !JsonRpcApiUtil.LATEST_STR.equalsIgnoreCase(blockNumOrTag);
+    return archiveService.isEnabled() && !JsonRpcApiUtil.LATEST_STR.equalsIgnoreCase(blockNumOrTag);
+  }
+
+  void validateArchiveAvailable() throws JsonRpcInternalException {
+    readerFactory();
   }
 
   public String getBalance(String address, String blockNumOrTag)

@@ -8,6 +8,7 @@ import org.junit.Test;
 import org.tron.core.archive.ArchiveExecutionContext;
 import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveSource;
+import org.tron.core.archive.domain.ArchiveDomain;
 import org.tron.core.archive.domain.DefaultArchiveDomainCatalog;
 import org.tron.core.archive.domain.DefaultArchiveDomainRegistry;
 import org.tron.core.archive.domain.DynamicKeyPolicy;
@@ -45,12 +46,20 @@ public class ArchiveCaptureHolderTest {
 
   @Test
   public void txCaptureStateRequiresCurrentExecutionPosition() {
-    ArchiveCaptureHolder.set(engineWithoutActiveContext());
+    ArchiveCaptureEngine inactive = engineWithoutActiveContext();
+    ArchiveCaptureHolder.set(inactive);
     assertTrue(ArchiveCaptureHolder.isActive());
     assertFalse(ArchiveCaptureHolder.isCapturingCurrentTx());
+    assertFalse(ArchiveCaptureHolder.capturesStore("account"));
+    assertFalse(inactive.failure().isPresent());
+
+    inactive.beginBlockCapture();
+    assertFalse(ArchiveCaptureHolder.capturesStore("account"));
+    assertTrue(inactive.failure().isPresent());
 
     ArchiveCaptureHolder.set(engineWithActiveContext());
     assertTrue(ArchiveCaptureHolder.isCapturingCurrentTx());
+    assertTrue(ArchiveCaptureHolder.capturesStore("account"));
   }
 
   @Test
@@ -86,6 +95,46 @@ public class ArchiveCaptureHolderTest {
 
     assertTrue("unknown store must be visible to commitBlock", engine.failure().isPresent());
     assertTrue(engine.failure().get().getMessage().contains("capturesStore(no-such-store)"));
+  }
+
+  @Test
+  public void unknownStoreDuringActiveBlockWithoutTxIsRecorded() {
+    ArchiveCaptureEngine engine = engineWithoutActiveContext();
+    engine.beginBlockCapture();
+    ArchiveCaptureHolder.set(engine);
+
+    assertFalse(ArchiveCaptureHolder.capturesStore("no-such-store"));
+
+    assertTrue("unknown active-block store must fail closed", engine.failure().isPresent());
+    assertTrue(engine.failure().get().getMessage().contains("capturesStore(no-such-store)"));
+  }
+
+  @Test
+  public void directCaptureDuringActiveBlockWithoutTxIsRecorded() {
+    ArchiveCaptureEngine engine = engineWithoutActiveContext();
+    engine.beginBlockCapture();
+    ArchiveCaptureHolder.set(engine);
+
+    ArchiveCaptureHolder.capturePut("account", new byte[21], null, new byte[] {1});
+
+    assertTrue("direct capture must fail closed", engine.failure().isPresent());
+    assertTrue(engine.failure().get().getMessage().contains("capturePut(account)"));
+    assertTrue(engine.records().isEmpty());
+  }
+
+  @Test
+  public void directSemanticCaptureDuringActiveBlockWithoutTxIsRecorded() {
+    ArchiveCaptureEngine engine = engineWithoutActiveContext();
+    engine.beginBlockCapture();
+    ArchiveCaptureHolder.set(engine);
+
+    ArchiveCaptureHolder.captureSemanticPut(
+        ArchiveDomain.CONTRACT_STORAGE, new byte[54], null, new byte[32]);
+
+    assertTrue("direct semantic capture must fail closed", engine.failure().isPresent());
+    assertTrue(engine.failure().get().getMessage().contains(
+        "captureSemanticPut(CONTRACT_STORAGE)"));
+    assertTrue(engine.records().isEmpty());
   }
 
   @Test

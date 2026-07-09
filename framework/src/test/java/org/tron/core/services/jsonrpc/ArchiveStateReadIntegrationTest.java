@@ -79,7 +79,7 @@ public class ArchiveStateReadIntegrationTest {
   }
 
   @Test
-  public void blockOneStartDoesNotPretendGenesisWasCaptured() throws Exception {
+  public void blockOneStartRejectsMissingAccountAsUnknown() throws Exception {
     DefaultArchiveService svc = new DefaultArchiveService(true, new InMemoryArchiveTemporalStore());
     commitEmptyBlock(svc, 1);
     Wallet wallet = walletWithBlock(1);
@@ -88,6 +88,7 @@ public class ArchiveStateReadIntegrationTest {
 
     JsonRpcInternalException ex = assertThrows(JsonRpcInternalException.class,
         () -> adapter.getBalance(ethAddr, "0x1"));
+
     assertEquals("archive account is unknown before mid-chain coverage", ex.getMessage());
   }
 

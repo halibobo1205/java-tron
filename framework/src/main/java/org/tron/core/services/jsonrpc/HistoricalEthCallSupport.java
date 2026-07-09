@@ -65,6 +65,10 @@ public final class HistoricalEthCallSupport {
     return !JsonRpcApiUtil.LATEST_STR.equalsIgnoreCase(blockNumOrTag);
   }
 
+  void validateArchiveAvailable() throws JsonRpcInternalException {
+    readerFactory();
+  }
+
   public String call(byte[] ownerAddress, byte[] contractAddress, long callValue, byte[] data,
       String blockNumOrTag) throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
       JsonRpcInternalException {

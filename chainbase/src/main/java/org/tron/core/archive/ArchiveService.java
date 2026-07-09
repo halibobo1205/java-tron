@@ -47,6 +47,16 @@ public interface ArchiveService {
     publishSolidifiedBlocks(solidifiedBlockNum);
   }
 
+  /**
+   * Startup recovery hook with the current canonical head number. Implementations that persist an
+   * in-flight journal can use this to fail closed if canonical block apply committed a hot-tail
+   * block but the archive journal write did not survive the crash.
+   */
+  default void reconcileInFlightOnStartup(long solidifiedBlockNum, long canonicalHeadNum,
+      LongFunction<BlockCapsule> canonicalBlockProvider) {
+    reconcileInFlightOnStartup(solidifiedBlockNum, canonicalBlockProvider);
+  }
+
   void abortBlock(BlockCapsule block);
 
   void unwindBlock(BlockCapsule block);

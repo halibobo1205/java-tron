@@ -49,6 +49,7 @@ public final class ArchiveCaptureEngine {
   private final ArchiveExecutionContext context;
   private final List<ArchiveChangeRecord> records = new ArrayList<>();
   private ArchiveException failure;
+  private boolean blockActive;
 
   public ArchiveCaptureEngine(ArchiveDomainRegistry registry, ArchiveDomainCatalog catalog,
       DynamicKeyPolicy dynamicKeyPolicy, ArchiveExecutionContext context) {
@@ -121,6 +122,15 @@ public final class ArchiveCaptureEngine {
 
   public boolean hasCurrentPosition() {
     return context.current().isPresent();
+  }
+
+  public boolean hasActiveBlock() {
+    return blockActive;
+  }
+
+  public void beginBlockCapture() {
+    clear();
+    blockActive = true;
   }
 
   private static DomainValue prevDomainValue(ArchiveDomainDescriptor descriptor, byte[] prevValue) {
@@ -235,7 +245,7 @@ public final class ArchiveCaptureEngine {
   }
 
   private void requireKnownStore(StoreBinding binding) {
-    if (!binding.isKnown() && context.current().isPresent()) {
+    if (!binding.isKnown() && (context.current().isPresent() || blockActive)) {
       throw new ArchiveException("archive store dbName is not classified: " + binding.getDbName());
     }
   }
@@ -263,5 +273,6 @@ public final class ArchiveCaptureEngine {
   public void clear() {
     records.clear();
     failure = null;
+    blockActive = false;
   }
 }

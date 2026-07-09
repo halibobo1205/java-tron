@@ -45,6 +45,9 @@ final class ArchiveInFlightCodec {
   }
 
   static byte[] blockKey(long blockNum) {
+    if (blockNum < 0) {
+      throw new ArchiveException("archive in-flight block number must be non-negative");
+    }
     ByteArrayOutputStream bytes = new ByteArrayOutputStream(1 + Long.BYTES);
     DataOutputStream out = new DataOutputStream(bytes);
     try {
@@ -63,7 +66,11 @@ final class ArchiveInFlightCodec {
     }
     try {
       DataInputStream in = new DataInputStream(new ByteArrayInputStream(key, 1, Long.BYTES));
-      return in.readLong();
+      long blockNum = in.readLong();
+      if (blockNum < 0) {
+        throw new ArchiveException("archive in-flight block number must be non-negative");
+      }
+      return blockNum;
     } catch (IOException e) {
       throw new ArchiveException("archive in-flight block key decode failed", e);
     }
@@ -82,6 +89,9 @@ final class ArchiveInFlightCodec {
   }
 
   static byte[] encodeBlock(ArchiveInFlightBlock block) {
+    if (block.getRange().getBlockNum() < 0) {
+      throw new ArchiveException("archive in-flight block number must be non-negative");
+    }
     try {
       ByteArrayOutputStream bytes = new ByteArrayOutputStream();
       DataOutputStream out = new DataOutputStream(bytes);
@@ -148,7 +158,7 @@ final class ArchiveInFlightCodec {
   }
 
   private static List<ArchiveTxPosition> readPositions(DataInputStream in) throws IOException {
-    int count = nonNegativeCount(in.readInt(), "archive in-flight position count");
+    int count = boundedCount(in, in.readInt(), 30, "archive in-flight position count");
     List<ArchiveTxPosition> positions = new ArrayList<>(count);
     for (int i = 0; i < count; i++) {
       positions.add(readPosition(in));
@@ -158,6 +168,7 @@ final class ArchiveInFlightCodec {
 
   private static void writePosition(DataOutputStream out, ArchiveTxPosition position)
       throws IOException {
+    requirePositionTxId(position.getPhase(), position.getTxId(), "archive in-flight position");
     out.writeLong(position.getTxNum());
     out.writeLong(position.getBlockNum());
     out.writeByte(position.getPhase().ordinal());
@@ -175,7 +186,20 @@ final class ArchiveInFlightCodec {
     int txIndex = in.readInt();
     byte[] txId = readBytes(in);
     byte[] blockHash = readBytes(in);
+    requirePositionTxId(phase, txId, "archive in-flight position");
     return new ArchiveTxPosition(txNum, blockNum, phase, source, txIndex, txId, blockHash);
+  }
+
+  private static void requirePositionTxId(ArchivePhase phase, byte[] txId, String what) {
+    if (phase == ArchivePhase.USER_TX) {
+      if (txId == null || txId.length != ArchiveBlockRange.BLOCK_HASH_LENGTH) {
+        throw new ArchiveException(what + " user txId must be a 32-byte txId");
+      }
+      return;
+    }
+    if (txId != null && txId.length != 0) {
+      throw new ArchiveException(what + " system txId must be empty");
+    }
   }
 
   private static void writeRecords(DataOutputStream out, List<ArchiveChangeRecord> records)
@@ -191,7 +215,7 @@ final class ArchiveInFlightCodec {
   }
 
   private static List<ArchiveChangeRecord> readRecords(DataInputStream in) throws IOException {
-    int count = nonNegativeCount(in.readInt(), "archive in-flight record count");
+    int count = boundedCount(in, in.readInt(), 48, "archive in-flight record count");
     List<ArchiveChangeRecord> records = new ArrayList<>(count);
     for (int i = 0; i < count; i++) {
       ArchiveTxPosition position = readPosition(in);
@@ -213,7 +237,13 @@ final class ArchiveInFlightCodec {
   private static DomainValue readDomainValue(DataInputStream in) throws IOException {
     boolean deleted = in.readBoolean();
     byte[] value = readBytes(in);
-    return deleted ? DomainValue.tombstone() : DomainValue.present(value);
+    if (deleted) {
+      if (value.length != 0) {
+        throw new ArchiveException("archive in-flight tombstone value must be empty");
+      }
+      return DomainValue.tombstone();
+    }
+    return DomainValue.present(value);
   }
 
   private static void writeBytes(DataOutputStream out, byte[] value) throws IOException {
@@ -223,9 +253,21 @@ final class ArchiveInFlightCodec {
 
   private static byte[] readBytes(DataInputStream in) throws IOException {
     int length = nonNegativeCount(in.readInt(), "archive in-flight byte length");
+    if (length > in.available()) {
+      throw new ArchiveException("archive in-flight byte length exceeds remaining value bytes");
+    }
     byte[] value = new byte[length];
     in.readFully(value);
     return value;
+  }
+
+  private static int boundedCount(DataInputStream in, int count, int minBytesPerEntry,
+      String what) throws IOException {
+    nonNegativeCount(count, what);
+    if (count > in.available() / minBytesPerEntry) {
+      throw new ArchiveException(what + " exceeds remaining value bytes");
+    }
+    return count;
   }
 
   private static int nonNegativeCount(int count, String what) {
