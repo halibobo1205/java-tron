@@ -70,9 +70,9 @@
 
 `getAsOf(domain, K, T)`（契约不变：返回 T 时的值）：
 ```
-seek 第一条 history 记录 (domain, K, C) with C >= T   // 前向 seek，不是 seekForPrev
+seek 第一条 history 记录 (domain, K, C) with C > T    // 前向 seek，不是 seekForPrev
 if 命中且仍属于 (domain,K):
-    return history value (= oldVal of change C = T 时的值)
+    return history value (= oldVal of first change C>T, 即 T 时值)
 else:   // K 在 T 之后没有任何被捕获的变更
     return latest(domain, K)   // 没改过 ⇒ T 时值 == 最新值（fall-to-latest，原生）
 ```

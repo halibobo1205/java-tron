@@ -21,7 +21,7 @@ worktree：`/Users/boson/IdeaProjects/java-tron/.claude/worktrees/vibrant-borg-d
   - `changeset[T,domain,K] = newVal`（txNum 顺序的受影响 key 索引；schema=5 保存
     after-value 用于 startup 校验 latest，oldVal 已在 history 行）
 - **读** `getAsOf(domain,K,T)`（契约不变：返回 T 时的值）：
-  - 前向 seek 第一条 `history(domain,K,C)`，`C >= T`：命中且仍属 `(domain,K)` → 返回其值（=oldVal(C)=T 时值）。
+  - 前向 seek 第一条 `history(domain,K,C)`，`C > T`：命中且仍属 `(domain,K)` → 返回其值（=oldVal(C)=T 时值）。
   - 无命中（K 在 T 之后无任何捕获变更）→ 返回 `latest(domain,K)`（没改过=最新值，**原生 fall-to-latest**）。
   - 命中值是 tombstone → T 之后第一次变更是"创建"→ T 时不存在 → MISSING。
 - **unwind**：回退 txNum T 的变更，changeset 定位受影响 key，`latest[K]` 还原为 T

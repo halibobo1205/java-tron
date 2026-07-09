@@ -21,14 +21,22 @@ public final class DefaultArchiveStateReaderFactory implements ArchiveStateReade
   private final ArchiveDomainCatalog catalog;
   private final ArchiveTxNumIndex txNumIndex;
   private final AvailabilityGuard availabilityGuard;
+  private final ArchiveReadThrough readThrough;
 
   public DefaultArchiveStateReaderFactory(ArchiveTemporalStore temporalStore,
       ArchiveDomainCatalog catalog, ArchiveTxNumIndex txNumIndex,
       AvailabilityGuard availabilityGuard) {
+    this(temporalStore, catalog, txNumIndex, availabilityGuard, ArchiveReadThrough.NONE);
+  }
+
+  public DefaultArchiveStateReaderFactory(ArchiveTemporalStore temporalStore,
+      ArchiveDomainCatalog catalog, ArchiveTxNumIndex txNumIndex,
+      AvailabilityGuard availabilityGuard, ArchiveReadThrough readThrough) {
     this.temporalStore = temporalStore;
     this.catalog = catalog;
     this.txNumIndex = txNumIndex;
     this.availabilityGuard = availabilityGuard;
+    this.readThrough = readThrough == null ? ArchiveReadThrough.NONE : readThrough;
   }
 
   @Override
@@ -42,7 +50,7 @@ public final class DefaultArchiveStateReaderFactory implements ArchiveStateReade
           "no resolved archive state point");
     }
     validatePoint(point);
-    return new DefaultArchiveStateReader(temporalStore, catalog, point);
+    return new DefaultArchiveStateReader(temporalStore, catalog, point, readThrough);
   }
 
   private void validatePoint(ArchiveStatePoint point) throws ArchiveReaderException {

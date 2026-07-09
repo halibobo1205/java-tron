@@ -10,6 +10,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.StorageUtils;
+import org.tron.core.ChainBaseManager;
 import org.tron.core.Wallet;
 import org.tron.core.archive.ArchiveService;
 import org.tron.core.archive.ArchiveServiceFactory;
@@ -43,7 +44,7 @@ public class DefaultConfig {
   }
 
   @Bean(destroyMethod = "close")
-  public ArchiveService archiveService() {
+  public ArchiveService archiveService(ChainBaseManager chainBaseManager) {
     CommonParameter parameter = CommonParameter.getInstance();
     StorageConfig.ArchiveConfig archive = parameter.getStorage().getArchive();
     if (archive == null || !archive.isEnable()) {
@@ -51,7 +52,7 @@ public class DefaultConfig {
     }
     String archiveDbPath = Paths.get(parameter.getOutputDirectory(),
         parameter.getStorage().getDbDirectory(), archive.getDb().getDirectory()).toString();
-    return ArchiveServiceFactory.create(archive, archiveDbPath);
+    return ArchiveServiceFactory.create(archive, archiveDbPath, chainBaseManager);
   }
 
   @Bean
