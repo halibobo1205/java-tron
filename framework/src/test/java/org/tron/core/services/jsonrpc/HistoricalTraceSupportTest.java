@@ -40,6 +40,20 @@ public class HistoricalTraceSupportTest {
   }
 
   @Test
+  public void disabledArchiveTraceCallValidatesUnsupportedOrMalformedSelectorsBeforeAvailability() {
+    HistoricalTraceSupport support =
+        new HistoricalTraceSupport(null, NoopArchiveService.INSTANCE);
+
+    JsonRpcInvalidParamsException pending = assertThrows(JsonRpcInvalidParamsException.class,
+        () -> support.traceCall(null, null, 0L, null, "pending"));
+    assertTrue(pending.getMessage().contains(JsonRpcApiUtil.TAG_PENDING_SUPPORT_ERROR));
+
+    JsonRpcInvalidParamsException malformed = assertThrows(JsonRpcInvalidParamsException.class,
+        () -> support.traceCall(null, null, 0L, null, "not-a-block"));
+    assertTrue(malformed.getMessage().contains(JsonRpcApiUtil.BLOCK_NUM_ERROR));
+  }
+
+  @Test
   public void disabledArchiveTraceTransactionFailsClosedBeforeWalletLookup() {
     Wallet wallet = mock(Wallet.class);
     HistoricalTraceSupport support =
