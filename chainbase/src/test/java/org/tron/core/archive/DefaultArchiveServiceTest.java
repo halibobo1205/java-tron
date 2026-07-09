@@ -73,6 +73,59 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
+  public void disabledServiceDoesNotClearLiveOwnerContext() {
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    DefaultArchiveService live =
+        new DefaultArchiveService(true, new InMemoryArchiveTxNumIndex(), context);
+    BlockCapsule block = block(5);
+    live.beginBlock(block, ArchiveSource.NORMAL);
+    live.beginSystemTx(block, ArchivePhase.BLOCK_PREPARE);
+
+    DefaultArchiveService disabled =
+        new DefaultArchiveService(false, new InMemoryArchiveTxNumIndex(), context);
+    try {
+      disabled.endTx();
+      disabled.abortBlock(block);
+      disabled.close();
+
+      assertTrue(context.current().isPresent());
+      assertTrue(ArchiveCaptureHolder.isCapturingCurrentTx());
+      live.validateAvailable();
+    } finally {
+      live.close();
+    }
+  }
+
+  @Test
+  public void failedStartupDoesNotClearLiveOwnerContext() {
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    DefaultArchiveService live =
+        new DefaultArchiveService(true, new InMemoryArchiveTxNumIndex(), context);
+    BlockCapsule block = block(5);
+    live.beginBlock(block, ArchiveSource.NORMAL);
+    live.beginSystemTx(block, ArchivePhase.BLOCK_PREPARE);
+
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    ArchiveBlockRange badRange = new ArchiveBlockRange(
+        6, 7, 8, 7, 8, 0, ArchiveSource.NORMAL);
+    inFlightStore.putBlock(new ArchiveInFlightBlock(
+        badRange, java.util.Collections.emptyList(), java.util.Collections.emptyList()));
+
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> serviceWithInFlightStore(new InMemoryArchiveTxNumIndex(), context,
+              new InMemoryArchiveTemporalStore(), inFlightStore));
+
+      assertTrue(ex.getMessage().contains("non-contiguous archive in-flight txNum"));
+      assertTrue(context.current().isPresent());
+      assertTrue(ArchiveCaptureHolder.isCapturingCurrentTx());
+      live.validateAvailable();
+    } finally {
+      live.close();
+    }
+  }
+
+  @Test
   public void enabledEmptyBlockLifecycleCommitsRange() {
     InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
     ArchiveExecutionContext context = new ArchiveExecutionContext();
@@ -302,6 +355,165 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
+  public void startupReconcileRejectsInFlightPastCanonicalHead() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    BlockCapsule stale = blockWithParentSeed(5, (byte) 5);
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    commitEmptyBlock(service, stale);
+    service.close();
+
+    DefaultArchiveService restarted = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> restarted.reconcileInFlightOnStartup(4, 4, blockNum -> stale));
+
+      assertTrue(ex.getMessage().contains("after canonical head"));
+      assertFalse(index.getBlockRange(5).isPresent());
+      assertThrows(ArchiveException.class, restarted::validateAvailable);
+    } finally {
+      restarted.close();
+    }
+  }
+
+  @Test
+  public void startupReconcileRejectsCanonicalTailMissingInFlightJournal() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    BlockCapsule b4 = blockWithParentSeed(4, (byte) 4);
+    BlockCapsule b5 = blockWithParentSeed(5, (byte) 5);
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    commitEmptyBlock(service, b4);
+    service.publishSolidifiedBlocks(4);
+    assertTrue(index.getBlockRange(4).isPresent());
+    assertEquals(0, inFlightStore.loadBlocks().size());
+    service.close();
+
+    DefaultArchiveService restarted = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> restarted.reconcileInFlightOnStartup(4, 5, blockNum -> b5));
+
+      assertTrue(ex.getMessage().contains("in-flight journal missing"));
+      assertThrows(ArchiveException.class, restarted::validateAvailable);
+    } finally {
+      restarted.close();
+    }
+  }
+
+  @Test
+  public void closeClearsThreadLocalContextAndCaptureBuffer() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    DefaultArchiveService service = new DefaultArchiveService(true, index, context);
+    BlockCapsule b = block(5);
+    service.beginBlock(b, ArchiveSource.NORMAL);
+    service.beginSystemTx(b, ArchivePhase.BLOCK_PREPARE);
+    service.getCaptureEngine().capturePut("account", new byte[21], null, account(1));
+    assertTrue(context.current().isPresent());
+    assertTrue(ArchiveCaptureHolder.isCapturingCurrentTx());
+    assertEquals(1, service.getCaptureEngine().records().size());
+
+    service.close();
+
+    assertFalse(context.current().isPresent());
+    assertFalse(ArchiveCaptureHolder.isCapturingCurrentTx());
+    assertEquals(0, service.getCaptureEngine().records().size());
+  }
+
+  @Test
+  public void staleEndTxDoesNotClearNewerActiveTxContext() {
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    DefaultArchiveService older = new DefaultArchiveService(
+        true, new InMemoryArchiveTxNumIndex(), context, new InMemoryArchiveTemporalStore());
+    DefaultArchiveService newer = new DefaultArchiveService(
+        true, new InMemoryArchiveTxNumIndex(), context, new InMemoryArchiveTemporalStore());
+    BlockCapsule block = block(5);
+    try {
+      newer.beginBlock(block, ArchiveSource.NORMAL);
+      newer.beginSystemTx(block, ArchivePhase.BLOCK_PREPARE);
+      assertTrue(context.current().isPresent());
+
+      older.endTx();
+
+      assertTrue(context.current().isPresent());
+      assertTrue(ArchiveCaptureHolder.isCapturingCurrentTx());
+    } finally {
+      older.close();
+      newer.close();
+    }
+  }
+
+  @Test
+  public void staleAbortDoesNotClearNewerActiveTxContext() {
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    DefaultArchiveService older = new DefaultArchiveService(
+        true, new InMemoryArchiveTxNumIndex(), context, new InMemoryArchiveTemporalStore());
+    DefaultArchiveService newer = new DefaultArchiveService(
+        true, new InMemoryArchiveTxNumIndex(), context, new InMemoryArchiveTemporalStore());
+    BlockCapsule block = block(5);
+    try {
+      newer.beginBlock(block, ArchiveSource.NORMAL);
+      newer.beginSystemTx(block, ArchivePhase.BLOCK_PREPARE);
+      assertTrue(context.current().isPresent());
+
+      assertThrows(ArchiveException.class, () -> older.abortBlock(block));
+
+      assertTrue(context.current().isPresent());
+      assertTrue(ArchiveCaptureHolder.isCapturingCurrentTx());
+    } finally {
+      older.close();
+      newer.close();
+    }
+  }
+
+  @Test
+  public void disabledFactoryDoesNotClearLiveThreadLocalContext() {
+    ArchiveExecutionContext context = ArchiveExecutionContextHolder.get();
+    DefaultArchiveService service =
+        new DefaultArchiveService(true, new InMemoryArchiveTxNumIndex(), context);
+    BlockCapsule block = block(5);
+    service.beginBlock(block, ArchiveSource.NORMAL);
+    service.beginSystemTx(block, ArchivePhase.BLOCK_PREPARE);
+
+    try {
+      ArchiveServiceFactory.create(null);
+
+      assertTrue(context.current().isPresent());
+      assertTrue(ArchiveCaptureHolder.isCapturingCurrentTx());
+      service.validateAvailable();
+    } finally {
+      service.close();
+    }
+  }
+
+  @Test
+  public void unwindNonHeadInFlightBlockLeavesJournalIntact() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, context, temporal, inFlightStore);
+    BlockCapsule b5 = blockWithParentSeed(5, (byte) 5);
+    BlockCapsule b6 = blockWithParentSeed(6, (byte) 6);
+    commitEmptyBlock(service, b5);
+    commitEmptyBlock(service, b6);
+    assertEquals(2, inFlightStore.loadBlocks().size());
+
+    ArchiveException ex = assertThrows(ArchiveException.class, () -> service.unwindBlock(b5));
+
+    assertTrue(ex.getMessage().contains("not archive in-flight head"));
+    assertEquals(2, inFlightStore.loadBlocks().size());
+  }
+
+  @Test
   public void commitCollapsesSameKeySameTxToFirstPrevLastNew() throws Exception {
     // Two captures of the same account within one user tx (10 -> 20 -> 30): the drain must keep the
     // FIRST prev (10, the true pre-tx value) for history and the LAST value (30) for latest, so a
@@ -521,6 +733,54 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
+  public void inFlightDeleteFailureAfterDurablePublishIsRecoveredOnRestart() {
+    TrackingArchiveTxNumIndex index = new TrackingArchiveTxNumIndex();
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    DeleteFailingArchiveInFlightStore inFlightStore = new DeleteFailingArchiveInFlightStore();
+    DefaultArchiveService service =
+        serviceWithInFlightStore(index, context, temporal, inFlightStore);
+
+    byte[] addr = new byte[21];
+    addr[0] = 0x41;
+    BlockCapsule b = block(5);
+    service.beginBlock(b, ArchiveSource.NORMAL);
+    service.beginSystemTx(b, ArchivePhase.BLOCK_PREPARE);
+    service.getCaptureEngine().capturePut("account", addr, account(1), account(2));
+    service.endTx();
+    service.beginSystemTx(b, ArchivePhase.BLOCK_FINALIZE);
+    service.endTx();
+    service.commitBlock(b);
+
+    service.publishSolidifiedBlocks(5);
+
+    assertTrue(index.getBlockRange(5).isPresent());
+    assertEquals("", index.repairReason);
+    service.validateAvailable();
+    assertEquals(1, inFlightStore.loadBlocks().size());
+    service.close();
+
+    DefaultArchiveService restarted = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    try {
+      assertEquals(1, inFlightStore.loadBlocks().size());
+      restarted.validateAvailable();
+    } finally {
+      restarted.close();
+    }
+
+    inFlightStore.failDelete = false;
+    DefaultArchiveService cleanupRestart = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    try {
+      assertEquals(0, inFlightStore.loadBlocks().size());
+      cleanupRestart.validateAvailable();
+    } finally {
+      cleanupRestart.close();
+    }
+  }
+
+  @Test
   public void publishedUnwindMarksArchiveUnavailable() {
     InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
     ArchiveExecutionContext context = new ArchiveExecutionContext();
@@ -716,7 +976,7 @@ public class DefaultArchiveServiceTest {
       assertTrue(ex.getMessage().contains("capture engine is not active"));
       assertTrue(index.repairReason.contains("capture engine is not active"));
       assertFalse(index.getBlockRange(5).isPresent());
-      assertFalse(context.current().isPresent());
+      assertTrue(context.current().isPresent());
       assertTrue(older.getCaptureEngine().records().isEmpty());
       index.beginBlock(6L, ArchiveSource.NORMAL);
       index.abortBlock(6L);
@@ -746,7 +1006,7 @@ public class DefaultArchiveServiceTest {
       assertTrue(ex.getMessage().contains("capture engine is not active"));
       assertEquals(0, ex.getSuppressed().length);
       assertTrue(index.repairReason.contains("capture engine is not active"));
-      assertFalse(context.current().isPresent());
+      assertTrue(context.current().isPresent());
       assertTrue(older.getCaptureEngine().records().isEmpty());
     } finally {
       newer.close();
@@ -905,6 +1165,30 @@ public class DefaultArchiveServiceTest {
 
     @Override
     public void unwind(long fromTxNum) {
+    }
+  }
+
+  private static final class DeleteFailingArchiveInFlightStore implements ArchiveInFlightStore {
+
+    private final InMemoryArchiveInFlightStore delegate = new InMemoryArchiveInFlightStore();
+    private boolean failDelete = true;
+
+    @Override
+    public List<ArchiveInFlightBlock> loadBlocks() {
+      return delegate.loadBlocks();
+    }
+
+    @Override
+    public void putBlock(ArchiveInFlightBlock block) {
+      delegate.putBlock(block);
+    }
+
+    @Override
+    public void deleteBlock(long blockNum) {
+      if (failDelete) {
+        throw new ArchiveException("delete failed");
+      }
+      delegate.deleteBlock(blockNum);
     }
   }
 

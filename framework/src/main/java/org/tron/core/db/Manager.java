@@ -531,7 +531,7 @@ public class Manager {
       this.khaosDb.start(canonicalHead);
       long solidifiedNum = Math.min(
           getDynamicPropertiesStore().getLatestSolidifiedBlockNum(), canonicalHead.getNum());
-      archiveService.reconcileInFlightOnStartup(solidifiedNum,
+      archiveService.reconcileInFlightOnStartup(solidifiedNum, canonicalHead.getNum(),
           blockNum -> getArchiveCanonicalBlock(blockNum, canonicalHead));
       BlockCapsule archiveValidationHead = solidifiedNum == canonicalHead.getNum()
           ? canonicalHead
@@ -638,7 +638,7 @@ public class Manager {
       long solidifiedNum = Math.min(
           chainBaseManager.getDynamicPropertiesStore().getLatestSolidifiedBlockNum(),
           genesisBlock.getNum());
-      archiveService.reconcileInFlightOnStartup(solidifiedNum,
+      archiveService.reconcileInFlightOnStartup(solidifiedNum, genesisBlock.getNum(),
           blockNum -> getArchiveCanonicalBlock(blockNum, genesisBlock));
       validateGenesisArchiveCoverage();
     } else {
@@ -705,6 +705,9 @@ public class Manager {
   private BlockCapsule getArchiveCanonicalBlock(long blockNum, BlockCapsule knownHead) {
     if (knownHead != null && knownHead.getNum() == blockNum) {
       return knownHead;
+    }
+    if (knownHead != null && blockNum > knownHead.getNum()) {
+      return null;
     }
     try {
       return chainBaseManager.getBlockByNum(blockNum);

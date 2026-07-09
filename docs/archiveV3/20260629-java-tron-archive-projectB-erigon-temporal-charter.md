@@ -56,13 +56,15 @@
 变更 `K`（old→new）发生在 txNum `T`：
 - `history[domain, K, T] = oldVal`（变更前的值）
 - `latest[domain, K] = newVal`（当前值，fall-to-latest 用）
-- `changeset[T, domain, K] = oldVal`（unwind 用，见 4.4）
+- `changeset[T, domain, K] = newVal`（txNum 顺序的受影响 key 索引；schema=5 保存
+  after-value 作为 startup 校验 latest 的锚点，旧值已由 history 行保存）
 
 实现要点：
 - `TronStoreWithRevoking.put`：在 `super.put` 之前先 `byte[] old = getUnchecked(key)`，把 `old` 一起交给 capture（新增 `capturePutWithPrev(dbName, key, old, new)`，或扩展现 `capturePut`）。**每次写多一次读**——这是 Erigon 模型的固有成本，可接受。
 - `ArchiveChangeRecord` 增加 `prevValue` 字段（或区分 history-value=prev / latest-value=new）。
 - semantic put（CONTRACT_STORAGE 等）同理：`captureSemanticPut` 需带旧值。
-- delete：`history[K,T] = oldVal`，`latest[K] = tombstone`。
+- delete：`history[K,T] = oldVal`，`latest[K] = tombstone`，`changeset[T,K] =
+  tombstone`。
 
 ### 4.2 读路径（getAsOf 改为 next-change + fall-to-latest）
 
@@ -86,7 +88,10 @@ else:   // K 在 T 之后没有任何被捕获的变更
 
 ### 4.4 unwind 语义（用 history 旧值回滚 latest）
 
-回退 txNum `T` 的变更：`latest[K]` 应恢复为 T 时的旧值 = `history[K,T]`（或更早）。changeset 提供 (T → 受影响 K)；逐 K 把 latest 还原为该 K 在 T 之前的值（history 中 `< T` 的最近一条的「新值」… 注意：旧值模型下回滚需要的是「T 之前的值」，等价于 `history[K, T]` 的内容即为 T 之前的值）。**unwind 正确性是 B 的重点验证项**（下方测试）。
+回退 txNum `T` 的变更：`latest[K]` 应恢复为 T 时的旧值 = `history[K,T]`。changeset
+提供 (T → 受影响 K) 的顺序索引；RocksDB schema=5 的 changeset value 保存 after-value，
+用于 block marker digest 和 startup `latest == last changeset value` 校验，unwind 仍从 history
+行读取旧值来恢复 latest。**unwind 正确性是 B 的重点验证项**（下方测试）。
 
 ### 4.5（B-efficiency）Erigon 存储优化
 

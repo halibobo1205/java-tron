@@ -3,14 +3,18 @@ package org.tron.core.archive.temporal;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
+import java.util.Arrays;
 import org.junit.Test;
+import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveSource;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
+import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.archive.txnum.ArchiveTxPosition;
 
 /**
@@ -77,6 +81,51 @@ public class InMemoryArchiveTemporalStoreTest {
   }
 
   @Test
+  public void putBlockChangesRejectsDuplicateChangesetWithoutPartialWrite() {
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        1, 10, 12, 10, 12, new byte[32], 1, ArchiveSource.NORMAL);
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> store.putBlockChanges(range, Arrays.asList(
+            change(11, KEY, tomb(), val(1)),
+            change(11, KEY, val(1), val(2)))));
+
+    assertTrue(ex.getMessage().contains("duplicate changeset row"));
+    assertFalse(store.latest(ArchiveDomain.ACCOUNT, KEY).isPresent());
+    assertEquals(0, store.changeCount());
+  }
+
+  @Test
+  public void putBlockChangesOrdersSameKeyBeforeWritingLatest() {
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        1, 10, 11, 10, 11, new byte[32], 1, ArchiveSource.NORMAL);
+
+    store.putBlockChanges(range, Arrays.asList(
+        change(11, KEY, val(0x0A), val(0x0B)),
+        change(10, KEY, tomb(), val(0x0A))));
+
+    assertArrayEquals(new byte[] {0x0A}, asOf(10));
+    assertArrayEquals(new byte[] {0x0B}, asOf(11));
+    assertArrayEquals(new byte[] {0x0B}, store.latest(ArchiveDomain.ACCOUNT, KEY)
+        .get().getValue());
+  }
+
+  @Test
+  public void putBlockChangesRejectsBrokenPrevValueChainWithoutPartialWrite() {
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        1, 10, 11, 10, 11, new byte[32], 1, ArchiveSource.NORMAL);
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> store.putBlockChanges(range, Arrays.asList(
+            change(10, KEY, tomb(), val(0x0A)),
+            change(11, KEY, val(0x7F), val(0x0B)))));
+
+    assertTrue(ex.getMessage().contains("prev-value chain"));
+    assertFalse(store.latest(ArchiveDomain.ACCOUNT, KEY).isPresent());
+    assertEquals(0, store.changeCount());
+  }
+
+  @Test
   public void fallToLatestWhenNoChangeAfterQuery() {
     // created at tx5 and never changed again: every query at/after tx5 falls through to latest.
     store.putChange(change(5, KEY, tomb(), val(0x0A)));
@@ -124,12 +173,12 @@ public class InMemoryArchiveTemporalStoreTest {
   }
 
   @Test
-  public void unwindCreatedKeyDropsLatestWhenNoOlderHistory() {
-    // created at tx8; unwinding tx8 drops both history and latest so no latest-only row remains.
+  public void unwindCreatedKeyRestoresTombstoneWhenNoOlderHistory() {
+    // created at tx8; unwinding tx8 restores latest to the pre-change tombstone.
     store.putChange(change(8, KEY, tomb(), val(0x0B)));
     store.unwind(8);
-    assertFalse(store.latest(ArchiveDomain.ACCOUNT, KEY).isPresent());
-    assertFalse(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 100).isPresent());
+    assertTrue(store.latest(ArchiveDomain.ACCOUNT, KEY).get().isDeleted());
+    assertTrue(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 100).get().isDeleted());
     assertEquals(0, store.changeCount());
   }
 
@@ -137,7 +186,8 @@ public class InMemoryArchiveTemporalStoreTest {
   public void unwindFromZeroClearsLatestOnlyResidue() {
     store.putChange(change(8, KEY, val(0x0A), val(0x0B)));
     store.unwind(8);
-    assertFalse(store.latest(ArchiveDomain.ACCOUNT, KEY).isPresent());
+    assertArrayEquals(new byte[] {0x0A}, store.latest(ArchiveDomain.ACCOUNT, KEY).get()
+        .getValue());
     assertEquals(0, store.changeCount());
 
     store.unwind(0);
@@ -145,5 +195,20 @@ public class InMemoryArchiveTemporalStoreTest {
     assertFalse(store.latest(ArchiveDomain.ACCOUNT, KEY).isPresent());
     assertFalse(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, Long.MAX_VALUE).isPresent());
     assertEquals(0, store.changeCount());
+  }
+
+  @Test
+  public void unwindRejectsNegativeTxNum() {
+    assertThrows(ArchiveException.class, () -> store.unwind(-1));
+  }
+
+  @Test
+  public void getAsOfRejectsNegativeTxNum() {
+    store.putChange(change(5, KEY, tomb(), val(1)));
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> store.getAsOf(ArchiveDomain.ACCOUNT, KEY, -1));
+
+    assertTrue(ex.getMessage().contains("non-negative"));
   }
 }

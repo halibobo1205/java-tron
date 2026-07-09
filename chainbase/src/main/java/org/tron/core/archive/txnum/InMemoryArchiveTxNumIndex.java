@@ -3,10 +3,12 @@ package org.tron.core.archive.txnum;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.Set;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchivePhase;
@@ -44,6 +46,9 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
 
   /** Seeds the committed cursor (e.g. restored from a persistent index on restart). */
   public InMemoryArchiveTxNumIndex(long startTxNum) {
+    if (startTxNum < 0) {
+      throw new ArchiveException("archive txNum cursor must be non-negative: " + startTxNum);
+    }
     this.committedNextTxNum = startTxNum;
     this.workingNextTxNum = startTxNum;
   }
@@ -55,6 +60,9 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
 
   @Override
   public synchronized void beginBlock(long blockNum, ArchiveSource source) {
+    if (blockNum < 0) {
+      throw new ArchiveException("archive block number must be non-negative: " + blockNum);
+    }
     if (pendingBlockNum != null) {
       throw new ArchiveException(
           "archive txNum index already has pending block " + pendingBlockNum);
@@ -83,6 +91,7 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
     if (txIndex < 0) {
       throw new ArchiveException("user tx index must be non-negative: " + txIndex);
     }
+    ArchiveBlockRangeCodec.requireTxId(txId, "archive user transaction");
     ArchiveTxPosition position = new ArchiveTxPosition(
         workingNextTxNum++, blockNum, ArchivePhase.USER_TX, pendingSource, txIndex, txId);
     pendingPositions.add(position);
@@ -106,13 +115,17 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
     requirePending(blockNum);
     long prepareTxNum = -1;
     long finalizeTxNum = -1;
+    int prepareCount = 0;
+    int finalizeCount = 0;
     int actualUserCount = 0;
     for (ArchiveTxPosition position : pendingPositions) {
       switch (position.getPhase()) {
         case BLOCK_PREPARE:
+          prepareCount++;
           prepareTxNum = position.getTxNum();
           break;
         case BLOCK_FINALIZE:
+          finalizeCount++;
           finalizeTxNum = position.getTxNum();
           break;
         case USER_TX:
@@ -126,6 +139,10 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
       throw new ArchiveException(
           "commit of block " + blockNum + " requires both prepare and finalize system tx");
     }
+    if (prepareCount != 1 || finalizeCount != 1) {
+      throw new ArchiveException("commit of block " + blockNum
+          + " requires exactly one prepare and one finalize system tx");
+    }
     if (actualUserCount != userTxCount) {
       throw new ArchiveException("user tx count mismatch for block " + blockNum
           + ": expected " + userTxCount + ", allocated " + actualUserCount);
@@ -133,6 +150,9 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
 
     long firstTxNum = committedNextTxNum;
     long lastTxNum = workingNextTxNum - 1;
+    validatePendingShape(blockNum, firstTxNum, lastTxNum, prepareTxNum, finalizeTxNum,
+        userTxCount);
+    validatePendingTxIds(blockNum);
     ArchiveBlockRange range = new ArchiveBlockRange(
         blockNum, firstTxNum, lastTxNum, prepareTxNum, finalizeTxNum, blockHash, userTxCount,
         pendingSource, schemaChecksum);
@@ -170,6 +190,7 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
 
   @Override
   public synchronized void unwindBlock(long blockNum) {
+    requireNonNegativeBlockNum(blockNum);
     ArchiveBlockRange range = getHeadBlockRange(blockNum);
     for (long txNum = range.getFirstTxNum(); txNum <= range.getLastTxNum(); txNum++) {
       if (!positionsByTxNum.containsKey(txNum)) {
@@ -195,6 +216,7 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
 
   @Override
   public synchronized ArchiveBlockRange getHeadBlockRange(long blockNum) {
+    requireNonNegativeBlockNum(blockNum);
     ArchiveBlockRange range = blockRanges.get(blockNum);
     if (range == null) {
       throw new ArchiveException("cannot unwind block " + blockNum + ": not committed");
@@ -207,6 +229,7 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
 
   @Override
   public synchronized void validateCanonicalHead(long headNum, byte[] headHash) {
+    requireNonNegativeBlockNum(headNum);
     if (lastCommittedBlock < 0) {
       return;
     }
@@ -225,16 +248,21 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
 
   @Override
   public synchronized Optional<ArchiveBlockRange> getBlockRange(long blockNum) {
+    requireNonNegativeBlockNum(blockNum);
     return Optional.ofNullable(blockRanges.get(blockNum));
   }
 
   @Override
   public synchronized Optional<ArchiveTxPosition> getPosition(long txNum) {
+    if (txNum < 0) {
+      throw new ArchiveException("archive tx-position txNum must be non-negative");
+    }
     return Optional.ofNullable(positionsByTxNum.get(txNum));
   }
 
   @Override
   public synchronized OptionalLong findTxNumByBlockAndIndex(long blockNum, int txIndex) {
+    requireNonNegativeBlockNum(blockNum);
     Long txNum = txNumByBlockAndIndex.get(blockIndexKey(blockNum, txIndex));
     return (txNum == null) ? OptionalLong.empty() : OptionalLong.of(txNum);
   }
@@ -244,6 +272,7 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
     if (txId == null || txId.length == 0) {
       return OptionalLong.empty();
     }
+    ArchiveBlockRangeCodec.requireTxId(txId, "archive txId lookup");
     Long txNum = txNumByTxId.get(ByteArray.toHexString(txId));
     return (txNum == null) ? OptionalLong.empty() : OptionalLong.of(txNum);
   }
@@ -264,6 +293,7 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
   }
 
   private void requirePending(long blockNum) {
+    requireNonNegativeBlockNum(blockNum);
     if (pendingBlockNum == null) {
       throw new ArchiveException("no pending block; beginBlock(" + blockNum + ") required first");
     }
@@ -294,6 +324,51 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
     }
   }
 
+  private void validatePendingShape(long blockNum, long firstTxNum, long lastTxNum,
+      long prepareTxNum, long finalizeTxNum, int userTxCount) {
+    if (prepareTxNum != firstTxNum) {
+      throw new ArchiveException("archive prepare txNum must be first for block " + blockNum);
+    }
+    if (finalizeTxNum != lastTxNum) {
+      throw new ArchiveException("archive finalize txNum must be last for block " + blockNum);
+    }
+    long expectedSpan = (long) userTxCount + 2L;
+    long actualSpan = lastTxNum - firstTxNum + 1L;
+    if (actualSpan != expectedSpan) {
+      throw new ArchiveException("archive txNum span does not match user tx count for block "
+          + blockNum);
+    }
+    for (ArchiveTxPosition position : pendingPositions) {
+      if (position.getPhase() == ArchivePhase.USER_TX) {
+        long expectedTxNum = firstTxNum + 1L + position.getTxIndex();
+        if (position.getTxNum() != expectedTxNum
+            || position.getTxIndex() < 0
+            || position.getTxIndex() >= userTxCount) {
+          throw new ArchiveException("archive user tx-position order mismatch for block "
+              + blockNum);
+        }
+      }
+    }
+  }
+
+  private void validatePendingTxIds(long blockNum) {
+    Set<String> seen = new HashSet<>();
+    for (ArchiveTxPosition position : pendingPositions) {
+      byte[] txId = position.getTxId();
+      if (txId.length == 0) {
+        continue;
+      }
+      String txIdHex = ByteArray.toHexString(txId);
+      if (!seen.add(txIdHex)) {
+        throw new ArchiveException("archive duplicate txId in block " + blockNum);
+      }
+      if (txNumByTxId.containsKey(txIdHex)) {
+        throw new ArchiveException("archive duplicate txId already committed in block "
+            + blockNum);
+      }
+    }
+  }
+
   private long findLastCommittedBlock() {
     long last = -1L;
     for (Long blockNum : blockRanges.keySet()) {
@@ -316,5 +391,11 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
 
   private static String blockIndexKey(long blockNum, int txIndex) {
     return blockNum + ":" + txIndex;
+  }
+
+  private static void requireNonNegativeBlockNum(long blockNum) {
+    if (blockNum < 0) {
+      throw new ArchiveException("archive block number must be non-negative: " + blockNum);
+    }
   }
 }
