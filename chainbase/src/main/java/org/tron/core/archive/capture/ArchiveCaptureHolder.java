@@ -67,8 +67,17 @@ public final class ArchiveCaptureHolder {
     if (active == null) {
       return false;
     }
+    if (!active.hasCurrentPosition() && !active.hasActiveBlock()) {
+      return false;
+    }
     try {
-      return active.capturesStore(dbName);
+      boolean captures = active.capturesStore(dbName);
+      if (captures && active.hasActiveBlock() && !active.hasCurrentPosition()) {
+        active.recordFailure("capturesStore(" + dbName + ")",
+            new IllegalStateException("archive captured store write without current tx context"));
+        return false;
+      }
+      return captures;
     } catch (Exception e) {
       active.recordFailure("capturesStore(" + dbName + ")", e);
       // The commit path will fail closed from the recorded failure; skip the extra prev read here.
@@ -76,9 +85,27 @@ public final class ArchiveCaptureHolder {
     }
   }
 
+  public static boolean requireCurrentTx(String operation) {
+    ArchiveCaptureEngine active = engine;
+    if (active == null) {
+      return false;
+    }
+    if (active.hasCurrentPosition()) {
+      return true;
+    }
+    if (active.hasActiveBlock()) {
+      active.recordFailure(operation,
+          new IllegalStateException("archive write without current tx context"));
+    }
+    return false;
+  }
+
   public static void capturePut(String dbName, byte[] key, byte[] prevValue, byte[] value) {
     ArchiveCaptureEngine active = engine;
     if (active == null) {
+      return;
+    }
+    if (!ensureCurrentTx(active, "capturePut(" + dbName + ")")) {
       return;
     }
     try {
@@ -92,6 +119,9 @@ public final class ArchiveCaptureHolder {
   public static void captureDelete(String dbName, byte[] key, byte[] prevValue) {
     ArchiveCaptureEngine active = engine;
     if (active == null) {
+      return;
+    }
+    if (!ensureCurrentTx(active, "captureDelete(" + dbName + ")")) {
       return;
     }
     try {
@@ -108,6 +138,9 @@ public final class ArchiveCaptureHolder {
     if (active == null) {
       return;
     }
+    if (!ensureCurrentTx(active, "captureAccountAsset")) {
+      return;
+    }
     try {
       active.captureAccountAsset(addressKey, oldAccount, newAccount);
     } catch (Exception e) {
@@ -122,6 +155,9 @@ public final class ArchiveCaptureHolder {
       byte[] value) {
     ArchiveCaptureEngine active = engine;
     if (active == null) {
+      return;
+    }
+    if (!ensureCurrentTx(active, "captureSemanticPut(" + domain + ")")) {
       return;
     }
     try {
@@ -141,6 +177,9 @@ public final class ArchiveCaptureHolder {
     if (active == null) {
       return;
     }
+    if (!ensureCurrentTx(active, "captureSemanticDelete(" + domain + ")")) {
+      return;
+    }
     try {
       active.captureSemanticDelete(domain, canonicalKey, prevValue);
     } catch (Exception e) {
@@ -148,5 +187,16 @@ public final class ArchiveCaptureHolder {
       logger.warn("archive semantic capture(delete) failed for {} (dropped): {}", domain,
           e.getMessage());
     }
+  }
+
+  private static boolean ensureCurrentTx(ArchiveCaptureEngine active, String operation) {
+    if (active.hasCurrentPosition()) {
+      return true;
+    }
+    if (active.hasActiveBlock()) {
+      active.recordFailure(operation,
+          new IllegalStateException("archive write without current tx context"));
+    }
+    return false;
   }
 }

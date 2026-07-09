@@ -3,6 +3,7 @@ package org.tron.core.config.args;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import com.typesafe.config.Config;
@@ -102,19 +103,22 @@ public class StorageConfigTest {
     assertTrue(sc.getBalance().getHistory().isLookup());
   }
 
-  @Test(expected = IllegalArgumentException.class)
+  @Test
   public void testSnapshotMaxFlushCountZeroRejected() {
-    StorageConfig.fromConfig(withRef("storage.snapshot.maxFlushCount = 0"));
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef("storage.snapshot.maxFlushCount = 0")));
   }
 
-  @Test(expected = IllegalArgumentException.class)
+  @Test
   public void testSnapshotMaxFlushCountNegativeRejected() {
-    StorageConfig.fromConfig(withRef("storage.snapshot.maxFlushCount = -1"));
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef("storage.snapshot.maxFlushCount = -1")));
   }
 
-  @Test(expected = IllegalArgumentException.class)
+  @Test
   public void testSnapshotMaxFlushCountOver500Rejected() {
-    StorageConfig.fromConfig(withRef("storage.snapshot.maxFlushCount = 501"));
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef("storage.snapshot.maxFlushCount = 501")));
   }
 
   @Test
@@ -159,7 +163,7 @@ public class StorageConfigTest {
     StorageConfig.ArchiveConfig a = StorageConfig.fromConfig(withRef(
         "storage.archive { enable = true, db { directory = arc }, txnum { enable = false },"
             + " temporal { enable = false }, commitment { enable = true, persistTxRoots = true },"
-            + " debug { enable = true }, coverage = FULL, warnUnclassifiedStoreWrites = false }"))
+            + " debug { enable = true }, coverage = TVM_STATE_ONLY }"))
         .getArchive();
     assertTrue(a.isEnable());
     assertEquals("arc", a.getDb().getDirectory());
@@ -168,18 +172,33 @@ public class StorageConfigTest {
     assertTrue(a.getCommitment().isEnable());
     assertTrue(a.getCommitment().isPersistTxRoots());
     assertTrue(a.getDebug().isEnable());
-    assertEquals("FULL", a.getCoverage());
-    assertFalse(a.isWarnUnclassifiedStoreWrites());
+    assertEquals("TVM_STATE_ONLY", a.getCoverage());
+    assertTrue(a.isWarnUnclassifiedStoreWrites());
   }
 
-  @Test(expected = IllegalArgumentException.class)
+  @Test
   public void testArchiveRejectsEmptyDirectory() {
-    StorageConfig.fromConfig(withRef("storage.archive.db.directory = \"\""));
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef("storage.archive.db.directory = \"\"")));
   }
 
-  @Test(expected = IllegalArgumentException.class)
+  @Test
   public void testArchiveRejectsEmptyCoverage() {
-    StorageConfig.fromConfig(withRef("storage.archive.coverage = \"\""));
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef("storage.archive.coverage = \"\"")));
+  }
+
+  @Test
+  public void testArchiveRejectsUnsupportedCoverage() {
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef("storage.archive.coverage = FULL")));
+  }
+
+  @Test
+  public void testArchiveRejectsWarnUnclassifiedDisabled() {
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef(
+            "storage.archive.warnUnclassifiedStoreWrites = false")));
   }
 
   // ---- readProperties() ----
@@ -261,13 +280,15 @@ public class StorageConfigTest {
     assertEquals("bar", p.getPath());
   }
 
-  @Test(expected = IllegalArgumentException.class)
+  @Test
   public void testPropertiesInvalidIntegerRejected() {
-    props("storage.properties = [ { name = foo, blockSize = not_a_number } ]");
+    assertThrows(IllegalArgumentException.class,
+        () -> props("storage.properties = [ { name = foo, blockSize = not_a_number } ]"));
   }
 
-  @Test(expected = IllegalArgumentException.class)
+  @Test
   public void testPropertiesInvalidLongRejected() {
-    props("storage.properties = [ { name = foo, cacheSize = not_a_number } ]");
+    assertThrows(IllegalArgumentException.class,
+        () -> props("storage.properties = [ { name = foo, cacheSize = not_a_number } ]"));
   }
 }

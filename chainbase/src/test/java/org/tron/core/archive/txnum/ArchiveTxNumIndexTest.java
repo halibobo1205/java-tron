@@ -13,16 +13,18 @@ import org.tron.core.archive.ArchiveSource;
 
 public class ArchiveTxNumIndexTest {
 
-  private static final byte[] TX_A = new byte[] {1, 2, 3};
-  private static final byte[] TX_B = new byte[] {4, 5, 6};
+  private static final byte[] TX_A = txId(1);
+  private static final byte[] TX_B = txId(2);
   private static final byte[] HASH_A = blockHash(7);
   private static final byte[] HASH_B = blockHash(9);
 
   private static long commitTwoUserTxBlock(ArchiveTxNumIndex idx, long blockNum) {
+    byte[] txA = txId((int) blockNum * 2 - 1);
+    byte[] txB = txId((int) blockNum * 2);
     idx.beginBlock(blockNum, ArchiveSource.NORMAL);
     idx.allocateSystemTx(blockNum, ArchivePhase.BLOCK_PREPARE);
-    idx.allocateUserTx(blockNum, 0, TX_A);
-    idx.allocateUserTx(blockNum, 1, TX_B);
+    idx.allocateUserTx(blockNum, 0, txA);
+    idx.allocateUserTx(blockNum, 1, txB);
     idx.allocateSystemTx(blockNum, ArchivePhase.BLOCK_FINALIZE);
     return idx.commitBlock(blockNum, 2).getLastTxNum();
   }
@@ -60,6 +62,16 @@ public class ArchiveTxNumIndexTest {
   }
 
   @Test
+  public void txIdLookupRejectsMalformedNonEmptyTxId() {
+    ArchiveTxNumIndex idx = new InMemoryArchiveTxNumIndex();
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> idx.findTxNumByTxId(new byte[] {1}));
+
+    assertTrue(ex.getMessage().contains("32-byte txId"));
+  }
+
+  @Test
   public void txNumIsMonotonicAcrossBlocks() {
     ArchiveTxNumIndex idx = new InMemoryArchiveTxNumIndex();
     assertEquals(3, commitTwoUserTxBlock(idx, 1));
@@ -71,6 +83,64 @@ public class ArchiveTxNumIndexTest {
     assertEquals(4, range.getFirstTxNum());
     assertEquals(5, range.getLastTxNum());
     assertEquals(0, range.getUserTxCount());
+  }
+
+  @Test
+  public void duplicatePrepareCannotPublishInMemoryRange() {
+    ArchiveTxNumIndex idx = new InMemoryArchiveTxNumIndex();
+    idx.beginBlock(1, ArchiveSource.NORMAL);
+    idx.allocateSystemTx(1, ArchivePhase.BLOCK_PREPARE);
+    idx.allocateSystemTx(1, ArchivePhase.BLOCK_PREPARE);
+    idx.allocateSystemTx(1, ArchivePhase.BLOCK_FINALIZE);
+
+    ArchiveException ex = assertThrows(ArchiveException.class, () -> idx.commitBlock(1, 0));
+
+    assertTrue(ex.getMessage().contains("exactly one prepare"));
+    assertFalse(idx.getBlockRange(1).isPresent());
+  }
+
+  @Test
+  public void userTxAfterFinalizeCannotPublishInMemoryRange() {
+    ArchiveTxNumIndex idx = new InMemoryArchiveTxNumIndex();
+    idx.beginBlock(1, ArchiveSource.NORMAL);
+    idx.allocateSystemTx(1, ArchivePhase.BLOCK_PREPARE);
+    idx.allocateSystemTx(1, ArchivePhase.BLOCK_FINALIZE);
+    idx.allocateUserTx(1, 0, TX_A);
+
+    ArchiveException ex = assertThrows(ArchiveException.class, () -> idx.commitBlock(1, 1));
+
+    assertTrue(ex.getMessage().contains("finalize txNum must be last"));
+    assertFalse(idx.getBlockRange(1).isPresent());
+  }
+
+  @Test
+  public void duplicateUserTxIdInPendingBlockCannotPublishInMemoryRange() {
+    ArchiveTxNumIndex idx = new InMemoryArchiveTxNumIndex();
+    idx.beginBlock(1, ArchiveSource.NORMAL);
+    idx.allocateSystemTx(1, ArchivePhase.BLOCK_PREPARE);
+    idx.allocateUserTx(1, 0, TX_A);
+    idx.allocateUserTx(1, 1, TX_A);
+    idx.allocateSystemTx(1, ArchivePhase.BLOCK_FINALIZE);
+
+    ArchiveException ex = assertThrows(ArchiveException.class, () -> idx.commitBlock(1, 2));
+
+    assertTrue(ex.getMessage().contains("duplicate txId"));
+    assertFalse(idx.getBlockRange(1).isPresent());
+  }
+
+  @Test
+  public void duplicateCommittedTxIdCannotPublishInMemoryRange() {
+    ArchiveTxNumIndex idx = new InMemoryArchiveTxNumIndex();
+    commitTwoUserTxBlock(idx, 1);
+    idx.beginBlock(2, ArchiveSource.NORMAL);
+    idx.allocateSystemTx(2, ArchivePhase.BLOCK_PREPARE);
+    idx.allocateUserTx(2, 0, TX_A);
+    idx.allocateSystemTx(2, ArchivePhase.BLOCK_FINALIZE);
+
+    ArchiveException ex = assertThrows(ArchiveException.class, () -> idx.commitBlock(2, 1));
+
+    assertTrue(ex.getMessage().contains("duplicate txId already committed"));
+    assertFalse(idx.getBlockRange(2).isPresent());
   }
 
   @Test
@@ -183,7 +253,7 @@ public class ArchiveTxNumIndexTest {
     assertTrue(ex.getMessage().contains("not archive head"));
     assertTrue(idx.getBlockRange(1).isPresent());
     assertTrue(idx.getBlockRange(2).isPresent());
-    assertEquals(5, idx.findTxNumByTxId(TX_A).getAsLong());
+    assertEquals(5, idx.findTxNumByTxId(txId(3)).getAsLong());
   }
 
   @Test
@@ -198,6 +268,42 @@ public class ArchiveTxNumIndexTest {
     ArchiveTxNumIndex idx = new InMemoryArchiveTxNumIndex();
     assertThrows(ArchiveException.class,
         () -> idx.allocateSystemTx(1, ArchivePhase.BLOCK_PREPARE));
+  }
+
+  @Test
+  public void userTxRequiresFullTxId() {
+    ArchiveTxNumIndex idx = new InMemoryArchiveTxNumIndex();
+    idx.beginBlock(1, ArchiveSource.NORMAL);
+
+    assertThrows(ArchiveException.class, () -> idx.allocateUserTx(1, 0, null));
+    assertThrows(ArchiveException.class, () -> idx.allocateUserTx(1, 0, new byte[] {1}));
+  }
+
+  @Test
+  public void negativeBlockNumberRejected() {
+    ArchiveTxNumIndex idx = new InMemoryArchiveTxNumIndex();
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> idx.beginBlock(-1, ArchiveSource.NORMAL));
+    assertTrue(ex.getMessage().contains("non-negative"));
+    assertThrows(ArchiveException.class, () -> idx.getBlockRange(-1));
+  }
+
+  @Test
+  public void negativeSeedCursorRejected() {
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> new InMemoryArchiveTxNumIndex(-1));
+    assertTrue(ex.getMessage().contains("non-negative"));
+  }
+
+  @Test
+  public void negativeReadCoordinatesRejected() {
+    ArchiveTxNumIndex idx = new InMemoryArchiveTxNumIndex();
+
+    assertThrows(ArchiveException.class, () -> idx.getBlockRange(-1));
+    assertThrows(ArchiveException.class, () -> idx.getPosition(-1));
+    assertThrows(ArchiveException.class, () -> idx.findTxNumByBlockAndIndex(-1, 0));
+    assertThrows(ArchiveException.class, () -> idx.validateCanonicalHead(-1, HASH_A));
+    assertThrows(ArchiveException.class, () -> idx.unwindBlock(-1));
   }
 
   @Test
@@ -240,5 +346,11 @@ public class ArchiveTxNumIndexTest {
     byte[] hash = new byte[ArchiveBlockRange.BLOCK_HASH_LENGTH];
     hash[ArchiveBlockRange.BLOCK_HASH_LENGTH - 1] = (byte) seed;
     return hash;
+  }
+
+  private static byte[] txId(int seed) {
+    byte[] txId = new byte[ArchiveBlockRangeCodec.TX_ID_LENGTH];
+    txId[txId.length - 1] = (byte) seed;
+    return txId;
   }
 }

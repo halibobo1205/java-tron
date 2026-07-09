@@ -350,6 +350,31 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
   }
 
   @Test
+  public void traceTransactionRejectsFetchedTransactionHashMismatch() throws Exception {
+    byte[] contract = addr(0x11);
+    byte[] caller = addr(0x22);
+    byte[] otherCaller = addr(0x23);
+
+    TransactionCapsule requested = new TransactionCapsule(
+        TvmTestUtils.buildTriggerSmartContract(caller, contract, new byte[0], 0L),
+        ContractType.TriggerSmartContract);
+    byte[] requestedTxId = requested.getTransactionId().getBytes();
+    Transaction wrongTx = new TransactionCapsule(
+        TvmTestUtils.buildTriggerSmartContract(otherCaller, contract, new byte[0], 0L),
+        ContractType.TriggerSmartContract).getInstance();
+    DefaultArchiveService svc =
+        buildArchive(new InMemoryArchiveTemporalStore(), contract, requestedTxId);
+
+    Wallet wallet = mock(Wallet.class);
+    when(wallet.getTransactionById(ByteString.copyFrom(requestedTxId))).thenReturn(wrongTx);
+
+    HistoricalTraceSupport support = new HistoricalTraceSupport(wallet, svc);
+    JsonRpcInternalException ex = assertThrows(JsonRpcInternalException.class,
+        () -> support.traceTransaction(requestedTxId, null));
+    assertEquals("transaction hash mismatch", ex.getMessage());
+  }
+
+  @Test
   public void traceTransactionRejectsArchivePositionBlockMismatch() throws Exception {
     byte[] contract = addr(0x11);
     byte[] caller = addr(0x22);

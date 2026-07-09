@@ -170,26 +170,9 @@ public final class HistoricalTraceSupport {
       throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
       JsonRpcInternalException {
     validateTraceOptions(traceOptions);
+    requireArchiveEnabled();
+    requireTxId(txId);
     ByteString txIdBs = ByteString.copyFrom(txId);
-    Transaction tx = wallet.getTransactionById(txIdBs);
-    if (tx == null) {
-      throw new JsonRpcInvalidParamsException("transaction not found");
-    }
-    ContractType contractType = null;
-    boolean traceable = false;
-    if (tx.getRawData().getContractCount() > 0) {
-      Contract contract = tx.getRawData().getContract(0);
-      contractType = contract.getType();
-      traceable = contractType == ContractType.TriggerSmartContract
-          || contractType == ContractType.CreateSmartContract;
-    }
-
-    TransactionInfo info = wallet.getTransactionInfoById(txIdBs);
-    if (info == null) {
-      throw new JsonRpcInternalException("transaction info not found");
-    }
-    long blockNum = info.getBlockNumber();
-
     ArchiveTxNumIndex index = txNumIndex();
     OptionalLong txNum = index.findTxNumByTxId(txId);
     if (!txNum.isPresent()) {
@@ -205,10 +188,10 @@ public final class HistoricalTraceSupport {
     }
     ArchiveTxPosition archivePosition = position.get();
     if (archivePosition.getPhase() != ArchivePhase.USER_TX
-        || archivePosition.getBlockNum() != blockNum
         || !Arrays.equals(archivePosition.getTxId(), txId)) {
       throw new JsonRpcInternalException("archive transaction position mismatch");
     }
+    long blockNum = archivePosition.getBlockNum();
     Optional<ArchiveBlockRange> range = index.getBlockRange(blockNum);
     if (!range.isPresent()) {
       long first = index.getFirstArchivedBlock();
@@ -221,6 +204,31 @@ public final class HistoricalTraceSupport {
     ArchiveBlockRange blockRange = range.get();
     if (t < blockRange.getFirstTxNum() || t > blockRange.getLastTxNum()) {
       throw new JsonRpcInternalException("archive transaction range mismatch");
+    }
+
+    Transaction tx = wallet.getTransactionById(txIdBs);
+    if (tx == null) {
+      throw new JsonRpcInvalidParamsException("transaction not found");
+    }
+    TransactionCapsule trxCap = new TransactionCapsule(tx);
+    if (!Arrays.equals(trxCap.getTransactionId().getBytes(), txId)) {
+      throw new JsonRpcInternalException("transaction hash mismatch");
+    }
+    ContractType contractType = null;
+    boolean traceable = false;
+    if (tx.getRawData().getContractCount() > 0) {
+      Contract contract = tx.getRawData().getContract(0);
+      contractType = contract.getType();
+      traceable = contractType == ContractType.TriggerSmartContract
+          || contractType == ContractType.CreateSmartContract;
+    }
+
+    TransactionInfo info = wallet.getTransactionInfoById(txIdBs);
+    if (info == null) {
+      throw new JsonRpcInternalException("transaction info not found");
+    }
+    if (info.getBlockNumber() != blockNum) {
+      throw new JsonRpcInternalException("archive transaction position mismatch");
     }
 
     Block block = wallet.getBlockByNum(blockNum);
@@ -246,9 +254,14 @@ public final class HistoricalTraceSupport {
     // writes must NOT be included). The reader reads getAsOf(point.getTxNum()).
     ArchiveStatePoint point = ArchiveStatePoint.txBefore(blockNum, blockHash, t - 1);
     // Reuse the real transaction so feeLimit (hence the energy limit) is preserved.
-    TransactionCapsule trxCap = new TransactionCapsule(tx);
     return runTrace(historicalBlock, point, trxCap, false, "historical debug_traceTransaction",
         info.getReceipt().getEnergyUsageTotal());
+  }
+
+  private static void requireTxId(byte[] txId) throws JsonRpcInvalidParamsException {
+    if (txId == null || txId.length != ArchiveBlockRange.BLOCK_HASH_LENGTH) {
+      throw new JsonRpcInvalidParamsException("invalid transaction hash");
+    }
   }
 
   private static void requireBlockHash(byte[] blockHash, String source, long blockNum)

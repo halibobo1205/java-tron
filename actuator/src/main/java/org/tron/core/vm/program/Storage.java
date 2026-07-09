@@ -99,9 +99,12 @@ public class Storage {
   public void commit() {
     // L4c archive: capture CONTRACT_STORAGE here (root per-tx storage write) where the contract
     // address + un-hashed slot are known; raw store key (row.getRowKey()) is irreversible.
-    boolean archiveActive = ArchiveCaptureHolder.isActive();
+    boolean archiveActive = ArchiveCaptureHolder.isCapturingCurrentTx();
     rowCache.forEach((DataWord rowKey, StorageRowCapsule row) -> {
       if (row.isDirty()) {
+        if (!archiveActive) {
+          ArchiveCaptureHolder.requireCurrentTx("contractStorageCommit");
+        }
         boolean zero = new DataWord(row.getValue()).isZero();
         // Read the slot's pre-write value (Erigon prev-value) before mutating the store; gated so a
         // non-archive node never does this extra read.

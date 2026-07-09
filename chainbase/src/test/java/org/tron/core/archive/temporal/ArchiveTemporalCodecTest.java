@@ -64,8 +64,24 @@ public class ArchiveTemporalCodecTest {
     assertArrayEquals(changeset, ArchiveTemporalCodec.changesetKeyOfHistory(history));
     assertArrayEquals(ArchiveTemporalCodec.latestKey(ArchiveDomain.CONTRACT_STATE, key),
         ArchiveTemporalCodec.latestKeyOfChangeset(changeset));
+    assertArrayEquals(ArchiveTemporalCodec.latestKey(ArchiveDomain.CONTRACT_STATE, key),
+        ArchiveTemporalCodec.latestKeyOfHistory(history));
     assertArrayEquals(ArchiveTemporalCodec.historyPrefix(ArchiveDomain.CONTRACT_STATE, key),
         ArchiveTemporalCodec.historyPrefixOfChangeset(changeset));
+  }
+
+  @Test
+  public void latestBaselineKeyRoundTripsWithLatestKey() {
+    byte[] key = {1, 2, 3, 4};
+    byte[] latest = ArchiveTemporalCodec.latestKey(ArchiveDomain.CONTRACT_STATE, key);
+    byte[] baseline = ArchiveTemporalCodec.latestBaselineKey(
+        ArchiveDomain.CONTRACT_STATE, key);
+
+    assertEquals(0x01, baseline[0]);
+    assertTrue(ArchiveTemporalCodec.startsWith(
+        baseline, ArchiveTemporalCodec.latestBaselinePrefix()));
+    assertArrayEquals(baseline, ArchiveTemporalCodec.latestBaselineKeyOfLatest(latest));
+    assertArrayEquals(latest, ArchiveTemporalCodec.latestKeyOfBaseline(baseline));
   }
 
   @Test
@@ -104,6 +120,33 @@ public class ArchiveTemporalCodecTest {
   }
 
   @Test
+  public void negativeTxNumsAreRejected() {
+    byte[] key = {7};
+
+    assertThrows(ArchiveException.class,
+        () -> ArchiveTemporalCodec.historyKey(ArchiveDomain.ACCOUNT, key, -1));
+    assertThrows(ArchiveException.class,
+        () -> ArchiveTemporalCodec.changesetKey(-1, ArchiveDomain.ACCOUNT, key));
+    assertThrows(ArchiveException.class, () -> ArchiveTemporalCodec.changesetSeekFrom(-1));
+    assertThrows(ArchiveException.class,
+        () -> ArchiveTemporalCodec.txNumOfHistory(rawHistoryKey(-1)));
+    assertThrows(ArchiveException.class,
+        () -> ArchiveTemporalCodec.txNumOfChangeset(rawChangesetKey(-1)));
+  }
+
+  @Test
+  public void unknownDomainIdsAreRejected() {
+    assertThrows(ArchiveException.class,
+        () -> ArchiveTemporalCodec.historyPrefixOfLatest(rawLatestKey(0x7fff)));
+    assertThrows(ArchiveException.class,
+        () -> ArchiveTemporalCodec.txNumOfHistory(rawHistoryKey(8, 0x7fff)));
+    assertThrows(ArchiveException.class,
+        () -> ArchiveTemporalCodec.txNumOfChangeset(rawChangesetKey(8, 0x7fff)));
+    assertThrows(ArchiveException.class,
+        () -> ArchiveTemporalCodec.latestKeyOfBaseline(rawBaselineKey(0x7fff)));
+  }
+
+  @Test
   public void blockCommitKeyLivesInMetaTable() {
     byte[] key = ArchiveTemporalCodec.blockCommitKey(9L);
 
@@ -128,6 +171,9 @@ public class ArchiveTemporalCodecTest {
     assertArrayEquals(new byte[] {4, 5}, present.getValue());
     assertTrue(ArchiveTemporalCodec.decodeValue(
         ArchiveTemporalCodec.encodeValue(DomainValue.tombstone())).isDeleted());
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> ArchiveTemporalCodec.decodeValue(new byte[] {1, 7}));
+    assertTrue(ex.getMessage().contains("tombstone value must be empty"));
   }
 
   private static int compare(byte[] a, byte[] b) {
@@ -139,5 +185,63 @@ public class ArchiveTemporalCodecTest {
       }
     }
     return a.length - b.length;
+  }
+
+  private static byte[] rawHistoryKey(long txNum) {
+    return rawHistoryKey(txNum, ArchiveDomain.ACCOUNT.getId());
+  }
+
+  private static byte[] rawHistoryKey(long txNum, int domainId) {
+    byte[] key = new byte[16];
+    key[0] = ArchiveTemporalCodec.HISTORY_PREFIX;
+    putDomainId(key, 1, domainId);
+    key[6] = 1;
+    key[7] = 7;
+    putLong(key, 8, txNum);
+    return key;
+  }
+
+  private static byte[] rawChangesetKey(long txNum) {
+    return rawChangesetKey(txNum, ArchiveDomain.ACCOUNT.getId());
+  }
+
+  private static byte[] rawChangesetKey(long txNum, int domainId) {
+    byte[] key = new byte[16];
+    key[0] = ArchiveTemporalCodec.CHANGESET_PREFIX;
+    putLong(key, 1, txNum);
+    putDomainId(key, 9, domainId);
+    key[14] = 1;
+    key[15] = 7;
+    return key;
+  }
+
+  private static byte[] rawLatestKey(int domainId) {
+    byte[] key = new byte[8];
+    key[0] = ArchiveTemporalCodec.LATEST_PREFIX;
+    putDomainId(key, 1, domainId);
+    key[6] = 1;
+    key[7] = 7;
+    return key;
+  }
+
+  private static byte[] rawBaselineKey(int domainId) {
+    byte[] prefix = ArchiveTemporalCodec.latestBaselinePrefix();
+    byte[] key = Arrays.copyOf(prefix, prefix.length + 7);
+    putDomainId(key, prefix.length, domainId);
+    key[prefix.length + 5] = 1;
+    key[prefix.length + 6] = 7;
+    return key;
+  }
+
+  private static void putDomainId(byte[] key, int offset, int domainId) {
+    key[offset] = (byte) (domainId >>> 8);
+    key[offset + 1] = (byte) domainId;
+  }
+
+  private static void putLong(byte[] key, int offset, long value) {
+    for (int i = Long.BYTES - 1; i >= 0; i--) {
+      key[offset + i] = (byte) value;
+      value >>>= Byte.SIZE;
+    }
   }
 }

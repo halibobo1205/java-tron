@@ -88,7 +88,6 @@ import org.tron.core.services.jsonrpc.filters.LogMatch;
 import org.tron.core.services.jsonrpc.types.BlockResult;
 import org.tron.core.services.jsonrpc.types.BuildArguments;
 import org.tron.core.services.jsonrpc.types.CallArguments;
-import org.tron.core.services.jsonrpc.types.TraceResult;
 import org.tron.core.services.jsonrpc.types.TransactionReceipt;
 import org.tron.core.services.jsonrpc.types.TransactionReceipt.TransactionContext;
 import org.tron.core.services.jsonrpc.types.TransactionResult;
@@ -202,10 +201,6 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
   // L8: historical eth_call replayed against archived state; null/disabled falls back to latest.
   @Autowired(required = false)
   private HistoricalEthCallSupport historicalEthCallSupport;
-  // Historical debug_traceCall replayed against archived state with the native tracer on; archive
-  // only (no latest debug_traceCall yet). Null/disabled rejects the request.
-  @Autowired(required = false)
-  private HistoricalTraceSupport historicalTraceSupport;
   private final String esName = "query-section";
 
   @Autowired
@@ -1034,6 +1029,7 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
       throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
       JsonRpcInternalException {
 
+    requireArchiveAvailableForCallObjectBlockParam(blockParamObj);
     ResolvedBlockParam blockParam = resolveBlockParam(blockParamObj);
     String blockNumOrTag = blockParam.getBlockNumOrTag();
 
@@ -1056,46 +1052,41 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
         ByteArray.fromHexString(transactionCall.resolveData()));
   }
 
-  @Override
-  public TraceResult traceCall(CallArguments transactionCall, Object blockParamObj,
-      Object traceOptions) throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
-      JsonRpcInternalException {
-    // Only the default struct-log tracer is implemented; unsupported options fail closed below.
-    ResolvedBlockParam blockParam = resolveBlockParam(blockParamObj);
-    String blockNumOrTag = blockParam.getBlockNumOrTag();
-    if (historicalTraceSupport == null
-        || !historicalTraceSupport.shouldUseArchive(blockNumOrTag)) {
-      // No latest debug_traceCall yet: a latest tag (or archive disabled) has no handler here.
-      throw new JsonRpcInternalException(
-          "debug_traceCall is only available for archived (non-latest) blocks");
-    }
-    return historicalTraceSupport.traceCall(
-        addressCompatibleToByteArray(transactionCall.getFrom()),
-        addressCompatibleToByteArray(transactionCall.getTo()),
-        transactionCall.parseValue(),
-        ByteArray.fromHexString(transactionCall.resolveData()),
-        blockNumOrTag,
-        traceOptions,
-        blockParam.getRequestedBlockHash());
-  }
-
-  @Override
-  public TraceResult traceTransaction(String txHash, Object traceOptions)
-      throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
-      JsonRpcInternalException {
-    // Only the default struct-log tracer is implemented; unsupported options fail closed below.
-    if (historicalTraceSupport == null || !historicalTraceSupport.isArchiveEnabled()) {
-      throw new JsonRpcInternalException(
-          "debug_traceTransaction is only available when archiving is enabled");
-    }
-    byte[] txId = hashToByteArray(txHash);
-    return historicalTraceSupport.traceTransaction(txId, traceOptions);
-  }
-
   /**
    * Normalises the JSON-RPC block parameter (string tag, or the object form with blockNumber /
    * blockHash) while preserving object-form blockHash binding for historical archive calls.
    */
+  private void requireArchiveAvailableForCallObjectBlockParam(Object blockParamObj)
+      throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
+      JsonRpcInternalException {
+    if (historicalEthCallSupport != null && isHistoricalObjectBlockParam(blockParamObj)) {
+      historicalEthCallSupport.validateArchiveAvailable();
+    }
+  }
+
+  private boolean isHistoricalObjectBlockParam(Object blockParamObj)
+      throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException {
+    if (!(blockParamObj instanceof Map)) {
+      return false;
+    }
+    Map<?, ?> paramMap = (Map<?, ?>) blockParamObj;
+    boolean hasBlockNumber = paramMap.containsKey("blockNumber");
+    boolean hasBlockHash = paramMap.containsKey("blockHash");
+    if (hasBlockNumber == hasBlockHash) {
+      throw new JsonRpcInvalidRequestException(JSON_ERROR);
+    }
+    if (hasBlockNumber) {
+      if (paramMap.containsKey("requireCanonical")) {
+        throw new JsonRpcInvalidParamsException(JSON_ERROR);
+      }
+      parseObjectBlockNumber(getObjectBlockParamString(paramMap, "blockNumber"));
+      return true;
+    }
+    validateRequireCanonical(paramMap);
+    hashToByteArray(getObjectBlockParamString(paramMap, "blockHash"));
+    return true;
+  }
+
   private ResolvedBlockParam resolveBlockParam(Object blockParamObj)
       throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
       JsonRpcInternalException {
@@ -1134,12 +1125,10 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
 
   private ResolvedBlockParam resolveGetterBlockParam(Object blockParamObj)
       throws JsonRpcInvalidParamsException, JsonRpcInternalException {
-    try {
-      return resolveBlockParam(blockParamObj);
-    } catch (JsonRpcInvalidRequestException e) {
-      throw new JsonRpcInvalidParamsException(
-          e.getMessage() == null ? JSON_ERROR : e.getMessage());
+    if (blockParamObj instanceof String) {
+      return ResolvedBlockParam.of((String) blockParamObj);
     }
+    throw new JsonRpcInvalidParamsException(JSON_ERROR);
   }
 
   private static final class ResolvedBlockParam {
@@ -1191,8 +1180,7 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
 
   private void validateRequireCanonical(Map<?, ?> paramMap)
       throws JsonRpcInvalidParamsException {
-    Object requireCanonical = paramMap.get("requireCanonical");
-    if (requireCanonical != null && !(requireCanonical instanceof Boolean)) {
+    if (paramMap.containsKey("requireCanonical")) {
       throw new JsonRpcInvalidParamsException(JSON_ERROR);
     }
   }
