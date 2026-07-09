@@ -4,7 +4,11 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
@@ -260,6 +264,28 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
   }
 
   @Test
+  public void traceCallBuildsHistoricalTransactionWithoutWalletLatestReference() throws Exception {
+    byte[] contract = addr(0x11);
+    byte[] caller = addr(0x22);
+    byte[] unrelatedTxId = new byte[32];
+    unrelatedTxId[31] = 1;
+
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    DefaultArchiveService svc = buildArchive(temporal, contract, unrelatedTxId);
+
+    Wallet wallet = mock(Wallet.class);
+    BlockCapsule block = blockCapsule(1);
+    when(wallet.getBlockByNum(1L)).thenReturn(block.getInstance());
+
+    HistoricalTraceSupport support = new HistoricalTraceSupport(wallet, svc);
+    TraceResult result = support.traceCall(caller, contract, 0L, new byte[0], "0x1");
+
+    assertFalse(result.isFailed());
+    assertEquals(word(3), result.getReturnValue());
+    verify(wallet, never()).createTransactionCapsule(any(), eq(ContractType.TriggerSmartContract));
+  }
+
+  @Test
   public void traceTransactionReturnsFailedTraceForVmException() throws Exception {
     byte[] contract = addr(0x11);
     byte[] caller = addr(0x22);
@@ -511,7 +537,7 @@ public class HistoricalTraceTransactionIntegrationTest extends BaseMethodTest {
   public void traceTransactionNotFoundThrowsInvalidParams() {
     byte[] txId = new byte[32];
     txId[31] = 0x7;
-    DefaultArchiveService svc = genesisCompleteEmptyArchive();
+    DefaultArchiveService svc = buildArchive(new InMemoryArchiveTemporalStore(), addr(0x11), txId);
     Wallet wallet = mock(Wallet.class);
     when(wallet.getTransactionById(ByteString.copyFrom(txId))).thenReturn(null);
 
