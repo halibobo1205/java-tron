@@ -455,9 +455,16 @@ public final class DefaultArchiveService implements ArchiveService {
       for (ArchiveChangeRecord record : captureEngine.records()) {
         WrappedByteArray id = mergeKey(record);
         ArchiveChangeRecord prior = merged.get(id);
-        merged.put(id, prior == null ? record
-            : new ArchiveChangeRecord(prior.getPosition(), prior.getDomain(),
-                prior.getCanonicalKey(), prior.getPrevValue(), record.getValue()));
+        if (prior == null) {
+          merged.put(id, record);
+          continue;
+        }
+        if (!sameDomainValue(prior.getValue(), record.getPrevValue())) {
+          throw new ArchiveException("archive capture prev-value chain mismatch for txNum "
+              + record.getTxNum());
+        }
+        merged.put(id, new ArchiveChangeRecord(prior.getPosition(), prior.getDomain(),
+            prior.getCanonicalKey(), prior.getPrevValue(), record.getValue()));
       }
       List<ArchiveChangeRecord> records = new ArrayList<>(merged.values());
       records.removeIf(this::isKnownNoop);

@@ -553,6 +553,35 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
+  public void commitRejectsBrokenWithinTxPrevValueChain() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    DefaultArchiveService service =
+        new DefaultArchiveService(true, index, context, temporal);
+
+    byte[] addr = new byte[21];
+    addr[0] = 0x41;
+    BlockCapsule b = block(5);
+    service.beginBlock(b, ArchiveSource.NORMAL);
+    service.beginSystemTx(b, ArchivePhase.BLOCK_PREPARE);
+    service.endTx();
+    service.beginSystemTx(b, ArchivePhase.BLOCK_FINALIZE);
+    long txNum = context.current().orElseThrow(AssertionError::new).getTxNum();
+    service.getCaptureEngine().capturePut("account", addr, account(10), account(20));
+    service.getCaptureEngine().capturePut("account", addr, account(99), account(30));
+    service.endTx();
+
+    ArchiveException ex = assertThrows(ArchiveException.class, () -> service.commitBlock(b));
+
+    assertTrue(ex.getMessage().contains("prev-value chain mismatch"));
+    assertTrue(ex.getMessage().contains(String.valueOf(txNum)));
+    assertThrows(ArchiveException.class, service::validateAvailable);
+    assertFalse(index.getBlockRange(5).isPresent());
+    assertEquals(0, temporal.changeCount());
+  }
+
+  @Test
   public void sameValueWritesSeedTemporalLatestForMidChainCoverage() throws Exception {
     InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
     ArchiveExecutionContext context = new ArchiveExecutionContext();

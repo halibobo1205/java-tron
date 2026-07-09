@@ -35,9 +35,12 @@ public final class JsonRpcArchiveStatePointResolver {
     if (JsonRpcApiUtil.LATEST_STR.equalsIgnoreCase(blockNumOrTag)) {
       return ResolvedArchiveStatePoint.latest();
     }
-    // Reuses the canonical tag/quantity parser: earliest -> 0, finalized -> solid block,
-    // quantity -> its number; pending / bad input throw JsonRpcInvalidParamsException.
-    long requestedBlockNum = JsonRpcApiUtil.parseBlockNumber(blockNumOrTag, wallet);
+    // Reuses the canonical tag semantics but keeps the historical getter quantity contract:
+    // "0xN" parses as hex and bare "N" parses as decimal. The Wallet overload intentionally
+    // accepts only 0x-prefixed quantities for other APIs, so keep archive parsing local here.
+    long requestedBlockNum = JsonRpcApiUtil.isBlockTag(blockNumOrTag)
+        ? JsonRpcApiUtil.parseBlockTag(blockNumOrTag, wallet)
+        : JsonRpcApiUtil.parseBlockNumber(blockNumOrTag);
     Block block = wallet.getBlockByNum(requestedBlockNum);
     if (block == null) {
       throw new JsonRpcInvalidParamsException("block header not found");

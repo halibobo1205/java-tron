@@ -188,6 +188,24 @@ public class NoopArchiveServiceTest {
   }
 
   @Test
+  public void factoryRejectsUnsupportedCommitmentEnabled() {
+    StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
+    config.setEnable(true);
+    config.getCommitment().setEnable(true);
+    ArchiveException ex = assertThrows(ArchiveException.class, () -> createArchive(config));
+    assertTrue(ex.getMessage().contains("commitment.enable is not supported"));
+  }
+
+  @Test
+  public void factoryRejectsPersistTxRootsEnabled() {
+    StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
+    config.setEnable(true);
+    config.getCommitment().setPersistTxRoots(true);
+    ArchiveException ex = assertThrows(ArchiveException.class, () -> createArchive(config));
+    assertTrue(ex.getMessage().contains("persistTxRoots cannot be true"));
+  }
+
+  @Test
   public void factoryInstallsPersistentStoreWhenPathSupplied() throws IOException {
     StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
     config.setEnable(true);

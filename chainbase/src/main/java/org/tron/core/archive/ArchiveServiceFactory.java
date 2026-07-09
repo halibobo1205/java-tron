@@ -119,6 +119,13 @@ public final class ArchiveServiceFactory {
       throw new ArchiveException(
           "storage.archive.warnUnclassifiedStoreWrites cannot be false in P0");
     }
+    if (config.getCommitment() != null && config.getCommitment().isEnable()) {
+      throw new ArchiveException("storage.archive.commitment.enable is not supported in P0");
+    }
+    if (config.getCommitment() != null && config.getCommitment().isPersistTxRoots()) {
+      throw new ArchiveException(
+          "storage.archive.commitment.persistTxRoots cannot be true in P0");
+    }
   }
 
   private static void recoverPublishedInFlightBlocks(RocksDbArchiveInFlightStore inFlightStore,
