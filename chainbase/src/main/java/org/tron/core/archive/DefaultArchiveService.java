@@ -26,7 +26,9 @@ import org.tron.core.archive.domain.DefaultArchiveDomainCatalog;
 import org.tron.core.archive.domain.DefaultArchiveDomainRegistry;
 import org.tron.core.archive.domain.DynamicKeyPolicy;
 import org.tron.core.archive.reader.ArchiveReaderException;
+import org.tron.core.archive.reader.ArchiveReadThrough;
 import org.tron.core.archive.reader.ArchiveStateReaderFactory;
+import org.tron.core.archive.reader.ArchiveStatePoint;
 import org.tron.core.archive.reader.DefaultArchiveStateReaderFactory;
 import org.tron.core.archive.temporal.ArchiveTemporalStore;
 import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
@@ -57,6 +59,7 @@ public final class DefaultArchiveService implements ArchiveService {
   private final ArchiveTemporalStore temporalStore;
   private final ArchiveInFlightStore inFlightStore;
   private final ArchiveStateReaderFactory readerFactory;
+  private final ArchiveReadThrough liveReadThrough;
   private final byte[] schemaChecksum;
   private final ReentrantReadWriteLock consistencyLock = new ReentrantReadWriteLock(true);
   private final NavigableMap<Long, ArchiveInFlightBlock> inFlightBlocks = new TreeMap<>();
@@ -96,10 +99,19 @@ public final class DefaultArchiveService implements ArchiveService {
       ArchiveExecutionContext executionContext, ArchiveTemporalStore temporalStore,
       ArchiveInFlightStore inFlightStore, ArchiveDomainRegistry registry,
       ArchiveDomainCatalog catalog) {
+    this(enabled, txNumIndex, executionContext, temporalStore, inFlightStore,
+        registry, catalog, ArchiveReadThrough.NONE);
+  }
+
+  DefaultArchiveService(boolean enabled, ArchiveTxNumIndex txNumIndex,
+      ArchiveExecutionContext executionContext, ArchiveTemporalStore temporalStore,
+      ArchiveInFlightStore inFlightStore, ArchiveDomainRegistry registry,
+      ArchiveDomainCatalog catalog, ArchiveReadThrough liveReadThrough) {
     this.enabled = enabled;
     this.txNumIndex = txNumIndex;
     this.executionContext = executionContext;
     if (enabled) {
+      this.liveReadThrough = liveReadThrough == null ? ArchiveReadThrough.NONE : liveReadThrough;
       this.schemaChecksum = ArchiveSchemaChecksum.of(registry, catalog);
       this.captureEngine = new ArchiveCaptureEngine(registry, catalog, new DynamicKeyPolicy(),
           executionContext);
@@ -108,11 +120,12 @@ public final class DefaultArchiveService implements ArchiveService {
       this.executionTxNumIndex = new InMemoryArchiveTxNumIndex(txNumIndex.getNextTxNum());
       loadInFlightBlocks();
       this.readerFactory = new DefaultArchiveStateReaderFactory(temporalStore, catalog,
-          txNumIndex, this::validateAvailableForRead);
+          txNumIndex, this::validateAvailableForRead, this::readThrough);
       executionContext.clear();
       captureEngine.clear();
       ArchiveCaptureHolder.set(captureEngine);
     } else {
+      this.liveReadThrough = ArchiveReadThrough.NONE;
       this.schemaChecksum = new byte[0];
       this.captureEngine = null;
       this.temporalStore = null;
@@ -137,8 +150,25 @@ public final class DefaultArchiveService implements ArchiveService {
         continue;
       }
       validateInFlightAppend(block);
+      validateInFlightPrevValueChain(block);
       replayExecutionInFlightBlock(block);
       rememberInFlightInMemory(block);
+    }
+  }
+
+  private void validateInFlightPrevValueChain(ArchiveInFlightBlock block) {
+    Map<WrappedByteArray, DomainValue> stagedLatest = new LinkedHashMap<>();
+    for (ArchiveChangeRecord record : block.getRecords()) {
+      WrappedByteArray key = latestKey(record.getDomain(), record.getCanonicalKey());
+      DomainValue expected = stagedLatest.get(key);
+      if (expected == null) {
+        expected = latestWithInFlight(record.getDomain(), record.getCanonicalKey()).orElse(null);
+      }
+      if (expected != null && !sameDomainValue(expected, record.getPrevValue())) {
+        throw new ArchiveException("archive in-flight prev-value chain mismatch for txNum "
+            + record.getTxNum());
+      }
+      stagedLatest.put(key, record.getValue());
     }
   }
 
@@ -277,9 +307,12 @@ public final class DefaultArchiveService implements ArchiveService {
         if (canonicalBlockProvider == null) {
           throw new ArchiveException("archive startup reconciliation requires canonical blocks");
         }
+        BlockCapsule previousCanonical = null;
         for (ArchiveInFlightBlock block : inFlightBlocks.values()) {
           validateInFlightNotAfterCanonicalHead(block, canonicalHeadNum);
-          validateInFlightMatchesCanonical(block, canonicalBlockProvider);
+          BlockCapsule canonical = validateInFlightMatchesCanonical(block, canonicalBlockProvider);
+          validateCanonicalParentLink(previousCanonical, canonical);
+          previousCanonical = canonical;
         }
         validateCanonicalTailCovered(canonicalHeadNum, canonicalBlockProvider);
         publishSolidifiedBlocksLocked(solidifiedBlockNum);
@@ -335,7 +368,7 @@ public final class DefaultArchiveService implements ArchiveService {
     rebuildInFlightLatest();
   }
 
-  private static void validateInFlightMatchesCanonical(ArchiveInFlightBlock block,
+  private static BlockCapsule validateInFlightMatchesCanonical(ArchiveInFlightBlock block,
       LongFunction<BlockCapsule> canonicalBlockProvider) {
     ArchiveBlockRange range = block.getRange();
     BlockCapsule canonical = canonicalBlockProvider.apply(range.getBlockNum());
@@ -350,6 +383,17 @@ public final class DefaultArchiveService implements ArchiveService {
     if (!Arrays.equals(canonical.getBlockId().getBytes(), range.getBlockHash())) {
       throw new ArchiveException("archive in-flight block " + range.getBlockNum()
           + " hash mismatch with canonical block");
+    }
+    return canonical;
+  }
+
+  private static void validateCanonicalParentLink(BlockCapsule previous, BlockCapsule current) {
+    if (previous == null) {
+      return;
+    }
+    if (!Arrays.equals(current.getParentHash().getBytes(), previous.getBlockId().getBytes())) {
+      throw new ArchiveException("archive in-flight block " + current.getNum()
+          + " parent hash mismatch with previous canonical block");
     }
   }
 
@@ -593,6 +637,34 @@ public final class DefaultArchiveService implements ArchiveService {
       throw new ArchiveReaderException(ArchiveReaderException.Reason.INTERNAL_IO,
           "archive is unavailable", e);
     }
+  }
+
+  private Optional<DomainValue> readThrough(ArchiveDomain domain, byte[] canonicalKey,
+      ArchiveStatePoint point) throws ArchiveReaderException {
+    if (!canUseLiveReadThrough(point)) {
+      return Optional.empty();
+    }
+    Optional<DomainValue> inFlight = readThroughInFlight(domain, canonicalKey, point.getTxNum());
+    return inFlight.isPresent() ? inFlight : liveReadThrough.read(domain, canonicalKey, point);
+  }
+
+  private boolean canUseLiveReadThrough(ArchiveStatePoint point) {
+    long firstArchivedBlock = txNumIndex.getFirstArchivedBlock();
+    return firstArchivedBlock > 0 && point.getBlockNum() >= firstArchivedBlock;
+  }
+
+  private Optional<DomainValue> readThroughInFlight(ArchiveDomain domain, byte[] canonicalKey,
+      long pointTxNum) {
+    for (ArchiveInFlightBlock block : inFlightBlocks.values()) {
+      for (ArchiveChangeRecord record : block.getRecords()) {
+        if (record.getTxNum() > pointTxNum
+            && record.getDomain() == domain
+            && Arrays.equals(record.getCanonicalKey(), canonicalKey)) {
+          return Optional.of(record.getPrevValue());
+        }
+      }
+    }
+    return Optional.empty();
   }
 
   @Override

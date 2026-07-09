@@ -1172,8 +1172,20 @@ public class Manager {
   }
 
   void commitArchiveBlockOrFailStop(BlockCapsule block, String action) {
+    commitArchiveBlockOnlyOrFailStop(block, action);
+    publishArchiveSolidifiedOrFailStop(block, action);
+  }
+
+  void commitArchiveBlockOnlyOrFailStop(BlockCapsule block, String action) {
     try {
       archiveService.commitBlock(block);
+    } catch (RuntimeException e) {
+      throw archiveRuntimeError(action, block, e);
+    }
+  }
+
+  void publishArchiveSolidifiedOrFailStop(BlockCapsule block, String action) {
+    try {
       archiveService.publishSolidifiedBlocks(
           getDynamicPropertiesStore().getLatestSolidifiedBlockNum());
     } catch (RuntimeException e) {
@@ -1565,6 +1577,10 @@ public class Manager {
             archiveService.beginBlock(newBlock, ArchiveSource.NORMAL);
             try (ISession tmpSession = revokingStore.buildSession()) {
               applyBlock(newBlock, txs);
+              // Persist the archive journal before the canonical session commit. A crash between
+              // the two commits must fail-stop on restart, not silently skip the first archive
+              // block as a mid-chain activation.
+              commitArchiveBlockOnlyOrFailStop(newBlock, "push block");
               tmpSession.commit();
             } catch (Throwable throwable) {
               abortArchiveBlockBestEffort(newBlock, "push block", throwable);
@@ -1573,9 +1589,8 @@ public class Manager {
               clearSolidityContractTriggerCache(block.getNum());
               throw throwable;
             }
-            // Archive commit after canonical commit, before blockTrigger reads progress.
-            // L5 note: a commitBlock failure here must become a deterministic fail-stop.
-            commitArchiveBlockOrFailStop(newBlock, "push block");
+            // Publish only after the canonical session commit is durable.
+            publishArchiveSolidifiedOrFailStop(newBlock, "push block");
             long newSolidNum = getDynamicPropertiesStore().getLatestSolidifiedBlockNum();
             blockTrigger(newBlock, oldSolidNum, newSolidNum);
           }

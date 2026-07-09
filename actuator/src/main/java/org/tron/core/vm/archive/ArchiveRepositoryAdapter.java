@@ -68,6 +68,7 @@ public class ArchiveRepositoryAdapter implements Repository {
   private final Map<Key, ContractCapsule> contracts = new HashMap<>();
   private final Map<Key, ContractStateCapsule> contractStates = new HashMap<>();
   private final Map<Key, Map<DataWord, DataWord>> storage = new HashMap<>();
+  private final Map<Key, Map<Key, Long>> tokenBalances = new HashMap<>();
   private final Map<Key, Map<Key, byte[]>> transientStorage = new HashMap<>();
   private final Set<Key> newContracts = new HashSet<>();
 
@@ -120,12 +121,18 @@ public class ArchiveRepositoryAdapter implements Repository {
 
   @Override
   public long getTokenBalance(byte[] address, byte[] tokenId) {
-    AccountCapsule account = getAccount(address);
-    if (account == null) {
+    byte[] tokenIdWithoutLeadingZero = canonicalTokenId(tokenId);
+    if (tokenIdWithoutLeadingZero.length == 0) {
       return 0L;
     }
-    byte[] tokenIdWithoutLeadingZero = ByteUtil.stripLeadingZeroes(tokenId);
-    if (tokenIdWithoutLeadingZero == null || tokenIdWithoutLeadingZero.length == 0) {
+    Key accountKey = Key.create(address);
+    Key tokenKey = Key.create(tokenIdWithoutLeadingZero);
+    Map<Key, Long> balances = tokenBalances.get(accountKey);
+    if (balances != null && balances.containsKey(tokenKey)) {
+      return balances.get(tokenKey);
+    }
+    AccountCapsule account = getAccount(address);
+    if (account == null) {
       return 0L;
     }
     if (parent != null) {
@@ -282,6 +289,9 @@ public class ArchiveRepositoryAdapter implements Repository {
     newContracts.forEach(key -> parent.putNewContract(key.getData()));
     storage.forEach((addrKey, slots) ->
         slots.forEach((slot, value) -> parent.putStorageValue(addrKey.getData(), slot, value)));
+    tokenBalances.forEach((addrKey, balances) ->
+        balances.forEach((tokenKey, balance) ->
+            parent.putTokenBalance(addrKey.getData(), tokenKey.getData(), balance)));
     transientStorage.forEach((addrKey, values) ->
         values.forEach((key, value) -> parent.updateTransientStorageValue(
             addrKey.getData(), key.getData(), value)));
@@ -513,7 +523,35 @@ public class ArchiveRepositoryAdapter implements Repository {
 
   @Override
   public long addTokenBalance(byte[] address, byte[] tokenId, long value) {
-    throw unsupported("addTokenBalance" + NEEDS_BLOCK_CTX);
+    byte[] tokenIdWithoutLeadingZero = canonicalTokenId(tokenId);
+    if (tokenIdWithoutLeadingZero.length == 0) {
+      return 0L;
+    }
+    AccountCapsule account = getAccount(address);
+    if (account == null) {
+      account = createAccount(address, Protocol.AccountType.Normal);
+    }
+    long balance = getTokenBalance(address, tokenIdWithoutLeadingZero);
+    if (value == 0) {
+      return balance;
+    }
+    if (value < 0 && balance < -value) {
+      throw new RuntimeException(
+          ByteArray.toHexString(account.createDbKey()) + " insufficient balance");
+    }
+    long updated = addExact(balance, value, VMConfig.disableJavaLangMath());
+    putTokenBalance(address, tokenIdWithoutLeadingZero, updated);
+    return updated;
+  }
+
+  private void putTokenBalance(byte[] address, byte[] tokenId, long balance) {
+    tokenBalances.computeIfAbsent(Key.create(address), k -> new HashMap<>())
+        .put(Key.create(tokenId), balance);
+  }
+
+  private static byte[] canonicalTokenId(byte[] tokenId) {
+    byte[] stripped = ByteUtil.stripLeadingZeroes(tokenId);
+    return stripped == null ? ByteUtil.EMPTY_BYTE_ARRAY : stripped;
   }
 
   // ---------------------------------------------------------------------------------------------
