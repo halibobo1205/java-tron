@@ -161,18 +161,18 @@ public class StorageConfigTest {
   @Test
   public void testArchiveOverride() {
     StorageConfig.ArchiveConfig a = StorageConfig.fromConfig(withRef(
-        "storage.archive { enable = true, db { directory = arc }, txnum { enable = false },"
-            + " temporal { enable = false },"
+        "storage.archive { enable = true, db { directory = arc }, txnum { enable = true },"
+            + " temporal { enable = true },"
             + " commitment { enable = false, persistTxRoots = false },"
-            + " debug { enable = true }, coverage = TVM_STATE_ONLY }"))
+            + " debug { enable = false }, coverage = TVM_STATE_ONLY }"))
         .getArchive();
     assertTrue(a.isEnable());
     assertEquals("arc", a.getDb().getDirectory());
-    assertFalse(a.getTxnum().isEnable());
-    assertFalse(a.getTemporal().isEnable());
+    assertTrue(a.getTxnum().isEnable());
+    assertTrue(a.getTemporal().isEnable());
     assertFalse(a.getCommitment().isEnable());
     assertFalse(a.getCommitment().isPersistTxRoots());
-    assertTrue(a.getDebug().isEnable());
+    assertFalse(a.getDebug().isEnable());
     assertEquals("TVM_STATE_ONLY", a.getCoverage());
     assertTrue(a.isWarnUnclassifiedStoreWrites());
   }
@@ -214,6 +214,35 @@ public class StorageConfigTest {
     assertThrows(IllegalArgumentException.class,
         () -> StorageConfig.fromConfig(withRef(
             "storage.archive { enable = true, commitment { persistTxRoots = true } }")));
+  }
+
+  @Test
+  public void testArchiveRejectsTxNumDisabled() {
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef(
+            "storage.archive { enable = true, txnum { enable = false } }")));
+  }
+
+  @Test
+  public void testArchiveRejectsTemporalDisabled() {
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef(
+            "storage.archive { enable = true, temporal { enable = false } }")));
+  }
+
+  @Test
+  public void testArchiveRejectsDebugEnabled() {
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef(
+            "storage.archive { enable = true, debug { enable = true } }")));
+  }
+
+  @Test
+  public void testArchiveRejectsUnknownKeys() {
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef("storage.archive.enabled = true")));
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef("storage.archive.debug.enabled = true")));
   }
 
   // ---- readProperties() ----

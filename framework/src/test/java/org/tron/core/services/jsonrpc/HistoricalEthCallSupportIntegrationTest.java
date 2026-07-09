@@ -6,10 +6,11 @@ import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
-import com.google.protobuf.Message;
 import java.nio.charset.StandardCharsets;
 import org.junit.Before;
 import org.junit.Test;
@@ -29,7 +30,6 @@ import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.archive.txnum.ArchiveTxPosition;
 import org.tron.core.capsule.BlockCapsule;
-import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.exception.jsonrpc.JsonRpcInternalException;
 import org.tron.protos.Protocol.Account;
 import org.tron.protos.Protocol.Transaction.Contract.ContractType;
@@ -158,9 +158,6 @@ public class HistoricalEthCallSupportIntegrationTest extends BaseMethodTest {
     Wallet wallet = mock(Wallet.class);
     BlockCapsule block = blockCapsule(1);
     when(wallet.getBlockByNum(1L)).thenReturn(block.getInstance());
-    when(wallet.createTransactionCapsule(any(), eq(ContractType.TriggerSmartContract)))
-        .thenAnswer(inv -> new TransactionCapsule(
-            (Message) inv.getArgument(0), ContractType.TriggerSmartContract));
 
     HistoricalEthCallSupport support = new HistoricalEthCallSupport(wallet, svc);
 
@@ -171,6 +168,7 @@ public class HistoricalEthCallSupportIntegrationTest extends BaseMethodTest {
     // executor -> hex render all served the ARCHIVED value.
     assertEquals(
         "0x000000000000000000000000000000000000000000000000000000000000002a", hex);
+    verify(wallet, never()).createTransactionCapsule(any(), eq(ContractType.TriggerSmartContract));
   }
 
   @Test
