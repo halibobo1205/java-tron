@@ -7,11 +7,14 @@ import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.Optional;
 import org.tron.common.arch.Arch;
+import org.tron.core.ChainBaseManager;
 import org.tron.core.archive.domain.ArchiveDomainCatalog;
 import org.tron.core.archive.domain.ArchiveDomainRegistry;
 import org.tron.core.archive.domain.ArchiveSchemaChecksum;
 import org.tron.core.archive.domain.DefaultArchiveDomainCatalog;
 import org.tron.core.archive.domain.DefaultArchiveDomainRegistry;
+import org.tron.core.archive.reader.ArchiveReadThrough;
+import org.tron.core.archive.reader.ChainBaseArchiveReadThrough;
 import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
 import org.tron.core.archive.temporal.RocksDbArchiveTemporalStore;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
@@ -43,6 +46,18 @@ public final class ArchiveServiceFactory {
   }
 
   public static ArchiveService create(StorageConfig.ArchiveConfig config, String archiveDir) {
+    return create(config, archiveDir, ArchiveReadThrough.NONE);
+  }
+
+  public static ArchiveService create(StorageConfig.ArchiveConfig config, String archiveDir,
+      ChainBaseManager chainBaseManager) {
+    ArchiveReadThrough readThrough = chainBaseManager == null
+        ? ArchiveReadThrough.NONE : new ChainBaseArchiveReadThrough(chainBaseManager);
+    return create(config, archiveDir, readThrough);
+  }
+
+  private static ArchiveService create(StorageConfig.ArchiveConfig config, String archiveDir,
+      ArchiveReadThrough readThrough) {
     if (config == null || !config.isEnable()) {
       return NoopArchiveService.INSTANCE;
     }
@@ -93,7 +108,8 @@ public final class ArchiveServiceFactory {
         temporalStore.validateTxNumsCovered(committedIndex::hasCommittedTxNum);
         temporalStore.validateDomainRows(catalog);
         return new DefaultArchiveService(true, txNumIndex,
-            ArchiveExecutionContextHolder.get(), temporalStore, inFlightStore, registry, catalog);
+            ArchiveExecutionContextHolder.get(), temporalStore, inFlightStore, registry,
+            catalog, readThrough);
       } catch (RuntimeException e) {
         closeOnFailure(inFlightStore, e);
         closeOnFailure(temporalStore, e);
@@ -107,7 +123,7 @@ public final class ArchiveServiceFactory {
     }
     return new DefaultArchiveService(true, new InMemoryArchiveTxNumIndex(),
         ArchiveExecutionContextHolder.get(), new InMemoryArchiveTemporalStore(),
-        registry, catalog);
+        new InMemoryArchiveInFlightStore(), registry, catalog, readThrough);
   }
 
   private static void validateSupportedConfig(StorageConfig.ArchiveConfig config) {

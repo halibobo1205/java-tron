@@ -17,6 +17,7 @@ import org.tron.core.archive.ArchiveExecutionContext;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveSource;
+import org.tron.core.archive.codec.ContractStorageKeyCodec;
 import org.tron.core.archive.domain.ArchiveDomain;
 import org.tron.core.archive.domain.ArchiveDomainCatalog;
 import org.tron.core.archive.domain.ArchiveDomainDescriptor;
@@ -226,7 +227,7 @@ public class ArchiveCaptureEngineTest {
   @Test
   public void capturesSemanticContractStorage() {
     enterTx(21);
-    byte[] key = new byte[54]; // address(21) || slot(32) || version(1=0)
+    byte[] key = new byte[ContractStorageKeyCodec.LENGTH];
     byte[] value = new byte[32];
     value[31] = 7;
     engine.captureSemanticPut(ArchiveDomain.CONTRACT_STORAGE, key, null, value); // null prev = new
@@ -242,7 +243,7 @@ public class ArchiveCaptureEngineTest {
   @Test
   public void capturesSemanticStoragePrevValueOnOverwrite() {
     enterTx(21);
-    byte[] key = new byte[54];
+    byte[] key = new byte[ContractStorageKeyCodec.LENGTH];
     byte[] prev = new byte[32];
     prev[31] = 3;
     byte[] value = new byte[32];
@@ -258,7 +259,8 @@ public class ArchiveCaptureEngineTest {
     enterTx(1);
     byte[] prev = new byte[32];
     prev[31] = 5;
-    engine.captureSemanticDelete(ArchiveDomain.CONTRACT_STORAGE, new byte[54], prev);
+    engine.captureSemanticDelete(
+        ArchiveDomain.CONTRACT_STORAGE, new byte[ContractStorageKeyCodec.LENGTH], prev);
     assertEquals(1, engine.records().size());
     ArchiveChangeRecord r = engine.records().get(0);
     assertFalse(r.getPrevValue().isDeleted()); // slot had a value before the delete
@@ -267,7 +269,8 @@ public class ArchiveCaptureEngineTest {
 
   @Test
   public void semanticCaptureNoOpOutsideContext() {
-    engine.captureSemanticPut(ArchiveDomain.CONTRACT_STORAGE, new byte[54], null, new byte[32]);
+    engine.captureSemanticPut(ArchiveDomain.CONTRACT_STORAGE,
+        new byte[ContractStorageKeyCodec.LENGTH], null, new byte[32]);
     assertTrue(engine.records().isEmpty());
   }
 
@@ -291,7 +294,8 @@ public class ArchiveCaptureEngineTest {
 
     ArchiveException ex = assertThrows(ArchiveException.class,
         () -> missingCatalogEngine.captureSemanticPut(
-            ArchiveDomain.CONTRACT_STORAGE, new byte[54], null, new byte[32]));
+            ArchiveDomain.CONTRACT_STORAGE,
+            new byte[ContractStorageKeyCodec.LENGTH], null, new byte[32]));
 
     assertTrue(ex.getMessage().contains("missing descriptor"));
   }

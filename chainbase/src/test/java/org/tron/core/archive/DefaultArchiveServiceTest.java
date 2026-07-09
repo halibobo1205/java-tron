@@ -7,6 +7,8 @@ import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import com.google.protobuf.ByteString;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
@@ -22,7 +24,9 @@ import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
 import org.tron.core.archive.domain.DefaultArchiveDomainCatalog;
 import org.tron.core.archive.domain.DefaultArchiveDomainRegistry;
+import org.tron.core.archive.reader.ArchiveReadResult;
 import org.tron.core.archive.reader.ArchiveReaderException;
+import org.tron.core.archive.reader.ArchiveReadThrough;
 import org.tron.core.archive.reader.ArchiveStatePoint;
 import org.tron.core.archive.temporal.ArchiveTemporalStore;
 import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
@@ -30,6 +34,7 @@ import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.archive.txnum.ArchiveTxPosition;
 import org.tron.core.archive.txnum.ArchiveTxNumIndex;
 import org.tron.core.archive.txnum.InMemoryArchiveTxNumIndex;
+import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
 import org.tron.protos.Protocol.Account;
@@ -303,6 +308,13 @@ public class DefaultArchiveServiceTest {
         new DefaultArchiveDomainRegistry(), new DefaultArchiveDomainCatalog());
   }
 
+  private static DefaultArchiveService serviceWithReadThrough(ArchiveTxNumIndex index,
+      ArchiveExecutionContext context, ArchiveTemporalStore temporal,
+      ArchiveInFlightStore inFlightStore, ArchiveReadThrough readThrough) {
+    return new DefaultArchiveService(true, index, context, temporal, inFlightStore,
+        new DefaultArchiveDomainRegistry(), new DefaultArchiveDomainCatalog(), readThrough);
+  }
+
   @Test
   public void startupReconcilePublishesSolidifiedInFlightBlocks() {
     InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
@@ -329,6 +341,111 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
+  public void startupRejectsInFlightPrevValueMismatchAgainstTemporalLatest() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, context, temporal, inFlightStore);
+    byte[] addr = new byte[21];
+    addr[0] = 0x41;
+
+    BlockCapsule b4 = blockWithParentSeed(4, (byte) 4);
+    service.beginBlock(b4, ArchiveSource.NORMAL);
+    service.beginSystemTx(b4, ArchivePhase.BLOCK_PREPARE);
+    service.endTx();
+    service.beginSystemTx(b4, ArchivePhase.BLOCK_FINALIZE);
+    service.getCaptureEngine().capturePut("account", addr, null, account(20));
+    service.endTx();
+    service.commitBlock(b4);
+    service.publishSolidifiedBlocks(4);
+
+    BlockCapsule b5 = blockWithParentSeed(5, (byte) 5);
+    service.beginBlock(b5, ArchiveSource.NORMAL);
+    service.beginSystemTx(b5, ArchivePhase.BLOCK_PREPARE);
+    service.endTx();
+    service.beginSystemTx(b5, ArchivePhase.BLOCK_FINALIZE);
+    service.getCaptureEngine().capturePut("account", addr, account(20), account(30));
+    service.endTx();
+    service.commitBlock(b5);
+    ArchiveInFlightBlock good = inFlightStore.loadBlocks().get(0);
+    ArchiveChangeRecord goodRecord = good.getRecords().get(0);
+    ArchiveChangeRecord badRecord = new ArchiveChangeRecord(goodRecord.getPosition(),
+        goodRecord.getDomain(), goodRecord.getCanonicalKey(), DomainValue.present(account(99)),
+        goodRecord.getValue());
+    inFlightStore.putBlock(new ArchiveInFlightBlock(
+        good.getRange(), good.getPositions(), Collections.singletonList(badRecord)));
+    service.close();
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> serviceWithInFlightStore(
+            index, new ArchiveExecutionContext(), temporal, inFlightStore));
+    assertTrue(ex.getMessage().contains("prev-value chain mismatch"));
+  }
+
+  @Test
+  public void readThroughUsesInFlightPrevBeforeLiveHead() throws Exception {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    byte[] addr = new byte[21];
+    addr[0] = 0x41;
+    ArchiveReadThrough liveReadThrough = (domain, key, point) ->
+        domain == ArchiveDomain.ACCOUNT && Arrays.equals(key, addr)
+            ? Optional.of(DomainValue.present(account(99)))
+            : Optional.empty();
+    DefaultArchiveService service = serviceWithReadThrough(
+        index, context, temporal, inFlightStore, liveReadThrough);
+
+    BlockCapsule published = blockWithParentSeed(5, (byte) 5);
+    commitEmptyBlock(service, published);
+    service.publishSolidifiedBlocks(5);
+    ArchiveBlockRange range = index.getBlockRange(5).orElseThrow(AssertionError::new);
+
+    BlockCapsule inFlight = blockWithParentSeed(6, (byte) 6);
+    service.beginBlock(inFlight, ArchiveSource.NORMAL);
+    service.beginSystemTx(inFlight, ArchivePhase.BLOCK_PREPARE);
+    service.endTx();
+    service.beginSystemTx(inFlight, ArchivePhase.BLOCK_FINALIZE);
+    service.getCaptureEngine().capturePut("account", addr, account(10), account(20));
+    service.endTx();
+    service.commitBlock(inFlight);
+
+    ArchiveReadResult<AccountCapsule> result = service.getReaderFactory()
+        .open(ArchiveStatePoint.blockEnd(5, range.getBlockHash(), range.getFinalizeTxNum()))
+        .getAccount(addr);
+
+    assertEquals(ArchiveReadResult.Status.PRESENT, result.getStatus());
+    assertEquals(10, result.getValue().getBalance());
+  }
+
+  @Test
+  public void genesisCompleteArchiveDoesNotUseLiveReadThroughOnTemporalMiss() throws Exception {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    byte[] addr = new byte[21];
+    addr[0] = 0x41;
+    ArchiveReadThrough liveReadThrough = (domain, key, point) ->
+        Optional.of(DomainValue.present(account(99)));
+    DefaultArchiveService service = serviceWithReadThrough(
+        index, context, temporal, new InMemoryArchiveInFlightStore(), liveReadThrough);
+
+    BlockCapsule genesis = blockWithParentSeed(0, (byte) 0);
+    commitEmptyBlock(service, genesis);
+    service.publishSolidifiedBlocks(0);
+    ArchiveBlockRange range = index.getBlockRange(0).orElseThrow(AssertionError::new);
+
+    ArchiveReadResult<AccountCapsule> result = service.getReaderFactory()
+        .open(ArchiveStatePoint.blockEnd(0, range.getBlockHash(), range.getFinalizeTxNum()))
+        .getAccount(addr);
+
+    assertEquals(ArchiveReadResult.Status.MISSING, result.getStatus());
+  }
+
+  @Test
   public void startupReconcileRejectsCanonicalHashMismatch() {
     InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
     InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
@@ -347,6 +464,34 @@ public class DefaultArchiveServiceTest {
               blockNum -> blockWithParentSeed(5, (byte) 9)));
 
       assertTrue(ex.getMessage().contains("hash mismatch"));
+      assertFalse(index.getBlockRange(5).isPresent());
+      assertThrows(ArchiveException.class, restarted::validateAvailable);
+    } finally {
+      restarted.close();
+    }
+  }
+
+  @Test
+  public void startupReconcileRejectsCanonicalParentMismatch() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    BlockCapsule b5 = blockWithParentSeed(5, (byte) 5);
+    BlockCapsule b6 = blockWithParentSeed(6, (byte) 6);
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    commitEmptyBlock(service, b5);
+    commitEmptyBlock(service, b6);
+    service.close();
+
+    DefaultArchiveService restarted = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> restarted.reconcileInFlightOnStartup(6,
+              blockNum -> blockNum == 5 ? b5 : b6));
+
+      assertTrue(ex.getMessage().contains("parent hash mismatch"));
       assertFalse(index.getBlockRange(5).isPresent());
       assertThrows(ArchiveException.class, restarted::validateAvailable);
     } finally {

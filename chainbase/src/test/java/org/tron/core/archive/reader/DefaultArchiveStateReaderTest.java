@@ -3,6 +3,8 @@ package org.tron.core.archive.reader;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThrows;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.google.common.primitives.Bytes;
 import com.google.protobuf.ByteString;
@@ -10,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import org.junit.Before;
 import org.junit.Test;
 import org.tron.common.utils.ByteArray;
+import org.tron.core.ChainBaseManager;
 import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveSource;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
@@ -22,6 +25,7 @@ import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
 import org.tron.core.archive.txnum.ArchiveTxPosition;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.ContractStateCapsule;
+import org.tron.core.store.DynamicPropertiesStore;
 import org.tron.protos.Protocol.Account;
 import org.tron.protos.contract.SmartContractOuterClass.ContractState;
 import org.tron.protos.contract.SmartContractOuterClass.SmartContract;
@@ -38,8 +42,12 @@ public class DefaultArchiveStateReaderTest {
   }
 
   private ArchiveStateReader readerAt(long txNum) {
+    return readerAt(txNum, ArchiveReadThrough.NONE);
+  }
+
+  private ArchiveStateReader readerAt(long txNum, ArchiveReadThrough readThrough) {
     return new DefaultArchiveStateReader(store, catalog,
-        ArchiveStatePoint.blockEnd(1, new byte[] {1}, txNum));
+        ArchiveStatePoint.blockEnd(1, new byte[] {1}, txNum), readThrough);
   }
 
   // Models "key created at txNum with `value`, absent before" (prev = tombstone). getAsOf at/after
@@ -119,6 +127,22 @@ public class DefaultArchiveStateReaderTest {
     return SmartContract.newBuilder().setVersion(version).build().toByteArray();
   }
 
+  private static byte[] contract(int version, byte[] trxHash) {
+    return SmartContract.newBuilder()
+        .setVersion(version)
+        .setTrxHash(ByteString.copyFrom(trxHash))
+        .build()
+        .toByteArray();
+  }
+
+  private static byte[] storageKey(byte[] address, byte[] slot, int version) {
+    return ArchiveStorageKeyCodec.contractStorageKey(address, slot, version);
+  }
+
+  private static byte[] storageKey(byte[] address, byte[] slot, byte[] trxHash, int version) {
+    return ArchiveStorageKeyCodec.contractStorageKey(address, slot, trxHash, version);
+  }
+
   @Test
   public void getAccountResolvesThreeStates() throws Exception {
     put(ArchiveDomain.ACCOUNT, addr(1), DomainValue.present(account(100)), 5);
@@ -169,6 +193,36 @@ public class DefaultArchiveStateReaderTest {
   }
 
   @Test
+  public void readThroughSuppliesMidChainBaselineWhenTemporalMisses() throws Exception {
+    byte[] address = addr(1);
+    ArchiveReadThrough readThrough = (domain, key, point) -> {
+      if (domain == ArchiveDomain.ACCOUNT && java.util.Arrays.equals(key, address)) {
+        return java.util.Optional.of(DomainValue.present(account(77)));
+      }
+      return java.util.Optional.empty();
+    };
+
+    ArchiveReadResult<AccountCapsule> account = readerAt(5, readThrough).getAccount(address);
+
+    assertEquals(Status.PRESENT, account.getStatus());
+    assertEquals(77, account.getValue().getBalance());
+  }
+
+  @Test
+  public void temporalFutureChangeWinsOverReadThrough() throws Exception {
+    byte[] address = addr(1);
+    put(ArchiveDomain.ACCOUNT, address, DomainValue.present(account(30)),
+        DomainValue.present(account(31)), 6);
+    ArchiveReadThrough readThrough = (domain, key, point) ->
+        java.util.Optional.of(DomainValue.present(account(99)));
+
+    ArchiveReadResult<AccountCapsule> account = readerAt(5, readThrough).getAccount(address);
+
+    assertEquals(Status.PRESENT, account.getStatus());
+    assertEquals(30, account.getValue().getBalance());
+  }
+
+  @Test
   public void midChainReaderUsesCapturedPrevButLeavesUncapturedKeysMissing() throws Exception {
     byte[] existing = "TOTAL_NET_LIMIT".getBytes(StandardCharsets.US_ASCII);
     byte[] gap = "TOTAL_ENERGY_LIMIT".getBytes(StandardCharsets.US_ASCII);
@@ -184,6 +238,23 @@ public class DefaultArchiveStateReaderTest {
   }
 
   @Test
+  public void chainBaseReadThroughUsesDynamicGetterDefaultWhenRawRowIsMissing() throws Exception {
+    byte[] osaka = "ALLOW_TVM_OSAKA".getBytes(StandardCharsets.US_ASCII);
+    ChainBaseManager chainBaseManager = mock(ChainBaseManager.class);
+    DynamicPropertiesStore dynamicPropertiesStore = mock(DynamicPropertiesStore.class);
+    when(chainBaseManager.getDynamicPropertiesStore()).thenReturn(dynamicPropertiesStore);
+    when(dynamicPropertiesStore.getUnchecked(osaka)).thenReturn(null);
+    when(dynamicPropertiesStore.getAllowTvmOsaka()).thenReturn(0L);
+
+    ArchiveStateReader reader = readerAt(5,
+        new ChainBaseArchiveReadThrough(chainBaseManager, catalog));
+    ArchiveReadResult<byte[]> result = reader.getDynamicProperty(osaka);
+
+    assertEquals(Status.PRESENT, result.getStatus());
+    assertEquals(0L, ByteArray.toLong(result.getValue()));
+  }
+
+  @Test
   public void getCodeAndStorage() throws Exception {
     put(ArchiveDomain.CODE, addr(1), DomainValue.present(new byte[] {0x60, (byte) 0x80}), 5);
     put(ArchiveDomain.CONTRACT, addr(1), DomainValue.present(contract(0)), 5);
@@ -191,7 +262,7 @@ public class DefaultArchiveStateReaderTest {
     slot[31] = 7;
     byte[] word = new byte[32];
     word[31] = 9;
-    put(ArchiveDomain.CONTRACT_STORAGE, Bytes.concat(addr(1), slot, new byte[] {0}),
+    put(ArchiveDomain.CONTRACT_STORAGE, storageKey(addr(1), slot, 0),
         DomainValue.present(word), 5);
     ArchiveStateReader reader = readerAt(5);
     assertArrayEquals(new byte[] {0x60, (byte) 0x80}, reader.getCode(addr(1)).getValue());
@@ -209,9 +280,9 @@ public class DefaultArchiveStateReaderTest {
     byte[] v1Word = new byte[32];
     v1Word[31] = 10;
     put(ArchiveDomain.CONTRACT, address, DomainValue.present(contract(1)), 5);
-    put(ArchiveDomain.CONTRACT_STORAGE, Bytes.concat(address, slot, new byte[] {0}),
+    put(ArchiveDomain.CONTRACT_STORAGE, storageKey(address, slot, 0),
         DomainValue.present(v0Word), 5);
-    put(ArchiveDomain.CONTRACT_STORAGE, Bytes.concat(address, slot, new byte[] {1}),
+    put(ArchiveDomain.CONTRACT_STORAGE, storageKey(address, slot, 1),
         DomainValue.present(v1Word), 5);
 
     assertArrayEquals(v1Word, readerAt(5).getStorage(address, slot).getValue());
@@ -225,7 +296,7 @@ public class DefaultArchiveStateReaderTest {
     byte[] v0Word = new byte[32];
     v0Word[31] = 9;
     put(ArchiveDomain.CONTRACT, address, DomainValue.present(contract(1)), 5);
-    put(ArchiveDomain.CONTRACT_STORAGE, Bytes.concat(address, slot, new byte[] {0}),
+    put(ArchiveDomain.CONTRACT_STORAGE, storageKey(address, slot, 0),
         DomainValue.present(v0Word), 5);
 
     assertEquals(Status.MISSING, readerAt(5).getStorage(address, slot).getStatus());
@@ -239,9 +310,9 @@ public class DefaultArchiveStateReaderTest {
     byte[] v0Word = new byte[32];
     v0Word[31] = 9;
     put(ArchiveDomain.CONTRACT, address, DomainValue.present(contract(1)), 5);
-    put(ArchiveDomain.CONTRACT_STORAGE, Bytes.concat(address, slot, new byte[] {1}),
+    put(ArchiveDomain.CONTRACT_STORAGE, storageKey(address, slot, 1),
         DomainValue.present(new byte[] {1}), DomainValue.tombstone(), 5);
-    put(ArchiveDomain.CONTRACT_STORAGE, Bytes.concat(address, slot, new byte[] {0}),
+    put(ArchiveDomain.CONTRACT_STORAGE, storageKey(address, slot, 0),
         DomainValue.present(v0Word), 5);
 
     assertEquals(Status.TOMBSTONE, readerAt(5).getStorage(address, slot).getStatus());
@@ -255,10 +326,30 @@ public class DefaultArchiveStateReaderTest {
     word[31] = 9;
     put(ArchiveDomain.CONTRACT, address, DomainValue.present(contract(0)),
         DomainValue.tombstone(), 5);
-    put(ArchiveDomain.CONTRACT_STORAGE, Bytes.concat(address, slot, new byte[] {0}),
+    put(ArchiveDomain.CONTRACT_STORAGE, storageKey(address, slot, 0),
         DomainValue.present(word), 5);
 
     assertEquals(Status.TOMBSTONE, readerAt(5).getStorage(address, slot).getStatus());
+  }
+
+  @Test
+  public void getStorageUsesHistoricalDeploymentHash() throws Exception {
+    byte[] address = addr(1);
+    byte[] slot = new byte[32];
+    slot[31] = 7;
+    byte[] oldNamespaceWord = new byte[32];
+    oldNamespaceWord[31] = 1;
+    byte[] create2Word = new byte[32];
+    create2Word[31] = 2;
+    byte[] trxHash = new byte[32];
+    trxHash[31] = 9;
+    put(ArchiveDomain.CONTRACT, address, DomainValue.present(contract(0, trxHash)), 5);
+    put(ArchiveDomain.CONTRACT_STORAGE, storageKey(address, slot, 0),
+        DomainValue.present(oldNamespaceWord), 5);
+    put(ArchiveDomain.CONTRACT_STORAGE, storageKey(address, slot, trxHash, 0),
+        DomainValue.present(create2Word), 5);
+
+    assertArrayEquals(create2Word, readerAt(5).getStorage(address, slot).getValue());
   }
 
   @Test

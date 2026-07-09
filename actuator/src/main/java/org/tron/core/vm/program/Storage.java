@@ -22,6 +22,7 @@ public class Storage {
   private final Map<DataWord, StorageRowCapsule> rowCache = new HashMap<>();
   @Getter
   private byte[] addrHash;
+  private byte[] trxHash = new byte[ArchiveStorageKeyCodec.DEPLOYMENT_HASH_LEN];
   @Getter
   private StorageRowStore store;
   @Getter
@@ -37,6 +38,7 @@ public class Storage {
 
   public Storage(Storage storage) {
     this.addrHash = storage.addrHash.clone();
+    this.trxHash = storage.trxHash.clone();
     this.address = storage.getAddress().clone();
     this.store = storage.store;
     this.contractVersion = storage.contractVersion;
@@ -71,6 +73,7 @@ public class Storage {
   public void generateAddrHash(byte[] trxId) {
     // update addreHash for create2
     addrHash = addrHash(address, trxId);
+    trxHash = ArchiveStorageKeyCodec.deploymentHash(trxId);
   }
 
   public DataWord getValue(DataWord key) {
@@ -116,7 +119,7 @@ public class Storage {
         }
         if (archiveActive) {
           byte[] key = ArchiveStorageKeyCodec.contractStorageKey(
-              address, rowKey.getData(), contractVersion);
+              address, rowKey.getData(), trxHash, contractVersion);
           if (zero) {
             ArchiveCaptureHolder.captureSemanticDelete(ArchiveDomain.CONTRACT_STORAGE, key, prev);
           } else {

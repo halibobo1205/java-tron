@@ -49,7 +49,7 @@
 - **背景**：资产优化开启时（`getAllowAccountAssetOptimizationFromRoot()==1`），`SnapshotRoot.put` 把 TRC10 余额 `clearAsset()` 从 Account proto 剥离、单写 `AccountAssetStore`（`extends TronDatabase`，无 revoking，写在 **flush 层**）。现 hook 分类法（GENERIC/STORE_SPECIFIC/SEMANTIC_ONLY/IGNORE_RAW）**无类目可捕获**这条路径 → ACCOUNT 域采到的余额零 TRC10，历史 `eth_getBalance(TRC10)` 与"完整 root"皆错。
 - **共同前提（A/B 都要做）**：捕获每个 `(account, assetId)→balance` 变更。~~原设想需 hook flush 层~~ → 核源码后**改为 L4 per-tx 语义 hook**（见下方 DECISION 实现细化），不需碰 flush 层。
 - **选项 A（account-asset 作 ACCOUNT 域的 SEMANTIC_BACKING）**：类比 storage-row 之于 CONTRACT_STORAGE，把 `(account, assetId)->balance` 作为 ACCOUNT 历史值的语义背书。语义上 TRC10 本属账户；但会让 ACCOUNT 域值编码 + canonical 化更复杂（已因 map 字段棘手，见决策 4）。
-- **选项 B（新增独立 `ACCOUNT_ASSET` 域，进 P0 `IN_GLOBAL_ROOT` + `FULL_HISTORY`）**：key = `address || assetId`，value = `balance`。与 Erigon 多域风格一致、可独立灰度；key 空间与 CONTRACT_STORAGE（`address||slot`）同构，codec/reader 可复用。代价：多一个域 + 需保证同账户两处一致。
+- **选项 B（新增独立 `ACCOUNT_ASSET` 域，进 P0 `IN_GLOBAL_ROOT` + `FULL_HISTORY`）**：key = `address || assetId`，value = `balance`。与 Erigon 多域风格一致、可独立灰度；key 空间与 CONTRACT_STORAGE（`address||deploymentHash||slot`）相近，codec/reader 可复用。代价：多一个域 + 需保证同账户两处一致。
 - **建议：B（独立 ACCOUNT_ASSET 域）**。更贴合 domain registry 的可灰度/可独立 root 哲学，且避免把 ACCOUNT 域值编码推得更难。
 - **DECISION（2026-06-26 已拍板）：选 B — 新增独立 `ACCOUNT_ASSET` 域，进 P0 `IN_GLOBAL_ROOT` + `FULL_HISTORY`。**
 
@@ -84,12 +84,10 @@
 - **DECISION（2026-06-26 已拍板）：选 A — per-domain canonicalizing codec（含 map 的域序列化前按 key 字节序排序重编码 + 规范化 protobuf 默认值/未知字段）。须在 L4（no-op 检测）与 L7（root hash）落地前定义；带 shuffled-map 决定性测试。**
 - **补（决策 2 细化）**：**ACCOUNT 域 canonical value 须剥掉 `asset`(6) / `assetV2`(56) / `asset_optimized`(60) 三字段**（资产进 ACCOUNT_ASSET 域），使 root 与本地资产优化配置无关。同理凡"本地存储优化产物字段"（如此类 flag）都应在 canonical 编码里规范化掉。
 
-### 决策 5 — Archive 物理后端 + 目标平台：RocksDB 9.7.4 + 列簇 + BlobDB，arm64-first（2026-06-26 已拍板）
+### 决策 5 — Archive 物理后端 + 目标平台：arm64-first，P0 单 keyspace，后续多 CF/BlobDB（2026-06-26 已拍板，2026-07-09 修订）
 
 - **背景**：x86_64 是 **legacy 工具链**（Java 8 + RocksDB 5.15.10 + 老 protoc，几乎肯定为老生产 OS/glibc + Java 8 主网兼容而钉）；arm64 是现代栈（Java 17 + RocksDB 9.7.4）。**全局**把 x86_64 bump 到 9.7.4 会动共识路径 `RocksDbDataSourceImpl` + 冒老 OS 主网兼容风险 → 属项目级基础设施决策，不塞进 archive 本期。
-- **DECISION（2026-06-26 已拍板）：archive P0 只面向 arm64 现代栈（Java 17 + RocksDB 9.7.4）；x86_64 留作后续（archive 跑稳后再随 x86 上现代工具链 / 回移）。** 具体：
-  1. **物理后端 = RocksDB 9.7.4**；逻辑表 → **列簇（CF-per-表类型，`domainId` 留 key 里，约 5–7 个 CF）**；每块/批 solidify 提交 = **单个原子 multi-CF WriteBatch**；藏在 `ArchiveRawStore`/`ArchiveTable` 抽象后；新写 `ArchiveRocksDb`，**不碰共识路径 `RocksDbDataSourceImpl`**。
-  2. **用满 9.7.4**：大 HISTORY/CHANGESET value 上 **BlobDB（KV 分离）**减写放大；per-CF Zstd/compaction/bloom/prefix；配合决策 6 的 solidified 批量写用 `IngestExternalFile` + 可 `disableWAL`（靠 `PROGRESS` checkpoint 重建）。
+- **DECISION（2026-07-09 修订）：archive P0 仍只面向 arm64 现代栈；当前实现采用兼容 RocksDB 5.15/9.7 的单 keyspace/单 CF 编码，`temporal` / `inflight` / `index` 拆为独立 DB path。多 CF、BlobDB、Zstd/compaction/bloom/prefix、SST ingest 是 P0 之后的物理优化，不作为当前验收门。** x86_64 仍留作后续（archive 跑稳后再随 x86 上现代工具链 / 回移）。
   3. **多盘**用 `cf_paths`（HISTORY 容量盘 / LATEST·ROOT 快盘）；真·冷段 freeze 留 M6。
   4. **模块拆分（关键，与 L1 契合）**：`ArchiveService` 接口 + `NoopArchiveService` + 配置 bean + `ArchiveServiceFactory` 放**基础模块、Java 8 源码级、到处都编**（默认关闭；x86 上 `enable=true` → factory 拒绝"本构建不支持 archive"）。L2-L9 真实现（RocksDB-CF / temporal / reader / commitment）放 **arm64-only 编译单元（Java 17 + RocksDB 9.7.4）**，x86 构建排除。L1 现有"接口 + noop + factory 拒绝 enable"设计本就支持这种拆分。
   5. **真实现可用 Java 17**（arm64-only）；只有 Java-8 基础那层必须 **Java 8 兼容**。
@@ -167,7 +165,7 @@ id = **u16 flat 顺序**（决策，作废旧 `0x01XX`）；保留第一版枚�
 | 0x0010 | market_order | MARKET_ORDER | **IN_GLOBAL_ROOT** | FULL_HISTORY | GENERIC |
 | 0x0014 | properties | DYNAMIC_PROPERTIES | **IN_GLOBAL_ROOT**(key 级) | FULL_HISTORY | **ALLOWLIST** |
 | 0x0015 | proposal | PROPOSAL | **IN_GLOBAL_ROOT** | FULL_HISTORY | GENERIC |
-| 0x0016 | storage-row | CONTRACT_STORAGE | **IN_GLOBAL_ROOT** | FULL_HISTORY | **SEMANTIC**(拆 addr‖slot‖version) |
+| 0x0016 | storage-row | CONTRACT_STORAGE | **IN_GLOBAL_ROOT** | FULL_HISTORY | **SEMANTIC**(拆 addr‖deploymentHash‖slot‖version) |
 | 0x0017 | votes | VOTES | **IN_GLOBAL_ROOT** | FULL_HISTORY | GENERIC |
 | 0x0018 | witness | WITNESS | **IN_GLOBAL_ROOT** | FULL_HISTORY | GENERIC |
 | 0x0020 | contract-state | CONTRACT_STATE | **IN_GLOBAL_ROOT** | FULL_HISTORY | GENERIC（EnergyFactor，共识级执行态） |

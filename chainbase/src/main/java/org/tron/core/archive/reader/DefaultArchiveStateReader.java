@@ -20,8 +20,8 @@ import org.tron.protos.contract.SmartContractOuterClass.SmartContract;
 /**
  * Reads historical state from an {@link ArchiveTemporalStore} at a fixed {@link ArchiveStatePoint},
  * mapping the store's PRESENT/TOMBSTONE/MISSING outcome (via {@code getAsOf}, inclusive-after) to a
- * typed {@link ArchiveReadResult}. It never consults live state, so archive reads cannot leak a
- * newer canonical head into an older historical point.
+ * typed {@link ArchiveReadResult}. When the temporal store has no row, an optional service-level
+ * read-through may supply a guarded mid-chain baseline without exposing non-solidified writes.
  */
 public final class DefaultArchiveStateReader implements ArchiveStateReader {
 
@@ -31,14 +31,21 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
 
   private final ArchiveTemporalStore temporalStore;
   private final ArchiveDomainCatalog catalog;
+  private final ArchiveReadThrough readThrough;
   private final DynamicKeyPolicy dynamicKeyPolicy = new DynamicKeyPolicy();
   private final ArchiveStatePoint point;
 
   DefaultArchiveStateReader(ArchiveTemporalStore temporalStore,
       ArchiveDomainCatalog catalog, ArchiveStatePoint point) {
+    this(temporalStore, catalog, point, ArchiveReadThrough.NONE);
+  }
+
+  DefaultArchiveStateReader(ArchiveTemporalStore temporalStore,
+      ArchiveDomainCatalog catalog, ArchiveStatePoint point, ArchiveReadThrough readThrough) {
     this.temporalStore = temporalStore;
     this.catalog = catalog;
     this.point = point;
+    this.readThrough = readThrough == null ? ArchiveReadThrough.NONE : readThrough;
   }
 
   @Override
@@ -128,7 +135,8 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
       return retype(contract);
     }
     ArchiveReadResult<byte[]> raw =
-        getStorageRaw(address, slot, contract.getValue().getContractVersion());
+        getStorageRaw(address, slot, contract.getValue().getTrxHash(),
+            contract.getValue().getContractVersion());
     if (raw.isPresent() && raw.getValue().length > MAX_STORAGE_VALUE_LEN) {
       throw new ArchiveReaderException(ArchiveReaderException.Reason.CORRUPT_VALUE,
           "archive storage value exceeds 32 bytes");
@@ -149,9 +157,10 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
     return getRaw(ArchiveDomain.DYNAMIC_PROPERTIES, key);
   }
 
-  private ArchiveReadResult<byte[]> getStorageRaw(byte[] address, byte[] slot, int contractVersion)
-      throws ArchiveReaderException {
-    byte[] primaryKey = ArchiveStorageKeyCodec.contractStorageKey(address, slot, contractVersion);
+  private ArchiveReadResult<byte[]> getStorageRaw(byte[] address, byte[] slot, byte[] trxHash,
+      int contractVersion) throws ArchiveReaderException {
+    byte[] primaryKey =
+        ArchiveStorageKeyCodec.contractStorageKey(address, slot, trxHash, contractVersion);
     return getRaw(ArchiveDomain.CONTRACT_STORAGE, primaryKey);
   }
 
@@ -170,7 +179,10 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
           "archive temporal read failed for " + domain, e);
     }
     if (!stored.isPresent()) {
-      return ArchiveReadResult.missing();
+      Optional<DomainValue> readThroughValue = readThrough.read(domain, canonicalKey, point);
+      return readThroughValue.isPresent()
+          ? toReadResult(readThroughValue.get())
+          : ArchiveReadResult.missing();
     }
     return toReadResult(stored.get());
   }

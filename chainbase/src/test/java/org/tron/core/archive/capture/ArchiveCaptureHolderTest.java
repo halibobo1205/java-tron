@@ -8,6 +8,7 @@ import org.junit.Test;
 import org.tron.core.archive.ArchiveExecutionContext;
 import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveSource;
+import org.tron.core.archive.codec.ContractStorageKeyCodec;
 import org.tron.core.archive.domain.ArchiveDomain;
 import org.tron.core.archive.domain.DefaultArchiveDomainCatalog;
 import org.tron.core.archive.domain.DefaultArchiveDomainRegistry;
@@ -129,7 +130,8 @@ public class ArchiveCaptureHolderTest {
     ArchiveCaptureHolder.set(engine);
 
     ArchiveCaptureHolder.captureSemanticPut(
-        ArchiveDomain.CONTRACT_STORAGE, new byte[54], null, new byte[32]);
+        ArchiveDomain.CONTRACT_STORAGE,
+        new byte[ContractStorageKeyCodec.LENGTH], null, new byte[32]);
 
     assertTrue("direct semantic capture must fail closed", engine.failure().isPresent());
     assertTrue(engine.failure().get().getMessage().contains(

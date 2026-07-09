@@ -158,6 +158,23 @@ public class ArchiveRepositoryAdapterTest {
   }
 
   @Test
+  public void tokenBalanceOverlayMergesFromChildToParent() {
+    reader.account = ArchiveReadResult.present(account(1L));
+    reader.accountAsset = ArchiveReadResult.present(ByteArray.fromLong(77L));
+    byte[] tokenId = new byte[] {'1', '0', '0'};
+
+    ArchiveRepositoryAdapter child = (ArchiveRepositoryAdapter) adapter.newRepositoryChild();
+
+    assertEquals(87L, child.addTokenBalance(ADDR, tokenId, 10L));
+    assertEquals(87L, child.getTokenBalance(ADDR, tokenId));
+    assertEquals(77L, adapter.getTokenBalance(ADDR, tokenId));
+
+    child.commit();
+
+    assertEquals(87L, adapter.getTokenBalance(ADDR, tokenId));
+  }
+
+  @Test
   public void vmDynamicPropertiesIsTheInjectedHistoricalView() {
     assertSame(vmProps, adapter.getVmDynamicProperties());
   }

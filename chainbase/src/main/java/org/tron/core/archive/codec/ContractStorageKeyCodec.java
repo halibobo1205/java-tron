@@ -4,15 +4,17 @@ import java.util.Arrays;
 import org.tron.core.archive.ArchiveException;
 
 /**
- * Canonical key codec for CONTRACT_STORAGE: {@code address(21) || slot(32) || version(1)}, where
- * version is the storage key version (0 or 1). The raw storage-row key is irreversible, so this
- * canonical key is produced by the L4 semantic hook, not from the raw store key.
+ * Canonical key codec for CONTRACT_STORAGE:
+ * {@code address(21) || deploymentHash(32) || slot(32) || version(1)}, where version is the storage
+ * key version (0 or 1). The raw storage-row key is irreversible, so this canonical key is produced
+ * by the L4 semantic hook, not from the raw store key.
  */
 public final class ContractStorageKeyCodec implements CanonicalKeyCodec {
 
   public static final int ADDRESS_LEN = 21;
+  public static final int DEPLOYMENT_HASH_LEN = 32;
   public static final int SLOT_LEN = 32;
-  public static final int LENGTH = ADDRESS_LEN + SLOT_LEN + 1; // 54
+  public static final int LENGTH = ADDRESS_LEN + DEPLOYMENT_HASH_LEN + SLOT_LEN + 1; // 86
 
   @Override
   public String codecId() {
