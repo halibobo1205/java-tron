@@ -99,21 +99,18 @@ public final class HistoricalTraceSupport {
       byte[] data, String blockNumOrTag, Object traceOptions, byte[] requestedBlockHash)
       throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
       JsonRpcInternalException {
+    validateTraceCallRequest(blockNumOrTag, traceOptions);
+    requireArchiveEnabled();
     try (ArchiveService.ReadGuard ignored = readGuard()) {
       return traceCallLocked(ownerAddress, contractAddress, callValue, data, blockNumOrTag,
-          traceOptions, requestedBlockHash);
+          requestedBlockHash);
     }
   }
 
   private TraceResult traceCallLocked(byte[] ownerAddress, byte[] contractAddress, long callValue,
-      byte[] data, String blockNumOrTag, Object traceOptions, byte[] requestedBlockHash)
+      byte[] data, String blockNumOrTag, byte[] requestedBlockHash)
       throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
       JsonRpcInternalException {
-    validateTraceOptions(traceOptions);
-    if (JsonRpcApiUtil.LATEST_STR.equalsIgnoreCase(blockNumOrTag)) {
-      throw new JsonRpcInternalException("historical debug_traceCall invoked for the latest tag");
-    }
-    requireArchiveEnabled();
     ResolvedArchiveStatePoint resolved = resolver.resolveBlockEnd(blockNumOrTag);
     if (resolved.isLatest()) {
       throw new JsonRpcInternalException("historical debug_traceCall invoked for the latest tag");
@@ -132,13 +129,7 @@ public final class HistoricalTraceSupport {
     requireResolvedBlockHash(point, historicalBlock.getBlockId().getBytes());
     TriggerSmartContract trigger =
         triggerCallContract(ownerAddress, contractAddress, callValue, data, 0, null);
-    TransactionCapsule trxCap;
-    try {
-      trxCap = wallet.createTransactionCapsule(trigger, ContractType.TriggerSmartContract);
-    } catch (ContractValidateException e) {
-      throw new JsonRpcInvalidRequestException(
-          e.getMessage() == null ? CONTRACT_VALIDATE_ERROR : e.getMessage());
-    }
+    TransactionCapsule trxCap = createHistoricalCallTransaction(trigger, historicalBlock);
     return runTrace(historicalBlock, point, trxCap, true, "historical debug_traceCall");
   }
 
@@ -292,6 +283,40 @@ public final class HistoricalTraceSupport {
     }
     throw new JsonRpcInvalidParamsException(
         "debug trace options are not supported; only the default struct-log tracer is available");
+  }
+
+  private static void validateTraceCallRequest(String blockNumOrTag, Object traceOptions)
+      throws JsonRpcInvalidParamsException, JsonRpcInternalException {
+    validateTraceOptions(traceOptions);
+    if (JsonRpcApiUtil.LATEST_STR.equalsIgnoreCase(blockNumOrTag)) {
+      throw new JsonRpcInternalException("historical debug_traceCall invoked for the latest tag");
+    }
+    validateHistoricalSelectorSyntax(blockNumOrTag);
+  }
+
+  private static void validateHistoricalSelectorSyntax(String blockNumOrTag)
+      throws JsonRpcInvalidParamsException {
+    if (JsonRpcApiUtil.PENDING_STR.equalsIgnoreCase(blockNumOrTag)) {
+      throw new JsonRpcInvalidParamsException(JsonRpcApiUtil.TAG_PENDING_SUPPORT_ERROR);
+    }
+    if (JsonRpcApiUtil.SAFE_STR.equalsIgnoreCase(blockNumOrTag)) {
+      throw new JsonRpcInvalidParamsException(JsonRpcApiUtil.TAG_SAFE_SUPPORT_ERROR);
+    }
+    if (JsonRpcApiUtil.isBlockTag(blockNumOrTag)) {
+      return;
+    }
+    JsonRpcApiUtil.parseBlockNumber(blockNumOrTag);
+  }
+
+  private static TransactionCapsule createHistoricalCallTransaction(TriggerSmartContract trigger,
+      BlockCapsule historicalBlock) {
+    TransactionCapsule trxCap =
+        new TransactionCapsule(trigger, ContractType.TriggerSmartContract);
+    long blockTimestamp = historicalBlock.getTimeStamp();
+    trxCap.setReference(historicalBlock.getNum(), historicalBlock.getBlockId().getBytes());
+    trxCap.setTimestamp(blockTimestamp);
+    trxCap.setExpiration(blockTimestamp == Long.MAX_VALUE ? Long.MAX_VALUE : blockTimestamp + 1);
+    return trxCap;
   }
 
   /**
