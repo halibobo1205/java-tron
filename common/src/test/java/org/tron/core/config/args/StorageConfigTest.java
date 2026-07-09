@@ -162,15 +162,16 @@ public class StorageConfigTest {
   public void testArchiveOverride() {
     StorageConfig.ArchiveConfig a = StorageConfig.fromConfig(withRef(
         "storage.archive { enable = true, db { directory = arc }, txnum { enable = false },"
-            + " temporal { enable = false }, commitment { enable = true, persistTxRoots = true },"
+            + " temporal { enable = false },"
+            + " commitment { enable = false, persistTxRoots = false },"
             + " debug { enable = true }, coverage = TVM_STATE_ONLY }"))
         .getArchive();
     assertTrue(a.isEnable());
     assertEquals("arc", a.getDb().getDirectory());
     assertFalse(a.getTxnum().isEnable());
     assertFalse(a.getTemporal().isEnable());
-    assertTrue(a.getCommitment().isEnable());
-    assertTrue(a.getCommitment().isPersistTxRoots());
+    assertFalse(a.getCommitment().isEnable());
+    assertFalse(a.getCommitment().isPersistTxRoots());
     assertTrue(a.getDebug().isEnable());
     assertEquals("TVM_STATE_ONLY", a.getCoverage());
     assertTrue(a.isWarnUnclassifiedStoreWrites());
@@ -199,6 +200,20 @@ public class StorageConfigTest {
     assertThrows(IllegalArgumentException.class,
         () -> StorageConfig.fromConfig(withRef(
             "storage.archive.warnUnclassifiedStoreWrites = false")));
+  }
+
+  @Test
+  public void testArchiveRejectsUnsupportedCommitmentEnabled() {
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef(
+            "storage.archive { enable = true, commitment { enable = true } }")));
+  }
+
+  @Test
+  public void testArchiveRejectsPersistTxRootsEnabled() {
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef(
+            "storage.archive { enable = true, commitment { persistTxRoots = true } }")));
   }
 
   // ---- readProperties() ----
