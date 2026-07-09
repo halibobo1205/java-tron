@@ -12,6 +12,10 @@ import java.util.Map;
 import org.junit.Test;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.ByteArray;
+import org.tron.core.archive.domain.DynamicKeyDecision;
+import org.tron.core.archive.domain.DynamicKeyPolicy;
+import org.tron.core.archive.domain.HistoryPolicy;
+import org.tron.core.archive.domain.ReaderPolicy;
 import org.tron.core.archive.reader.ArchiveReadResult;
 import org.tron.core.archive.reader.ArchiveReaderException;
 import org.tron.core.archive.reader.ArchiveStatePoint;
@@ -221,6 +225,28 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
               mock(VmDynamicProperties.class), reader));
 
       assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, e.getReason());
+    }
+  }
+
+  @Test
+  public void strictGenesisDynamicKeysIncludeLegacyPhysicalAllowSameTokenNameKey() {
+    boolean hasLegacyPhysicalKey = false;
+    for (String key : HistoricalArchiveVmDynamicProperties.STRICT_GENESIS_LONG_KEYS) {
+      if (" ALLOW_SAME_TOKEN_NAME".equals(key)) {
+        hasLegacyPhysicalKey = true;
+      }
+    }
+    assertEquals(true, hasLegacyPhysicalKey);
+  }
+
+  @Test
+  public void strictGenesisDynamicKeysAreArchiveReadableAndHistorical() {
+    DynamicKeyPolicy policy = new DynamicKeyPolicy();
+    for (String key : HistoricalArchiveVmDynamicProperties.STRICT_GENESIS_LONG_KEYS) {
+      assertHistoricalReaderKey(policy, key);
+    }
+    for (String key : HistoricalArchiveVmDynamicProperties.STRICT_GENESIS_PRESENT_KEYS) {
+      assertHistoricalReaderKey(policy, key);
     }
   }
 
@@ -473,5 +499,15 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
 
     public void close() {
     }
+  }
+
+  private static void assertHistoricalReaderKey(DynamicKeyPolicy policy, String key) {
+    DynamicKeyDecision decision = policy.decision(key.getBytes(StandardCharsets.US_ASCII));
+    ReaderPolicy readerPolicy = decision.getReaderPolicy();
+    HistoryPolicy historyPolicy = decision.getHistoryPolicy();
+    assertEquals("key must be readable by archive VM path: " + key,
+        ReaderPolicy.HISTORICAL_VM, readerPolicy);
+    assertEquals("key must retain archive history: " + key,
+        HistoryPolicy.FULL_HISTORY, historyPolicy);
   }
 }
