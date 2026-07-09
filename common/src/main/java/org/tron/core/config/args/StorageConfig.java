@@ -193,6 +193,12 @@ public class StorageConfig {
         throw new IllegalArgumentException(
             "storage.archive.warnUnclassifiedStoreWrites cannot be false in P0");
       }
+      if (enable && (txnum == null || !txnum.isEnable())) {
+        throw new IllegalArgumentException("storage.archive.txnum.enable cannot be false in P0");
+      }
+      if (enable && (temporal == null || !temporal.isEnable())) {
+        throw new IllegalArgumentException("storage.archive.temporal.enable cannot be false in P0");
+      }
       if (enable && commitment != null && commitment.isEnable()) {
         throw new IllegalArgumentException(
             "storage.archive.commitment.enable is not supported in P0");
@@ -200,6 +206,9 @@ public class StorageConfig {
       if (enable && commitment != null && commitment.isPersistTxRoots()) {
         throw new IllegalArgumentException(
             "storage.archive.commitment.persistTxRoots cannot be true in P0");
+      }
+      if (enable && debug != null && debug.isEnable()) {
+        throw new IllegalArgumentException("storage.archive.debug.enable is not supported in P0");
       }
     }
 
@@ -254,6 +263,7 @@ public class StorageConfig {
 
   public static StorageConfig fromConfig(Config config) {
     Config section = config.getConfig("storage");
+    validateArchiveConfigKeys(section);
 
     StorageConfig sc = ConfigBeanFactory.create(section, StorageConfig.class);
     sc.rawStorageConfig = section;
@@ -269,6 +279,46 @@ public class StorageConfig {
     sc.txCache.postProcess();
     sc.archive.postProcess();
     return sc;
+  }
+
+  private static void validateArchiveConfigKeys(Config section) {
+    if (!section.hasPath("archive")) {
+      return;
+    }
+    Config archive = section.getConfig("archive");
+    requireOnlyKeys("storage.archive", archive.root(), "enable", "db", "txnum", "temporal",
+        "commitment", "debug", "coverage", "warnUnclassifiedStoreWrites");
+    if (archive.hasPath("db")) {
+      requireOnlyKeys("storage.archive.db", archive.getConfig("db").root(), "directory");
+    }
+    if (archive.hasPath("txnum")) {
+      requireOnlyKeys("storage.archive.txnum", archive.getConfig("txnum").root(), "enable");
+    }
+    if (archive.hasPath("temporal")) {
+      requireOnlyKeys("storage.archive.temporal", archive.getConfig("temporal").root(), "enable");
+    }
+    if (archive.hasPath("commitment")) {
+      requireOnlyKeys("storage.archive.commitment", archive.getConfig("commitment").root(),
+          "enable", "persistTxRoots");
+    }
+    if (archive.hasPath("debug")) {
+      requireOnlyKeys("storage.archive.debug", archive.getConfig("debug").root(), "enable");
+    }
+  }
+
+  private static void requireOnlyKeys(String path, ConfigObject object, String... allowedKeys) {
+    for (String key : object.keySet()) {
+      boolean allowed = false;
+      for (String allowedKey : allowedKeys) {
+        if (allowedKey.equals(key)) {
+          allowed = true;
+          break;
+        }
+      }
+      if (!allowed) {
+        throw new IllegalArgumentException(path + "." + key + " is not supported");
+      }
+    }
   }
 
   // Partial LevelDB option override for default/defaultM/defaultL.

@@ -18,6 +18,7 @@ import org.tron.core.archive.NoopArchiveService;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.exception.jsonrpc.JsonRpcInternalException;
+import org.tron.core.exception.jsonrpc.JsonRpcInvalidParamsException;
 import org.tron.protos.Protocol.Block;
 
 /**
@@ -44,6 +45,20 @@ public class HistoricalEthCallSupportTest {
     JsonRpcInternalException ex = assertThrows(JsonRpcInternalException.class,
         () -> support.call(null, null, 0L, null, "0x10"));
     assertTrue(ex.getMessage().contains("archive is not available"));
+  }
+
+  @Test
+  public void disabledArchiveValidatesUnsupportedOrMalformedSelectorsBeforeAvailability() {
+    HistoricalEthCallSupport support =
+        new HistoricalEthCallSupport(null, NoopArchiveService.INSTANCE);
+
+    JsonRpcInvalidParamsException pending = assertThrows(JsonRpcInvalidParamsException.class,
+        () -> support.call(null, null, 0L, null, "pending"));
+    assertTrue(pending.getMessage().contains(JsonRpcApiUtil.TAG_PENDING_SUPPORT_ERROR));
+
+    JsonRpcInvalidParamsException malformed = assertThrows(JsonRpcInvalidParamsException.class,
+        () -> support.call(null, null, 0L, null, "not-a-block"));
+    assertTrue(malformed.getMessage().contains(JsonRpcApiUtil.BLOCK_NUM_ERROR));
   }
 
   @Test

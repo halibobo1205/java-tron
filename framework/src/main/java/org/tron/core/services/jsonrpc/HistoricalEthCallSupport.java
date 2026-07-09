@@ -81,6 +81,7 @@ public final class HistoricalEthCallSupport {
     if (JsonRpcApiUtil.LATEST_STR.equalsIgnoreCase(blockNumOrTag)) {
       throw new JsonRpcInternalException("historical eth_call invoked for the latest tag");
     }
+    validateHistoricalSelectorSyntax(blockNumOrTag);
     requireArchiveEnabled();
     try (ArchiveService.ReadGuard ignored = readGuard()) {
       ResolvedArchiveStatePoint resolved = resolver.resolveBlockEnd(blockNumOrTag);
@@ -114,7 +115,7 @@ public final class HistoricalEthCallSupport {
         VmDynamicProperties vmProperties = new HistoricalArchiveVmDynamicProperties(
             latestStore, historicalEnergyFee, reader, genesisComplete);
         TransactionCapsule trxCap =
-            wallet.createTransactionCapsule(trigger, ContractType.TriggerSmartContract);
+            createHistoricalCallTransaction(trigger, historicalBlock);
         HistoricalConstantCallResult result = new HistoricalConstantCallExecutor()
             .execute(reader, vmProperties, historicalBlock, trxCap, genesisComplete);
         if (result.isReverted()) {
@@ -185,6 +186,31 @@ public final class HistoricalEthCallSupport {
     if (!archiveService.isEnabled()) {
       throw new JsonRpcInternalException("archive is not available");
     }
+  }
+
+  private static void validateHistoricalSelectorSyntax(String blockNumOrTag)
+      throws JsonRpcInvalidParamsException {
+    if (JsonRpcApiUtil.PENDING_STR.equalsIgnoreCase(blockNumOrTag)) {
+      throw new JsonRpcInvalidParamsException(JsonRpcApiUtil.TAG_PENDING_SUPPORT_ERROR);
+    }
+    if (JsonRpcApiUtil.SAFE_STR.equalsIgnoreCase(blockNumOrTag)) {
+      throw new JsonRpcInvalidParamsException(JsonRpcApiUtil.TAG_SAFE_SUPPORT_ERROR);
+    }
+    if (JsonRpcApiUtil.isBlockTag(blockNumOrTag)) {
+      return;
+    }
+    JsonRpcApiUtil.parseBlockNumber(blockNumOrTag);
+  }
+
+  private static TransactionCapsule createHistoricalCallTransaction(TriggerSmartContract trigger,
+      BlockCapsule historicalBlock) {
+    TransactionCapsule trxCap =
+        new TransactionCapsule(trigger, ContractType.TriggerSmartContract);
+    long blockTimestamp = historicalBlock.getTimeStamp();
+    trxCap.setReference(historicalBlock.getNum(), historicalBlock.getBlockId().getBytes());
+    trxCap.setTimestamp(blockTimestamp);
+    trxCap.setExpiration(blockTimestamp == Long.MAX_VALUE ? Long.MAX_VALUE : blockTimestamp + 1);
+    return trxCap;
   }
 
   private static void requireResolvedBlockHash(ArchiveStatePoint point, byte[] blockHash)
