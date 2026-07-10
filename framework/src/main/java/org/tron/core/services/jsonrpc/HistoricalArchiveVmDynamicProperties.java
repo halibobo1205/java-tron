@@ -360,8 +360,7 @@ public final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDyna
         continue;
       }
       if (r.getStatus() == Status.TOMBSTONE) {
-        throw new ArchiveReaderException(ArchiveReaderException.Reason.CORRUPT_VALUE,
-            "archive dynamic property " + key + " is tombstoned");
+        continue;
       }
       if (!genesisComplete) {
         throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
