@@ -325,6 +325,44 @@ public final class DefaultArchiveService implements ArchiveService {
     }
   }
 
+  @Override
+  public void reconcilePublishedHeadOnStartup(long canonicalHeadNum) {
+    if (!enabled) {
+      return;
+    }
+    Lock writeLock = consistencyLock.writeLock();
+    writeLock.lock();
+    try {
+      try {
+        validateAvailable();
+        unwindPublishedBlocksAfterCanonicalHead(canonicalHeadNum);
+      } catch (RuntimeException e) {
+        markFatal(e);
+        throw e;
+      }
+    } finally {
+      writeLock.unlock();
+    }
+  }
+
+  private void unwindPublishedBlocksAfterCanonicalHead(long canonicalHeadNum) {
+    if (canonicalHeadNum < 0) {
+      return;
+    }
+    boolean unwound = false;
+    long archiveHead = txNumIndex.getLastArchivedBlock();
+    while (archiveHead > canonicalHeadNum) {
+      ArchiveBlockRange range = txNumIndex.getHeadBlockRange(archiveHead);
+      temporalStore.unwindBlock(range);
+      txNumIndex.unwindBlock(archiveHead);
+      unwound = true;
+      archiveHead = txNumIndex.getLastArchivedBlock();
+    }
+    if (unwound) {
+      executionTxNumIndex = new InMemoryArchiveTxNumIndex(txNumIndex.getNextTxNum());
+    }
+  }
+
   private static void validateInFlightNotAfterCanonicalHead(ArchiveInFlightBlock block,
       long canonicalHeadNum) {
     if (canonicalHeadNum < 0) {

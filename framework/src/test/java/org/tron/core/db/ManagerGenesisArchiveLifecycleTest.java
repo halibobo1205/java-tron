@@ -1,5 +1,6 @@
 package org.tron.core.db;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mockStatic;
@@ -17,6 +18,7 @@ import org.tron.core.archive.reader.ArchiveReadResult;
 import org.tron.core.archive.reader.ArchiveStatePoint;
 import org.tron.core.archive.reader.ArchiveStateReader;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
+import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.services.jsonrpc.HistoricalArchiveVmDynamicProperties;
 
@@ -72,6 +74,7 @@ public class ManagerGenesisArchiveLifecycleTest extends BaseMethodTest {
     assertArchivedLong(reader, "ALLOW_TVM_PRAGUE",
         chainBaseManager.getDynamicPropertiesStore().getAllowTvmPrague());
     assertArchivedPresent(reader, "ACTIVE_DEFAULT_OPERATIONS");
+    assertArchivedBlackholeAccount(reader);
   }
 
   private static void assertArchivedLong(ArchiveStateReader reader, String key, long expected)
@@ -87,5 +90,13 @@ public class ManagerGenesisArchiveLifecycleTest extends BaseMethodTest {
     ArchiveReadResult<byte[]> result =
         reader.getDynamicProperty(key.getBytes(StandardCharsets.US_ASCII));
     assertTrue("expected archived dynamic property " + key, result.isPresent());
+  }
+
+  private void assertArchivedBlackholeAccount(ArchiveStateReader reader) throws Exception {
+    AccountCapsule liveBlackhole = chainBaseManager.getAccountStore().getBlackhole();
+    ArchiveReadResult<AccountCapsule> archivedBlackhole =
+        reader.getAccount(liveBlackhole.getAddress().toByteArray());
+    assertTrue("expected archived blackhole account", archivedBlackhole.isPresent());
+    assertArrayEquals(liveBlackhole.getData(), archivedBlackhole.getValue().getData());
   }
 }

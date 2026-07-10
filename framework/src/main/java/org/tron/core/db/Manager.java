@@ -531,6 +531,7 @@ public class Manager {
       this.khaosDb.start(canonicalHead);
       long solidifiedNum = Math.min(
           getDynamicPropertiesStore().getLatestSolidifiedBlockNum(), canonicalHead.getNum());
+      archiveService.reconcilePublishedHeadOnStartup(canonicalHead.getNum());
       archiveService.reconcileInFlightOnStartup(solidifiedNum, canonicalHead.getNum(),
           blockNum -> getArchiveCanonicalBlock(blockNum, canonicalHead));
       BlockCapsule archiveValidationHead = solidifiedNum == canonicalHead.getNum()
@@ -671,6 +672,9 @@ public class Manager {
               chainBaseManager.getDynamicPropertiesStore().saveGenesisArchiveDynamicProperties();
             }
             this.initAccount();
+            if (archiveService.isEnabled() && needToSetBlackholePermission()) {
+              resetBlackholeAccountPermission();
+            }
             this.initWitness();
             this.khaosDb.start(genesisBlock);
             this.updateRecentBlock(genesisBlock);

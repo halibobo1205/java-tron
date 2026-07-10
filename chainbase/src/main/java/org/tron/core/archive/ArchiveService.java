@@ -57,6 +57,14 @@ public interface ArchiveService {
     reconcileInFlightOnStartup(solidifiedBlockNum, canonicalBlockProvider);
   }
 
+  /**
+   * Startup recovery hook after the canonical head is known. If archive publication outlived the
+   * canonical block stores during shutdown/crash recovery, implementations may rewind published
+   * archive head blocks that are above {@code canonicalHeadNum}.
+   */
+  default void reconcilePublishedHeadOnStartup(long canonicalHeadNum) {
+  }
+
   void abortBlock(BlockCapsule block);
 
   void unwindBlock(BlockCapsule block);

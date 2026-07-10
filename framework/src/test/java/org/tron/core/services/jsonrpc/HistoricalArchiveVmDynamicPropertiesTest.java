@@ -2,6 +2,7 @@ package org.tron.core.services.jsonrpc;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -385,15 +386,26 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
   }
 
   @Test
-  public void tombstonedForkStatsFailClosed() {
+  public void tombstonedForkStatsAreAbsent() throws Exception {
     FakeReader reader = new FakeReader();
     reader.putVmDefaults();
     reader.putTombstone("FORK_VERSION_35");
     VmDynamicProperties latest = mock(VmDynamicProperties.class);
 
-    ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
-        () -> new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true));
-    assertEquals(ArchiveReaderException.Reason.CORRUPT_VALUE, e.getReason());
+    HistoricalArchiveVmDynamicProperties view =
+        new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true);
+
+    assertNull(view.statsByVersion(35));
+  }
+
+  @Test
+  public void validateGenesisArchiveRowsAllowsTombstonedForkStats() throws Exception {
+    FakeReader reader = new FakeReader();
+    reader.putStrictGenesisDefaults();
+    reader.putTombstone("FORK_VERSION_27");
+
+    HistoricalArchiveVmDynamicProperties.validateGenesisArchiveRows(
+        mock(VmDynamicProperties.class), reader);
   }
 
   /** Serves configured DYNAMIC_PROPERTIES values by key; everything else MISSING. */

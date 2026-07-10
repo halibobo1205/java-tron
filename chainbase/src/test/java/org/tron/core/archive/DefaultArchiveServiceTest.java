@@ -341,6 +341,70 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
+  public void startupReconcileUnwindsPublishedBlocksAfterCanonicalHead() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    byte[] addr = new byte[21];
+    addr[0] = 0x41;
+    BlockCapsule b5 = blockWithParentSeed(5, (byte) 5);
+    BlockCapsule b6 = blockWithParentSeed(6, (byte) 6);
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    commitEmptyBlock(service, b5);
+    service.beginBlock(b6, ArchiveSource.NORMAL);
+    service.beginSystemTx(b6, ArchivePhase.BLOCK_PREPARE);
+    service.endTx();
+    service.beginSystemTx(b6, ArchivePhase.BLOCK_FINALIZE);
+    service.getCaptureEngine().capturePut("account", addr, null, account(60));
+    service.endTx();
+    service.commitBlock(b6);
+    service.publishSolidifiedBlocks(6);
+    assertTrue(index.getBlockRange(6).isPresent());
+    assertTrue(temporal.latest(ArchiveDomain.ACCOUNT, addr).isPresent());
+    service.close();
+
+    DefaultArchiveService restarted = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    try {
+      restarted.reconcilePublishedHeadOnStartup(5);
+      restarted.reconcileInFlightOnStartup(5, 5, blockNum -> blockNum == 5 ? b5 : null);
+
+      assertTrue(index.getBlockRange(5).isPresent());
+      assertFalse(index.getBlockRange(6).isPresent());
+      Optional<DomainValue> latestAccount = temporal.latest(ArchiveDomain.ACCOUNT, addr);
+      assertTrue(latestAccount.isPresent());
+      assertTrue(latestAccount.get().isDeleted());
+      restarted.validateCanonicalHead(b5);
+    } finally {
+      restarted.close();
+    }
+  }
+
+  @Test
+  public void inFlightReconcileDoesNotUnwindPublishedHead() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    BlockCapsule b5 = blockWithParentSeed(5, (byte) 5);
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    commitEmptyBlock(service, b5);
+    service.publishSolidifiedBlocks(5);
+    service.close();
+
+    DefaultArchiveService restarted = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    try {
+      restarted.reconcileInFlightOnStartup(0, 0, blockNum -> null);
+
+      assertTrue(index.getBlockRange(5).isPresent());
+    } finally {
+      restarted.close();
+    }
+  }
+
+  @Test
   public void startupRejectsInFlightPrevValueMismatchAgainstTemporalLatest() {
     InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
     InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
