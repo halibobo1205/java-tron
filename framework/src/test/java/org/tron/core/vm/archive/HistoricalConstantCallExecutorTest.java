@@ -136,6 +136,7 @@ public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
     when(vmProps.getAllowTvmLondon()).thenReturn(1L);
     when(vmProps.getAllowTvmIstanbul()).thenReturn(1L);
     when(vmProps.getAllowTvmShangHai()).thenReturn(allowShangHai);
+    when(vmProps.getMaintenanceTimeInterval()).thenReturn(21_600_000L);
 
     BlockCapsule block = new BlockCapsule(1L, Sha256Hash.ZERO_HASH, 1000L,
         ByteString.copyFrom(new byte[21]));
