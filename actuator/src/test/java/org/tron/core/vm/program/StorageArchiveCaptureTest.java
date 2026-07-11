@@ -111,4 +111,50 @@ public class StorageArchiveCaptureTest {
     verify(store, never()).get(any());
     verify(store).put(any(), any());
   }
+
+  @Test
+  public void capturePrevReadFailureDoesNotBlockCanonicalWrite() {
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    ArchiveCaptureEngine engine = new ArchiveCaptureEngine(
+        new DefaultArchiveDomainRegistry(), new DefaultArchiveDomainCatalog(),
+        new DynamicKeyPolicy(), context);
+    ArchiveCaptureHolder.set(engine);
+    context.enter(new ArchiveTxPosition(
+        7L, 1L, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, new byte[] {1}));
+
+    byte[] address = new byte[21];
+    address[0] = 0x41;
+    StorageRowStore store = mock(StorageRowStore.class);
+    when(store.get(any())).thenThrow(new IllegalStateException("read failed"));
+    Storage storage = new Storage(address, store);
+    storage.put(new DataWord(new byte[] {5}), new DataWord(new byte[] {9}));
+
+    storage.commit();
+
+    assertTrue(engine.failure().isPresent());
+    assertTrue(engine.records().isEmpty());
+    verify(store).put(any(), any());
+  }
+
+  @Test
+  public void captureKeyFailureDoesNotBlockCanonicalWrite() {
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    ArchiveCaptureEngine engine = new ArchiveCaptureEngine(
+        new DefaultArchiveDomainRegistry(), new DefaultArchiveDomainCatalog(),
+        new DynamicKeyPolicy(), context);
+    ArchiveCaptureHolder.set(engine);
+    context.enter(new ArchiveTxPosition(
+        7L, 1L, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, new byte[] {1}));
+
+    StorageRowStore store = mock(StorageRowStore.class);
+    Storage storage = new Storage(new byte[20], store);
+    storage.put(new DataWord(new byte[] {5}), new DataWord(new byte[] {9}));
+
+    storage.commit();
+
+    assertTrue(engine.failure().isPresent());
+    assertTrue(engine.records().isEmpty());
+    verify(store, never()).get(any());
+    verify(store).put(any(), any());
+  }
 }

@@ -66,8 +66,9 @@ public interface ArchiveTemporalStore {
   /**
    * Drop every change with {@code txNum >= fromTxNum}. If an affected key still has older canonical
    * history, restore latest to the prevValue of its smallest dropped change (= that key's value at
-   * the end of {@code fromTxNum - 1}); otherwise delete latest too so the store does not retain an
-   * unanchored latest-only value after a reverted first capture.
+   * the end of {@code fromTxNum - 1}). A partial unwind retains that restored value as a baseline,
+   * including a tombstone for a key absent before its first capture; a full unwind from txNum 0
+   * removes latest values too.
    */
   void unwind(long fromTxNum);
 
