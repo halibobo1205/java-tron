@@ -176,6 +176,19 @@ public class ArchiveTemporalCodecTest {
     assertTrue(ex.getMessage().contains("tombstone value must be empty"));
   }
 
+  @Test
+  public void emptyPresentValueRoundTripsDistinctFromTombstone() {
+    // encodeValue(present(empty)) is a single flag byte {0}; it must decode back to a present-empty
+    // value, never a tombstone -- the two length-1 encodings ({0} present-empty, {1} tombstone)
+    // must not collide, or an empty stored value would silently flip to "deleted".
+    byte[] encoded = ArchiveTemporalCodec.encodeValue(DomainValue.present(new byte[0]));
+    assertArrayEquals(new byte[] {0}, encoded);
+    DomainValue decoded = ArchiveTemporalCodec.decodeValue(encoded);
+    assertFalse(decoded.isDeleted());
+    assertEquals(0, decoded.getValue().length);
+    assertTrue(ArchiveTemporalCodec.decodeValue(new byte[] {1}).isDeleted());
+  }
+
   private static int compare(byte[] a, byte[] b) {
     int len = a.length < b.length ? a.length : b.length;
     for (int i = 0; i < len; i++) {

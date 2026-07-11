@@ -111,6 +111,27 @@ public class ArchiveTemporalStoreConsistencyTest {
     assertTrue(Arrays.equals(new byte[] {0x30}, mem.latest(DOMAIN, K3).get().getValue()));
   }
 
+  @Test
+  public void inMemoryAndRocksAgreeOnDeleteThenRecreate() {
+    // Created, deleted, then re-created. A read inside the deleted window [9,11] must return a
+    // TOMBSTONE sourced from the NEXT change's (tx12) pre-value via a HISTORY seek -- NOT fall-to-
+    // latest (latest is the recreated 0x0B) and NOT empty. No existing test has a change after a
+    // delete, so this history-seek-returns-tombstone branch was previously undriven.
+    put(5, K1, DomainValue.tombstone(), val(0x0A));
+    put(9, K1, val(0x0A), DomainValue.tombstone());
+    put(12, K1, DomainValue.tombstone(), val(0x0B));
+
+    for (long t : new long[] {9, 10, 11}) {
+      Optional<DomainValue> v = rocks.getAsOf(DOMAIN, K1, t);
+      assertTrue("as-of " + t + " present-but-deleted", v.isPresent() && v.get().isDeleted());
+    }
+    // value at end of tx8 is 0x0A; at/after tx12 it is the recreated 0x0B.
+    assertTrue(Arrays.equals(new byte[] {0x0A}, rocks.getAsOf(DOMAIN, K1, 8).get().getValue()));
+    assertTrue(Arrays.equals(new byte[] {0x0B}, rocks.getAsOf(DOMAIN, K1, 12).get().getValue()));
+    // both stores agree at every txNum across the whole create/delete/recreate lifecycle.
+    assertParity(K1, 15);
+  }
+
   private static void deleteRecursively(File f) {
     File[] children = f.listFiles();
     if (children != null) {

@@ -548,6 +548,36 @@ public class RocksDbArchiveTemporalStoreTest {
   }
 
   @Test
+  public void unwindDroppingTwoChangesRestoresSmallestPrevAndSurvivesRestart() {
+    // Three changes; unwind(8) drops BOTH tx8 and tx12 for KEY (the multi-drop path the single-drop
+    // test above never exercises), while tx5 (older than fromTxNum) is retained.
+    store.putChange(change(5, DomainValue.tombstone(), DomainValue.present(new byte[] {0x0A})));
+    store.putChange(change(8, DomainValue.present(new byte[] {0x0A}),
+        DomainValue.present(new byte[] {0x0B})));
+    store.putChange(change(12, DomainValue.present(new byte[] {0x0B}),
+        DomainValue.present(new byte[] {0x0C})));
+    store.unwind(8);
+    // latest is the SMALLEST dropped change's pre-value (tx8's 0x0A), NOT tx12's 0x0B/0x0C.
+    assertArrayEquals(new byte[] {0x0A}, store.latest(ArchiveDomain.ACCOUNT, KEY).get().getValue());
+    assertArrayEquals(new byte[] {0x0A},
+        store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 100).get().getValue());
+    // both tx8 and tx12 history rows are gone: as-of 8 falls through to latest.
+    assertArrayEquals(new byte[] {0x0A},
+        store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 8).get().getValue());
+    // tx5's tombstone-prev history survives (proves the retained older row is untouched).
+    assertTrue(store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 4).get().isDeleted());
+
+    // The restore + deletions persist across a restart, and because the key is anchored by retained
+    // history (tx5), NO latest-baseline marker is written -- validateTxNumsCovered must not throw.
+    store.close();
+    store = new RocksDbArchiveTemporalStore(dir.toString());
+    store.validateTxNumsCovered(txNum -> true);
+    assertArrayEquals(new byte[] {0x0A}, store.latest(ArchiveDomain.ACCOUNT, KEY).get().getValue());
+    assertArrayEquals(new byte[] {0x0A},
+        store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 100).get().getValue());
+  }
+
+  @Test
   public void unwindFirstMidChainChangeKeepsLatestOnlyBaselineAcrossRestart() {
     store.putChange(change(8, DomainValue.present(new byte[] {0x0A}),
         DomainValue.present(new byte[] {0x0B})));
