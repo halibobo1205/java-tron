@@ -13,6 +13,7 @@ import static org.mockito.Mockito.when;
 import com.google.protobuf.ByteString;
 import org.junit.After;
 import org.junit.Test;
+import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.Wallet;
 import org.tron.core.archive.ArchiveException;
@@ -115,6 +116,34 @@ public class ArchiveJsonRpcStateAdapterTest {
     assertEquals("archive code is unknown before mid-chain coverage", code.getMessage());
 
     verify(wallet, never()).getAccount(any(Account.class));
+  }
+
+  @Test
+  public void midChainTombstoneRendersAsDefaultZeroNotError() throws Exception {
+    DefaultArchiveService svc = new DefaultArchiveService(true);
+    byte[] addr = ByteArray.fromHexString("41abd4b9367799eaa3197fecb144eb71de1e049abc");
+    // Publish block 5 (mid-chain: first archived block = 5) carrying a captured account DELETE for
+    // addr, so the temporal store holds a TOMBSTONE (known-deleted) -- distinct from MISSING
+    // (never captured), which the coverage gate turns into an error.
+    BlockCapsule b5 = blockCapsule(5);
+    svc.beginBlock(b5, ArchiveSource.NORMAL);
+    svc.beginSystemTx(b5, ArchivePhase.BLOCK_PREPARE);
+    svc.endTx();
+    svc.beginSystemTx(b5, ArchivePhase.BLOCK_FINALIZE);
+    svc.getCaptureEngine().captureDelete("account", addr,
+        Account.newBuilder().setBalance(5L).build().toByteArray());
+    svc.endTx();
+    svc.commitBlock(b5);
+    svc.publishSolidifiedBlocks(5);
+
+    Wallet wallet = mock(Wallet.class);
+    when(wallet.getBlockByNum(5)).thenReturn(b5.getInstance());
+    ArchiveJsonRpcStateAdapter adapter = new ArchiveJsonRpcStateAdapter(wallet, svc);
+
+    // A KNOWN-deleted account at a mid-chain block renders as 0x0, NOT the "unknown before
+    // mid-chain coverage" error that a MISSING (never-captured) account produces.
+    assertEquals("0x0",
+        adapter.getBalance("0xabd4b9367799eaa3197fecb144eb71de1e049abc", "0x5"));
   }
 
   @Test
