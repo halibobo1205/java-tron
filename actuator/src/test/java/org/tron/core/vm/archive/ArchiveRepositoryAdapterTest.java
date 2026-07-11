@@ -2,6 +2,7 @@ package org.tron.core.vm.archive;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
@@ -127,6 +128,24 @@ public class ArchiveRepositoryAdapterTest {
     assertSame(contract, adapter.getContract(ADDR));
     reader.contract = ArchiveReadResult.missing();
     assertNull(adapter.getContract(ADDR));
+  }
+
+  @Test
+  public void deleteContractShadowsArchiveAndPropagatesOnCommit() {
+    // SELFDESTRUCT write-isolation: deleteContract writes a null tombstone into the overlay, which
+    // must shadow the archived contract (a null-tombstone is distinct from absent) and, on commit,
+    // route to parent.deleteContract -- never resurrect the archived contract or NPE.
+    ContractCapsule archived = new ContractCapsule(new byte[] {9});
+    reader.contract = ArchiveReadResult.present(archived);
+    assertNotNull("root reads the archived contract", adapter.getContract(ADDR));
+
+    ArchiveRepositoryAdapter child = (ArchiveRepositoryAdapter) adapter.newRepositoryChild();
+    child.deleteContract(ADDR);
+    assertNull("child sees its own tombstone, not the archived contract", child.getContract(ADDR));
+    assertNotNull("parent still archived before commit", adapter.getContract(ADDR));
+
+    child.commit();
+    assertNull("commit routed the tombstone to parent.deleteContract", adapter.getContract(ADDR));
   }
 
   @Test
