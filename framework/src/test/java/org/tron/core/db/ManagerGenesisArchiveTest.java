@@ -3,7 +3,11 @@ package org.tron.core.db;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
@@ -21,6 +25,26 @@ import org.tron.core.exception.TronError;
 import org.tron.core.store.DynamicPropertiesStore;
 
 public class ManagerGenesisArchiveTest {
+
+  @Test
+  public void initGenesisDefersInFlightReconcileUntilCanonicalHeadIsKnown() {
+    Manager manager = new Manager();
+    ChainBaseManager chainBaseManager = mock(ChainBaseManager.class);
+    ArchiveService archiveService = mock(ArchiveService.class);
+    DynamicPropertiesStore dynamicPropertiesStore = mock(DynamicPropertiesStore.class);
+    BlockCapsule genesis = new BlockCapsule(0L, Sha256Hash.ZERO_HASH, 0L, ByteString.EMPTY);
+    when(chainBaseManager.getGenesisBlock()).thenReturn(genesis);
+    when(chainBaseManager.containBlock(genesis.getBlockId())).thenReturn(true);
+    when(chainBaseManager.getDynamicPropertiesStore()).thenReturn(dynamicPropertiesStore);
+    when(dynamicPropertiesStore.getLatestBlockHeaderNumber()).thenReturn(12L);
+    when(archiveService.isEnabled()).thenReturn(true);
+    ReflectUtils.setFieldValue(manager, "chainBaseManager", chainBaseManager);
+    ReflectUtils.setFieldValue(manager, "archiveService", archiveService);
+
+    manager.initGenesis();
+
+    verify(archiveService, never()).reconcileInFlightOnStartup(anyLong(), anyLong(), any());
+  }
 
   @Test
   public void initGenesisRejectsExistingGenesisWithoutArchiveBlockZero() {

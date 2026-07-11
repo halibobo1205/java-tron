@@ -32,7 +32,7 @@ public final class PersistentArchiveTxNumIndex implements ArchiveTxNumIndex, Aut
     store.validateContiguousCoverage();
     store.validatePositionCoverage();
     // Resume txNum allocation from the persisted cursor so new blocks never collide with old ones.
-    this.inner = new InMemoryArchiveTxNumIndex(store.getCursor());
+    this.inner = delegateFromStore();
   }
 
   @Override
@@ -87,9 +87,13 @@ public final class PersistentArchiveTxNumIndex implements ArchiveTxNumIndex, Aut
     try {
       store.commitRange(persistedRange, inner.getCommittedNextTxNum(), positions);
     } catch (RuntimeException e) {
-      inner = new InMemoryArchiveTxNumIndex(store.getCursor());
+      inner = delegateFromStore();
       throw e;
     }
+    // Committed lookups are served by RocksDB. Retain only the allocation cursor so the delegate
+    // cannot grow with chain height.
+    inner = new InMemoryArchiveTxNumIndex(
+        persistedRange.getLastTxNum() + 1, persistedRange.getBlockNum());
     return persistedRange;
   }
 
@@ -104,7 +108,7 @@ public final class PersistentArchiveTxNumIndex implements ArchiveTxNumIndex, Aut
     store.unwindRange(range, range.getFirstTxNum());
     // Re-seed the allocation state from the rewound persistent cursor. Committed lookups are served
     // from the store, so dropping the delegate's recent in-memory maps does not lose queryability.
-    inner = new InMemoryArchiveTxNumIndex(range.getFirstTxNum());
+    inner = delegateFromStore();
   }
 
   @Override
@@ -165,6 +169,13 @@ public final class PersistentArchiveTxNumIndex implements ArchiveTxNumIndex, Aut
     // The persisted floor survives restart, unlike the in-memory window which only holds blocks
     // committed since startup.
     return store.getFirstArchivedBlock();
+  }
+
+  private InMemoryArchiveTxNumIndex delegateFromStore() {
+    long lastCommittedBlock = store.getLastRange()
+        .map(ArchiveBlockRange::getBlockNum)
+        .orElse(-1L);
+    return new InMemoryArchiveTxNumIndex(store.getCursor(), lastCommittedBlock);
   }
 
   @Override

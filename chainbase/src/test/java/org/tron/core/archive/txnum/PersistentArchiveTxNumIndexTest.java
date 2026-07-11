@@ -19,6 +19,7 @@ import org.rocksdb.Options;
 import org.rocksdb.RocksDB;
 import org.rocksdb.RocksDBException;
 import org.rocksdb.RocksIterator;
+import org.tron.common.utils.ReflectUtils;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveSource;
@@ -103,6 +104,21 @@ public class PersistentArchiveTxNumIndexTest {
     // Cursor restored: the next block continues from block 2's end, no txNum collision.
     ArchiveBlockRange r3 = pushBlock(3);
     assertEquals(r2.getLastTxNum() + 1, r3.getFirstTxNum());
+  }
+
+  @Test
+  public void commitDropsTransientDelegateRowsAfterPersistence() {
+    ArchiveBlockRange range = pushBlockWithUserTx(1, TX_A);
+
+    InMemoryArchiveTxNumIndex delegate = ReflectUtils.getFieldValue(index, "inner");
+
+    assertFalse(delegate.getBlockRange(1).isPresent());
+    assertFalse(delegate.getPosition(range.getFirstTxNum()).isPresent());
+    assertFalse(delegate.findTxNumByBlockAndIndex(1, 0).isPresent());
+    assertFalse(delegate.findTxNumByTxId(TX_A).isPresent());
+    assertEquals(range.getLastTxNum() + 1, delegate.getNextTxNum());
+    assertTrue(index.getBlockRange(1).isPresent());
+    assertTrue(index.findTxNumByTxId(TX_A).isPresent());
   }
 
   @Test

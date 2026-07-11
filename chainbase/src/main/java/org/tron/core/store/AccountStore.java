@@ -91,12 +91,15 @@ public class AccountStore extends TronStoreWithRevoking<AccountCapsule> {
     // L4c: read the pre-put account so ACCOUNT_ASSET can value-diff assetV2 (gated to avoid the
     // extra read + serialize when archive is off).
     boolean archiveActive = ArchiveCaptureHolder.isCapturingCurrentTx();
-    byte[] oldArchiveValue = archiveActive
-        ? accountAssetDiffValue(revokingDB.getUnchecked(key)) : null;
+    ArchivePreviousValue previous = archiveActive
+        ? readArchivePreviousValue(getDbName(), key) : null;
+    boolean archivePrepared = archiveActive && previous.isAvailable();
+    byte[] oldArchiveValue = archivePrepared
+        ? accountAssetDiffValue(previous.getValue()) : null;
     byte[] newArchiveValue = archiveActive ? accountAssetDiffValue(item.getData()) : null;
     super.put(key, item);
     accountStateCallBackUtils.accountCallBack(key, item);
-    if (archiveActive) {
+    if (archivePrepared) {
       ArchiveCaptureHolder.captureAccountAsset(key, oldArchiveValue, newArchiveValue);
     }
   }
@@ -138,10 +141,13 @@ public class AccountStore extends TronStoreWithRevoking<AccountCapsule> {
       }
     }
     boolean archiveActive = ArchiveCaptureHolder.isCapturingCurrentTx();
-    byte[] oldArchiveValue = archiveActive
-        ? accountAssetDiffValue(revokingDB.getUnchecked(key)) : null;
+    ArchivePreviousValue previous = archiveActive
+        ? readArchivePreviousValue(getDbName(), key) : null;
+    boolean archivePrepared = archiveActive && previous.isAvailable();
+    byte[] oldArchiveValue = archivePrepared
+        ? accountAssetDiffValue(previous.getValue()) : null;
     super.delete(key);
-    if (archiveActive) {
+    if (archivePrepared) {
       ArchiveCaptureHolder.captureAccountAsset(key, oldArchiveValue, null);
     }
   }

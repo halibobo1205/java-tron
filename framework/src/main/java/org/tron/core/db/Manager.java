@@ -637,11 +637,6 @@ public class Manager {
 
     if (chainBaseManager.containBlock(genesisBlock.getBlockId())) {
       Args.getInstance().setChainId(genesisBlock.getBlockId().toString());
-      long solidifiedNum = Math.min(
-          chainBaseManager.getDynamicPropertiesStore().getLatestSolidifiedBlockNum(),
-          genesisBlock.getNum());
-      archiveService.reconcileInFlightOnStartup(solidifiedNum, genesisBlock.getNum(),
-          blockNum -> getArchiveCanonicalBlock(blockNum, genesisBlock));
       validateGenesisArchiveCoverage();
     } else {
       if (chainBaseManager.hasBlocks()) {

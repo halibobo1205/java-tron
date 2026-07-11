@@ -403,6 +403,7 @@ public final class DefaultArchiveService implements ArchiveService {
       publishInFlightBlock(block);
       inFlightBlocks.remove(block.getRange().getBlockNum());
     }
+    executionTxNumIndex.discardBlocksThrough(solidifiedBlockNum);
     rebuildInFlightLatest();
   }
 
