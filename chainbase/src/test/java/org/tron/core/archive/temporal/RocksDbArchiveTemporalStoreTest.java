@@ -295,6 +295,28 @@ public class RocksDbArchiveTemporalStoreTest {
   }
 
   @Test
+  public void putBlockChangesRejectsDuplicateChangesetRowWithoutPartialWrite() {
+    // Two records with identical (txNum, domain, key) in one block batch. The RocksDb accumulator's
+    // duplicate guard (different code from the InMemory HashSet, reached after rows are staged into
+    // the WriteBatch) must reject and DISCARD the staged batch. Chain-consistent (second prev ==
+    // first value) so it passes prev-value validation and reaches the duplicate check.
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        3, 10, 12, 10, 12, blockHash(3), 1, ArchiveSource.NORMAL);
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> store.putBlockChanges(range, Arrays.asList(
+            changeInRange(range, 11, DomainValue.tombstone(),
+                DomainValue.present(new byte[] {0x0A})),
+            changeInRange(range, 11, DomainValue.present(new byte[] {0x0A}),
+                DomainValue.present(new byte[] {0x0B})))));
+
+    assertTrue(ex.getMessage().contains("duplicate changeset row"));
+    // nothing committed: no latest, no leftover rows, and no block-commit marker.
+    assertFalse(store.latest(ArchiveDomain.ACCOUNT, KEY).isPresent());
+    assertFalse(store.hasDataBeyondManifest());
+    assertThrows(ArchiveException.class, () -> store.validateCommittedBlock(range));
+  }
+
+  @Test
   public void putBlockChangesOrdersSameKeyBeforeWritingLatest() {
     ArchiveBlockRange range = new ArchiveBlockRange(
         3, 10, 11, 10, 11, blockHash(3), 1, ArchiveSource.NORMAL);
