@@ -6,11 +6,13 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
+import java.util.Arrays;
 import org.junit.Before;
 import org.junit.Test;
 import org.tron.common.BaseMethodTest;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.runtime.TvmTestUtils;
+import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.archive.reader.ArchiveReadResult;
 import org.tron.core.archive.reader.ArchiveStatePoint;
@@ -21,6 +23,7 @@ import org.tron.core.capsule.ContractCapsule;
 import org.tron.core.capsule.ContractStateCapsule;
 import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.store.VmDynamicProperties;
+import org.tron.core.vm.config.VMConfig;
 import org.tron.protos.Protocol.Account;
 import org.tron.protos.Protocol.Transaction.Contract.ContractType;
 import org.tron.protos.contract.SmartContractOuterClass.SmartContract;
@@ -85,12 +88,15 @@ public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
   }
 
   @Test
-  public void historicalChainIdDoesNotCrashOnGenesisBlockRead() throws Exception {
+  public void historicalChainIdReturnsGenesisDerivedValue() throws Exception {
     // CHAINID reads block 0 via getBlockByNum; the adapter must serve it from the immutable block
-    // store (EIP-712 / permit contracts use it) instead of throwing. Value is genesis-derived, so
-    // we only assert the call completes and returns a 32-byte word.
+    // store (EIP-712 / permit contracts use it) instead of throwing.
     byte[] result = runViewCall(CHAINID_CODE, ArchiveReadResult.missing());
-    org.junit.Assert.assertEquals(32, result.length);
+    byte[] expected = chainBaseManager.getBlockByNum(0).getBlockId().getBytes();
+    if (VMConfig.allowTvmCompatibleEvm() || VMConfig.allowOptimizedReturnValueOfChainId()) {
+      expected = Arrays.copyOfRange(expected, expected.length - 4, expected.length);
+    }
+    assertArrayEquals(new DataWord(expected).getData(), result);
   }
 
   @Test

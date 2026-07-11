@@ -71,7 +71,7 @@ public class OpActions {
   public Action addMemoryWrite(int address, byte[] data, int size) {
     return addAction(memory, Action.Name.write)
         .addParam("address", address)
-        .addParam("data", toHexString(data).substring(0, size));
+        .addParam("data", toHexString(data).substring(0, size * 2));
   }
 
   public Action addStoragePut(DataWord key, DataWord value) {
