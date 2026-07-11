@@ -98,10 +98,10 @@ public abstract class TronStoreWithRevoking<T extends ProtoCapsule> implements I
     // is just revokingDB.put -- byte-identical to a non-archive node, no extra read.
     String dbName = getDbName();
     boolean capture = ArchiveCaptureHolder.capturesStore(dbName);
-    byte[] prev = capture ? revokingDB.getUnchecked(key) : null;
+    ArchivePreviousValue previous = capture ? readArchivePreviousValue(dbName, key) : null;
     revokingDB.put(key, value);
-    if (capture) {
-      ArchiveCaptureHolder.capturePut(dbName, key, prev, value);
+    if (capture && previous.isAvailable()) {
+      ArchiveCaptureHolder.capturePut(dbName, key, previous.getValue(), value);
     }
   }
 
@@ -109,10 +109,50 @@ public abstract class TronStoreWithRevoking<T extends ProtoCapsule> implements I
   public void delete(byte[] key) {
     String dbName = getDbName();
     boolean capture = ArchiveCaptureHolder.capturesStore(dbName);
-    byte[] prev = (capture && key != null) ? revokingDB.getUnchecked(key) : null;
+    ArchivePreviousValue previous = (capture && key != null)
+        ? readArchivePreviousValue(dbName, key) : null;
     revokingDB.delete(key);
-    if (capture) {
-      ArchiveCaptureHolder.captureDelete(dbName, key, prev);
+    if (capture && key == null) {
+      ArchiveCaptureHolder.captureDelete(dbName, null, null);
+    } else if (capture && previous.isAvailable()) {
+      ArchiveCaptureHolder.captureDelete(dbName, key, previous.getValue());
+    }
+  }
+
+  /** Isolates the archive-only prev-value read from the canonical store mutation. */
+  protected final ArchivePreviousValue readArchivePreviousValue(String dbName, byte[] key) {
+    try {
+      return ArchivePreviousValue.available(revokingDB.getUnchecked(key));
+    } catch (Exception e) {
+      ArchiveCaptureHolder.recordFailure("prevRead(" + dbName + ")", e);
+      return ArchivePreviousValue.unavailable();
+    }
+  }
+
+  protected static final class ArchivePreviousValue {
+
+    private final boolean available;
+    private final byte[] value;
+
+    private ArchivePreviousValue(boolean available, byte[] value) {
+      this.available = available;
+      this.value = value;
+    }
+
+    private static ArchivePreviousValue available(byte[] value) {
+      return new ArchivePreviousValue(true, value);
+    }
+
+    private static ArchivePreviousValue unavailable() {
+      return new ArchivePreviousValue(false, null);
+    }
+
+    public boolean isAvailable() {
+      return available;
+    }
+
+    public byte[] getValue() {
+      return value;
     }
   }
 

@@ -17,6 +17,7 @@ import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import org.junit.After;
 import org.junit.Test;
+import org.tron.common.utils.ReflectUtils;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
@@ -954,6 +955,33 @@ public class DefaultArchiveServiceTest {
     assertTrue(index.getBlockRange(5).isPresent());
     assertTrue(index.getBlockRange(6).isPresent());
     assertFalse(index.getBlockRange(7).isPresent());
+  }
+
+  @Test
+  public void publishDiscardsSolidifiedExecutionRowsAndRetainsInFlightTail() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    DefaultArchiveService service = new DefaultArchiveService(
+        true, index, new ArchiveExecutionContext());
+    BlockCapsule b5 = blockWithParentSeed(5, (byte) 5);
+    BlockCapsule b6 = blockWithParentSeed(6, (byte) 6);
+    BlockCapsule b7 = blockWithParentSeed(7, (byte) 7);
+    commitEmptyBlock(service, b5);
+    commitEmptyBlock(service, b6);
+    commitEmptyBlock(service, b7);
+
+    service.publishSolidifiedBlocks(6);
+
+    InMemoryArchiveTxNumIndex execution =
+        ReflectUtils.getFieldValue(service, "executionTxNumIndex");
+    assertFalse(execution.getBlockRange(5).isPresent());
+    assertFalse(execution.getBlockRange(6).isPresent());
+    assertTrue(execution.getBlockRange(7).isPresent());
+
+    service.unwindBlock(b7);
+    BlockCapsule replacement = blockWithParentSeed(7, (byte) 0x70);
+    commitEmptyBlock(service, replacement);
+    service.publishSolidifiedBlocks(7);
+    assertTrue(index.getBlockRange(7).isPresent());
   }
 
   @Test
