@@ -204,6 +204,33 @@ public class ArchiveTxNumIndexTest {
   }
 
   @Test
+  public void discardPublishedPrefixRetainsInFlightTailAndUnwindFloor() {
+    InMemoryArchiveTxNumIndex idx = new InMemoryArchiveTxNumIndex();
+    commitTwoUserTxBlock(idx, 5);
+    ArchiveBlockRange first = idx.getBlockRange(5).orElseThrow(AssertionError::new);
+    ArchiveBlockRange second = commitEmptyBlock(idx, 6);
+    ArchiveBlockRange tail = commitEmptyBlock(idx, 7);
+
+    idx.discardBlocksThrough(6);
+
+    assertFalse(idx.getBlockRange(5).isPresent());
+    assertFalse(idx.getBlockRange(6).isPresent());
+    assertFalse(idx.getPosition(first.getFirstTxNum()).isPresent());
+    assertFalse(idx.getPosition(second.getLastTxNum()).isPresent());
+    assertFalse(idx.findTxNumByBlockAndIndex(5, 0).isPresent());
+    assertFalse(idx.findTxNumByTxId(txId(9)).isPresent());
+    assertTrue(idx.getBlockRange(7).isPresent());
+    assertTrue(idx.getPosition(tail.getFirstTxNum()).isPresent());
+
+    idx.unwindBlock(7);
+    ArchiveBlockRange replacement = commitEmptyBlock(idx, 7);
+    assertEquals(tail.getFirstTxNum(), replacement.getFirstTxNum());
+    idx.discardBlocksThrough(7);
+    assertFalse(idx.getBlockRange(7).isPresent());
+    assertEquals(replacement.getLastTxNum() + 1, commitEmptyBlock(idx, 8).getFirstTxNum());
+  }
+
+  @Test
   public void unwindBackToEmptyClearsFirstArchivedBlock() {
     ArchiveTxNumIndex idx = new InMemoryArchiveTxNumIndex();
     commitTwoUserTxBlock(idx, 7);

@@ -42,10 +42,10 @@ public class ContractStore extends TronStoreWithRevoking<ContractCapsule> {
     // Read the pre-put value (Erigon prev-value) only when archived; default path is a plain put.
     String dbName = getDbName();
     boolean capture = ArchiveCaptureHolder.capturesStore(dbName);
-    byte[] prev = capture ? revokingDB.getUnchecked(key) : null;
+    ArchivePreviousValue previous = capture ? readArchivePreviousValue(dbName, key) : null;
     revokingDB.put(key, value);
-    if (capture) {
-      ArchiveCaptureHolder.capturePut(dbName, key, prev, value);
+    if (capture && previous.isAvailable()) {
+      ArchiveCaptureHolder.capturePut(dbName, key, previous.getValue(), value);
     }
   }
 

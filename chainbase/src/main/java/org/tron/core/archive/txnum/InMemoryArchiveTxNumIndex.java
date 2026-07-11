@@ -29,6 +29,7 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
   // in-memory index is used standalone (no persistence).
   private long firstArchivedBlock = -1L;
   private long lastCommittedBlock = -1L;
+  private long discardedThroughBlock = -1L;
 
   // null when no block is pending; only one block may be pending at a time.
   private Long pendingBlockNum;
@@ -46,11 +47,22 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
 
   /** Seeds the committed cursor (e.g. restored from a persistent index on restart). */
   public InMemoryArchiveTxNumIndex(long startTxNum) {
+    this(startTxNum, -1L);
+  }
+
+  /** Seeds a cursor plus a discarded block high-water mark for append validation. */
+  InMemoryArchiveTxNumIndex(long startTxNum, long lastCommittedBlock) {
     if (startTxNum < 0) {
       throw new ArchiveException("archive txNum cursor must be non-negative: " + startTxNum);
     }
+    if (lastCommittedBlock < -1L) {
+      throw new ArchiveException("archive last committed block must be at least -1: "
+          + lastCommittedBlock);
+    }
     this.committedNextTxNum = startTxNum;
     this.workingNextTxNum = startTxNum;
+    this.lastCommittedBlock = lastCommittedBlock;
+    this.discardedThroughBlock = lastCommittedBlock;
   }
 
   /** The next txNum to be allocated for the following block (the committed cursor). */
@@ -192,26 +204,62 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
   public synchronized void unwindBlock(long blockNum) {
     requireNonNegativeBlockNum(blockNum);
     ArchiveBlockRange range = getHeadBlockRange(blockNum);
-    for (long txNum = range.getFirstTxNum(); txNum <= range.getLastTxNum(); txNum++) {
-      if (!positionsByTxNum.containsKey(txNum)) {
-        throw new ArchiveException("archive tx-position missing for unwind txNum " + txNum);
+    removeCommittedRange(range);
+    committedNextTxNum = range.getFirstTxNum();
+    workingNextTxNum = committedNextTxNum;
+    long retainedHead = findLastCommittedBlock();
+    lastCommittedBlock = retainedHead >= 0 ? retainedHead : discardedThroughBlock;
+    firstArchivedBlock = findFirstCommittedBlock();
+  }
+
+  /**
+   * Drops lookup rows for a durably published prefix while preserving the allocation cursor and
+   * the retained in-flight tail needed for head unwind.
+   */
+  public synchronized void discardBlocksThrough(long blockNum) {
+    requireNonNegativeBlockNum(blockNum);
+    if (pendingBlockNum != null) {
+      throw new ArchiveException("cannot discard archive blocks while block "
+          + pendingBlockNum + " is pending");
+    }
+    if (lastCommittedBlock < 0) {
+      return;
+    }
+    long discardThrough = Math.min(blockNum, lastCommittedBlock);
+    if (discardThrough <= discardedThroughBlock) {
+      return;
+    }
+    List<ArchiveBlockRange> discarded = new ArrayList<>();
+    for (ArchiveBlockRange range : blockRanges.values()) {
+      if (range.getBlockNum() <= discardThrough) {
+        discarded.add(range);
       }
     }
-    blockRanges.remove(blockNum);
+    for (ArchiveBlockRange range : discarded) {
+      removeCommittedRange(range);
+    }
+    discardedThroughBlock = discardThrough;
+    firstArchivedBlock = findFirstCommittedBlock();
+  }
+
+  private void removeCommittedRange(ArchiveBlockRange range) {
+    for (long txNum = range.getFirstTxNum(); txNum <= range.getLastTxNum(); txNum++) {
+      if (!positionsByTxNum.containsKey(txNum)) {
+        throw new ArchiveException("archive tx-position missing for removal txNum " + txNum);
+      }
+    }
+    blockRanges.remove(range.getBlockNum());
     for (long txNum = range.getFirstTxNum(); txNum <= range.getLastTxNum(); txNum++) {
       ArchiveTxPosition position = positionsByTxNum.remove(txNum);
       if (position.getTxIndex() >= 0) {
-        txNumByBlockAndIndex.remove(blockIndexKey(blockNum, position.getTxIndex()));
+        txNumByBlockAndIndex.remove(
+            blockIndexKey(range.getBlockNum(), position.getTxIndex()));
       }
       byte[] txId = position.getTxId();
       if (txId.length > 0) {
         txNumByTxId.remove(ByteArray.toHexString(txId));
       }
     }
-    committedNextTxNum = range.getFirstTxNum();
-    workingNextTxNum = committedNextTxNum;
-    lastCommittedBlock = findLastCommittedBlock();
-    firstArchivedBlock = findFirstCommittedBlock();
   }
 
   @Override
@@ -234,6 +282,10 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
       return;
     }
     ArchiveBlockRange range = blockRanges.get(lastCommittedBlock);
+    if (range == null) {
+      throw new ArchiveException("archive head block " + lastCommittedBlock
+          + " is no longer retained in memory");
+    }
     if (range.getBlockNum() != headNum) {
       throw new ArchiveException("archive head block " + range.getBlockNum()
           + " does not match canonical head block " + headNum);
