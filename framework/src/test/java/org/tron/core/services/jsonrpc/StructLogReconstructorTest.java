@@ -5,7 +5,10 @@ import static org.junit.Assert.assertTrue;
 
 import java.math.BigInteger;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import org.bouncycastle.util.encoders.Hex;
 import org.junit.Test;
 import org.tron.common.runtime.vm.DataWord;
 import org.tron.core.services.jsonrpc.types.StructLog;
@@ -55,6 +58,18 @@ public class StructLogReconstructorTest {
     assertEquals(0L, logs.get(3).getGasCost());
   }
 
+  @Test
+  public void legacyOddLengthMemoryWriteIsPaddedInsteadOfCrashing() {
+    ProgramTrace trace = new ProgramTrace();
+    trace.setOps(Arrays.asList(op(0x00, 0, 0, 1000L, legacyMemoryWrite("a"))));
+
+    List<StructLog> logs = StructLogReconstructor.reconstruct(trace);
+
+    byte[] expected = new byte[32];
+    expected[0] = (byte) 0xa0;
+    assertEquals(Hex.toHexString(expected), logs.get(0).getMemory().get(0));
+  }
+
   private static org.tron.core.vm.trace.Op op(int code, int pc, int deep, long energy,
       OpActions actions) {
     org.tron.core.vm.trace.Op op = new org.tron.core.vm.trace.Op();
@@ -80,6 +95,18 @@ public class StructLogReconstructorTest {
   private static OpActions push(long value) {
     OpActions actions = new OpActions();
     actions.addStackPush(new DataWord(value));
+    return actions;
+  }
+
+  private static OpActions legacyMemoryWrite(String data) {
+    OpActions.Action write = new OpActions.Action();
+    write.setName(OpActions.Action.Name.write);
+    Map<String, Object> params = new HashMap<>();
+    params.put("address", "0");
+    params.put("data", data);
+    write.setParams(params);
+    OpActions actions = new OpActions();
+    actions.setMemory(Arrays.asList(write));
     return actions;
   }
 

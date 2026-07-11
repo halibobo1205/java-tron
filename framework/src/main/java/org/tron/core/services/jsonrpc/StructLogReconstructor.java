@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.bouncycastle.util.encoders.DecoderException;
 import org.bouncycastle.util.encoders.Hex;
 import org.tron.common.math.StrictMathWrapper;
 import org.tron.core.services.jsonrpc.types.StructLog;
@@ -28,9 +29,9 @@ import org.tron.core.vm.trace.ProgramTrace;
  * <ul>
  *   <li>{@code storage} reflects WRITE-touched slots only (put/remove); the native tracer does not
  *       capture SLOAD reads, so a read-only slot never appears.</li>
- *   <li>{@code memory} is rebuilt from the recorded write deltas, whose {@code data} field is the
- *       hex the native tracer captured for that write; large writes may be truncated by the tracer
- *       (a pre-existing native-tracer property), so memory is best-effort, not byte-exact.</li>
+ *   <li>{@code memory} is rebuilt from recorded write deltas. Legacy odd-nibble deltas are padded
+ *       and malformed deltas are ignored, so traces produced by older nodes remain
+ *       best-effort.</li>
  *   <li>{@code gasCost} uses the native per-op energy cost when available, falling back to the
  *       drop in remaining energy to the next same-frame op for legacy traces.</li>
  * </ul>
@@ -149,7 +150,10 @@ public final class StructLogReconstructor {
         break;
       case write:
         int address = Integer.parseInt(param(a, "address"));
-        byte[] data = Hex.decode(param(a, "data"));
+        byte[] data = decodeMemoryData(param(a, "data"));
+        if (data.length == 0) {
+          return;
+        }
         ensureCapacity(memory, address + data.length);
         for (int k = 0; k < data.length; k++) {
           memory.set(address + k, data[k]);
@@ -181,6 +185,17 @@ public final class StructLogReconstructor {
   private static void ensureCapacity(List<Byte> memory, int minSize) {
     while (memory.size() < minSize) {
       memory.add((byte) 0);
+    }
+  }
+
+  private static byte[] decodeMemoryData(String encoded) {
+    // Old OpActions treated byte count as hex-char count. MSTORE8 therefore emitted one nibble;
+    // pad on the right because the old truncation removed trailing nibbles.
+    String normalized = (encoded.length() & 1) == 0 ? encoded : encoded + "0";
+    try {
+      return Hex.decode(normalized);
+    } catch (DecoderException e) {
+      return new byte[0];
     }
   }
 

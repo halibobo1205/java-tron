@@ -109,22 +109,33 @@ public class Storage {
           ArchiveCaptureHolder.requireCurrentTx("contractStorageCommit");
         }
         boolean zero = new DataWord(row.getValue()).isZero();
-        // Read the slot's pre-write value (Erigon prev-value) before mutating the store; gated so a
-        // non-archive node never does this extra read.
-        byte[] prev = archiveActive ? prevSlotValue(row.getRowKey()) : null;
+        byte[] prev = null;
+        byte[] archiveKey = null;
+        boolean capturePrepared = false;
+        if (archiveActive) {
+          try {
+            archiveKey = ArchiveStorageKeyCodec.contractStorageKey(
+                address, rowKey.getData(), trxHash, contractVersion);
+            // Read the Erigon prev-value before mutating the store. Preparation failures must not
+            // alter canonical VM execution; the archive commit will fail closed instead.
+            prev = prevSlotValue(row.getRowKey());
+            capturePrepared = true;
+          } catch (Exception e) {
+            ArchiveCaptureHolder.recordFailure("contractStoragePrepare", e);
+          }
+        }
         if (zero) {
           this.store.delete(row.getRowKey());
         } else {
           this.store.put(row.getRowKey(), row);
         }
-        if (archiveActive) {
-          byte[] key = ArchiveStorageKeyCodec.contractStorageKey(
-              address, rowKey.getData(), trxHash, contractVersion);
+        if (capturePrepared) {
           if (zero) {
-            ArchiveCaptureHolder.captureSemanticDelete(ArchiveDomain.CONTRACT_STORAGE, key, prev);
+            ArchiveCaptureHolder.captureSemanticDelete(
+                ArchiveDomain.CONTRACT_STORAGE, archiveKey, prev);
           } else {
             ArchiveCaptureHolder.captureSemanticPut(
-                ArchiveDomain.CONTRACT_STORAGE, key, prev, row.getValue());
+                ArchiveDomain.CONTRACT_STORAGE, archiveKey, prev, row.getValue());
           }
         }
       }
