@@ -94,6 +94,7 @@ import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveService;
 import org.tron.core.archive.ArchiveSource;
 import org.tron.core.archive.DefaultArchiveService;
+import org.tron.core.archive.NoopArchiveService;
 import org.tron.core.archive.reader.ArchiveReaderException;
 import org.tron.core.archive.reader.ArchiveStatePoint;
 import org.tron.core.archive.reader.ArchiveStateReader;
@@ -212,7 +213,7 @@ public class Manager {
   @Autowired
   private RevokingDatabase revokingStore;
   @Autowired
-  private ArchiveService archiveService;
+  private ArchiveService archiveService = NoopArchiveService.INSTANCE;
   @Getter
   private SessionOptional session = SessionOptional.instance();
   @Getter
