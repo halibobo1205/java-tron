@@ -301,6 +301,17 @@ public class DefaultArchiveServiceTest {
     service.commitBlock(block);
   }
 
+  private static void commitAccountChangeBlock(DefaultArchiveService service, BlockCapsule block,
+      byte[] addr, byte[] oldAccount, byte[] newAccount) {
+    service.beginBlock(block, ArchiveSource.NORMAL);
+    service.beginSystemTx(block, ArchivePhase.BLOCK_PREPARE);
+    service.endTx();
+    service.beginSystemTx(block, ArchivePhase.BLOCK_FINALIZE);
+    service.getCaptureEngine().capturePut("account", addr, oldAccount, newAccount);
+    service.endTx();
+    service.commitBlock(block);
+  }
+
   private static DefaultArchiveService serviceWithInFlightStore(ArchiveTxNumIndex index,
       ArchiveExecutionContext context, ArchiveTemporalStore temporal,
       ArchiveInFlightStore inFlightStore) {
@@ -481,6 +492,40 @@ public class DefaultArchiveServiceTest {
         .open(ArchiveStatePoint.blockEnd(5, range.getBlockHash(), range.getFinalizeTxNum()))
         .getAccount(addr);
 
+    assertEquals(ArchiveReadResult.Status.PRESENT, result.getStatus());
+    assertEquals(10, result.getValue().getBalance());
+  }
+
+  @Test
+  public void readThroughReturnsEarliestPrevAcrossMultipleInFlightBlocks() throws Exception {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    byte[] addr = new byte[21];
+    addr[0] = 0x41;
+    // No live-head value: only the in-flight chain can answer.
+    ArchiveReadThrough liveReadThrough = (domain, key, point) -> Optional.empty();
+    DefaultArchiveService service = serviceWithReadThrough(
+        index, context, temporal, inFlightStore, liveReadThrough);
+
+    BlockCapsule published = blockWithParentSeed(5, (byte) 5);
+    commitEmptyBlock(service, published);
+    service.publishSolidifiedBlocks(5);
+    ArchiveBlockRange range = index.getBlockRange(5).orElseThrow(AssertionError::new);
+
+    // Two UNPUBLISHED in-flight blocks change the same account: b6 (10->20), b7 (20->30).
+    commitAccountChangeBlock(service, blockWithParentSeed(6, (byte) 6), addr,
+        account(10), account(20));
+    commitAccountChangeBlock(service, blockWithParentSeed(7, (byte) 7), addr,
+        account(20), account(30));
+
+    ArchiveReadResult<AccountCapsule> result = service.getReaderFactory()
+        .open(ArchiveStatePoint.blockEnd(5, range.getBlockHash(), range.getFinalizeTxNum()))
+        .getAccount(addr);
+
+    // At block 5 (before both in-flight changes) the value is the EARLIEST in-flight change's
+    // pre-value (b6's 10) -- NOT b7's pre-value (20) and not a temporal miss.
     assertEquals(ArchiveReadResult.Status.PRESENT, result.getStatus());
     assertEquals(10, result.getValue().getBalance());
   }
@@ -740,6 +785,44 @@ public class DefaultArchiveServiceTest {
 
     assertTrue(ex.getMessage().contains("not archive in-flight head"));
     assertEquals(2, inFlightStore.loadBlocks().size());
+  }
+
+  @Test
+  public void sequentialUnwindOfInFlightHeadsRewindsAllocatorForReorg() throws Exception {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    ArchiveExecutionContext context = new ArchiveExecutionContext();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, context, temporal, inFlightStore);
+    byte[] addr = new byte[21];
+    addr[0] = 0x41;
+
+    // Three unpublished in-flight blocks change A: b5 created->10, b6 10->20, b7 20->30.
+    BlockCapsule b5 = blockWithParentSeed(5, (byte) 5);
+    BlockCapsule b6 = blockWithParentSeed(6, (byte) 6);
+    BlockCapsule b7 = blockWithParentSeed(7, (byte) 7);
+    commitAccountChangeBlock(service, b5, addr, null, account(10));
+    commitAccountChangeBlock(service, b6, addr, account(10), account(20));
+    commitAccountChangeBlock(service, b7, addr, account(20), account(30));
+    assertEquals(3, inFlightStore.loadBlocks().size());
+
+    // Reorg: unwind b7 then b6 back-to-back (each is the in-flight head after the prior drop).
+    service.unwindBlock(b7);
+    service.unwindBlock(b6);
+    assertEquals(1, inFlightStore.loadBlocks().size());
+
+    // The execution txNum allocator rewound to b5's last txNum: a replacement b6' commits WITHOUT a
+    // "non-contiguous in-flight txNum" error (would throw here if the allocator were stale).
+    BlockCapsule b6prime = blockWithParentSeed(6, (byte) 0x60);
+    commitAccountChangeBlock(service, b6prime, addr, account(10), account(40));
+    service.publishSolidifiedBlocks(6);
+
+    // Published latest reflects the replacement (40), not the reorged-away b7 value (30).
+    assertEquals(40, Account.parseFrom(
+        temporal.latest(ArchiveDomain.ACCOUNT, addr).orElseThrow(AssertionError::new).getValue())
+        .getBalance());
+    service.validateAvailable();
   }
 
   @Test
