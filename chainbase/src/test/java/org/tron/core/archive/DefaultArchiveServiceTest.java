@@ -723,6 +723,29 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
+  public void inFlightBufferCapFailStopsRunawayBacklog() {
+    // The committed-not-solidified in-flight buffer is bounded: once it reaches the cap (nothing
+    // solidifying to drain it), the next commit fail-stops instead of growing without limit.
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    service.setMaxInFlightBlocksForTest(2);
+    try {
+      commitEmptyBlock(service, blockWithParentSeed(5, (byte) 5));  // in-flight size 1
+      commitEmptyBlock(service, blockWithParentSeed(6, (byte) 6));  // in-flight size 2 (at cap)
+
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> commitEmptyBlock(service, blockWithParentSeed(7, (byte) 7)));
+      assertTrue(ex.getMessage().contains("in-flight buffer reached its cap"));
+      assertThrows(ArchiveException.class, service::validateAvailable);  // fail-stopped
+    } finally {
+      service.close();
+    }
+  }
+
+  @Test
   public void startupReconcileRejectsCanonicalParentMismatch() {
     InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
     InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();

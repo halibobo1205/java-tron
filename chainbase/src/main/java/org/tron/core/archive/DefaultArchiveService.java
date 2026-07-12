@@ -70,6 +70,12 @@ public final class DefaultArchiveService implements ArchiveService {
   // in-flight block and record. Maintained in lock-step with inFlightLatest (same write lock).
   private final Map<WrappedByteArray, NavigableMap<Long, DomainValue>> inFlightPrevByKey =
       new HashMap<>();
+  // Defensive backstop on the committed-not-solidified in-flight buffer. Healthy DPoS
+  // solidification lags the head by tens of blocks; this cap sits far above any legitimate lag and
+  // only fires if solidification stalls while the head keeps advancing -- so the node fail-stops
+  // instead of OOMing.
+  static final int DEFAULT_MAX_IN_FLIGHT_BLOCKS = 65_536;
+  private int maxInFlightBlocks = DEFAULT_MAX_IN_FLIGHT_BLOCKS;
   private volatile RuntimeException fatalFailure;
 
   public DefaultArchiveService(boolean enabled) {
@@ -608,8 +614,17 @@ public final class DefaultArchiveService implements ArchiveService {
     applyInFlightLatest(block);
   }
 
+  // Test-only: shrink the in-flight cap so the fail-stop can be exercised without 65k real blocks.
+  void setMaxInFlightBlocksForTest(int max) {
+    this.maxInFlightBlocks = max;
+  }
+
   private void validateInFlightAppend(ArchiveInFlightBlock block) {
     long blockNum = block.getRange().getBlockNum();
+    if (inFlightBlocks.size() >= maxInFlightBlocks) {
+      throw new ArchiveException("archive in-flight buffer reached its cap of " + maxInFlightBlocks
+          + " committed-not-solidified blocks; refusing to append block " + blockNum);
+    }
     if (inFlightBlocks.containsKey(blockNum)) {
       throw new ArchiveException("archive in-flight block already exists for block "
           + blockNum);
