@@ -11,10 +11,12 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
+import java.util.NavigableSet;
 import java.util.Optional;
 import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
+import java.util.TreeSet;
 import org.tron.common.math.StrictMathWrapper;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
@@ -46,6 +48,11 @@ public final class InMemoryArchiveTemporalStore implements ArchiveTemporalStore 
 
   private final Map<ArchiveDomain, Map<WrappedByteArray, KeyState>>
       byDomain = new EnumMap<>(ArchiveDomain.class);
+
+  // Committed block numbers, including empty blocks (which leave no history row). The temporal head
+  // is the maximum committed block; tracking it lets unwindBlock reject a non-head range even when
+  // the true head block changed no state -- matching RocksDb's block-commit-marker head guard.
+  private final NavigableSet<Long> committedBlockNums = new TreeSet<>();
 
   @Override
   public void putChange(ArchiveChangeRecord record) {
@@ -83,6 +90,8 @@ public final class InMemoryArchiveTemporalStore implements ArchiveTemporalStore 
     for (ArchiveChangeRecord record : ordered) {
       putChange(record);
     }
+    // Record the block even when it wrote no state, so an empty head block is still the head.
+    committedBlockNums.add(range.getBlockNum());
   }
 
   private void validatePrevValueChain(List<ArchiveChangeRecord> ordered) {
@@ -172,6 +181,7 @@ public final class InMemoryArchiveTemporalStore implements ArchiveTemporalStore 
     }
     if (fromTxNum == 0) {
       byDomain.clear();
+      committedBlockNums.clear();
       return;
     }
     for (Map<WrappedByteArray, KeyState> domainMap : byDomain.values()) {
@@ -195,32 +205,17 @@ public final class InMemoryArchiveTemporalStore implements ArchiveTemporalStore 
   @Override
   public void unwindBlock(ArchiveBlockRange range) {
     // Parity with RocksDbArchiveTemporalStore.unwindBlock: only the temporal head block may be
-    // unwound. The interface default is unbounded -- unwind(firstTxNum) drops every change at or
-    // above firstTxNum, which for a NON-head range would silently discard higher/head blocks that
-    // the fail-stop RocksDb path (validateHeadBlock) instead rejects with state intact. Guard here
-    // so the two stores stay observationally identical (ArchiveTemporalStore contract).
-    long headTxNum = maxHistoryTxNum();
-    if (headTxNum > range.getLastTxNum()) {
+    // unwound. The head is the maximum COMMITTED block (committedBlockNums), NOT the max history
+    // txNum -- an empty head block leaves no history row, so a txNum-only guard would miss it and
+    // wrongly accept unwinding a lower block. The unbounded interface default would then silently
+    // discard higher/head blocks that the fail-stop RocksDb path (validateHeadBlock) rejects with
+    // state intact. Guard so the two stores stay observationally identical.
+    if (!committedBlockNums.isEmpty() && committedBlockNums.last() != range.getBlockNum()) {
       throw new ArchiveException("cannot unwind archive temporal block " + range.getBlockNum()
           + ": not temporal head");
     }
     unwind(range.getFirstTxNum());
-  }
-
-  /** Highest txNum retained across all history rows, or -1 when the store holds no changes. */
-  private long maxHistoryTxNum() {
-    long max = -1L;
-    for (Map<WrappedByteArray, KeyState> domainMap : byDomain.values()) {
-      for (KeyState state : domainMap.values()) {
-        if (!state.history.isEmpty()) {
-          long last = state.history.lastKey();
-          if (last > max) {
-            max = last;
-          }
-        }
-      }
-    }
-    return max;
+    committedBlockNums.remove(range.getBlockNum());
   }
 
   /** Total number of txNum history entries across all domains/keys; for diagnostics and tests. */

@@ -7,6 +7,7 @@ import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import java.util.Arrays;
+import java.util.Collections;
 import org.junit.Test;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchivePhase;
@@ -243,6 +244,23 @@ public class InMemoryArchiveTemporalStoreTest {
     assertArrayEquals(new byte[] {0x0A}, store.latest(ArchiveDomain.ACCOUNT, KEY).get().getValue());
     assertArrayEquals(new byte[] {0x0A}, asOf(100));
     assertEquals(1, store.changeCount());
+  }
+
+  @Test
+  public void unwindBlockRejectsNonHeadWhenHeadBlockIsEmpty() {
+    // An empty head block leaves no history row; the head guard must still recognise it via the
+    // committed-block set and reject unwinding the lower block, matching RocksDb's block markers.
+    ArchiveBlockRange b3 = new ArchiveBlockRange(
+        3, 10, 11, 10, 11, new byte[32], 0, ArchiveSource.NORMAL);
+    ArchiveBlockRange b4empty = new ArchiveBlockRange(
+        4, 12, 13, 12, 13, new byte[32], 0, ArchiveSource.NORMAL);
+    store.putBlockChanges(b3, Arrays.asList(changeAt(10, 3, KEY, tomb(), val(0x0A))));
+    store.putBlockChanges(b4empty, Collections.emptyList());   // empty head block, no history row
+
+    ArchiveException ex = assertThrows(ArchiveException.class, () -> store.unwindBlock(b3));
+
+    assertTrue(ex.getMessage().contains("not temporal head"));
+    assertArrayEquals(new byte[] {0x0A}, store.latest(ArchiveDomain.ACCOUNT, KEY).get().getValue());
   }
 
   @Test
