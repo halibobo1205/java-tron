@@ -3,6 +3,7 @@ package org.tron.core.archive;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
@@ -29,6 +30,7 @@ import org.tron.core.archive.reader.ArchiveReadResult;
 import org.tron.core.archive.reader.ArchiveReaderException;
 import org.tron.core.archive.reader.ArchiveReadThrough;
 import org.tron.core.archive.reader.ArchiveStatePoint;
+import org.tron.core.archive.reader.ArchiveStateReader;
 import org.tron.core.archive.temporal.ArchiveTemporalStore;
 import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
@@ -740,6 +742,35 @@ public class DefaultArchiveServiceTest {
           () -> commitEmptyBlock(service, blockWithParentSeed(7, (byte) 7)));
       assertTrue(ex.getMessage().contains("in-flight buffer reached its cap"));
       assertThrows(ArchiveException.class, service::validateAvailable);  // fail-stopped
+    } finally {
+      service.close();
+    }
+  }
+
+  @Test
+  public void openReaderGenesisCompleteReleasesLockAfterSnapshot() throws Exception {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    try {
+      BlockCapsule b0 = blockWithParentSeed(0, (byte) 0);
+      commitEmptyBlock(service, b0);
+      service.publishSolidifiedBlocks(0);
+      assertEquals(0L, index.getFirstArchivedBlock());  // genesis-complete
+
+      ArchiveBlockRange range = index.getBlockRange(0).get();
+      ArchiveStatePoint point = ArchiveStatePoint.blockEnd(
+          0, b0.getBlockId().getBytes(), range.getFinalizeTxNum());
+
+      try (ArchiveStateReader reader = service.openReader(point)) {
+        assertSame(point, reader.getPoint());
+        // Genesis-complete releases the read lock once the snapshot is captured, so the SAME thread
+        // can acquire the write lock to commit another block -- a deadlock if the read lock were
+        // still held for the reader's whole lifetime (as it is on the mid-chain path).
+        commitEmptyBlock(service, blockWithParentSeed(1, (byte) 1));
+      }
     } finally {
       service.close();
     }

@@ -1,6 +1,9 @@
 package org.tron.core.archive;
 
 import java.util.function.LongFunction;
+import org.tron.core.archive.reader.ArchiveReaderException;
+import org.tron.core.archive.reader.ArchiveStatePoint;
+import org.tron.core.archive.reader.ArchiveStateReader;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
 
@@ -81,6 +84,16 @@ public interface ArchiveService {
   default ReadGuard acquireReadGuard() {
     return () -> {
     };
+  }
+
+  /**
+   * Open a reader for a historical point. An enabled archive returns a reader that either holds a
+   * consistent snapshot (genesis-complete, lock released for the reader's lifetime) or holds the
+   * read lock until closed (mid-chain). The reader MUST be closed. Disabled stubs reject the call.
+   */
+  default ArchiveStateReader openReader(ArchiveStatePoint point) throws ArchiveReaderException {
+    throw new ArchiveReaderException(ArchiveReaderException.Reason.ARCHIVE_DISABLED,
+        "archive is not enabled");
   }
 
   /** True when this sidecar has a committed archive range for {@code blockNum}. */
