@@ -64,6 +64,31 @@ public interface ArchiveTemporalStore {
   Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey);
 
   /**
+   * Open an isolated, point-in-time read view for {@code getAsOf} / {@code latest}. Real stores
+   * override this with a true snapshot (RocksDB snapshot or in-memory copy) so a read can run after
+   * the archive lock is released. This default is a non-isolated pass-through, kept
+   * only so lightweight test stubs compile; production stores must override it.
+   */
+  default ArchiveTemporalReadView openReadView() {
+    ArchiveTemporalStore self = this;
+    return new ArchiveTemporalReadView() {
+      @Override
+      public Optional<DomainValue> getAsOf(ArchiveDomain domain, byte[] canonicalKey, long txNum) {
+        return self.getAsOf(domain, canonicalKey, txNum);
+      }
+
+      @Override
+      public Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey) {
+        return self.latest(domain, canonicalKey);
+      }
+
+      @Override
+      public void close() {
+      }
+    };
+  }
+
+  /**
    * Drop every change with {@code txNum >= fromTxNum}. If an affected key still has older canonical
    * history, restore latest to the prevValue of its smallest dropped change (= that key's value at
    * the end of {@code fromTxNum - 1}). A partial unwind retains that restored value as a baseline,
