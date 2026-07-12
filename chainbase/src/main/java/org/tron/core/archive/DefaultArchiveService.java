@@ -30,7 +30,9 @@ import org.tron.core.archive.reader.ArchiveReaderException;
 import org.tron.core.archive.reader.ArchiveReadThrough;
 import org.tron.core.archive.reader.ArchiveStateReaderFactory;
 import org.tron.core.archive.reader.ArchiveStatePoint;
+import org.tron.core.archive.reader.ArchiveStateReader;
 import org.tron.core.archive.reader.DefaultArchiveStateReaderFactory;
+import org.tron.core.archive.temporal.ArchiveTemporalReadView;
 import org.tron.core.archive.temporal.ArchiveTemporalStore;
 import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
@@ -59,7 +61,7 @@ public final class DefaultArchiveService implements ArchiveService {
   private final ArchiveCaptureEngine captureEngine;
   private final ArchiveTemporalStore temporalStore;
   private final ArchiveInFlightStore inFlightStore;
-  private final ArchiveStateReaderFactory readerFactory;
+  private final DefaultArchiveStateReaderFactory readerFactory;
   private final ArchiveReadThrough liveReadThrough;
   private final byte[] schemaChecksum;
   private final ReentrantReadWriteLock consistencyLock = new ReentrantReadWriteLock(true);
@@ -850,6 +852,47 @@ public final class DefaultArchiveService implements ArchiveService {
     } catch (RuntimeException e) {
       readLock.unlock();
       throw e;
+    }
+  }
+
+  @Override
+  public ArchiveStateReader openReader(ArchiveStatePoint point) throws ArchiveReaderException {
+    if (!enabled) {
+      throw new ArchiveReaderException(ArchiveReaderException.Reason.ARCHIVE_DISABLED,
+          "archive temporal store is not available");
+    }
+    Lock readLock = consistencyLock.readLock();
+    readLock.lock();
+    boolean lockTransferred = false;
+    try {
+      validateAvailable();
+      ArchiveStateReader reader;
+      if (txNumIndex.getFirstArchivedBlock() == 0L) {
+        // Genesis-complete: freeze temporal reads in a snapshot, release the lock, and let the VM
+        // run against the snapshot -- so a long historical eth_call/trace no longer stalls block
+        // commit. The live/in-flight read-through is gated on firstArchivedBlock > 0, so it is
+        // unused here; the temporal snapshot alone is a complete, consistent view.
+        ArchiveTemporalReadView view = temporalStore.openReadView();
+        try {
+          reader = readerFactory.openSnapshot(point, view);
+        } catch (RuntimeException | ArchiveReaderException e) {
+          view.close();
+          throw e;
+        }
+        readLock.unlock();
+        lockTransferred = true;
+        return reader;
+      }
+      // Mid-chain: the read-through reads the live main DB, consistent only while this
+      // write-blocking lock is held (pushBlock commits the archive before the canonical session).
+      // Keep today's behaviour -- the reader holds the read lock until it is closed.
+      reader = readerFactory.open(point, readLock::unlock);
+      lockTransferred = true;
+      return reader;
+    } finally {
+      if (!lockTransferred) {
+        readLock.unlock();
+      }
     }
   }
 
