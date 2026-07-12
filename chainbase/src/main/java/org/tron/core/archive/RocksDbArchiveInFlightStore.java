@@ -88,6 +88,7 @@ public final class RocksDbArchiveInFlightStore implements ArchiveInFlightStore {
   private static boolean isEmpty(RocksDB db) {
     try (RocksIterator it = db.newIterator()) {
       it.seekToFirst();
+      ArchiveRocksIterators.requireOk(it, "isEmpty: scan in-flight store for any row");
       return !it.isValid();
     }
   }
@@ -118,6 +119,7 @@ public final class RocksDbArchiveInFlightStore implements ArchiveInFlightStore {
         }
         it.next();
       }
+      ArchiveRocksIterators.requireOk(it, "validateCurrentKeyspace: scan in-flight keyspace");
     }
   }
 
@@ -138,6 +140,7 @@ public final class RocksDbArchiveInFlightStore implements ArchiveInFlightStore {
         blocks.add(block);
         it.next();
       }
+      ArchiveRocksIterators.requireOk(it, "loadBlocks: scan in-flight blocks");
       return blocks;
     }
   }
