@@ -35,6 +35,9 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
   private final ArchiveReadThrough readThrough;
   private final DynamicKeyPolicy dynamicKeyPolicy = new DynamicKeyPolicy();
   private final ArchiveStatePoint point;
+  // Runs on close() after the view is released -- e.g. releases the archive read lock a mid-chain
+  // reader holds for its lifetime. A no-op for a snapshot reader (the lock was already released).
+  private final Runnable onClose;
 
   DefaultArchiveStateReader(ArchiveTemporalStore temporalStore,
       ArchiveDomainCatalog catalog, ArchiveStatePoint point) {
@@ -49,10 +52,17 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
 
   DefaultArchiveStateReader(ArchiveTemporalReadView temporalView,
       ArchiveDomainCatalog catalog, ArchiveStatePoint point, ArchiveReadThrough readThrough) {
+    this(temporalView, catalog, point, readThrough, () -> {
+    });
+  }
+
+  DefaultArchiveStateReader(ArchiveTemporalReadView temporalView, ArchiveDomainCatalog catalog,
+      ArchiveStatePoint point, ArchiveReadThrough readThrough, Runnable onClose) {
     this.temporalView = temporalView;
     this.catalog = catalog;
     this.point = point;
     this.readThrough = readThrough == null ? ArchiveReadThrough.NONE : readThrough;
+    this.onClose = onClose;
   }
 
   @Override
@@ -215,8 +225,12 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
 
   @Override
   public void close() {
-    // Release the temporal read view: a no-op for a live pass-through, or the RocksDB snapshot for
-    // a snapshot-backed reader (so held SST files are unpinned).
-    temporalView.close();
+    // Release the temporal read view (a no-op for a live pass-through, or the RocksDB snapshot for
+    // a snapshot reader), then run onClose (e.g. release the read lock a mid-chain reader held).
+    try {
+      temporalView.close();
+    } finally {
+      onClose.run();
+    }
   }
 }

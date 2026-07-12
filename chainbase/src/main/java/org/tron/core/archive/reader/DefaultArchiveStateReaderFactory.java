@@ -2,6 +2,7 @@ package org.tron.core.archive.reader;
 
 import java.util.Arrays;
 import org.tron.core.archive.domain.ArchiveDomainCatalog;
+import org.tron.core.archive.temporal.ArchiveTemporalReadView;
 import org.tron.core.archive.temporal.ArchiveTemporalStore;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.archive.txnum.ArchiveTxNumIndex;
@@ -41,6 +42,33 @@ public final class DefaultArchiveStateReaderFactory implements ArchiveStateReade
 
   @Override
   public ArchiveStateReader open(ArchiveStatePoint point) throws ArchiveReaderException {
+    validateOpenable(point);
+    return new DefaultArchiveStateReader(temporalStore, catalog, point, readThrough);
+  }
+
+  /**
+   * Open a live reader whose {@code close()} additionally runs {@code onClose} (used to release the
+   * archive read lock a mid-chain reader holds for its lifetime).
+   */
+  public ArchiveStateReader open(ArchiveStatePoint point, Runnable onClose)
+      throws ArchiveReaderException {
+    validateOpenable(point);
+    return new DefaultArchiveStateReader(ArchiveTemporalReadView.passThrough(temporalStore),
+        catalog, point, readThrough, onClose);
+  }
+
+  /**
+   * Open a reader bound to a pre-captured temporal snapshot {@code view} (genesis-complete path).
+   * The live read-through is gated on {@code firstArchivedBlock > 0}, so it is unused here and the
+   * temporal snapshot alone is a complete, consistent view; {@code view.close()} releases it.
+   */
+  public ArchiveStateReader openSnapshot(ArchiveStatePoint point, ArchiveTemporalReadView view)
+      throws ArchiveReaderException {
+    validateOpenable(point);
+    return new DefaultArchiveStateReader(view, catalog, point, ArchiveReadThrough.NONE);
+  }
+
+  private void validateOpenable(ArchiveStatePoint point) throws ArchiveReaderException {
     if (temporalStore == null) {
       throw new ArchiveReaderException(ArchiveReaderException.Reason.ARCHIVE_DISABLED,
           "archive temporal store is not available");
@@ -50,7 +78,6 @@ public final class DefaultArchiveStateReaderFactory implements ArchiveStateReade
           "no resolved archive state point");
     }
     validatePoint(point);
-    return new DefaultArchiveStateReader(temporalStore, catalog, point, readThrough);
   }
 
   private void validatePoint(ArchiveStatePoint point) throws ArchiveReaderException {
