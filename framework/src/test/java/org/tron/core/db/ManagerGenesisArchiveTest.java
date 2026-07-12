@@ -47,7 +47,7 @@ public class ManagerGenesisArchiveTest {
   }
 
   @Test
-  public void initGenesisRejectsExistingGenesisWithoutArchiveBlockZero() {
+  public void genesisArchiveCoverageRejectsExistingGenesisWithoutArchiveBlockZero() {
     Manager manager = new Manager();
     ChainBaseManager chainBaseManager = mock(ChainBaseManager.class);
     ArchiveService archiveService = mock(ArchiveService.class);
@@ -62,14 +62,14 @@ public class ManagerGenesisArchiveTest {
     ReflectUtils.setFieldValue(manager, "chainBaseManager", chainBaseManager);
     ReflectUtils.setFieldValue(manager, "archiveService", archiveService);
 
-    TronError error = assertThrows(TronError.class, manager::initGenesis);
+    TronError error = assertThrows(TronError.class, manager::validateGenesisArchiveCoverage);
 
     assertEquals(TronError.ErrCode.GENESIS_BLOCK_INIT, error.getErrCode());
     assertTrue(error.getMessage().contains("genesis block was not captured"));
   }
 
   @Test
-  public void initGenesisRejectsGenesisArchiveMissingVmDynamicRows() {
+  public void genesisArchiveCoverageRejectsMissingVmDynamicRows() {
     Manager manager = new Manager();
     ChainBaseManager chainBaseManager = mock(ChainBaseManager.class);
     DynamicPropertiesStore dynamicPropertiesStore = mock(DynamicPropertiesStore.class);
@@ -88,7 +88,7 @@ public class ManagerGenesisArchiveTest {
       ReflectUtils.setFieldValue(manager, "chainBaseManager", chainBaseManager);
       ReflectUtils.setFieldValue(manager, "archiveService", archiveService);
 
-      TronError error = assertThrows(TronError.class, manager::initGenesis);
+      TronError error = assertThrows(TronError.class, manager::validateGenesisArchiveCoverage);
 
       assertEquals(TronError.ErrCode.GENESIS_BLOCK_INIT, error.getErrCode());
       assertTrue(error.getMessage().contains("genesis VM dynamic properties are incomplete"));
@@ -98,7 +98,7 @@ public class ManagerGenesisArchiveTest {
   }
 
   @Test
-  public void initGenesisRejectsGenesisArchiveMissingVmRowsAfterHeadAdvances() {
+  public void genesisArchiveCoverageRejectsMissingVmRowsAfterHeadAdvances() {
     Manager manager = new Manager();
     ChainBaseManager chainBaseManager = mock(ChainBaseManager.class);
     DynamicPropertiesStore dynamicPropertiesStore = mock(DynamicPropertiesStore.class);
@@ -117,7 +117,7 @@ public class ManagerGenesisArchiveTest {
       ReflectUtils.setFieldValue(manager, "chainBaseManager", chainBaseManager);
       ReflectUtils.setFieldValue(manager, "archiveService", archiveService);
 
-      TronError error = assertThrows(TronError.class, manager::initGenesis);
+      TronError error = assertThrows(TronError.class, manager::validateGenesisArchiveCoverage);
 
       assertEquals(TronError.ErrCode.GENESIS_BLOCK_INIT, error.getErrCode());
       assertTrue(error.getMessage().contains("genesis VM dynamic properties are incomplete"));
