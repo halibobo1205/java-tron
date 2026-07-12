@@ -192,6 +192,28 @@ public class ArchiveTemporalStoreConsistencyTest {
     assertParity(K1, 15);
   }
 
+  @Test
+  public void readViewIsIsolatedFromWritesAfterItOpensInBothStores() {
+    // K1 created at tx2 (0x0A). Open a read view on each store, THEN move K1 to 0x0B at tx5. Live
+    // reads must see 0x0B; the views must keep returning the snapshot-time 0x0A -- RocksDb via a
+    // real snapshot, InMemory via a deep copy. This is what lets a VM run after the lock releases.
+    put(2, K1, DomainValue.tombstone(), val(0x0A));
+
+    try (ArchiveTemporalReadView memView = mem.openReadView();
+        ArchiveTemporalReadView rocksView = rocks.openReadView()) {
+      put(5, K1, val(0x0A), val(0x0B));
+
+      assertTrue(Arrays.equals(new byte[] {0x0B}, mem.latest(DOMAIN, K1).get().getValue()));
+      assertTrue(Arrays.equals(new byte[] {0x0B}, rocks.latest(DOMAIN, K1).get().getValue()));
+      assertTrue(Arrays.equals(new byte[] {0x0A}, memView.latest(DOMAIN, K1).get().getValue()));
+      assertTrue(Arrays.equals(new byte[] {0x0A}, rocksView.latest(DOMAIN, K1).get().getValue()));
+      assertTrue(Arrays.equals(new byte[] {0x0A},
+          memView.getAsOf(DOMAIN, K1, 100).get().getValue()));
+      assertTrue(Arrays.equals(new byte[] {0x0A},
+          rocksView.getAsOf(DOMAIN, K1, 100).get().getValue()));
+    }
+  }
+
   private static void deleteRecursively(File f) {
     File[] children = f.listFiles();
     if (children != null) {

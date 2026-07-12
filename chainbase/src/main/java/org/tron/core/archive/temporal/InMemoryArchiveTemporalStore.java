@@ -152,10 +152,43 @@ public final class InMemoryArchiveTemporalStore implements ArchiveTemporalStore 
 
   @Override
   public Optional<DomainValue> getAsOf(ArchiveDomain domain, byte[] canonicalKey, long txNum) {
+    return resolveAsOf(byDomain, domain, canonicalKey, txNum);
+  }
+
+  @Override
+  public Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey) {
+    return resolveLatest(byDomain, domain, canonicalKey);
+  }
+
+  @Override
+  public ArchiveTemporalReadView openReadView() {
+    // Isolated point-in-time view over a deep copy of the in-memory state (test-only store, so the
+    // copy cost is irrelevant); later store mutations create new entries and never touch the copy.
+    Map<ArchiveDomain, Map<WrappedByteArray, KeyState>> snapshot = deepCopy(byDomain);
+    return new ArchiveTemporalReadView() {
+      @Override
+      public Optional<DomainValue> getAsOf(ArchiveDomain domain, byte[] canonicalKey, long txNum) {
+        return resolveAsOf(snapshot, domain, canonicalKey, txNum);
+      }
+
+      @Override
+      public Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey) {
+        return resolveLatest(snapshot, domain, canonicalKey);
+      }
+
+      @Override
+      public void close() {
+      }
+    };
+  }
+
+  private static Optional<DomainValue> resolveAsOf(
+      Map<ArchiveDomain, Map<WrappedByteArray, KeyState>> byDomain, ArchiveDomain domain,
+      byte[] canonicalKey, long txNum) {
     if (txNum < 0) {
       throw new ArchiveException("archive temporal txNum must be non-negative");
     }
-    KeyState state = stateOf(domain, canonicalKey);
+    KeyState state = stateOf(byDomain, domain, canonicalKey);
     if (state == null) {
       return Optional.empty();
     }
@@ -168,10 +201,28 @@ public final class InMemoryArchiveTemporalStore implements ArchiveTemporalStore 
     return Optional.ofNullable(state.latest);
   }
 
-  @Override
-  public Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey) {
-    KeyState state = stateOf(domain, canonicalKey);
+  private static Optional<DomainValue> resolveLatest(
+      Map<ArchiveDomain, Map<WrappedByteArray, KeyState>> byDomain, ArchiveDomain domain,
+      byte[] canonicalKey) {
+    KeyState state = stateOf(byDomain, domain, canonicalKey);
     return Optional.ofNullable(state == null ? null : state.latest);
+  }
+
+  private static Map<ArchiveDomain, Map<WrappedByteArray, KeyState>> deepCopy(
+      Map<ArchiveDomain, Map<WrappedByteArray, KeyState>> src) {
+    Map<ArchiveDomain, Map<WrappedByteArray, KeyState>> copy = new EnumMap<>(ArchiveDomain.class);
+    for (Map.Entry<ArchiveDomain, Map<WrappedByteArray, KeyState>> domainEntry : src.entrySet()) {
+      Map<WrappedByteArray, KeyState> domainCopy = new HashMap<>();
+      for (Map.Entry<WrappedByteArray, KeyState> keyEntry : domainEntry.getValue().entrySet()) {
+        KeyState original = keyEntry.getValue();
+        KeyState clone = new KeyState();
+        clone.history.putAll(original.history);  // DomainValue is immutable, so sharing refs is ok
+        clone.latest = original.latest;
+        domainCopy.put(keyEntry.getKey(), clone);
+      }
+      copy.put(domainEntry.getKey(), domainCopy);
+    }
+    return copy;
   }
 
   @Override
@@ -229,7 +280,8 @@ public final class InMemoryArchiveTemporalStore implements ArchiveTemporalStore 
     return count;
   }
 
-  private KeyState stateOf(ArchiveDomain domain, byte[] canonicalKey) {
+  private static KeyState stateOf(Map<ArchiveDomain, Map<WrappedByteArray, KeyState>> byDomain,
+      ArchiveDomain domain, byte[] canonicalKey) {
     Map<WrappedByteArray, KeyState> domainMap = byDomain.get(domain);
     return (domainMap == null) ? null : domainMap.get(WrappedByteArray.of(canonicalKey));
   }
