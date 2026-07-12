@@ -15,9 +15,11 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.LongPredicate;
 import org.rocksdb.Options;
+import org.rocksdb.ReadOptions;
 import org.rocksdb.RocksDB;
 import org.rocksdb.RocksDBException;
 import org.rocksdb.RocksIterator;
+import org.rocksdb.Snapshot;
 import org.rocksdb.WriteBatch;
 import org.rocksdb.WriteOptions;
 import org.tron.common.math.StrictMathWrapper;
@@ -565,6 +567,12 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
 
   @Override
   public Optional<DomainValue> getAsOf(ArchiveDomain domain, byte[] canonicalKey, long txNum) {
+    return getAsOf(domain, canonicalKey, txNum, null);
+  }
+
+  // readOptions == null -> a live read; a snapshot ReadOptions -> an isolated point-in-time read.
+  private Optional<DomainValue> getAsOf(ArchiveDomain domain, byte[] canonicalKey, long txNum,
+      ReadOptions readOptions) {
     if (txNum < 0) {
       throw new ArchiveException("archive temporal txNum must be non-negative");
     }
@@ -572,7 +580,8 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
     if (txNum != Long.MAX_VALUE) {
       byte[] prefix = ArchiveTemporalCodec.historyPrefix(domain, canonicalKey);
       byte[] seek = ArchiveTemporalCodec.historyKey(domain, canonicalKey, txNum + 1);
-      try (RocksIterator it = db.newIterator()) {
+      try (RocksIterator it = readOptions == null
+          ? db.newIterator() : db.newIterator(readOptions)) {
         it.seek(seek);
         if (it.isValid() && ArchiveTemporalCodec.startsWith(it.key(), prefix)) {
           return Optional.of(ArchiveTemporalCodec.decodeValue(it.value()));
@@ -581,18 +590,60 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
       }
     }
     // No change after txNum: the key has not changed since, so its value then == latest.
-    return latest(domain, canonicalKey);
+    return latest(domain, canonicalKey, readOptions);
   }
 
   @Override
   public Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey) {
+    return latest(domain, canonicalKey, null);
+  }
+
+  private Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey,
+      ReadOptions readOptions) {
     try {
-      byte[] value = db.get(ArchiveTemporalCodec.latestKey(domain, canonicalKey));
+      byte[] key = ArchiveTemporalCodec.latestKey(domain, canonicalKey);
+      byte[] value = readOptions == null ? db.get(key) : db.get(readOptions, key);
       return (value == null)
           ? Optional.empty()
           : Optional.of(ArchiveTemporalCodec.decodeValue(value));
     } catch (RocksDBException e) {
       throw new ArchiveException("archive temporal latest failed", e);
+    }
+  }
+
+  @Override
+  public ArchiveTemporalReadView openReadView() {
+    // Pin a consistent point-in-time; getAsOf/latest below read through the snapshot ReadOptions.
+    Snapshot snapshot = db.getSnapshot();
+    ReadOptions readOptions = new ReadOptions().setSnapshot(snapshot);
+    return new SnapshotReadView(snapshot, readOptions);
+  }
+
+  private final class SnapshotReadView implements ArchiveTemporalReadView {
+
+    private final Snapshot snapshot;
+    private final ReadOptions readOptions;
+
+    private SnapshotReadView(Snapshot snapshot, ReadOptions readOptions) {
+      this.snapshot = snapshot;
+      this.readOptions = readOptions;
+    }
+
+    @Override
+    public Optional<DomainValue> getAsOf(ArchiveDomain domain, byte[] canonicalKey, long txNum) {
+      return RocksDbArchiveTemporalStore.this.getAsOf(domain, canonicalKey, txNum, readOptions);
+    }
+
+    @Override
+    public Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey) {
+      return RocksDbArchiveTemporalStore.this.latest(domain, canonicalKey, readOptions);
+    }
+
+    @Override
+    public void close() {
+      // Release order matters: the ReadOptions references the snapshot.
+      readOptions.close();
+      db.releaseSnapshot(snapshot);
     }
   }
 
