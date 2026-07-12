@@ -9,6 +9,7 @@ import org.tron.core.archive.domain.ArchiveDomainCatalog;
 import org.tron.core.archive.domain.ArchiveDomainDescriptor;
 import org.tron.core.archive.domain.DynamicKeyPolicy;
 import org.tron.core.archive.domain.ReaderPolicy;
+import org.tron.core.archive.temporal.ArchiveTemporalReadView;
 import org.tron.core.archive.temporal.ArchiveTemporalStore;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.ContractCapsule;
@@ -29,7 +30,7 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
   private static final int SLOT_LEN = 32;
   private static final int MAX_STORAGE_VALUE_LEN = 32;
 
-  private final ArchiveTemporalStore temporalStore;
+  private final ArchiveTemporalReadView temporalView;
   private final ArchiveDomainCatalog catalog;
   private final ArchiveReadThrough readThrough;
   private final DynamicKeyPolicy dynamicKeyPolicy = new DynamicKeyPolicy();
@@ -42,7 +43,13 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
 
   DefaultArchiveStateReader(ArchiveTemporalStore temporalStore,
       ArchiveDomainCatalog catalog, ArchiveStatePoint point, ArchiveReadThrough readThrough) {
-    this.temporalStore = temporalStore;
+    // A live-store reader (mid-chain / lock-held path) wraps the store in a pass-through view.
+    this(ArchiveTemporalReadView.passThrough(temporalStore), catalog, point, readThrough);
+  }
+
+  DefaultArchiveStateReader(ArchiveTemporalReadView temporalView,
+      ArchiveDomainCatalog catalog, ArchiveStatePoint point, ArchiveReadThrough readThrough) {
+    this.temporalView = temporalView;
     this.catalog = catalog;
     this.point = point;
     this.readThrough = readThrough == null ? ArchiveReadThrough.NONE : readThrough;
@@ -173,7 +180,7 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
     }
     Optional<DomainValue> stored;
     try {
-      stored = temporalStore.getAsOf(domain, canonicalKey, point.getTxNum());
+      stored = temporalView.getAsOf(domain, canonicalKey, point.getTxNum());
     } catch (RuntimeException e) {
       throw new ArchiveReaderException(ArchiveReaderException.Reason.INTERNAL_IO,
           "archive temporal read failed for " + domain, e);
@@ -208,6 +215,8 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
 
   @Override
   public void close() {
-    // A lightweight view over a shared temporal store; nothing to release per read.
+    // Release the temporal read view: a no-op for a live pass-through, or the RocksDB snapshot for
+    // a snapshot-backed reader (so held SST files are unpinned).
+    temporalView.close();
   }
 }
