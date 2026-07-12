@@ -1,6 +1,7 @@
 package org.tron.core.archive.temporal;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import java.io.File;
@@ -14,11 +15,13 @@ import java.util.Optional;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveSource;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
+import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.archive.txnum.ArchiveTxPosition;
 
 /**
@@ -58,6 +61,18 @@ public class ArchiveTemporalStoreConsistencyTest {
         DOMAIN, key, prev, value);
     mem.putChange(r);
     rocks.putChange(r);
+  }
+
+  private void putBlock(ArchiveBlockRange range, List<ArchiveChangeRecord> records) {
+    mem.putBlockChanges(range, records);
+    rocks.putBlockChanges(range, records);
+  }
+
+  private static ArchiveChangeRecord rec(long txNum, long blockNum, byte[] key, DomainValue prev,
+      DomainValue value) {
+    return new ArchiveChangeRecord(
+        new ArchiveTxPosition(txNum, blockNum, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, null),
+        DOMAIN, key, prev, value);
   }
 
   private static DomainValue val(int b) {
@@ -130,6 +145,33 @@ public class ArchiveTemporalStoreConsistencyTest {
     assertTrue(Arrays.equals(new byte[] {0x0B}, rocks.getAsOf(DOMAIN, K1, 12).get().getValue()));
     // both stores agree at every txNum across the whole create/delete/recreate lifecycle.
     assertParity(K1, 15);
+  }
+
+  @Test
+  public void inMemoryAndRocksAgreeOnUnwindBlockHeadGuardAndHeadUnwind() {
+    // The block-scoped unwind path must also be observationally identical: both stores reject a
+    // NON-head unwindBlock (fail-stop, state intact) and unwind the head block the same way. The
+    // InMemory store head-guards unwindBlock to match RocksDb rather than silently dropping the
+    // higher head block that the unbounded interface default would discard.
+    ArchiveBlockRange b3 = new ArchiveBlockRange(
+        3, 10, 11, 10, 11, new byte[32], 0, ArchiveSource.NORMAL);
+    ArchiveBlockRange b4 = new ArchiveBlockRange(
+        4, 12, 13, 12, 13, new byte[32], 0, ArchiveSource.NORMAL);
+    putBlock(b3, List.of(rec(10, 3, K1, DomainValue.tombstone(), val(0x0A))));
+    putBlock(b4, List.of(rec(12, 4, K1, val(0x0A), val(0x0B))));
+
+    // non-head (b3) rejected by BOTH with the same message; neither store mutates any state.
+    assertTrue(assertThrows(ArchiveException.class, () -> mem.unwindBlock(b3))
+        .getMessage().contains("not temporal head"));
+    assertTrue(assertThrows(ArchiveException.class, () -> rocks.unwindBlock(b3))
+        .getMessage().contains("not temporal head"));
+    assertParity(K1, 15);
+
+    // head (b4) unwound by BOTH: latest reverts to 0x0A (pre-value of tx12) identically.
+    mem.unwindBlock(b4);
+    rocks.unwindBlock(b4);
+    assertParity(K1, 15);
+    assertTrue(Arrays.equals(new byte[] {0x0A}, mem.latest(DOMAIN, K1).get().getValue()));
   }
 
   private static void deleteRecursively(File f) {
