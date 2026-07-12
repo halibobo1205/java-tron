@@ -90,15 +90,50 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
   }
 
   @Test
-  public void tombstonedFlagValueFailsClosed() {
+  public void tombstonedResolveFlagResolvesToDefault() throws Exception {
+    // A tombstone prev-value proves the key was UNSET as of this block (its first write is later),
+    // so it resolves to the flag's default -- it must NOT fail closed, which would abort every
+    // historical eth_call/trace before an in-window activation. Osaka takes the resolve() path.
     FakeReader reader = new FakeReader();
     reader.putVmDefaults();
     reader.putTombstone("ALLOW_TVM_OSAKA");
     VmDynamicProperties latest = mock(VmDynamicProperties.class);
+    when(latest.getAllowTvmOsaka()).thenReturn(1L);        // latest ON; the tombstoned block is not
 
-    ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
-        () -> new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true));
-    assertEquals(ArchiveReaderException.Reason.CORRUPT_VALUE, e.getReason());
+    HistoricalArchiveVmDynamicProperties view =
+        new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true);
+
+    assertEquals(0L, view.getAllowTvmOsaka());
+  }
+
+  @Test
+  public void tombstonedArchivedForkFlagResolvesToOff() throws Exception {
+    // G2 repro: on a mid-chain archive, a fork flag first ACTIVATED inside the coverage window has
+    // its pre-activation prev-value captured as a tombstone. A historical call at a block before
+    // activation reads that tombstone; it must resolve to 0 (off) -- the flag's unset value -- not
+    // throw. Cancun takes the resolveArchived() path, the stricter one that used to fail closed.
+    FakeReader reader = new FakeReader();
+    reader.putVmDefaults();                                 // every other fork gate present (0)
+    reader.putTombstone("ALLOW_TVM_CANCUN");                // first activation is later, in-window
+    VmDynamicProperties latest = mock(VmDynamicProperties.class);
+    when(latest.getAllowTvmCancun()).thenReturn(1L);   // latest ON; the historical block is not
+
+    HistoricalArchiveVmDynamicProperties view =
+        new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true);
+
+    assertEquals(0L, view.getAllowTvmCancun());
+  }
+
+  @Test
+  public void tombstonedResolveKeyResolvesToDefaultEvenMidChain() throws Exception {
+    // A tombstone is strictly stronger than MISSING: MISSING is "unknown before coverage" (fails
+    // closed mid-chain), but a tombstone positively proves the key was unset at this block, so it
+    // resolves to the default even when genesisComplete == false. Exercised via the resolve() path.
+    FakeReader reader = new FakeReader();
+    reader.putTombstone("ENERGY_FEE");
+
+    assertEquals(100L, HistoricalArchiveVmDynamicProperties.resolveEnergyFee(reader, true));
+    assertEquals(100L, HistoricalArchiveVmDynamicProperties.resolveEnergyFee(reader, false));
   }
 
   @Test
@@ -197,18 +232,12 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
   }
 
   @Test
-  public void badEnergyFeeFailsClosed() {
+  public void malformedEnergyFeeFailsClosed() {
     FakeReader malformed = new FakeReader();
     malformed.putRaw("ENERGY_FEE", new byte[] {1});
     ArchiveReaderException malformedError = assertThrows(ArchiveReaderException.class,
         () -> HistoricalArchiveVmDynamicProperties.resolveEnergyFee(malformed, true));
     assertEquals(ArchiveReaderException.Reason.CORRUPT_VALUE, malformedError.getReason());
-
-    FakeReader tombstone = new FakeReader();
-    tombstone.putTombstone("ENERGY_FEE");
-    ArchiveReaderException tombstoneError = assertThrows(ArchiveReaderException.class,
-        () -> HistoricalArchiveVmDynamicProperties.resolveEnergyFee(tombstone, true));
-    assertEquals(ArchiveReaderException.Reason.CORRUPT_VALUE, tombstoneError.getReason());
   }
 
   @Test
