@@ -15,6 +15,7 @@ import org.rocksdb.WriteBatch;
 import org.rocksdb.WriteOptions;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchiveRocksDbWriteOptions;
+import org.tron.core.archive.ArchiveRocksIterators;
 import org.tron.core.archive.ArchivePhase;
 
 /**
@@ -113,6 +114,7 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
   private static boolean isEmpty(RocksDB db) {
     try (RocksIterator it = db.newIterator()) {
       it.seekToFirst();
+      ArchiveRocksIterators.requireOk(it, "isEmpty: scan for any row");
       return !it.isValid();
     }
   }
@@ -120,6 +122,7 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
   private static boolean isOnlyKey(RocksDB db, byte[] expectedKey) {
     try (RocksIterator it = db.newIterator()) {
       it.seekToFirst();
+      ArchiveRocksIterators.requireOk(it, "isOnlyKey: scan first row");
       return it.isValid() && Arrays.equals(it.key(), expectedKey)
           && !hasSecondRow(it);
     }
@@ -137,6 +140,7 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
         validateCurrentRow(it.key(), it.value());
         it.next();
       }
+      ArchiveRocksIterators.requireOk(it, "validateCurrentKeyspace: scan all rows");
     }
   }
 
@@ -332,6 +336,7 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
         previous = current;
         it.next();
       }
+      ArchiveRocksIterators.requireOk(it, "validateContiguousCoverage: scan block ranges");
     }
   }
 
@@ -367,6 +372,7 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
         validator.accept(current);
         it.next();
       }
+      ArchiveRocksIterators.requireOk(it, "validateCommittedRanges: scan block ranges");
     }
   }
 
@@ -436,6 +442,7 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
       } else {
         it.seekToLast();
       }
+      ArchiveRocksIterators.requireOk(it, "getLastRange: locate highest range row");
       if (!it.isValid() || it.key()[0] != ArchiveBlockRangeCodec.TXNUM_BLOCK_PREFIX) {
         return Optional.empty();
       }
@@ -767,6 +774,7 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
         validatePosition(range, txNum);
         it.next();
       }
+      ArchiveRocksIterators.requireOk(it, "validateNoOrphanIndexRows: scan position rows");
     }
     try (RocksIterator it = db.newIterator()) {
       it.seek(new byte[] {ArchiveBlockRangeCodec.TXNUM_BY_TXID_PREFIX});
@@ -784,6 +792,7 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
         }
         it.next();
       }
+      ArchiveRocksIterators.requireOk(it, "validateNoOrphanIndexRows: scan txId index rows");
     }
   }
 
