@@ -174,6 +174,24 @@ public class ArchiveTemporalStoreConsistencyTest {
     assertTrue(Arrays.equals(new byte[] {0x0A}, mem.latest(DOMAIN, K1).get().getValue()));
   }
 
+  @Test
+  public void inMemoryAndRocksAgreeRejectingNonHeadUnwindWhenHeadBlockIsEmpty() {
+    // An empty head block (no state change, no history row) must still make a lower block non-head
+    // in BOTH stores -- RocksDb via its block-commit marker, InMemory via its committed-block set.
+    ArchiveBlockRange b3 = new ArchiveBlockRange(
+        3, 10, 11, 10, 11, new byte[32], 0, ArchiveSource.NORMAL);
+    ArchiveBlockRange b4empty = new ArchiveBlockRange(
+        4, 12, 13, 12, 13, new byte[32], 0, ArchiveSource.NORMAL);
+    putBlock(b3, List.of(rec(10, 3, K1, DomainValue.tombstone(), val(0x0A))));
+    putBlock(b4empty, List.of());
+
+    assertTrue(assertThrows(ArchiveException.class, () -> mem.unwindBlock(b3))
+        .getMessage().contains("not temporal head"));
+    assertTrue(assertThrows(ArchiveException.class, () -> rocks.unwindBlock(b3))
+        .getMessage().contains("not temporal head"));
+    assertParity(K1, 15);
+  }
+
   private static void deleteRecursively(File f) {
     File[] children = f.listFiles();
     if (children != null) {
