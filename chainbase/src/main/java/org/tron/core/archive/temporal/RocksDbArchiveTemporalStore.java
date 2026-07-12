@@ -23,6 +23,7 @@ import org.rocksdb.WriteOptions;
 import org.tron.common.math.StrictMathWrapper;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchiveRocksDbWriteOptions;
+import org.tron.core.archive.ArchiveRocksIterators;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
@@ -95,6 +96,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
   private static boolean isEmpty(RocksDB db) {
     try (RocksIterator it = db.newIterator()) {
       it.seekToFirst();
+      ArchiveRocksIterators.requireOk(it, "isEmpty: scan for any row");
       return !it.isValid();
     }
   }
@@ -146,6 +148,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
         }
         it.next();
       }
+      ArchiveRocksIterators.requireOk(it, "validateCurrentKeyspace: keyspace scan");
     }
   }
 
@@ -259,6 +262,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
           && ArchiveTemporalCodec.txNumOfChangeset(it.key()) <= range.getLastTxNum()) {
         return true;
       }
+      ArchiveRocksIterators.requireOk(it, "hasRowsInRange: changeset range scan");
     }
     try (RocksIterator it = db.newIterator()) {
       it.seek(new byte[] {ArchiveTemporalCodec.HISTORY_PREFIX});
@@ -269,6 +273,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
         }
         it.next();
       }
+      ArchiveRocksIterators.requireOk(it, "hasRowsInRange: history range scan");
       return false;
     }
   }
@@ -283,6 +288,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
         }
         it.next();
       }
+      ArchiveRocksIterators.requireOk(it, "hasDataBeyondManifest: scan beyond manifest");
       return false;
     }
   }
@@ -301,6 +307,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
         }
         it.next();
       }
+      ArchiveRocksIterators.requireOk(it, "validateCommitMarkersCovered: commit marker scan");
     }
   }
 
@@ -326,6 +333,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
         }
         it.next();
       }
+      ArchiveRocksIterators.requireOk(it, "validateTxNumsCovered: history scan");
     } catch (RocksDBException e) {
       throw new ArchiveException("archive temporal history validation failed", e);
     }
@@ -349,6 +357,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
             changesetValue);
         it.next();
       }
+      ArchiveRocksIterators.requireOk(it, "validateTxNumsCovered: changeset scan");
     } catch (RocksDBException e) {
       throw new ArchiveException("archive temporal changeset validation failed", e);
     }
@@ -373,6 +382,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
             changesetValue);
         it.next();
       }
+      ArchiveRocksIterators.requireOk(it, "validateLatestRowsAnchored: changeset scan");
       validateLatestRowsAnchored(latestByChangeset);
     } catch (RocksDBException e) {
       throw new ArchiveException("archive temporal latest validation failed", e);
@@ -413,6 +423,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
         }
         it.next();
       }
+      ArchiveRocksIterators.requireOk(it, "validateLatestRowsAnchored: latest scan");
       validateLatestBaselineMarkers();
     }
   }
@@ -421,6 +432,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
     byte[] historyPrefix = ArchiveTemporalCodec.historyPrefixOfLatest(latestKey);
     try (RocksIterator history = db.newIterator()) {
       history.seek(historyPrefix);
+      ArchiveRocksIterators.requireOk(history, "hasHistoryRow: history prefix probe");
       return history.isValid() && ArchiveTemporalCodec.startsWith(history.key(), historyPrefix);
     }
   }
@@ -428,6 +440,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
   private boolean hasHistoryBefore(byte[] historyPrefix, long txNum) {
     try (RocksIterator history = db.newIterator()) {
       history.seek(historyPrefix);
+      ArchiveRocksIterators.requireOk(history, "hasHistoryBefore: history prefix probe");
       return history.isValid()
           && ArchiveTemporalCodec.startsWith(history.key(), historyPrefix)
           && ArchiveTemporalCodec.txNumOfHistory(history.key()) < txNum;
@@ -452,6 +465,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
         }
         it.next();
       }
+      ArchiveRocksIterators.requireOk(it, "validateLatestBaselineMarkers: baseline scan");
     }
   }
 
@@ -466,6 +480,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
         validateDomainRow(catalog, it.key(), it.value(), true, dynamicKeyPolicy);
         it.next();
       }
+      ArchiveRocksIterators.requireOk(it, "validateDomainRows: latest scan");
     }
     try (RocksIterator it = db.newIterator()) {
       it.seek(new byte[] {ArchiveTemporalCodec.HISTORY_PREFIX});
@@ -473,6 +488,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
         validateDomainRow(catalog, it.key(), it.value(), true, dynamicKeyPolicy);
         it.next();
       }
+      ArchiveRocksIterators.requireOk(it, "validateDomainRows: history scan");
     }
     try (RocksIterator it = db.newIterator()) {
       it.seek(new byte[] {ArchiveTemporalCodec.CHANGESET_PREFIX});
@@ -480,6 +496,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
         validateDomainRow(catalog, it.key(), it.value(), true, dynamicKeyPolicy);
         it.next();
       }
+      ArchiveRocksIterators.requireOk(it, "validateDomainRows: changeset scan");
     }
     byte[] latestBaselinePrefix = ArchiveTemporalCodec.latestBaselinePrefix();
     try (RocksIterator it = db.newIterator()) {
@@ -489,6 +506,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
             true, dynamicKeyPolicy);
         it.next();
       }
+      ArchiveRocksIterators.requireOk(it, "validateDomainRows: baseline scan");
     }
   }
 
@@ -559,6 +577,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
         if (it.isValid() && ArchiveTemporalCodec.startsWith(it.key(), prefix)) {
           return Optional.of(ArchiveTemporalCodec.decodeValue(it.value()));
         }
+        ArchiveRocksIterators.requireOk(it, "getAsOf: history seek");
       }
     }
     // No change after txNum: the key has not changed since, so its value then == latest.
@@ -601,6 +620,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
         }
         it.next();
       }
+      ArchiveRocksIterators.requireOk(it, "validateHeadBlock: commit marker scan");
     }
   }
 
@@ -640,6 +660,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
           batch.delete(changesetKey);
           it.next();
         }
+        ArchiveRocksIterators.requireOk(it, "unwind: changeset scan");
       }
       for (Map.Entry<WrappedByteArray, byte[]> e : affectedPrefix.entrySet()) {
         byte[] latestKey = e.getValue().clone();
@@ -674,6 +695,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
         batch.delete(it.key().clone());
         it.next();
       }
+      ArchiveRocksIterators.requireOk(it, "deleteAllLatest: latest scan");
     }
   }
 
@@ -685,6 +707,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
         batch.delete(it.key().clone());
         it.next();
       }
+      ArchiveRocksIterators.requireOk(it, "deleteAllLatestBaselines: baseline scan");
     }
   }
 
@@ -696,6 +719,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
         batch.delete(it.key().clone());
         it.next();
       }
+      ArchiveRocksIterators.requireOk(it, "deleteAllBlockCommitMarkers: marker scan");
     }
   }
 
@@ -732,6 +756,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
         rowAccumulator.addPersisted(changesetKey, historyValue, changesetValue);
         it.next();
       }
+      ArchiveRocksIterators.requireOk(it, "readBlockCommitRows: changeset scan");
     }
     return rowAccumulator.finish();
   }
