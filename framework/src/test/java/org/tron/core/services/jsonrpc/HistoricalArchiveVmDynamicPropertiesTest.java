@@ -125,6 +125,30 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
   }
 
   @Test
+  public void tombstonedConfigDefaultedFlagResolvesToConfigDefaultNotZero() throws Exception {
+    // A config-defaulted fork flag (its live getter falls back to CommonParameter, not a hard 0):
+    // on a custom deployment where allowTvmShangHai == 1, a tombstone (unset as of this block) must
+    // resolve to that config default, NOT a hardwired 0 -- else a historical replay wrongly turns
+    // OFF a rule (PUSH0) that was active from genesis. The archive never wrote a different value.
+    CommonParameter p = CommonParameter.getInstance();
+    long original = p.getAllowTvmShangHai();
+    try {
+      p.setAllowTvmShangHai(1L);
+      FakeReader reader = new FakeReader();
+      reader.putVmDefaults();
+      reader.putTombstone("ALLOW_TVM_SHANGHAI");
+      VmDynamicProperties latest = mock(VmDynamicProperties.class);
+
+      HistoricalArchiveVmDynamicProperties view =
+          new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true);
+
+      assertEquals(1L, view.getAllowTvmShangHai());
+    } finally {
+      p.setAllowTvmShangHai(original);
+    }
+  }
+
+  @Test
   public void tombstonedResolveKeyResolvesToDefaultEvenMidChain() throws Exception {
     // A tombstone is strictly stronger than MISSING: MISSING is "unknown before coverage" (fails
     // closed mid-chain), but a tombstone positively proves the key was unset at this block, so it

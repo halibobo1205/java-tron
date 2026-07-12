@@ -3,6 +3,7 @@ package org.tron.core.services.jsonrpc;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
+import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.archive.reader.ArchiveReadResult;
 import org.tron.core.archive.reader.ArchiveReadResult.Status;
@@ -225,9 +226,12 @@ public final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDyna
     this.allowTvmFreeze = resolveArchived(reader, "ALLOW_TVM_FREEZE");
     this.allowTvmVote = resolveArchived(reader, "ALLOW_TVM_VOTE");
     this.allowTvmLondon = resolveArchived(reader, "ALLOW_TVM_LONDON");
-    this.allowTvmShangHai = resolveArchived(reader, "ALLOW_TVM_SHANGHAI");
-    this.allowTvmCancun = resolveArchived(reader, "ALLOW_TVM_CANCUN");
-    this.allowTvmBlob = resolveArchived(reader, "ALLOW_TVM_BLOB");
+    this.allowTvmShangHai = resolveArchived(reader, "ALLOW_TVM_SHANGHAI",
+        CommonParameter.getInstance().getAllowTvmShangHai());
+    this.allowTvmCancun = resolveArchived(reader, "ALLOW_TVM_CANCUN",
+        CommonParameter.getInstance().getAllowTvmCancun());
+    this.allowTvmBlob = resolveArchived(reader, "ALLOW_TVM_BLOB",
+        CommonParameter.getInstance().getAllowTvmBlob());
     // Osaka and selfdestruct-restriction default to a hard-coded 0L in their live getters.
     this.allowTvmOsaka = resolve(reader, "ALLOW_TVM_OSAKA", genesisComplete,
         0L);
@@ -247,9 +251,12 @@ public final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDyna
     this.dynamicEnergyThreshold = resolveArchived(reader, "DYNAMIC_ENERGY_THRESHOLD");
     this.dynamicEnergyIncreaseFactor = resolveArchived(reader, "DYNAMIC_ENERGY_INCREASE_FACTOR");
     this.dynamicEnergyMaxFactor = resolveArchived(reader, "DYNAMIC_ENERGY_MAX_FACTOR");
-    this.allowEnergyAdjustment = resolveArchived(reader, "ALLOW_ENERGY_ADJUSTMENT");
-    this.allowStrictMath = resolveArchived(reader, "ALLOW_STRICT_MATH");
-    this.consensusLogicOptimization = resolveArchived(reader, "CONSENSUS_LOGIC_OPTIMIZATION");
+    this.allowEnergyAdjustment = resolveArchived(reader, "ALLOW_ENERGY_ADJUSTMENT",
+        CommonParameter.getInstance().getAllowEnergyAdjustment());
+    this.allowStrictMath = resolveArchived(reader, "ALLOW_STRICT_MATH",
+        CommonParameter.getInstance().getAllowStrictMath());
+    this.consensusLogicOptimization = resolveArchived(reader, "CONSENSUS_LOGIC_OPTIMIZATION",
+        CommonParameter.getInstance().getConsensusLogicOptimization());
     this.allowHardenResourceCalculation =
         resolveArchived(reader, "ALLOW_HARDEN_RESOURCE_CALCULATION");
     this.forkStatsByVersion = resolveForkStats(reader, genesisComplete,
@@ -332,6 +339,14 @@ public final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDyna
 
   private static long resolveArchived(ArchiveStateReader reader, String key)
       throws ArchiveReaderException {
+    // Default tombstone value 0: for the flags on the plain path this is either dead (the key is
+    // genesis-seeded, so it surfaces as MISSING not tombstone) or exact (its live getter hard-codes
+    // .orElse(0L)). Config-defaulted flags whose default can be non-zero pass an explicit default.
+    return resolveArchived(reader, key, 0L);
+  }
+
+  private static long resolveArchived(ArchiveStateReader reader, String key, long tombstoneDefault)
+      throws ArchiveReaderException {
     byte[] canonicalKey = key.getBytes(StandardCharsets.US_ASCII);
     ArchiveReadResult<byte[]> r = reader.getDynamicProperty(canonicalKey);
     if (r.isPresent()) {
@@ -344,11 +359,13 @@ public final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDyna
     }
     if (r.getStatus() == Status.TOMBSTONE) {
       // Tombstone positively proves the key was unset as of this block (its first write is later,
-      // in-window). Every flag on this path is a fork/feature gate whose unset value is 0 (off),
-      // and an off gate's parameters are unused -- so resolve to 0 rather than fail closed, which
-      // would abort historical eth_call/trace for every pre-activation block of an in-window
-      // upgrade. Genesis-seeded config keys predate coverage and surface as MISSING, not tombstone.
-      return 0L;
+      // in-window). Its value is then the flag's own default -- exactly what the live getter's
+      // .orElse(...) returns for an absent key. That default is 0 for a fork gate on the plain
+      // path, but a config-defaulted flag (e.g. ALLOW_TVM_SHANGHAI on a custom net) can default to
+      // a non-zero value, so the caller passes it in. Resolving to that default (instead of failing
+      // closed) keeps historical eth_call/trace working for every pre-activation block of an
+      // in-window upgrade; MISSING (below) stays strict because genesis coverage cannot be proven.
+      return tombstoneDefault;
     }
     throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
         "archive dynamic property " + key + " is missing from archived history");
