@@ -582,6 +582,147 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
+  public void startupReconcileRejectsInFlightBlockWithoutCanonical() {
+    // reconcile loop, canonical==null branch: an in-flight block whose canonical provider returns
+    // null fails closed (never silently dropped).
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    BlockCapsule b = blockWithParentSeed(5, (byte) 5);
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    commitEmptyBlock(service, b);
+    service.close();
+
+    DefaultArchiveService restarted = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> restarted.reconcileInFlightOnStartup(5, blockNum -> null));
+
+      assertTrue(ex.getMessage().contains("has no canonical block"));
+      assertFalse(index.getBlockRange(5).isPresent());
+      assertThrows(ArchiveException.class, restarted::validateAvailable);
+    } finally {
+      restarted.close();
+    }
+  }
+
+  @Test
+  public void startupReconcileRejectsCanonicalBlockNumberMismatch() {
+    // reconcile loop, height-mismatch branch: canonical provider resolves in-flight block 5 to a
+    // block reporting a different height (6) -> fail closed.
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    BlockCapsule b5 = blockWithParentSeed(5, (byte) 5);
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    commitEmptyBlock(service, b5);
+    service.close();
+
+    BlockCapsule wrongHeight = blockWithParentSeed(6, (byte) 6);
+    DefaultArchiveService restarted = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> restarted.reconcileInFlightOnStartup(5, blockNum -> wrongHeight));
+
+      assertTrue(ex.getMessage().contains("resolved to canonical block"));
+      assertFalse(index.getBlockRange(5).isPresent());
+      assertThrows(ArchiveException.class, restarted::validateAvailable);
+    } finally {
+      restarted.close();
+    }
+  }
+
+  @Test
+  public void startupReconcileRejectsNullCanonicalProvider() {
+    // reconcile with a null canonical provider fails closed (and fail-stops the service).
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> service.reconcileInFlightOnStartup(5, null));
+
+      assertTrue(ex.getMessage().contains("requires canonical blocks"));
+      assertThrows(ArchiveException.class, service::validateAvailable);
+    } finally {
+      service.close();
+    }
+  }
+
+  @Test
+  public void startupRejectsNonContiguousInFlightBlockAfterPublishedTail() {
+    // validateInFlightAppend block-number branch: after publishing block 4, an in-flight journal
+    // entry for block 6 (skipping 5) whose firstTxNum is contiguous trips ONLY the block-number
+    // contiguity guard.
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    BlockCapsule b4 = blockWithParentSeed(4, (byte) 4);
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    commitEmptyBlock(service, b4);
+    service.publishSolidifiedBlocks(4);
+    assertTrue(index.getBlockRange(4).isPresent());
+    assertEquals(0, inFlightStore.loadBlocks().size());
+    service.close();
+
+    long nextTxNum = index.getNextTxNum();
+    ArchiveBlockRange gapRange = new ArchiveBlockRange(
+        6, nextTxNum, nextTxNum + 1, nextTxNum, nextTxNum + 1, 0, ArchiveSource.NORMAL);
+    inFlightStore.putBlock(new ArchiveInFlightBlock(
+        gapRange, Collections.emptyList(), Collections.emptyList()));
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> serviceWithInFlightStore(
+            index, new ArchiveExecutionContext(), temporal, inFlightStore));
+
+    assertTrue(ex.getMessage().contains("non-contiguous archive in-flight block"));
+    assertTrue(ex.getMessage().contains("expected block 5 but got 6"));
+  }
+
+  @Test
+  public void startupRejectsDuplicateInFlightBlockNumber() {
+    // validateInFlightAppend duplicate-block guard (defense-in-depth): a journal that returns the
+    // same block twice must fail the second append instead of double-loading it.
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    BlockCapsule b = blockWithParentSeed(5, (byte) 5);
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    commitEmptyBlock(service, b);
+    ArchiveInFlightBlock good = inFlightStore.loadBlocks().get(0);
+    service.close();
+
+    ArchiveInFlightStore duplicateStore = new ArchiveInFlightStore() {
+      @Override
+      public List<ArchiveInFlightBlock> loadBlocks() {
+        return Arrays.asList(good, good);
+      }
+
+      @Override
+      public void putBlock(ArchiveInFlightBlock block) {
+      }
+
+      @Override
+      public void deleteBlock(long blockNum) {
+      }
+    };
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> serviceWithInFlightStore(
+            index, new ArchiveExecutionContext(), temporal, duplicateStore));
+
+    assertTrue(ex.getMessage().contains("already exists for block"));
+  }
+
+  @Test
   public void startupReconcileRejectsCanonicalParentMismatch() {
     InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
     InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
