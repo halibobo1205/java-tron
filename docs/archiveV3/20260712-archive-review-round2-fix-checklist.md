@@ -5,9 +5,13 @@
 
 **Bottom line:** the archive-OFF / consensus path has **zero critical/high risk** (re-verified: byte-identity, capture isolation, read-guard covers full RPC+VM replay, VM root-commit isolation). The archive *feature* is release-ready **once G2 is fixed**. G6/G4 are acceptable latent debt.
 
+> **Status update (2026-07-12):** codex ran out of budget, so **G2 and G6 were implemented directly on branch `archive-test-hardening`** — G2 in `8d0b50bfba`, G6 in `5cc61a214c`, each with regression tests (framework + chainbase suites green, framework checkstyle clean). **G4 remains optional/deferred** (deliberate safe asymmetry — see §3). Sections 1–2 are retained below as the design record of what was changed and why.
+
 ---
 
-## 1. [MUST-FIX before the archive feature ships] G2 — mid-chain fork-flag TOMBSTONE aborts historical `eth_call` / `debug_traceTransaction`
+## 1. ✅ FIXED (`8d0b50bfba`) — G2 — mid-chain fork-flag TOMBSTONE aborts historical `eth_call` / `debug_traceTransaction`
+
+> **Implemented as recommended:** `resolve(...)` returns `inMemoryDefault` on TOMBSTONE (unconditional, not gated on `genesisComplete`); `resolveArchived(...)` returns `0L` on TOMBSTONE (every flag on that path is a fork/feature gate whose unset value is off). Rather than migrate the ~25 `resolveArchived` getters to `resolve(..., 0L)`, the single `resolveArchived` tombstone branch resolves to 0 uniformly — genesis-seeded config keys (e.g. `MAINTENANCE_TIME_INTERVAL`) are written before coverage and surface as MISSING, not tombstone, so they never legitimately reach that branch. Regression tests: `tombstonedArchivedForkFlagResolvesToOff` (resolveArchived / Cancun), `tombstonedResolveFlagResolvesToDefault` (resolve / Osaka), `tombstonedResolveKeyResolvesToDefaultEvenMidChain` (resolve, `genesisComplete=false`). Two pre-existing tests that pinned the old fail-closed behavior were updated to the corrected semantics.
 
 **Severity:** medium · **Blast radius:** archive-enabled **mid-chain** nodes + their historical-RPC users (fail-closed error, not silent wrong value; no consensus impact).
 
@@ -38,7 +42,9 @@ Mid-chain archive (`firstArchivedBlock = 5`); drive a captured proposal that *fi
 
 ---
 
-## 2. [SHOULD-FIX — latent InMemory↔RocksDB parity gap] G6 — `InMemoryArchiveTemporalStore` inherits an unbounded, head-unguarded `unwindBlock`
+## 2. ✅ FIXED (`5cc61a214c`) — G6 — `InMemoryArchiveTemporalStore` inherits an unbounded, head-unguarded `unwindBlock`
+
+> **Implemented:** `InMemoryArchiveTemporalStore` now overrides `unwindBlock(range)` with a head-guard — it rejects the range (throws `"... not temporal head"`, state intact) when any retained history txNum exceeds `range.getLastTxNum()` (the InMemory analog of RocksDb's `validateHeadBlock`), then unwinds. Regression tests mirror RocksDb's `unwindBlockRejectsNonHeadBlockAndKeepsLatest`: `unwindBlockRejectsNonHeadBlockAndKeepsState` + `unwindBlockUnwindsHeadBlockAndRevertsLatest`. (InMemory has no block-commit markers, so it does not replicate `validateCommittedBlock`; the divergence that mattered — silent discard of higher blocks on a non-head unwind — is now closed.)
 
 **Severity:** low (latent — no live trigger today) · **Blast radius:** archive-nodes-only.
 
