@@ -21,4 +21,27 @@ public interface ArchiveTemporalReadView extends AutoCloseable {
 
   @Override
   void close();
+
+  /**
+   * A non-isolated view that delegates straight to a live store; {@code close()} is a no-op. Used
+   * on the mid-chain read path, where the archive read lock (held for the reader's whole lifetime)
+   * provides the isolation instead of a snapshot.
+   */
+  static ArchiveTemporalReadView passThrough(ArchiveTemporalStore store) {
+    return new ArchiveTemporalReadView() {
+      @Override
+      public Optional<DomainValue> getAsOf(ArchiveDomain domain, byte[] canonicalKey, long txNum) {
+        return store.getAsOf(domain, canonicalKey, txNum);
+      }
+
+      @Override
+      public Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey) {
+        return store.latest(domain, canonicalKey);
+      }
+
+      @Override
+      public void close() {
+      }
+    };
+  }
 }

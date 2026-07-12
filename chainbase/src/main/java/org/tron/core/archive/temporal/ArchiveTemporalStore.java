@@ -70,22 +70,7 @@ public interface ArchiveTemporalStore {
    * only so lightweight test stubs compile; production stores must override it.
    */
   default ArchiveTemporalReadView openReadView() {
-    ArchiveTemporalStore self = this;
-    return new ArchiveTemporalReadView() {
-      @Override
-      public Optional<DomainValue> getAsOf(ArchiveDomain domain, byte[] canonicalKey, long txNum) {
-        return self.getAsOf(domain, canonicalKey, txNum);
-      }
-
-      @Override
-      public Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey) {
-        return self.latest(domain, canonicalKey);
-      }
-
-      @Override
-      public void close() {
-      }
-    };
+    return ArchiveTemporalReadView.passThrough(this);
   }
 
   /**
