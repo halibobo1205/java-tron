@@ -192,6 +192,37 @@ public final class InMemoryArchiveTemporalStore implements ArchiveTemporalStore 
     }
   }
 
+  @Override
+  public void unwindBlock(ArchiveBlockRange range) {
+    // Parity with RocksDbArchiveTemporalStore.unwindBlock: only the temporal head block may be
+    // unwound. The interface default is unbounded -- unwind(firstTxNum) drops every change at or
+    // above firstTxNum, which for a NON-head range would silently discard higher/head blocks that
+    // the fail-stop RocksDb path (validateHeadBlock) instead rejects with state intact. Guard here
+    // so the two stores stay observationally identical (ArchiveTemporalStore contract).
+    long headTxNum = maxHistoryTxNum();
+    if (headTxNum > range.getLastTxNum()) {
+      throw new ArchiveException("cannot unwind archive temporal block " + range.getBlockNum()
+          + ": not temporal head");
+    }
+    unwind(range.getFirstTxNum());
+  }
+
+  /** Highest txNum retained across all history rows, or -1 when the store holds no changes. */
+  private long maxHistoryTxNum() {
+    long max = -1L;
+    for (Map<WrappedByteArray, KeyState> domainMap : byDomain.values()) {
+      for (KeyState state : domainMap.values()) {
+        if (!state.history.isEmpty()) {
+          long last = state.history.lastKey();
+          if (last > max) {
+            max = last;
+          }
+        }
+      }
+    }
+    return max;
+  }
+
   /** Total number of txNum history entries across all domains/keys; for diagnostics and tests. */
   public int changeCount() {
     int count = 0;
