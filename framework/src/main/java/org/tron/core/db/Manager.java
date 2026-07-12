@@ -539,6 +539,9 @@ public class Manager {
           ? canonicalHead
           : chainBaseManager.getBlockByNum(solidifiedNum);
       archiveService.validateCanonicalHead(archiveValidationHead);
+      // Validate genesis coverage only after reconcile has republished any solidified in-flight
+      // genesis, so a recoverable archive is not mis-read as "genesis not captured" and bricked.
+      validateGenesisArchiveCoverage();
     } catch (ItemNotFoundException e) {
       logger.error(
           "Can not find Dynamic highest block from DB! \nnumber={} \nhash={}",
@@ -637,7 +640,9 @@ public class Manager {
 
     if (chainBaseManager.containBlock(genesisBlock.getBlockId())) {
       Args.getInstance().setChainId(genesisBlock.getBlockId().toString());
-      validateGenesisArchiveCoverage();
+      // Genesis archive coverage is validated in init() AFTER reconcileInFlightOnStartup, not here:
+      // a genesis committed to the journal but not yet published (crash between commitBlock and
+      // publishSolidifiedBlocks) must get its reconcile-republish chance before being judged.
     } else {
       if (chainBaseManager.hasBlocks()) {
         String msg = String.format("Genesis block modify, please delete database directory(%s) and "
@@ -717,7 +722,7 @@ public class Manager {
     }
   }
 
-  private void validateGenesisArchiveCoverage() {
+  void validateGenesisArchiveCoverage() {
     if (!archiveService.isEnabled()) {
       return;
     }
