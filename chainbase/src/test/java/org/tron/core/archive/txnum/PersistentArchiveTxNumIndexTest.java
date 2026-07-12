@@ -696,6 +696,152 @@ public class PersistentArchiveTxNumIndexTest {
   }
 
   @Test
+  public void restartWithCursorButNoCommittedRangeFailsClosed() throws Exception {
+    index.close();
+    index = null;
+    store = null;
+
+    // A non-zero committed cursor with no range/first-block rows at all.
+    putRawTxNumRow(ArchiveBlockRangeCodec.CURSOR_KEY, ArchiveBlockRangeCodec.encodeCursor(5));
+
+    RocksDbArchiveBlockRangeStore reopenedStore =
+        new RocksDbArchiveBlockRangeStore(dir.toString());
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> persistent(reopenedStore));
+      assertTrue(ex.getMessage().contains("cursor 5 exists without a committed block range"));
+    } finally {
+      reopenedStore.close();
+    }
+  }
+
+  @Test
+  public void restartWithCursorInconsistentWithLastRangeFailsClosed() throws Exception {
+    index.close();
+    index = null;
+    store = null;
+
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        1, 0, 1, 0, 1, blockHash(1), 0, ArchiveSource.NORMAL);
+    // Range's true cursor is 2, but persist a present-yet-inconsistent cursor value.
+    putRawRange(range, 5, 1);
+
+    RocksDbArchiveBlockRangeStore reopenedStore =
+        new RocksDbArchiveBlockRangeStore(dir.toString());
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> persistent(reopenedStore));
+      assertTrue(ex.getMessage().contains("does not match last committed range cursor"));
+    } finally {
+      reopenedStore.close();
+    }
+  }
+
+  @Test
+  public void restartWithCommittedRangeButNoFirstBlockMarkerFailsClosed() throws Exception {
+    index.close();
+    index = null;
+    store = null;
+
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        1, 0, 1, 0, 1, blockHash(1), 0, ArchiveSource.NORMAL);
+    // Valid range + matching cursor (2) but omit the first-block marker.
+    putRawRange(range, 2);
+
+    RocksDbArchiveBlockRangeStore reopenedStore =
+        new RocksDbArchiveBlockRangeStore(dir.toString());
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> persistent(reopenedStore));
+      assertTrue(ex.getMessage()
+          .contains("first-block marker is inconsistent with committed range"));
+    } finally {
+      reopenedStore.close();
+    }
+  }
+
+  @Test
+  public void restartWithRangeStoredUnderWrongBlockKeyFailsClosed() throws Exception {
+    index.close();
+    index = null;
+    store = null;
+
+    // Encoded value is block 2, but stored under block 1's range key.
+    ArchiveBlockRange valueForBlock2 = new ArchiveBlockRange(
+        2, 2, 3, 2, 3, blockHash(2), 0, ArchiveSource.NORMAL);
+    putRawTxNumRow(ArchiveBlockRangeCodec.rangeKey(1),
+        ArchiveBlockRangeCodec.encodeRange(withChecksum(valueForBlock2)));
+    putRawTxNumRow(ArchiveBlockRangeCodec.CURSOR_KEY, ArchiveBlockRangeCodec.encodeCursor(4));
+    putRawTxNumRow(ArchiveBlockRangeCodec.FIRST_BLOCK_KEY,
+        ArchiveBlockRangeCodec.encodeFirstBlock(1));
+
+    RocksDbArchiveBlockRangeStore reopenedStore =
+        new RocksDbArchiveBlockRangeStore(dir.toString());
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> persistent(reopenedStore));
+      assertTrue(ex.getMessage().contains("block range key does not match encoded block"));
+    } finally {
+      reopenedStore.close();
+    }
+  }
+
+  @Test
+  public void restartWithFirstBlockMarkerAboveFirstRangeFailsClosed() throws Exception {
+    pushBlock(1);
+    pushBlock(2);
+    index.close();
+    index = null;
+    store = null;
+
+    // Two contiguous ranges (blocks 1,2) but first-block marker points at block 2.
+    putRawTxNumRow(ArchiveBlockRangeCodec.FIRST_BLOCK_KEY,
+        ArchiveBlockRangeCodec.encodeFirstBlock(2));
+
+    RocksDbArchiveBlockRangeStore reopenedStore =
+        new RocksDbArchiveBlockRangeStore(dir.toString());
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> persistent(reopenedStore));
+      assertTrue(ex.getMessage().contains("does not match first committed range block"));
+    } finally {
+      reopenedStore.close();
+    }
+  }
+
+  @Test
+  public void restartWithMissingTxIdIndexForCommittedUserTxFailsClosed() throws Exception {
+    pushBlockWithUserTx(1, TX_A);
+    index.close();
+    index = null;
+    store = null;
+
+    try (Options options = new Options().setCreateIfMissing(false);
+        RocksDB rawDb = RocksDB.open(options, dir.toString())) {
+      rawDb.delete(ArchiveBlockRangeCodec.txIdKey(TX_A));
+    }
+
+    RocksDbArchiveBlockRangeStore reopenedStore =
+        new RocksDbArchiveBlockRangeStore(dir.toString());
+    try {
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> persistent(reopenedStore));
+      assertTrue(ex.getMessage().contains("txId index missing for committed txNum"));
+    } finally {
+      reopenedStore.close();
+    }
+  }
+
+  @Test
+  public void validateCanonicalHeadRejectsMalformedCanonicalHash() {
+    pushBlock(10, HASH_A);
+
+    ArchiveException ex = assertThrows(ArchiveException.class,
+        () -> index.validateCanonicalHead(10, new byte[5]));
+    assertTrue(ex.getMessage().contains("canonical head block requires a 32-byte block hash"));
+  }
+
+  @Test
   public void restartWithCorruptRangeShapeFailsClosed() throws Exception {
     index.close();
     index = null;

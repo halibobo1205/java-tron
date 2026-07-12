@@ -3,6 +3,8 @@ package org.tron.core.archive.reader;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -21,6 +23,7 @@ import org.tron.core.archive.domain.ArchiveDomain;
 import org.tron.core.archive.domain.ArchiveDomainCatalog;
 import org.tron.core.archive.domain.DefaultArchiveDomainCatalog;
 import org.tron.core.archive.reader.ArchiveReadResult.Status;
+import org.tron.core.archive.temporal.ArchiveTemporalStore;
 import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
 import org.tron.core.archive.txnum.ArchiveTxPosition;
 import org.tron.core.capsule.AccountCapsule;
@@ -390,5 +393,60 @@ public class DefaultArchiveStateReaderTest {
     ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
         () -> readerAt(5).getAccount(addr(1)));
     assertEquals(ArchiveReaderException.Reason.CODEC_ERROR, e.getReason());
+  }
+
+  @Test
+  public void getAccountAssetMissingWhenAssetIdNullOrEmpty() throws Exception {
+    // A null or zero-length assetId short-circuits to MISSING before any store lookup, so the
+    // reader never builds a bare-address ACCOUNT_ASSET key.
+    assertEquals(Status.MISSING,
+        readerAt(5).getAccountAsset(addr(1), new byte[0]).getStatus());
+    assertEquals(Status.MISSING,
+        readerAt(5).getAccountAsset(addr(1), null).getStatus());
+  }
+
+  @Test
+  public void getStorageValueExceedingThirtyTwoBytesThrowsCorruptValue() {
+    // The post-read guard maps an over-length (>32-byte) storage word to CORRUPT_VALUE. The
+    // contract row must be present so getContract resolves before the storage read.
+    byte[] address = addr(1);
+    byte[] slot = new byte[32];
+    slot[31] = 7;
+    put(ArchiveDomain.CONTRACT, address, DomainValue.present(contract(0)), 5);
+    put(ArchiveDomain.CONTRACT_STORAGE, storageKey(address, slot, 0),
+        DomainValue.present(new byte[33]), 5);
+
+    ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
+        () -> readerAt(5).getStorage(address, slot));
+    assertEquals(ArchiveReaderException.Reason.CORRUPT_VALUE, e.getReason());
+  }
+
+  @Test
+  public void getRawRejectsDomainAbsentFromCatalog() {
+    // getRaw's descriptor guard (distinct from the getDynamicProperty key-policy guard): a catalog
+    // with no descriptor for the queried domain fails closed as DOMAIN_UNSUPPORTED, never reaching
+    // the temporal store.
+    ArchiveDomainCatalog emptyCatalog = mock(ArchiveDomainCatalog.class);
+    ArchiveStateReader reader = new DefaultArchiveStateReader(store, emptyCatalog,
+        ArchiveStatePoint.blockEnd(1, new byte[] {1}, 5));
+
+    ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
+        () -> reader.getAccount(addr(1)));
+    assertEquals(ArchiveReaderException.Reason.DOMAIN_UNSUPPORTED, e.getReason());
+  }
+
+  @Test
+  public void temporalStoreFailureBecomesInternalIo() {
+    // A RuntimeException from the underlying temporal store (e.g. a RocksDB read failure) is
+    // wrapped as INTERNAL_IO, never leaked as a raw runtime error or a MISSING result.
+    ArchiveTemporalStore throwingStore = mock(ArchiveTemporalStore.class);
+    when(throwingStore.getAsOf(any(), any(), anyLong()))
+        .thenThrow(new RuntimeException("temporal read failed"));
+    ArchiveStateReader reader = new DefaultArchiveStateReader(throwingStore, catalog,
+        ArchiveStatePoint.blockEnd(1, new byte[] {1}, 5));
+
+    ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
+        () -> reader.getAccount(addr(1)));
+    assertEquals(ArchiveReaderException.Reason.INTERNAL_IO, e.getReason());
   }
 }
