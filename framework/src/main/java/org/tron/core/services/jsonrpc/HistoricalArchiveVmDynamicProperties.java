@@ -316,8 +316,11 @@ public final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDyna
       return ByteArray.toLong(value);
     }
     if (r.getStatus() == Status.TOMBSTONE) {
-      throw new ArchiveReaderException(ArchiveReaderException.Reason.CORRUPT_VALUE,
-          "archive dynamic property " + key + " is tombstoned");
+      // A tombstone prev-value is a POSITIVE "this key was unset as of the queried block" (Erigon
+      // created-key: the first write records prevValue = absent -> tombstone). Unset == the code
+      // default -- exactly how resolveForkStats treats a tombstone. This is stronger than MISSING
+      // (unknown), so it holds even before mid-chain coverage; do NOT throw here.
+      return inMemoryDefault;
     }
     // MISSING: no captured change as of this block.
     if (genesisComplete) {
@@ -340,8 +343,12 @@ public final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDyna
       return ByteArray.toLong(value);
     }
     if (r.getStatus() == Status.TOMBSTONE) {
-      throw new ArchiveReaderException(ArchiveReaderException.Reason.CORRUPT_VALUE,
-          "archive dynamic property " + key + " is tombstoned");
+      // Tombstone positively proves the key was unset as of this block (its first write is later,
+      // in-window). Every flag on this path is a fork/feature gate whose unset value is 0 (off),
+      // and an off gate's parameters are unused -- so resolve to 0 rather than fail closed, which
+      // would abort historical eth_call/trace for every pre-activation block of an in-window
+      // upgrade. Genesis-seeded config keys predate coverage and surface as MISSING, not tombstone.
+      return 0L;
     }
     throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
         "archive dynamic property " + key + " is missing from archived history");
