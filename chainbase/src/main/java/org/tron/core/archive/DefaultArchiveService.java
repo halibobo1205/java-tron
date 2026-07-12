@@ -5,6 +5,7 @@ import com.google.common.primitives.Ints;
 import com.google.common.primitives.Longs;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -64,6 +65,11 @@ public final class DefaultArchiveService implements ArchiveService {
   private final ReentrantReadWriteLock consistencyLock = new ReentrantReadWriteLock(true);
   private final NavigableMap<Long, ArchiveInFlightBlock> inFlightBlocks = new TreeMap<>();
   private final Map<WrappedByteArray, DomainValue> inFlightLatest = new LinkedHashMap<>();
+  // Per-key txNum -> prev-value index over the in-flight blocks. Lets a read-through for a key that
+  // is about to change in-flight resolve via an O(log) higherEntry lookup instead of scanning every
+  // in-flight block and record. Maintained in lock-step with inFlightLatest (same write lock).
+  private final Map<WrappedByteArray, NavigableMap<Long, DomainValue>> inFlightPrevByKey =
+      new HashMap<>();
   private volatile RuntimeException fatalFailure;
 
   public DefaultArchiveService(boolean enabled) {
@@ -626,13 +632,16 @@ public final class DefaultArchiveService implements ArchiveService {
 
   private void applyInFlightLatest(ArchiveInFlightBlock block) {
     for (ArchiveChangeRecord record : block.getRecords()) {
-      inFlightLatest.put(latestKey(record.getDomain(), record.getCanonicalKey()),
-          record.getValue());
+      WrappedByteArray key = latestKey(record.getDomain(), record.getCanonicalKey());
+      inFlightLatest.put(key, record.getValue());
+      inFlightPrevByKey.computeIfAbsent(key, k -> new TreeMap<>())
+          .put(record.getTxNum(), record.getPrevValue());
     }
   }
 
   private void rebuildInFlightLatest() {
     inFlightLatest.clear();
+    inFlightPrevByKey.clear();
     for (ArchiveInFlightBlock block : inFlightBlocks.values()) {
       applyInFlightLatest(block);
     }
@@ -694,16 +703,14 @@ public final class DefaultArchiveService implements ArchiveService {
 
   private Optional<DomainValue> readThroughInFlight(ArchiveDomain domain, byte[] canonicalKey,
       long pointTxNum) {
-    for (ArchiveInFlightBlock block : inFlightBlocks.values()) {
-      for (ArchiveChangeRecord record : block.getRecords()) {
-        if (record.getTxNum() > pointTxNum
-            && record.getDomain() == domain
-            && Arrays.equals(record.getCanonicalKey(), canonicalKey)) {
-          return Optional.of(record.getPrevValue());
-        }
-      }
+    NavigableMap<Long, DomainValue> prevByTxNum =
+        inFlightPrevByKey.get(latestKey(domain, canonicalKey));
+    if (prevByTxNum == null) {
+      return Optional.empty();
     }
-    return Optional.empty();
+    // The value at pointTxNum is the pre-value of the earliest in-flight change strictly after it.
+    Map.Entry<Long, DomainValue> firstAfter = prevByTxNum.higherEntry(pointTxNum);
+    return firstAfter == null ? Optional.empty() : Optional.of(firstAfter.getValue());
   }
 
   @Override
