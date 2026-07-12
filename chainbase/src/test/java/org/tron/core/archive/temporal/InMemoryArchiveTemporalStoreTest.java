@@ -37,8 +37,13 @@ public class InMemoryArchiveTemporalStoreTest {
 
   private static ArchiveChangeRecord change(long txNum, byte[] key, DomainValue prev,
       DomainValue value) {
+    return changeAt(txNum, 1, key, prev, value);
+  }
+
+  private static ArchiveChangeRecord changeAt(long txNum, long blockNum, byte[] key,
+      DomainValue prev, DomainValue value) {
     return new ArchiveChangeRecord(
-        new ArchiveTxPosition(txNum, 1, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, null),
+        new ArchiveTxPosition(txNum, blockNum, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, null),
         ArchiveDomain.ACCOUNT, key, prev, value);
   }
 
@@ -200,6 +205,44 @@ public class InMemoryArchiveTemporalStoreTest {
   @Test
   public void unwindRejectsNegativeTxNum() {
     assertThrows(ArchiveException.class, () -> store.unwind(-1));
+  }
+
+  @Test
+  public void unwindBlockRejectsNonHeadBlockAndKeepsState() {
+    // Parity with RocksDbArchiveTemporalStore.unwindBlock: only the temporal head block may be
+    // unwound. The unbounded interface default would unwind(firstTxNum) and silently discard the
+    // higher head block too; the override must instead reject the non-head range, state intact.
+    ArchiveBlockRange first = new ArchiveBlockRange(
+        3, 10, 11, 10, 11, new byte[32], 0, ArchiveSource.NORMAL);
+    ArchiveBlockRange second = new ArchiveBlockRange(
+        4, 12, 13, 12, 13, new byte[32], 0, ArchiveSource.NORMAL);
+    store.putBlockChanges(first, Arrays.asList(changeAt(10, 3, KEY, tomb(), val(0x0A))));
+    store.putBlockChanges(second, Arrays.asList(changeAt(12, 4, KEY, val(0x0A), val(0x0B))));
+
+    ArchiveException ex = assertThrows(ArchiveException.class, () -> store.unwindBlock(first));
+
+    assertTrue(ex.getMessage().contains("not temporal head"));
+    assertArrayEquals(new byte[] {0x0B}, store.latest(ArchiveDomain.ACCOUNT, KEY).get().getValue());
+    assertArrayEquals(new byte[] {0x0B}, asOf(100));
+    assertEquals(2, store.changeCount());
+  }
+
+  @Test
+  public void unwindBlockUnwindsHeadBlockAndRevertsLatest() {
+    // The legitimate head-first path is unchanged: unwinding the head block reverts latest to the
+    // prior block's value and drops only the head block's history row.
+    ArchiveBlockRange first = new ArchiveBlockRange(
+        3, 10, 11, 10, 11, new byte[32], 0, ArchiveSource.NORMAL);
+    ArchiveBlockRange second = new ArchiveBlockRange(
+        4, 12, 13, 12, 13, new byte[32], 0, ArchiveSource.NORMAL);
+    store.putBlockChanges(first, Arrays.asList(changeAt(10, 3, KEY, tomb(), val(0x0A))));
+    store.putBlockChanges(second, Arrays.asList(changeAt(12, 4, KEY, val(0x0A), val(0x0B))));
+
+    store.unwindBlock(second);
+
+    assertArrayEquals(new byte[] {0x0A}, store.latest(ArchiveDomain.ACCOUNT, KEY).get().getValue());
+    assertArrayEquals(new byte[] {0x0A}, asOf(100));
+    assertEquals(1, store.changeCount());
   }
 
   @Test
