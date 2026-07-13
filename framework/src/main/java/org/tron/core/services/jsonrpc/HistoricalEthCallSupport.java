@@ -83,7 +83,10 @@ public final class HistoricalEthCallSupport {
     }
     validateHistoricalSelectorSyntax(blockNumOrTag);
     requireArchiveEnabled();
-    try (ArchiveService.ReadGuard ignored = readGuard()) {
+    // The reader (openReader) owns read consistency: a genesis-complete point runs against a
+    // released-lock snapshot, a mid-chain point holds the read lock until the reader closes. So the
+    // whole request no longer sits under the write-blocking lock -- only the snapshot capture does.
+    try {
       ResolvedArchiveStatePoint resolved = resolver.resolveBlockEnd(blockNumOrTag);
       if (resolved.isLatest()) {
         // shouldUseArchive already filters latest; reaching here means a caller skipped that guard.
@@ -107,7 +110,7 @@ public final class HistoricalEthCallSupport {
       TriggerSmartContract trigger =
           triggerCallContract(ownerAddress, contractAddress, callValue, data, 0, null);
 
-      try (ArchiveStateReader reader = readerFactory().open(point)) {
+      try (ArchiveStateReader reader = archiveService.openReader(point)) {
         // Execution parameters are read from the archive at the target point, so proposal writes
         // made later in the same block cannot leak into historical replay.
         long historicalEnergyFee =
@@ -169,14 +172,6 @@ public final class HistoricalEthCallSupport {
   private void requireArchiveAvailable() throws JsonRpcInternalException {
     try {
       archiveService.validateAvailable();
-    } catch (ArchiveException e) {
-      throw new JsonRpcInternalException(e.getMessage());
-    }
-  }
-
-  private ArchiveService.ReadGuard readGuard() throws JsonRpcInternalException {
-    try {
-      return archiveService.acquireReadGuard();
     } catch (ArchiveException e) {
       throw new JsonRpcInternalException(e.getMessage());
     }

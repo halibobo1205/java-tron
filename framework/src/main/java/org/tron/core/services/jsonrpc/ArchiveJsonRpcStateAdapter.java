@@ -62,8 +62,7 @@ public final class ArchiveJsonRpcStateAdapter {
   public String getBalance(String address, String blockNumOrTag, byte[] requestedBlockHash)
       throws JsonRpcInvalidParamsException, JsonRpcInternalException {
     byte[] address21 = JsonRpcApiUtil.addressCompatibleToByteArray(address);
-    try (ArchiveService.ReadGuard ignored = readGuard();
-        ArchiveStateReader reader = openReader(blockNumOrTag, requestedBlockHash)) {
+    try (ArchiveStateReader reader = resolveReader(blockNumOrTag, requestedBlockHash)) {
       ArchiveReadResult<AccountCapsule> account = reader.getAccount(address21);
       requireKnown(account, "account");
       return account.isPresent()
@@ -82,8 +81,7 @@ public final class ArchiveJsonRpcStateAdapter {
   public String getCode(String address, String blockNumOrTag, byte[] requestedBlockHash)
       throws JsonRpcInvalidParamsException, JsonRpcInternalException {
     byte[] address21 = JsonRpcApiUtil.addressCompatibleToByteArray(address);
-    try (ArchiveService.ReadGuard ignored = readGuard();
-        ArchiveStateReader reader = openReader(blockNumOrTag, requestedBlockHash)) {
+    try (ArchiveStateReader reader = resolveReader(blockNumOrTag, requestedBlockHash)) {
       ArchiveReadResult<byte[]> code = reader.getCode(address21);
       requireKnown(code, "code");
       return code.isPresent() ? ByteArray.toJsonHex(code.getValue()) : EMPTY_CODE;
@@ -101,8 +99,7 @@ public final class ArchiveJsonRpcStateAdapter {
       byte[] requestedBlockHash) throws JsonRpcInvalidParamsException, JsonRpcInternalException {
     byte[] address21 = JsonRpcApiUtil.addressCompatibleToByteArray(address);
     byte[] slot32 = normalizeSlot(storageIdx);
-    try (ArchiveService.ReadGuard ignored = readGuard();
-        ArchiveStateReader reader = openReader(blockNumOrTag, requestedBlockHash)) {
+    try (ArchiveStateReader reader = resolveReader(blockNumOrTag, requestedBlockHash)) {
       ArchiveReadResult<byte[]> value = reader.getStorage(address21, slot32);
       requireKnown(value, "storage");
       return value.isPresent() ? ByteArray.toJsonHex(leftPad32(value.getValue())) : ZERO_WORD;
@@ -111,12 +108,12 @@ public final class ArchiveJsonRpcStateAdapter {
     }
   }
 
-  private ArchiveStateReader openReader(String blockNumOrTag)
+  private ArchiveStateReader resolveReader(String blockNumOrTag)
       throws JsonRpcInvalidParamsException, JsonRpcInternalException {
-    return openReader(blockNumOrTag, null);
+    return resolveReader(blockNumOrTag, null);
   }
 
-  private ArchiveStateReader openReader(String blockNumOrTag, byte[] requestedBlockHash)
+  private ArchiveStateReader resolveReader(String blockNumOrTag, byte[] requestedBlockHash)
       throws JsonRpcInvalidParamsException, JsonRpcInternalException {
     requireArchiveEnabled();
     ResolvedArchiveStatePoint resolved = resolver.resolveBlockEnd(blockNumOrTag);
@@ -130,7 +127,9 @@ public final class ArchiveJsonRpcStateAdapter {
     }
     requireResolvedBlockHash(point);
     try {
-      return readerFactory().open(point);
+      // openReader owns read consistency: genesis-complete runs against a released-lock snapshot,
+      // mid-chain holds the read lock until the reader closes.
+      return archiveService.openReader(point);
     } catch (ArchiveReaderException e) {
       throw toInternal(e);
     }
@@ -193,14 +192,6 @@ public final class ArchiveJsonRpcStateAdapter {
       throw new JsonRpcInternalException("archive reader is not available");
     }
     return factory;
-  }
-
-  private ArchiveService.ReadGuard readGuard() throws JsonRpcInternalException {
-    try {
-      return archiveService.acquireReadGuard();
-    } catch (ArchiveException e) {
-      throw new JsonRpcInternalException(e.getMessage());
-    }
   }
 
   private static byte[] normalizeSlot(String storageIdx) throws JsonRpcInvalidParamsException {
