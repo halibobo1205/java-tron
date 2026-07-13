@@ -16,6 +16,7 @@ import java.util.OptionalLong;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.junit.After;
 import org.junit.Test;
 import org.tron.common.utils.ReflectUtils;
@@ -772,6 +773,81 @@ public class DefaultArchiveServiceTest {
         commitEmptyBlock(service, blockWithParentSeed(1, (byte) 1));
       }
     } finally {
+      service.close();
+    }
+  }
+
+  @Test
+  public void genesisCompleteOpenReaderDoesNotBlockConcurrentCommit() throws Exception {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    try {
+      BlockCapsule b0 = blockWithParentSeed(0, (byte) 0);
+      commitEmptyBlock(service, b0);
+      service.publishSolidifiedBlocks(0);
+      ArchiveBlockRange range = index.getBlockRange(0).get();
+      ArchiveStatePoint point = ArchiveStatePoint.blockEnd(
+          0, b0.getBlockId().getBytes(), range.getFinalizeTxNum());
+
+      try (ArchiveStateReader reader = service.openReader(point)) {
+        // Genesis-complete released the read lock after capturing the snapshot, so a commit on
+        // ANOTHER thread proceeds while the reader is still open -- the whole point of the change.
+        FutureTask<Void> commit = new FutureTask<>(() -> {
+          commitEmptyBlock(service, blockWithParentSeed(1, (byte) 1));
+          return null;
+        });
+        Thread thread = new Thread(commit, "concurrent-commit");
+        thread.start();
+        try {
+          commit.get(5, TimeUnit.SECONDS);  // completes; the reader does not hold the write lock
+        } finally {
+          thread.join(1000);
+        }
+      }
+    } finally {
+      service.close();
+    }
+  }
+
+  @Test
+  public void midChainOpenReaderBlocksConcurrentCommitUntilClosed() throws Exception {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    Thread thread = null;
+    try {
+      // Mid-chain start: the first archived block is 5 (> 0), so the reader holds the read lock for
+      // its whole lifetime (the live read-through needs the write-blocking lock held).
+      BlockCapsule b5 = blockWithParentSeed(5, (byte) 5);
+      commitEmptyBlock(service, b5);
+      service.publishSolidifiedBlocks(5);
+      assertEquals(5L, index.getFirstArchivedBlock());
+      ArchiveBlockRange range = index.getBlockRange(5).get();
+      ArchiveStatePoint point = ArchiveStatePoint.blockEnd(
+          5, b5.getBlockId().getBytes(), range.getFinalizeTxNum());
+
+      ArchiveStateReader reader = service.openReader(point);  // holds the read lock
+      FutureTask<Void> commit = new FutureTask<>(() -> {
+        commitEmptyBlock(service, blockWithParentSeed(6, (byte) 6));
+        return null;
+      });
+      thread = new Thread(commit, "blocked-commit");
+      thread.start();
+
+      // The write-blocking commit cannot proceed while the mid-chain reader holds the read lock.
+      assertThrows(TimeoutException.class, () -> commit.get(500, TimeUnit.MILLISECONDS));
+
+      reader.close();               // release the read lock
+      commit.get(5, TimeUnit.SECONDS);  // now the commit proceeds
+    } finally {
+      if (thread != null) {
+        thread.join(1000);
+      }
       service.close();
     }
   }
