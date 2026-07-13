@@ -1,6 +1,16 @@
 # Design — decouple historical eth_call/trace from the archive write lock (item 1)
 
-**Status:** design for review · **Scope:** archive-nodes-only, read path · **Author:** hand-off for review before implementation.
+**Status:** ✅ Phase 1 IMPLEMENTED (5 steps, committed) · **Scope:** archive-nodes-only, read path.
+
+> **Implemented (Phase 1, genesis-complete):** `ArchiveTemporalReadView` + `openReadView()` (RocksDB
+> snapshot / InMemory copy) → reader reads via the view → `DefaultArchiveService.openReader(point)`
+> branches genesis-complete (snapshot, lock released) vs mid-chain (lock held until close, via the
+> reader's `onClose`) → the 3 adapters call `openReader`. **Simplification found during
+> implementation:** for genesis-complete the whole read-through (in-flight + live) is gated on
+> `firstArchivedBlock > 0`, so it never runs — a **temporal snapshot alone is complete**, and the
+> in-flight snapshot (§4 item B) is NOT needed for Phase 1. Tests: view isolation (RocksDB+InMemory
+> differential), genesis-complete lock-release (single- and multi-threaded), mid-chain
+> commit-blocked-until-close. Phase 2 (mid-chain, needs a main-DB snapshot) remains future work.
 
 ## 1. Problem
 
