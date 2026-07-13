@@ -180,3 +180,16 @@ try-with-resources (they do).
 Proceed with **Phase 1** in the 5 steps above. It removes the write-lock stall for the deployment
 that matters (genesis-anchored public archive RPC), is provably consistent (C never runs), and leaves
 mid-chain on today's correct lock-held path. Phase 2 is a separate, larger effort.
+
+## 10. Phase 2 — assessed and DECLINED (2026-07-12)
+
+Investigated the main-DB read path for Phase 2. The mid-chain read-through reads ~7 live stores
+through TRON's `db2` revoking layer (`Chainbase.get → head() → SnapshotRoot → raw DB`); there is **no
+external read-snapshot API** (`getFromRoot` is still live). Delivering a lock-free mid-chain view
+would require **adding a snapshot read path into the consensus-critical `db2` MVCC layer** and
+capturing all ~7 stores atomically under the archive lock — a large, hard-to-verify change to code
+used by all block application. Weighed against a **bounded benefit** (mid-chain public-RPC is less
+common than a genesis-anchored full archive; on a trust node the eth_call CPU is bypassed by design),
+the risk/reward is poor. **Decision: do not implement Phase 2.** Mid-chain keeps today's correct
+lock-held path (preserved by Phase 1). Revisit only if a concrete mid-chain public-RPC node is
+demonstrably stalled.
