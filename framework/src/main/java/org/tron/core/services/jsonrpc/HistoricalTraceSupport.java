@@ -19,7 +19,6 @@ import org.tron.core.archive.DefaultArchiveService;
 import org.tron.core.archive.reader.ArchiveReaderException;
 import org.tron.core.archive.reader.ArchiveStatePoint;
 import org.tron.core.archive.reader.ArchiveStateReader;
-import org.tron.core.archive.reader.ArchiveStateReaderFactory;
 import org.tron.core.archive.reader.JsonRpcArchiveStatePointResolver;
 import org.tron.core.archive.reader.ResolvedArchiveStatePoint;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
@@ -101,13 +100,13 @@ public final class HistoricalTraceSupport {
       JsonRpcInternalException {
     validateTraceCallRequest(blockNumOrTag, traceOptions);
     requireArchiveEnabled();
-    try (ArchiveService.ReadGuard ignored = readGuard()) {
-      return traceCallLocked(ownerAddress, contractAddress, callValue, data, blockNumOrTag,
-          requestedBlockHash);
-    }
+    // Read consistency is owned by the reader (openReader): a genesis-complete point runs against a
+    // released-lock snapshot; a mid-chain point holds the read lock until the reader closes.
+    return traceCallResolved(ownerAddress, contractAddress, callValue, data, blockNumOrTag,
+        requestedBlockHash);
   }
 
-  private TraceResult traceCallLocked(byte[] ownerAddress, byte[] contractAddress, long callValue,
+  private TraceResult traceCallResolved(byte[] ownerAddress, byte[] contractAddress, long callValue,
       byte[] data, String blockNumOrTag, byte[] requestedBlockHash)
       throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
       JsonRpcInternalException {
@@ -152,12 +151,10 @@ public final class HistoricalTraceSupport {
   public TraceResult traceTransaction(byte[] txId, Object traceOptions)
       throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
       JsonRpcInternalException {
-    try (ArchiveService.ReadGuard ignored = readGuard()) {
-      return traceTransactionLocked(txId, traceOptions);
-    }
+    return traceTransactionResolved(txId, traceOptions);
   }
 
-  private TraceResult traceTransactionLocked(byte[] txId, Object traceOptions)
+  private TraceResult traceTransactionResolved(byte[] txId, Object traceOptions)
       throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
       JsonRpcInternalException {
     validateTraceOptions(traceOptions);
@@ -337,7 +334,7 @@ public final class HistoricalTraceSupport {
         StoreFactory.getInstance().getChainBaseManager().getDynamicPropertiesStore();
     boolean genesisComplete = isGenesisComplete();
 
-    try (ArchiveStateReader reader = readerFactory().open(point)) {
+    try (ArchiveStateReader reader = archiveService.openReader(point)) {
       long historicalEnergyFee =
           HistoricalArchiveVmDynamicProperties.resolveEnergyFee(reader, genesisComplete);
       VmDynamicProperties vmProperties = new HistoricalArchiveVmDynamicProperties(
@@ -382,18 +379,6 @@ public final class HistoricalTraceSupport {
     return new TraceResult(gas, result.isFailed(), returnValue, structLogs);
   }
 
-  private ArchiveStateReaderFactory readerFactory() throws JsonRpcInternalException {
-    if (!(archiveService instanceof DefaultArchiveService)) {
-      throw new JsonRpcInternalException("archive is not available");
-    }
-    requireArchiveAvailable();
-    ArchiveStateReaderFactory factory = ((DefaultArchiveService) archiveService).getReaderFactory();
-    if (factory == null) {
-      throw new JsonRpcInternalException("archive reader is not available");
-    }
-    return factory;
-  }
-
   private boolean isGenesisComplete() throws JsonRpcInternalException {
     if (!(archiveService instanceof DefaultArchiveService)) {
       return false;
@@ -414,14 +399,6 @@ public final class HistoricalTraceSupport {
   private void requireArchiveEnabled() throws JsonRpcInternalException {
     if (!archiveService.isEnabled()) {
       throw new JsonRpcInternalException("archive is not available");
-    }
-  }
-
-  private ArchiveService.ReadGuard readGuard() throws JsonRpcInternalException {
-    try {
-      return archiveService.acquireReadGuard();
-    } catch (ArchiveException e) {
-      throw new JsonRpcInternalException(e.getMessage());
     }
   }
 
