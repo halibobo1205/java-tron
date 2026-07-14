@@ -1924,8 +1924,17 @@ public final class DefaultArchiveService implements ArchiveService {
         }
         readLock.unlock();
         lockTransferred = true;
-        ManagedArchiveStateReader managed = new ManagedArchiveStateReader(
-            reader, lifecycleLease, queryLease, snapshotPermit);
+        ManagedArchiveStateReader managed;
+        try {
+          managed = new ManagedArchiveStateReader(
+              reader, lifecycleLease, queryLease, snapshotPermit);
+        } catch (RuntimeException e) {
+          // The reader owns the temporal snapshot; release it if the wrapper ctor fails, so this
+          // path cannot leak a RocksDB snapshot that pins SST files. close() has a no-op onClose
+          // here (the lock was already released above), so it only releases the snapshot.
+          reader.close();
+          throw e;
+        }
         leaseTransferred = true;
         snapshotPermitTransferred = true;
         return managed;
