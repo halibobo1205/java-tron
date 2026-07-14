@@ -170,6 +170,39 @@ public class UnifiedArchiveDbTest {
   }
 
   @Test
+  public void emptyInitializationResumesAfterManifestWriteWasInterrupted() throws Exception {
+    closeForRawEdit();
+    editRaw((rocksDb, handles) -> {
+      try (WriteOptions writeOptions = new WriteOptions().setDisableWAL(false).setSync(true)) {
+        rocksDb.delete(handles.get(UnifiedArchiveColumnFamily.META.ordinal() + 1),
+            writeOptions, UnifiedArchiveManifest.key());
+      }
+    });
+
+    db = UnifiedArchiveDb.initializeOrResumeEmpty(dbPath, SCHEMA_CHECKSUM);
+    assertFalse(db.hasArchiveData());
+    db.close();
+    db = UnifiedArchiveDb.open(dbPath, SCHEMA_CHECKSUM);
+  }
+
+  @Test
+  public void emptyInitializationDoesNotRepairAStoreContainingArchiveRows() throws Exception {
+    closeForRawEdit();
+    editRaw((rocksDb, handles) -> {
+      try (WriteOptions writeOptions = new WriteOptions().setDisableWAL(false).setSync(true)) {
+        rocksDb.delete(handles.get(UnifiedArchiveColumnFamily.META.ordinal() + 1),
+            writeOptions, UnifiedArchiveManifest.key());
+        rocksDb.put(handles.get(UnifiedArchiveColumnFamily.INDEX.ordinal() + 1),
+            writeOptions, INDEX_KEY, INDEX_VALUE);
+      }
+    });
+
+    ArchiveException failure = assertThrows(ArchiveException.class,
+        () -> UnifiedArchiveDb.initializeOrResumeEmpty(dbPath, SCHEMA_CHECKSUM));
+    assertTrue(failure.getMessage().contains("archive rows present"));
+  }
+
+  @Test
   public void openRejectsUnexpectedColumnFamily() throws Exception {
     closeForRawEdit();
     editRaw((rocksDb, handles) -> {

@@ -326,7 +326,7 @@ public final class RocksDbArchiveInFlightStore implements ArchiveInFlightStore {
     }
   }
 
-  private static void validateBlock(ArchiveInFlightBlock block, ArchiveDomainCatalog catalog,
+  static void validateBlock(ArchiveInFlightBlock block, ArchiveDomainCatalog catalog,
       DynamicKeyPolicy dynamicKeyPolicy) {
     if (block == null || block.getRange() == null) {
       throw new ArchiveException("archive in-flight block is invalid");

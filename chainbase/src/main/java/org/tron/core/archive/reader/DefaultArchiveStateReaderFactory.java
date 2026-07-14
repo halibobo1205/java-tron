@@ -102,9 +102,22 @@ public final class DefaultArchiveStateReaderFactory implements ArchiveStateReade
 
   public ArchiveStateReader openSnapshot(ArchiveStatePoint point, ArchiveTemporalReadView view,
       QueryContext queryContext) throws ArchiveReaderException {
+    return openSnapshot(point, view, () -> { }, true, queryContext);
+  }
+
+  /**
+   * Opens a reader over a caller-supplied snapshot. In a mid-chain archive the caller keeps its
+   * consistency lock until {@code onClose} runs, allowing guarded live read-through while index
+   * and temporal reads remain pinned to the same storage generation.
+   */
+  public ArchiveStateReader openSnapshot(ArchiveStatePoint point, ArchiveTemporalReadView view,
+      Runnable onClose, boolean completeHistory, QueryContext queryContext)
+      throws ArchiveReaderException {
     validateOpenable(point);
-    return new DefaultArchiveStateReader(view, catalog, point, ArchiveReadThrough.NONE,
-        () -> { }, true, maxMemoEntries, maxMemoBytes, queryContext);
+    ArchiveReadThrough snapshotReadThrough = completeHistory
+        ? ArchiveReadThrough.NONE : readThrough;
+    return new DefaultArchiveStateReader(view, catalog, point, snapshotReadThrough,
+        onClose, completeHistory, maxMemoEntries, maxMemoBytes, queryContext);
   }
 
   private ArchiveStateReader openView(ArchiveStatePoint point, Runnable onClose) {
