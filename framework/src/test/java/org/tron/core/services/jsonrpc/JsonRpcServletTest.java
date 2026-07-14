@@ -51,6 +51,7 @@ public class JsonRpcServletTest {
   private JsonRpcServer mockRpcServer;
   private int savedMaxBatchSize;
   private int savedMaxResponseSize;
+  private long savedMaxPendingResponseBytes;
 
   @Before
   public void setUp() throws Exception {
@@ -61,12 +62,16 @@ public class JsonRpcServletTest {
     f.set(servlet, mockRpcServer);
     savedMaxBatchSize = CommonParameter.getInstance().jsonRpcMaxBatchSize;
     savedMaxResponseSize = CommonParameter.getInstance().jsonRpcMaxResponseSize;
+    savedMaxPendingResponseBytes =
+        CommonParameter.getInstance().jsonRpcMaxPendingResponseBytes;
   }
 
   @After
   public void tearDown() {
     CommonParameter.getInstance().jsonRpcMaxBatchSize = savedMaxBatchSize;
     CommonParameter.getInstance().jsonRpcMaxResponseSize = savedMaxResponseSize;
+    CommonParameter.getInstance().jsonRpcMaxPendingResponseBytes =
+        savedMaxPendingResponseBytes;
   }
 
   // --- parse error paths ---
@@ -349,6 +354,7 @@ public class JsonRpcServletTest {
   public void slowClientsCannotRetainMoreThanTheGlobalResponseByteBudget() throws Exception {
     int limit = 256;
     CommonParameter.getInstance().jsonRpcMaxResponseSize = limit;
+    CommonParameter.getInstance().jsonRpcMaxPendingResponseBytes = 2L * limit;
     doAnswer(inv -> {
       OutputStream output = inv.getArgument(1);
       output.write(new byte[200]);
@@ -379,9 +385,43 @@ public class JsonRpcServletTest {
   }
 
   @Test
+  public void perResponseLimitDoesNotCollapseTheGlobalResponseByteBudget() throws Exception {
+    int limit = 256;
+    CommonParameter.getInstance().jsonRpcMaxResponseSize = limit;
+    CommonParameter.getInstance().jsonRpcMaxPendingResponseBytes = 4L * limit;
+    doAnswer(inv -> {
+      OutputStream output = inv.getArgument(1);
+      output.write(new byte[200]);
+      return 0;
+    }).when(mockRpcServer).handleRequest(any(InputStream.class), any(OutputStream.class));
+
+    CountDownLatch enteredNetworkWrite = new CountDownLatch(2);
+    CountDownLatch releaseNetworkWrite = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    Future<?> first = executor.submit(
+        () -> postTo(new BlockingResponse(enteredNetworkWrite, releaseNetworkWrite), 1));
+    Future<?> second = executor.submit(
+        () -> postTo(new BlockingResponse(enteredNetworkWrite, releaseNetworkWrite), 2));
+    try {
+      assertTrue(enteredNetworkWrite.await(5, TimeUnit.SECONDS));
+
+      MockHttpServletResponse third = doPost(
+          "{\"method\":\"eth_getBalance\",\"id\":3}");
+
+      assertEquals(200, third.getContentAsByteArray().length);
+    } finally {
+      releaseNetworkWrite.countDown();
+      first.get(5, TimeUnit.SECONDS);
+      second.get(5, TimeUnit.SECONDS);
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
   public void concurrentBatchConstructionUsesGlobalResponseByteBudget() throws Exception {
     int limit = 256;
     CommonParameter.getInstance().jsonRpcMaxResponseSize = limit;
+    CommonParameter.getInstance().jsonRpcMaxPendingResponseBytes = 2L * limit;
     doAnswer(inv -> {
       OutputStream output = inv.getArgument(1);
       output.write(new byte[200]);

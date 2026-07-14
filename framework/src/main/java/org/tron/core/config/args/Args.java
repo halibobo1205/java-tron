@@ -560,6 +560,7 @@ public class Args extends CommonParameter {
     PARAMETER.jsonRpcMaxBlockFilterNum = jsonrpc.getMaxBlockFilterNum();
     PARAMETER.jsonRpcMaxBatchSize = jsonrpc.getMaxBatchSize();
     PARAMETER.jsonRpcMaxResponseSize = jsonrpc.getMaxResponseSize();
+    PARAMETER.jsonRpcMaxPendingResponseBytes = jsonrpc.getMaxPendingResponseBytes();
     PARAMETER.jsonRpcMaxAddressSize = jsonrpc.getMaxAddressSize();
     PARAMETER.jsonRpcMaxLogFilterNum = jsonrpc.getMaxLogFilterNum();
     PARAMETER.jsonRpcMaxMessageSize = jsonrpc.getMaxMessageSize();
@@ -1318,4 +1319,3 @@ public class Args extends CommonParameter {
     return optionGroupMap;
   }
 }
-

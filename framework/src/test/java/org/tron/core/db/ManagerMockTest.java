@@ -1,6 +1,7 @@
 package org.tron.core.db;
 
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -11,6 +12,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockConstruction;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -48,6 +50,7 @@ import org.tron.common.runtime.vm.LogInfo;
 import org.tron.common.utils.Pair;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.ChainBaseManager;
+import org.tron.core.archive.NoopArchiveService;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.capsule.TransactionInfoCapsule;
@@ -62,6 +65,7 @@ import org.tron.core.exception.TaposException;
 import org.tron.core.exception.TooBigTransactionException;
 import org.tron.core.exception.TooBigTransactionResultException;
 import org.tron.core.exception.TransactionExpirationException;
+import org.tron.core.exception.TronError;
 import org.tron.core.exception.ValidateSignatureException;
 import org.tron.core.store.AccountStore;
 import org.tron.core.store.BalanceTraceStore;
@@ -700,6 +704,50 @@ public class ManagerMockTest {
     verify(goodBlock, atLeastOnce()).validateSignature(
         any(DynamicPropertiesStore.class), any(AccountStore.class));
     verify(goodBlock, atLeastOnce()).setSwitch(true);
+  }
+
+  @SneakyThrows
+  @Test
+  public void testSwitchForkPreservesNonArchiveTronErrorWithoutSwitchBack() {
+    Manager dbManager = spy(new Manager());
+    setField(dbManager, "archiveService", NoopArchiveService.INSTANCE);
+
+    ChainBaseManager cbm = mock(ChainBaseManager.class);
+    DynamicPropertiesStore dps = mock(DynamicPropertiesStore.class);
+    AccountStore accountStore = mock(AccountStore.class);
+    Sha256Hash sharedHash = Sha256Hash.ZERO_HASH;
+    when(cbm.getDynamicPropertiesStore()).thenReturn(dps);
+    when(cbm.getAccountStore()).thenReturn(accountStore);
+    when(dps.getLatestBlockHeaderHash()).thenReturn(sharedHash);
+    setField(dbManager, "chainBaseManager", cbm);
+
+    TronError dbFlush = new TronError("injected flush failure", TronError.ErrCode.DB_FLUSH);
+    RevokingDatabase revokingStore = mock(RevokingDatabase.class);
+    when(revokingStore.buildSession()).thenThrow(dbFlush);
+    setField(dbManager, "revokingStore", revokingStore);
+
+    KhaosDatabase khaosDb = mock(KhaosDatabase.class);
+    setField(dbManager, "khaosDb", khaosDb);
+    BlockCapsule candidate = mock(BlockCapsule.class);
+    BlockCapsule.BlockId candidateId = mock(BlockCapsule.BlockId.class);
+    when(candidate.getBlockId()).thenReturn(candidateId);
+    when(candidate.getNum()).thenReturn(100L);
+    BlockCapsule oldBlock = mock(BlockCapsule.class);
+    when(oldBlock.getParentHash()).thenReturn(sharedHash);
+    LinkedList<KhaosDatabase.KhaosBlock> first = new LinkedList<>();
+    first.add(new KhaosDatabase.KhaosBlock(candidate));
+    LinkedList<KhaosDatabase.KhaosBlock> value = new LinkedList<>();
+    value.add(new KhaosDatabase.KhaosBlock(oldBlock));
+    when(khaosDb.getBranch(candidateId, sharedHash)).thenReturn(new Pair<>(first, value));
+
+    Method switchFork = Manager.class.getDeclaredMethod("switchFork", BlockCapsule.class);
+    switchFork.setAccessible(true);
+    InvocationTargetException invocation = assertThrows(
+        InvocationTargetException.class, () -> switchFork.invoke(dbManager, candidate));
+
+    assertSame(dbFlush, invocation.getCause());
+    verify(khaosDb, never()).removeBlk(any());
+    verify(khaosDb, never()).setHead(any());
   }
 
   private static void setField(Object target, String name, Object value) throws Exception {

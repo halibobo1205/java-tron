@@ -19,6 +19,7 @@ import org.tron.core.archive.domain.DefaultArchiveDomainCatalog;
 import org.tron.core.archive.domain.DefaultArchiveDomainRegistry;
 import org.tron.core.archive.identity.ArchiveIdentity;
 import org.tron.core.archive.identity.ArchiveIdentityClaim;
+import org.tron.core.archive.identity.ArchiveIdentityException;
 import org.tron.core.archive.identity.ArchiveIdentityProtocol;
 import org.tron.core.archive.identity.ArchiveIdentityState;
 import org.tron.core.archive.identity.LegacyArchiveIdentityPayload;
@@ -108,6 +109,8 @@ public final class ArchiveServiceFactory {
               canonicalHasBlocks, catalog, schemaChecksum);
         }
         Files.createDirectories(archivePath);
+      } catch (ArchiveIdentityException e) {
+        throw new ArchiveException("archive identity validation failed: " + e.getMessage(), e);
       } catch (IOException e) {
         throw new ArchiveException("failed to create archive directory " + archiveDir, e);
       }
