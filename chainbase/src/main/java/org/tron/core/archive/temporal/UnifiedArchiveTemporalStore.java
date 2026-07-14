@@ -123,7 +123,7 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
     List<Row> historyRows = new ArrayList<>();
     List<Row> changesetRows = new ArrayList<>();
     Map<WrappedByteArray, LatestRows> latestRows = new LinkedHashMap<>();
-    MessageDigest digest = newDigest();
+    List<CommitDigestRow> commitRows = new ArrayList<>();
     Set<WrappedByteArray> changesetKeys = new HashSet<>();
     int rowCount = 0;
     for (ArchiveChangeRecord record : ordered) {
@@ -147,11 +147,20 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
       latestRows.put(WrappedByteArray.copyOf(latestKey),
           new LatestRows(latestKey,
               ArchiveTemporalCodec.latestBaselineKey(domain, canonicalKey), changesetValue));
-      updateDigest(digest, changesetKey);
-      updateDigest(digest, changesetValue);
-      updateDigest(digest, historyKey);
-      updateDigest(digest, historyValue);
+      commitRows.add(new CommitDigestRow(changesetKey, changesetValue, historyKey, historyValue));
       rowCount++;
+    }
+    // Fold the block-commit digest in changeset-key order to match the physical CHANGESET
+    // iteration in readBlockRows(), mirroring the Rocks BY_CHANGESET_KEY sort. RECORD_ORDER
+    // (canonicalKey lex-then-length) diverges from the stored order (keyLen-then-canonicalKey)
+    // for multi-key (txNum, domain) groups, which would fail-stop commit-marker validation.
+    commitRows.sort(COMMIT_DIGEST_ROW_BY_CHANGESET_KEY);
+    MessageDigest digest = newDigest();
+    for (CommitDigestRow row : commitRows) {
+      updateDigest(digest, row.changesetKey);
+      updateDigest(digest, row.changesetValue);
+      updateDigest(digest, row.historyKey);
+      updateDigest(digest, row.historyValue);
     }
     return new PreparedChanges(historyRows, changesetRows, latestRows, rowCount, digest.digest());
   }
@@ -708,6 +717,25 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
       this.latestRows = latestRows;
       this.rowCount = rowCount;
       this.digest = digest;
+    }
+  }
+
+  private static final Comparator<CommitDigestRow> COMMIT_DIGEST_ROW_BY_CHANGESET_KEY =
+      (left, right) -> compareBytes(left.changesetKey, right.changesetKey);
+
+  private static final class CommitDigestRow {
+
+    private final byte[] changesetKey;
+    private final byte[] changesetValue;
+    private final byte[] historyKey;
+    private final byte[] historyValue;
+
+    private CommitDigestRow(byte[] changesetKey, byte[] changesetValue, byte[] historyKey,
+        byte[] historyValue) {
+      this.changesetKey = changesetKey;
+      this.changesetValue = changesetValue;
+      this.historyKey = historyKey;
+      this.historyValue = historyValue;
     }
   }
 
