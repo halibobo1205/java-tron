@@ -1,9 +1,18 @@
 package org.tron.core.archive.temporal;
 
 import static org.junit.Assert.assertArrayEquals;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 import java.io.File;
 import java.io.IOException;
@@ -12,11 +21,17 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.function.ThrowingRunnable;
+import org.mockito.InOrder;
 import org.rocksdb.Options;
+import org.rocksdb.ReadOptions;
 import org.rocksdb.RocksDB;
+import org.rocksdb.RocksDBException;
+import org.rocksdb.RocksIterator;
 import org.rocksdb.WriteBatch;
 import org.rocksdb.WriteOptions;
 import org.tron.core.archive.ArchiveException;
@@ -107,6 +122,71 @@ public class RocksDbArchiveTemporalStoreTest {
         store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 5).get().getValue());
     assertArrayEquals(new byte[] {0x42},
         store.getAsOf(ArchiveDomain.ACCOUNT, KEY, 999).get().getValue());
+  }
+
+  @Test
+  public void snapshotReadViewRejectsNonOwnerReadAndCloseWithoutClosing() throws Exception {
+    store.putChange(change(5, DomainValue.tombstone(), DomainValue.present(new byte[] {0x42})));
+    ArchiveTemporalReadView view = store.openReadView();
+
+    assertNonOwnerRejected(() -> view.getAsOf(ArchiveDomain.ACCOUNT, KEY, 5));
+    assertNonOwnerRejected(() -> view.latest(ArchiveDomain.ACCOUNT, KEY));
+    assertNonOwnerRejected(view::close);
+
+    assertArrayEquals(new byte[] {0x42},
+        view.getAsOf(ArchiveDomain.ACCOUNT, KEY, 5).get().getValue());
+    view.close();
+    view.close();
+  }
+
+  @Test
+  public void snapshotReadViewChecksIteratorStatusImmediatelyAfterSeek() throws Exception {
+    RocksIterator iterator = mock(RocksIterator.class);
+    ReadOptions readOptions = mock(ReadOptions.class);
+    Runnable releaseSnapshot = mock(Runnable.class);
+    RocksDBException statusFailure = new RocksDBException("simulated history seek failure");
+    doThrow(statusFailure).when(iterator).status();
+    ArchiveTemporalReadView view = store.new SnapshotReadView(
+        readOptions, iterator, releaseSnapshot);
+
+    ArchiveException failure = assertThrows(ArchiveException.class,
+        () -> view.getAsOf(ArchiveDomain.ACCOUNT, KEY, 5));
+
+    assertSame(statusFailure, failure.getCause());
+    verify(iterator).status();
+    verify(iterator, never()).isValid();
+    view.close();
+  }
+
+  @Test
+  public void snapshotReadViewCloseAggregatesFailuresInReleaseOrderExactlyOnce() {
+    RocksIterator iterator = mock(RocksIterator.class);
+    ReadOptions readOptions = mock(ReadOptions.class);
+    Runnable releaseSnapshot = mock(Runnable.class);
+    RuntimeException iteratorFailure = new RuntimeException("iterator close failed");
+    RuntimeException readOptionsFailure = new RuntimeException("read options close failed");
+    RuntimeException snapshotFailure = new RuntimeException("snapshot release failed");
+    doThrow(iteratorFailure).when(iterator).close();
+    doThrow(readOptionsFailure).when(readOptions).close();
+    doThrow(snapshotFailure).when(releaseSnapshot).run();
+    ArchiveTemporalReadView view = store.new SnapshotReadView(
+        readOptions, iterator, releaseSnapshot);
+
+    RuntimeException failure = assertThrows(RuntimeException.class, view::close);
+
+    assertSame(iteratorFailure, failure);
+    assertEquals(2, failure.getSuppressed().length);
+    assertSame(readOptionsFailure, failure.getSuppressed()[0]);
+    assertSame(snapshotFailure, failure.getSuppressed()[1]);
+    InOrder releaseOrder = inOrder(iterator, readOptions, releaseSnapshot);
+    releaseOrder.verify(iterator).close();
+    releaseOrder.verify(readOptions).close();
+    releaseOrder.verify(releaseSnapshot).run();
+
+    view.close();
+    verify(iterator, times(1)).close();
+    verify(readOptions, times(1)).close();
+    verify(releaseSnapshot, times(1)).run();
   }
 
   @Test
@@ -1046,6 +1126,23 @@ public class RocksDbArchiveTemporalStoreTest {
       }
     }
     f.delete();
+  }
+
+  private static void assertNonOwnerRejected(ThrowingRunnable action) throws InterruptedException {
+    AtomicReference<Throwable> failure = new AtomicReference<>();
+    Thread thread = new Thread(() -> {
+      try {
+        action.run();
+      } catch (Throwable t) {
+        failure.set(t);
+      }
+    }, "archive-view-non-owner-test");
+    thread.start();
+    thread.join();
+
+    assertNotNull(failure.get());
+    assertEquals(ArchiveException.class, failure.get().getClass());
+    assertTrue(failure.get().getMessage().contains("non-owner thread"));
   }
 
   private static byte[] blockHash(int seed) {

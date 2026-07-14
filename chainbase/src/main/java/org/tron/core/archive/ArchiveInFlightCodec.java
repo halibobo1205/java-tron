@@ -17,12 +17,14 @@ import org.tron.core.archive.txnum.ArchiveTxPosition;
 
 final class ArchiveInFlightCodec {
 
-  private static final byte VALUE_VERSION = 1;
+  private static final byte VALUE_VERSION = 2;
   private static final byte META_PREFIX = 0x01;
   private static final byte BLOCK_PREFIX = 0x40;
+  private static final byte ACK_PREFIX = 0x41;
+  private static final byte TOKEN_PREFIX = 0x42;
   private static final byte[] MANIFEST_KEY = new byte[] {META_PREFIX, 'm', 'a', 'n', 'i'};
   private static final byte[] MANIFEST_VALUE =
-      "tron-archive-inflight|schema=1|values=range-position-record-v1"
+      "tron-archive-inflight|schema=2|values=token-state-range-position-record-v2"
           .getBytes(StandardCharsets.US_ASCII);
 
   private ArchiveInFlightCodec() {
@@ -44,6 +46,14 @@ final class ArchiveInFlightCodec {
     return new byte[] {BLOCK_PREFIX};
   }
 
+  static byte[] acknowledgementPrefix() {
+    return new byte[] {ACK_PREFIX};
+  }
+
+  static byte[] tokenPrefix() {
+    return new byte[] {TOKEN_PREFIX};
+  }
+
   static byte[] blockKey(long blockNum) {
     if (blockNum < 0) {
       throw new ArchiveException("archive in-flight block number must be non-negative");
@@ -56,6 +66,42 @@ final class ArchiveInFlightCodec {
       out.flush();
     } catch (IOException e) {
       throw new ArchiveException("archive in-flight block key encode failed", e);
+    }
+    return bytes.toByteArray();
+  }
+
+  static byte[] acknowledgementKey(long blockNum) {
+    if (blockNum < 0) {
+      throw new ArchiveException("archive acknowledgement block number must be non-negative");
+    }
+    ByteArrayOutputStream bytes = new ByteArrayOutputStream(1 + Long.BYTES);
+    DataOutputStream out = new DataOutputStream(bytes);
+    try {
+      out.writeByte(ACK_PREFIX);
+      out.writeLong(blockNum);
+      out.flush();
+    } catch (IOException e) {
+      throw new ArchiveException("archive acknowledgement key encode failed", e);
+    }
+    return bytes.toByteArray();
+  }
+
+  static byte[] tokenKey(long blockNum) {
+    return numberedKey(TOKEN_PREFIX, blockNum, "archive journal token");
+  }
+
+  private static byte[] numberedKey(byte prefix, long blockNum, String what) {
+    if (blockNum < 0) {
+      throw new ArchiveException(what + " block number must be non-negative");
+    }
+    ByteArrayOutputStream bytes = new ByteArrayOutputStream(1 + Long.BYTES);
+    DataOutputStream out = new DataOutputStream(bytes);
+    try {
+      out.writeByte(prefix);
+      out.writeLong(blockNum);
+      out.flush();
+    } catch (IOException e) {
+      throw new ArchiveException(what + " key encode failed", e);
     }
     return bytes.toByteArray();
   }
@@ -73,6 +119,38 @@ final class ArchiveInFlightCodec {
       return blockNum;
     } catch (IOException e) {
       throw new ArchiveException("archive in-flight block key decode failed", e);
+    }
+  }
+
+  static long blockNumOfAcknowledgementKey(byte[] key) {
+    if (key == null || key.length != 1 + Long.BYTES || key[0] != ACK_PREFIX) {
+      throw new ArchiveException("archive acknowledgement key is invalid");
+    }
+    try {
+      DataInputStream in = new DataInputStream(new ByteArrayInputStream(key, 1, Long.BYTES));
+      long blockNum = in.readLong();
+      if (blockNum < 0) {
+        throw new ArchiveException("archive acknowledgement block number must be non-negative");
+      }
+      return blockNum;
+    } catch (IOException e) {
+      throw new ArchiveException("archive acknowledgement key decode failed", e);
+    }
+  }
+
+  static long blockNumOfTokenKey(byte[] key) {
+    if (key == null || key.length != 1 + Long.BYTES || key[0] != TOKEN_PREFIX) {
+      throw new ArchiveException("archive journal token key is invalid");
+    }
+    try {
+      DataInputStream in = new DataInputStream(new ByteArrayInputStream(key, 1, Long.BYTES));
+      long blockNum = in.readLong();
+      if (blockNum < 0) {
+        throw new ArchiveException("archive journal token block number must be non-negative");
+      }
+      return blockNum;
+    } catch (IOException e) {
+      throw new ArchiveException("archive journal token key decode failed", e);
     }
   }
 
@@ -96,6 +174,8 @@ final class ArchiveInFlightCodec {
       ByteArrayOutputStream bytes = new ByteArrayOutputStream();
       DataOutputStream out = new DataOutputStream(bytes);
       out.writeByte(VALUE_VERSION);
+      out.writeByte(block.getJournalState().ordinal());
+      writeToken(out, block.getJournalToken());
       writeRange(out, block.getRange());
       writePositions(out, block.getPositions());
       writeRecords(out, block.getRecords());
@@ -110,16 +190,56 @@ final class ArchiveInFlightCodec {
     try {
       DataInputStream in = new DataInputStream(new ByteArrayInputStream(value));
       requireVersion(in.readByte());
+      ArchiveInFlightBlock.JournalState state = journalStateAt(in.readUnsignedByte());
+      ArchiveJournalToken token = readToken(in);
       ArchiveBlockRange range = readRange(in);
       List<ArchiveTxPosition> positions = readPositions(in);
       List<ArchiveChangeRecord> records = readRecords(in);
       if (in.available() != 0) {
         throw new ArchiveException("archive in-flight block has trailing bytes");
       }
-      return new ArchiveInFlightBlock(range, positions, records);
+      return new ArchiveInFlightBlock(range, positions, records, token, state);
     } catch (IOException e) {
       throw new ArchiveException("archive in-flight block decode failed", e);
     }
+  }
+
+  static byte[] encodeAcknowledgement(ArchiveJournalToken token) {
+    try {
+      ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+      DataOutputStream out = new DataOutputStream(bytes);
+      writeToken(out, token);
+      out.flush();
+      return bytes.toByteArray();
+    } catch (IOException e) {
+      throw new ArchiveException("archive acknowledgement encode failed", e);
+    }
+  }
+
+  static ArchiveJournalToken decodeAcknowledgement(byte[] value) {
+    try {
+      DataInputStream in = new DataInputStream(new ByteArrayInputStream(value));
+      ArchiveJournalToken token = readToken(in);
+      if (in.available() != 0) {
+        throw new ArchiveException("archive acknowledgement has trailing bytes");
+      }
+      return token;
+    } catch (IOException e) {
+      throw new ArchiveException("archive acknowledgement decode failed", e);
+    }
+  }
+
+  private static void writeToken(DataOutputStream out, ArchiveJournalToken token)
+      throws IOException {
+    out.writeLong(token.getBlockNum());
+    writeBytes(out, token.getBlockHash());
+    writeBytes(out, token.getGenerationNonce());
+    writeBytes(out, token.getSchemaChecksum());
+  }
+
+  private static ArchiveJournalToken readToken(DataInputStream in) throws IOException {
+    return new ArchiveJournalToken(
+        in.readLong(), readBytes(in), readBytes(in), readBytes(in));
   }
 
   private static void writeRange(DataOutputStream out, ArchiveBlockRange range)
@@ -296,6 +416,15 @@ final class ArchiveInFlightCodec {
     ArchivePhase[] values = ArchivePhase.values();
     if (ordinal >= values.length) {
       throw new ArchiveException("archive in-flight phase ordinal is invalid: " + ordinal);
+    }
+    return values[ordinal];
+  }
+
+  private static ArchiveInFlightBlock.JournalState journalStateAt(int ordinal) {
+    ArchiveInFlightBlock.JournalState[] values = ArchiveInFlightBlock.JournalState.values();
+    if (ordinal >= values.length) {
+      throw new ArchiveException("archive in-flight journal state ordinal is invalid: "
+          + ordinal);
     }
     return values[ordinal];
   }

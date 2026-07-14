@@ -25,9 +25,15 @@ public final class ArchiveChangeRecord {
 
   public ArchiveChangeRecord(ArchiveTxPosition position, ArchiveDomain domain,
       byte[] canonicalKey, DomainValue prevValue, DomainValue value) {
+    this(position, domain, canonicalKey, prevValue, value, true);
+  }
+
+  private ArchiveChangeRecord(ArchiveTxPosition position, ArchiveDomain domain,
+      byte[] canonicalKey, DomainValue prevValue, DomainValue value, boolean copyKey) {
     this.position = position;
     this.domain = domain;
-    this.canonicalKey = Arrays.copyOf(canonicalKey, canonicalKey.length);
+    this.canonicalKey = copyKey
+        ? Arrays.copyOf(canonicalKey, canonicalKey.length) : canonicalKey;
     this.prevValue = prevValue;
     this.value = value;
   }
@@ -48,6 +54,14 @@ public final class ArchiveChangeRecord {
     return Arrays.copyOf(canonicalKey, canonicalKey.length);
   }
 
+  byte[] canonicalKeyView() {
+    return canonicalKey;
+  }
+
+  public int canonicalKeySize() {
+    return canonicalKey.length;
+  }
+
   /** The value before this change (history / Erigon prev-value); tombstone if absent before. */
   public DomainValue getPrevValue() {
     return prevValue;
@@ -59,7 +73,10 @@ public final class ArchiveChangeRecord {
   }
 
   public boolean isSameValue() {
-    return prevValue.isDeleted() == value.isDeleted()
-        && Arrays.equals(prevValue.getValue(), value.getValue());
+    return prevValue.contentEquals(value);
+  }
+
+  ArchiveChangeRecord withValue(DomainValue newValue) {
+    return new ArchiveChangeRecord(position, domain, canonicalKey, prevValue, newValue, false);
   }
 }

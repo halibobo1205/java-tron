@@ -149,6 +149,9 @@ public class ArchiveCaptureEngineTest {
     assertTrue(engine.capturesStore("account"));    // GENERIC_TRON_STORE
     assertTrue(engine.capturesStore("contract"));   // STORE_SPECIFIC
     assertTrue(engine.capturesStore("properties")); // GENERIC_TRON_STORE_ALLOWLIST
+    assertTrue(engine.capturesStore("properties", ascii("ENERGY_FEE")));
+    assertTrue(engine.capturesStore("properties", ascii("SOME_FUTURE_KEY")));
+    assertFalse(engine.capturesStore("properties", ascii("ABI_MOVE_DONE")));
     assertFalse(engine.capturesStore("storage-row")); // SEMANTIC_ONLY (captured by semantic hook)
     assertFalse(engine.capturesStore("block"));       // excluded
     assertFalse(engine.capturesStore("accountTrie")); // derived excluded
@@ -171,6 +174,23 @@ public class ArchiveCaptureEngineTest {
     engine.capturePut("account", new byte[21], null, account(1));
     engine.clear();
     assertTrue(engine.records().isEmpty());
+  }
+
+  @Test
+  public void previousValueReadMetricsAreAggregatedAndClearedPerBlock() {
+    engine.recordPreviousValueRead(Long.MIN_VALUE, true);
+    engine.recordPreviousValueRead(Long.MIN_VALUE, true);
+    engine.recordPreviousValueRead(Long.MIN_VALUE, false);
+
+    assertEquals(2L, engine.previousValueReads());
+    assertEquals(1L, engine.previousValueReadFailures());
+    assertEquals(0L, engine.previousValueReadNanos());
+
+    engine.clear();
+
+    assertEquals(0L, engine.previousValueReads());
+    assertEquals(0L, engine.previousValueReadFailures());
+    assertEquals(0L, engine.previousValueReadNanos());
   }
 
   private static byte[] acct(Object... assetIdThenBalance) {

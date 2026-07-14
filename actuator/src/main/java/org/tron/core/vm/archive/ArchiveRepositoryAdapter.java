@@ -5,6 +5,7 @@ import static org.tron.common.math.Maths.addExact;
 import com.google.protobuf.ByteString;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import org.apache.commons.lang3.tuple.Pair;
@@ -14,6 +15,8 @@ import org.tron.common.utils.ByteUtil;
 import org.tron.core.archive.reader.ArchiveReadResult;
 import org.tron.core.archive.reader.ArchiveReaderException;
 import org.tron.core.archive.reader.ArchiveStateReader;
+import org.tron.core.archive.query.QueryContext;
+import org.tron.core.archive.query.QueryContextHolder;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.AssetIssueCapsule;
 import org.tron.core.capsule.BlockCapsule;
@@ -55,12 +58,14 @@ import org.tron.protos.Protocol;
 public class ArchiveRepositoryAdapter implements Repository {
 
   private static final String NEEDS_BLOCK_CTX = " needs block context (L8 Slice 3b)";
+  private static final int MAX_BLOCK_HASH_CACHE_ENTRIES = 256;
 
   // Root: reader + vmProperties set, parent null. Child: parent set, reader/vmProperties null.
   private final ArchiveStateReader reader;
   private final VmDynamicProperties vmProperties;
   private final ArchiveRepositoryAdapter parent;
   private final boolean genesisComplete;
+  private final Map<Long, byte[]> blockHashCache;
 
   // Copy-on-write overlay. containsKey decides; a null value marks a deletion at this level.
   private final Map<Key, AccountCapsule> accounts = new HashMap<>();
@@ -82,6 +87,12 @@ public class ArchiveRepositoryAdapter implements Repository {
     this.vmProperties = vmProperties;
     this.parent = null;
     this.genesisComplete = genesisComplete;
+    this.blockHashCache = new LinkedHashMap<Long, byte[]>(16, 0.75f, true) {
+      @Override
+      protected boolean removeEldestEntry(Map.Entry<Long, byte[]> eldest) {
+        return size() > MAX_BLOCK_HASH_CACHE_ENTRIES;
+      }
+    };
   }
 
   private ArchiveRepositoryAdapter(ArchiveRepositoryAdapter parent) {
@@ -89,6 +100,7 @@ public class ArchiveRepositoryAdapter implements Repository {
     this.vmProperties = null;
     this.parent = parent;
     this.genesisComplete = parent.genesisComplete;
+    this.blockHashCache = parent.blockHashCache;
   }
 
   @Override
@@ -465,10 +477,26 @@ public class ArchiveRepositoryAdapter implements Repository {
   @Override
   public BlockCapsule getBlockByNum(long num) {
     try {
+      QueryContext queryContext = QueryContextHolder.current();
+      if (queryContext != null) {
+        // ChainBaseManager resolves the height index and then the block row.
+        queryContext.recordBackendReads(2L);
+      }
       return StoreFactory.getInstance().getChainBaseManager().getBlockByNum(num);
     } catch (Exception e) {
       throw new UnsupportedHistoricalStateException("historical block " + num + " unavailable", e);
     }
+  }
+
+  @Override
+  public byte[] getBlockHashByNum(long num) {
+    byte[] cached = blockHashCache.get(num);
+    if (cached != null) {
+      return cached.clone();
+    }
+    byte[] blockHash = getBlockByNum(num).getBlockId().getBytes();
+    blockHashCache.put(num, blockHash.clone());
+    return blockHash;
   }
 
   @Override

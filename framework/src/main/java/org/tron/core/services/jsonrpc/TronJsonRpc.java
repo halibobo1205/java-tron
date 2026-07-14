@@ -16,6 +16,7 @@ import lombok.ToString;
 import org.springframework.stereotype.Component;
 import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.utils.ByteArray;
+import org.tron.core.archive.query.HistoricalQueryLimitException;
 import org.tron.core.exception.BadItemException;
 import org.tron.core.exception.ItemNotFoundException;
 import org.tron.core.exception.jsonrpc.JsonRpcExceedLimitException;
@@ -90,6 +91,7 @@ public interface TronJsonRpc {
   @JsonRpcMethod("eth_getBalance")
   @JsonRpcErrors({
       @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
+      @JsonRpcError(exception = HistoricalQueryLimitException.class, code = -32005, data = "{}"),
       @JsonRpcError(exception = JsonRpcInternalException.class, code = -32000, data = "{}"),
   })
   String getTrxBalance(String address, Object blockParamObj)
@@ -98,6 +100,7 @@ public interface TronJsonRpc {
   @JsonRpcMethod("eth_getStorageAt")
   @JsonRpcErrors({
       @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
+      @JsonRpcError(exception = HistoricalQueryLimitException.class, code = -32005, data = "{}"),
       @JsonRpcError(exception = JsonRpcInternalException.class, code = -32000, data = "{}"),
   })
   String getStorageAt(String address, String storageIdx, Object blockParamObj)
@@ -106,6 +109,7 @@ public interface TronJsonRpc {
   @JsonRpcMethod("eth_getCode")
   @JsonRpcErrors({
       @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
+      @JsonRpcError(exception = HistoricalQueryLimitException.class, code = -32005, data = "{}"),
       @JsonRpcError(exception = JsonRpcInternalException.class, code = -32000, data = "{}"),
   })
   String getABIOfSmartContract(String contractAddress, Object blockParamObj)
@@ -167,6 +171,7 @@ public interface TronJsonRpc {
   @JsonRpcErrors({
       @JsonRpcError(exception = JsonRpcInvalidRequestException.class, code = -32600, data = "{}"),
       @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
+      @JsonRpcError(exception = HistoricalQueryLimitException.class, code = -32005, data = "{}"),
       @JsonRpcError(exception = JsonRpcInternalException.class, code = -32000, data = "{}"),
   })
   String getCall(CallArguments transactionCall, Object blockNumOrTag)

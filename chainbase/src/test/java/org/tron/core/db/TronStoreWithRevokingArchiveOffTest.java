@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.same;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -90,6 +91,32 @@ public class TronStoreWithRevokingArchiveOffTest {
     assertTrue(engine.records().isEmpty());
   }
 
+  @Test
+  public void knownPreviousPutDoesNotReadPreviousTwice() {
+    byte[] key = new byte[] {1, 2, 3};
+    byte[] oldValue = new byte[] {4};
+    byte[] newValue = new byte[] {5};
+    enableCapture();
+    when(db.get(key)).thenReturn(oldValue);
+
+    store.putWithSinglePreviousRead(key, new TestCapsule(newValue));
+
+    verify(db, times(1)).get(key);
+    verify(db).put(same(key), same(newValue));
+  }
+
+  @Test
+  public void knownPreviousDeleteDoesNotReadPreviousTwice() {
+    byte[] key = new byte[] {1, 2, 3};
+    enableCapture();
+    when(db.get(key)).thenReturn(new byte[] {4});
+
+    store.deleteWithSinglePreviousRead(key);
+
+    verify(db, times(1)).get(key);
+    verify(db).remove(same(key));
+  }
+
   private static ArchiveCaptureEngine enableCapture() {
     ArchiveExecutionContext context = new ArchiveExecutionContext();
     context.enter(new ArchiveTxPosition(
@@ -105,6 +132,16 @@ public class TronStoreWithRevokingArchiveOffTest {
 
     private TestStore(DB<byte[], byte[]> db) {
       super(db);
+    }
+
+    private void putWithSinglePreviousRead(byte[] key, TestCapsule value) {
+      ArchivePreviousValue previous = readArchivePreviousValue(getDbName(), key);
+      putWithKnownArchivePrevious(key, value, previous);
+    }
+
+    private void deleteWithSinglePreviousRead(byte[] key) {
+      ArchivePreviousValue previous = readArchivePreviousValue(getDbName(), key);
+      deleteWithKnownArchivePrevious(key, previous);
     }
   }
 

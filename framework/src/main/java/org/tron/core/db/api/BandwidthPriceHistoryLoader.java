@@ -19,6 +19,14 @@ public class BandwidthPriceHistoryLoader {
     this.chainBaseManager = chainBaseManager;
   }
 
+  /** Returns whether the loader would alter the rooted price-history value. */
+  public boolean wouldChangeArchiveState() {
+    getBandwidthProposals();
+    return !proposalCapsuleList.isEmpty()
+        && !parseProposalsToStr().equals(
+            chainBaseManager.getDynamicPropertiesStore().getBandwidthPriceHistory());
+  }
+
   public void doWork() {
     long start = System.currentTimeMillis();
     logger.info("Start to load bandwidth price");

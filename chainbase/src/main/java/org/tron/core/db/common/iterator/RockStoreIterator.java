@@ -13,14 +13,21 @@ import org.rocksdb.RocksIterator;
 public final class RockStoreIterator implements DBIterator {
 
   private final RocksIterator dbIterator;
+  private final boolean failOnReadError;
   private boolean first = true;
 
   private final AtomicBoolean close = new AtomicBoolean(false);
   private final ReadOptions readOptions;
 
   public RockStoreIterator(RocksIterator dbIterator, ReadOptions readOptions) {
+    this(dbIterator, readOptions, false);
+  }
+
+  public RockStoreIterator(RocksIterator dbIterator, ReadOptions readOptions,
+      boolean failOnReadError) {
     this.readOptions = readOptions;
     this.dbIterator = dbIterator;
+    this.failOnReadError = failOnReadError;
   }
 
   @Override
@@ -44,15 +51,23 @@ public final class RockStoreIterator implements DBIterator {
         first = false;
       }
       if (!(hasNext = dbIterator.isValid())) { // false is last item
+        if (failOnReadError) {
+          dbIterator.status();
+        }
         close();
       }
     } catch (Exception e) {
-      logger.error(e.getMessage(), e);
+      RuntimeException strictFailure = new IllegalStateException(
+          "rocksdb iterator failed while reading", e);
       try {
         close();
       } catch (Exception e1) {
-        logger.error(e1.getMessage(), e1);
+        strictFailure.addSuppressed(e1);
       }
+      if (failOnReadError) {
+        throw strictFailure;
+      }
+      logger.error(e.getMessage(), e);
     }
     return hasNext;
   }

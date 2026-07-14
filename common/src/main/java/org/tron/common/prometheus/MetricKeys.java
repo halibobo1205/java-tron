@@ -21,6 +21,9 @@ public class MetricKeys {
     public static final String P2P_ERROR = "tron:p2p_error";
     public static final String P2P_DISCONNECT = "tron:p2p_disconnect";
     public static final String INTERNAL_SERVICE_FAIL = "tron:internal_service_fail";
+    public static final String ARCHIVE_WORK = "tron:archive_work";
+    public static final String ARCHIVE_QUERIES = "tron:archive_queries";
+    public static final String ARCHIVE_QUERY_RESOURCES = "tron:archive_query_resources";
 
     private Counter() {
       throw new IllegalStateException("Counter");
@@ -37,6 +40,7 @@ public class MetricKeys {
     public static final String DB_SST_LEVEL = "tron:db_sst_level";
     public static final String MANAGER_QUEUE = "tron:manager_queue_size";
     public static final String TX_CACHE = "tron:tx_cache";
+    public static final String ARCHIVE_STATE = "tron:archive_state";
 
     private Gauge() {
       throw new IllegalStateException("Gauge");
@@ -67,6 +71,8 @@ public class MetricKeys {
     public static final String BLOCK_FETCH_LATENCY = "tron:block_fetch_latency_seconds";
     public static final String BLOCK_RECEIVE_DELAY = "tron:block_receive_delay_seconds";
     public static final String BLOCK_TRANSACTION_COUNT = "tron:block_transaction_count";
+    public static final String ARCHIVE_STAGE_LATENCY = "tron:archive_stage_latency_seconds";
+    public static final String ARCHIVE_QUERY_LATENCY = "tron:archive_query_latency_seconds";
 
     private Histogram() {
       throw new IllegalStateException("Histogram");

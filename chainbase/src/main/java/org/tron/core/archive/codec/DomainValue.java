@@ -33,4 +33,14 @@ public final class DomainValue {
   public byte[] getValue() {
     return Arrays.copyOf(value, value.length);
   }
+
+  /** Allocation-free comparison for archive hot paths that already own both immutable values. */
+  public boolean contentEquals(DomainValue other) {
+    return other != null && deleted == other.deleted && Arrays.equals(value, other.value);
+  }
+
+  /** Encoded payload length without exposing the immutable backing array. */
+  public int size() {
+    return value.length;
+  }
 }

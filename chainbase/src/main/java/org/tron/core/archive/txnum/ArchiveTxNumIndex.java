@@ -54,6 +54,9 @@ public interface ArchiveTxNumIndex {
   default void markRepairRequired(String reason) {
   }
 
+  default void clearRepairRequired() {
+  }
+
   /**
    * The lowest block this index has ever covered, or a negative sentinel if it is empty. Only
    * {@code 0} proves coverage from genesis, which is what lets a historical read treat a MISSING

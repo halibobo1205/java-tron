@@ -1,9 +1,13 @@
 package org.tron.core.vm.archive;
 
 import java.util.Arrays;
+import java.util.Objects;
+import java.util.function.Supplier;
 import org.tron.common.math.StrictMathWrapper;
 import org.tron.common.runtime.ProgramResult;
 import org.tron.core.actuator.VMActuator;
+import org.tron.core.archive.query.QueryContext;
+import org.tron.core.archive.query.QueryContextHolder;
 import org.tron.core.archive.reader.ArchiveStateReader;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockCapsule;
@@ -42,6 +46,16 @@ import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
  */
 public final class HistoricalTraceCallExecutor {
 
+  private final Supplier<VMActuator> vmActuatorFactory;
+
+  public HistoricalTraceCallExecutor() {
+    this(() -> new VMActuator(true));
+  }
+
+  HistoricalTraceCallExecutor(Supplier<VMActuator> vmActuatorFactory) {
+    this.vmActuatorFactory = Objects.requireNonNull(vmActuatorFactory, "vmActuatorFactory");
+  }
+
   public HistoricalTraceCallResult execute(ArchiveStateReader reader,
       VmDynamicProperties vmProperties, BlockCapsule block, TransactionCapsule trxCap)
       throws ContractValidateException, ContractExeException {
@@ -58,40 +72,61 @@ public final class HistoricalTraceCallExecutor {
       VmDynamicProperties vmProperties, BlockCapsule block, TransactionCapsule trxCap,
       boolean genesisComplete, boolean useConstantEnergyCap)
       throws ContractValidateException, ContractExeException {
-    ArchiveRepositoryAdapter root =
-        new ArchiveRepositoryAdapter(reader, vmProperties, genesisComplete);
-    TransactionContext context =
-        new TransactionContext(block, trxCap, StoreFactory.getInstance(), true, false);
-    VMActuator vmActuator = new VMActuator(true);
-    vmActuator.setInjectedRootRepository(root);
-    vmActuator.setInjectedVmProperties(vmProperties);
-    if (!useConstantEnergyCap) {
-      vmActuator.setConstantCallMaxEnergyLimit(
-          exactTransactionEnergyLimit(root, vmProperties, trxCap));
-    }
-    VMConfig.setLocalVmTrace(true);
-    try {
-      vmActuator.validate(context);
-      vmActuator.execute(context);
-    } finally {
-      VMConfig.clearLocalVmTrace();
-      // validate() installs a thread-local config snapshot; drop it like the constant-call path.
-      VMConfig.clearLocalSnapshot();
-    }
+    QueryContext readerQueryContext = reader.getQueryContext();
+    try (QueryContextHolder.Scope ignored =
+        QueryContextHolder.attachIfPresent(readerQueryContext)) {
+      QueryContext queryContext = QueryContextHolder.current();
+      ArchiveRepositoryAdapter root =
+          new ArchiveRepositoryAdapter(reader, vmProperties, genesisComplete);
+      TransactionContext context =
+          new TransactionContext(block, trxCap, StoreFactory.getInstance(), true, false);
+      VMActuator vmActuator = Objects.requireNonNull(
+          vmActuatorFactory.get(), "vmActuatorFactory result");
+      vmActuator.setInjectedRootRepository(root);
+      vmActuator.setInjectedVmProperties(vmProperties);
+      if (!useConstantEnergyCap) {
+        vmActuator.setConstantCallMaxEnergyLimit(
+            exactTransactionEnergyLimit(root, vmProperties, trxCap));
+      }
+      VMConfig.setLocalVmTrace(true);
+      boolean completedWithoutVmFailure = false;
+      try {
+        vmActuator.validate(context);
+        vmActuator.execute(context);
 
-    ProgramResult result = context.getProgramResult();
-    Program program = vmActuator.getProgram();
-    if (program == null) {
-      throw new HistoricalVmExecutionException(
-          "historical trace call produced no program"
-              + (result.getException() == null ? "" : ": " + result.getException().getMessage()),
-          result.getException());
+        ProgramResult result = context.getProgramResult();
+        Program program = vmActuator.getProgram();
+        if (program == null) {
+          throw new HistoricalVmExecutionException(
+              "historical trace call produced no program"
+                  + (result.getException() == null
+                      ? "" : ": " + result.getException().getMessage()),
+              result.getException());
+        }
+        ProgramTrace trace = program.getTrace();
+        boolean failed = result.getException() != null || result.isRevert()
+            || (result.getRuntimeError() != null && !result.getRuntimeError().isEmpty());
+        HistoricalTraceCallResult traceResult = HistoricalTraceCallResult.of(
+            result.getHReturn(), result.getEnergyUsed(), failed,
+            result.getRuntimeError(), trace);
+        completedWithoutVmFailure = !failed;
+        return traceResult;
+      } finally {
+        VMConfig.clearLocalVmTrace();
+        // validate() installs a thread-local config snapshot; drop it like the constant-call path.
+        VMConfig.clearLocalSnapshot();
+        if (queryContext != null) {
+          if (queryContext.getRecordedTerminalException() != null) {
+            // VMActuator intentionally catches Throwable; restore an already-recorded budget error.
+            throw queryContext.getRecordedTerminalException();
+          }
+          if (completedWithoutVmFailure) {
+            // Sample a newly-expired deadline only when no independent VM/validation failure won.
+            queryContext.throwIfTerminated();
+          }
+        }
+      }
     }
-    ProgramTrace trace = program.getTrace();
-    boolean failed = result.getException() != null || result.isRevert()
-        || (result.getRuntimeError() != null && !result.getRuntimeError().isEmpty());
-    return HistoricalTraceCallResult.of(result.getHReturn(), result.getEnergyUsed(), failed,
-        result.getRuntimeError(), trace);
   }
 
   private static long exactTransactionEnergyLimit(ArchiveRepositoryAdapter root,

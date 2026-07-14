@@ -44,13 +44,15 @@ public final class ArchiveTemporalCodec {
       "latest-baseline".getBytes(StandardCharsets.US_ASCII);
   private static final byte[] MANIFEST_KEY = new byte[] {META_PREFIX, 'm', 'a', 'n', 'i'};
   private static final byte[] MANIFEST_VALUE =
-      ("tron-archive-temporal|schema=6|model=prev-value-v1"
+      ("tron-archive-temporal|schema=7|model=prev-value-v1"
           + "|prefix=archive-table-v1|key-len=u32|block-hash=range-marker"
-          + "|block-rows=sha256|changeset-value=after|latest-baseline=value")
+          + "|block-schema=sha256|block-rows=sha256|changeset-value=after"
+          + "|latest-baseline=value")
           .getBytes(StandardCharsets.US_ASCII);
   private static final int BLOCK_COMMIT_DIGEST_LENGTH = 32;
   private static final int BLOCK_COMMIT_VALUE_LENGTH =
-      36 + ArchiveBlockRange.BLOCK_HASH_LENGTH + Integer.BYTES + BLOCK_COMMIT_DIGEST_LENGTH;
+      36 + ArchiveBlockRange.BLOCK_HASH_LENGTH + ArchiveBlockRange.SCHEMA_CHECKSUM_LENGTH
+          + Integer.BYTES + BLOCK_COMMIT_DIGEST_LENGTH;
 
   private ArchiveTemporalCodec() {
   }
@@ -164,6 +166,7 @@ public final class ArchiveTemporalCodec {
       throw new ArchiveException("archive block commit requires a 32-byte block hash");
     }
     requireBlockCommitDigest(rowDigest);
+    byte[] schemaChecksum = markerSchemaChecksum(range);
     return Bytes.concat(
         Longs.toByteArray(range.getBlockNum()),
         Longs.toByteArray(range.getFirstTxNum()),
@@ -171,6 +174,7 @@ public final class ArchiveTemporalCodec {
         Longs.toByteArray(range.getFinalizeTxNum()),
         Ints.toByteArray(blockHash.length),
         blockHash,
+        schemaChecksum,
         Ints.toByteArray(rowCount),
         rowDigest);
   }
@@ -202,7 +206,13 @@ public final class ArchiveTemporalCodec {
     if (rowCount < 0 || rowDigest == null || rowDigest.length != BLOCK_COMMIT_DIGEST_LENGTH) {
       return false;
     }
-    int rowCountOffset = 36 + blockHashLen;
+    int schemaOffset = 36 + blockHashLen;
+    byte[] schemaChecksum = markerSchemaChecksum(range);
+    if (!Arrays.equals(Arrays.copyOfRange(encoded, schemaOffset,
+            schemaOffset + ArchiveBlockRange.SCHEMA_CHECKSUM_LENGTH), schemaChecksum)) {
+      return false;
+    }
+    int rowCountOffset = schemaOffset + ArchiveBlockRange.SCHEMA_CHECKSUM_LENGTH;
     int encodedRowCount = Ints.fromBytes(encoded[rowCountOffset], encoded[rowCountOffset + 1],
         encoded[rowCountOffset + 2], encoded[rowCountOffset + 3]);
     if (encodedRowCount != rowCount) {
@@ -226,7 +236,7 @@ public final class ArchiveTemporalCodec {
     if (blockHashLen != ArchiveBlockRange.BLOCK_HASH_LENGTH) {
       throw new ArchiveException("archive temporal commit marker hash length is invalid");
     }
-    int rowCountOffset = 36 + blockHashLen;
+    int rowCountOffset = 36 + blockHashLen + ArchiveBlockRange.SCHEMA_CHECKSUM_LENGTH;
     int rowCount = Ints.fromBytes(encoded[rowCountOffset], encoded[rowCountOffset + 1],
         encoded[rowCountOffset + 2], encoded[rowCountOffset + 3]);
     if (rowCount < 0) {
@@ -236,6 +246,19 @@ public final class ArchiveTemporalCodec {
 
   static int blockCommitDigestLength() {
     return BLOCK_COMMIT_DIGEST_LENGTH;
+  }
+
+  private static byte[] markerSchemaChecksum(ArchiveBlockRange range) {
+    byte[] schemaChecksum = range.getSchemaChecksum();
+    if (schemaChecksum.length == 0) {
+      // Temporal-store unit callers may use a schema-less range. Production journals and the
+      // persistent txNum index always carry the real 32-byte checksum.
+      return new byte[ArchiveBlockRange.SCHEMA_CHECKSUM_LENGTH];
+    }
+    if (schemaChecksum.length != ArchiveBlockRange.SCHEMA_CHECKSUM_LENGTH) {
+      throw new ArchiveException("archive block commit requires a 32-byte schema checksum");
+    }
+    return schemaChecksum;
   }
 
   static void requireBlockCommitDigest(byte[] rowDigest) {

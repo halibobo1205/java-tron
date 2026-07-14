@@ -25,13 +25,16 @@ import lombok.Getter;
 public class BufferedResponseWrapper extends HttpServletResponseWrapper {
 
   private final HttpServletResponse actual;
-  private final ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+  private ByteArrayOutputStream buffer = new ByteArrayOutputStream();
   private final int maxBytes;
+  private final ByteReservation byteReservation;
   private int status = HttpServletResponse.SC_OK;
   private String contentType;
   private boolean committed = false;
   @Getter
   private volatile boolean overflow = false;
+  @Getter
+  private volatile boolean resourceExhausted = false;
 
   private final ServletOutputStream outputStream = new ServletOutputStream() {
     @Override
@@ -40,7 +43,11 @@ public class BufferedResponseWrapper extends HttpServletResponseWrapper {
         return;
       }
       if (maxBytes > 0 && buffer.size() >= maxBytes) {
-        markOverflow();
+        markOverflow(false);
+        return;
+      }
+      if (byteReservation != null && !byteReservation.tryReserve(1)) {
+        markOverflow(true);
         return;
       }
       buffer.write(b);
@@ -48,11 +55,16 @@ public class BufferedResponseWrapper extends HttpServletResponseWrapper {
 
     @Override
     public void write(byte[] b, int off, int len) {
+      checkBounds(b, off, len);
       if (overflow) {
         return;
       }
-      if (maxBytes > 0 && buffer.size() + len > maxBytes) {
-        markOverflow();
+      if (maxBytes > 0 && (long) buffer.size() + len > maxBytes) {
+        markOverflow(false);
+        return;
+      }
+      if (byteReservation != null && !byteReservation.tryReserve(len)) {
+        markOverflow(true);
         return;
       }
       buffer.write(b, off, len);
@@ -76,14 +88,35 @@ public class BufferedResponseWrapper extends HttpServletResponseWrapper {
    * @param maxBytes max allowed response bytes; {@code 0} means no limit
    */
   public BufferedResponseWrapper(HttpServletResponse response, int maxBytes) {
+    this(response, maxBytes, null);
+  }
+
+  public BufferedResponseWrapper(HttpServletResponse response, int maxBytes,
+      ByteReservation byteReservation) {
     super(response);
     this.actual = response;
     this.maxBytes = maxBytes;
+    this.byteReservation = byteReservation;
   }
 
-  private void markOverflow() {
+  private void markOverflow(boolean exhausted) {
     overflow = true;
-    buffer.reset();
+    resourceExhausted = exhausted;
+    // ByteArrayOutputStream.reset() retains its backing array. Replace the stream so a rejected
+    // large response releases its process-wide byte budget only after its heap is releasable.
+    buffer = new ByteArrayOutputStream();
+    if (byteReservation != null) {
+      byteReservation.releaseAll();
+    }
+  }
+
+  private static void checkBounds(byte[] value, int offset, int length) {
+    if (value == null) {
+      throw new NullPointerException("value");
+    }
+    if ((offset | length) < 0 || length > value.length - offset) {
+      throw new IndexOutOfBoundsException();
+    }
   }
 
   /**
@@ -93,14 +126,14 @@ public class BufferedResponseWrapper extends HttpServletResponseWrapper {
   @Override
   public void setContentLength(int len) {
     if (maxBytes > 0 && len > maxBytes) {
-      markOverflow();
+      markOverflow(false);
     }
   }
 
   @Override
   public void setContentLengthLong(long len) {
     if (maxBytes > 0 && len > maxBytes) {
-      markOverflow();
+      markOverflow(false);
     }
   }
 
@@ -155,6 +188,12 @@ public class BufferedResponseWrapper extends HttpServletResponseWrapper {
     return writer;
   }
 
+  /** Flushes encoder state and returns the exact retained body size before network admission. */
+  public int getBufferedSize() {
+    writer.flush();
+    return buffer.size();
+  }
+
   public void commitToResponse() throws IOException {
     if (committed) {
       throw new IllegalStateException("commitToResponse() already called");
@@ -174,5 +213,13 @@ public class BufferedResponseWrapper extends HttpServletResponseWrapper {
     actual.setContentLength(buffer.size());
     buffer.writeTo(actual.getOutputStream());
     actual.getOutputStream().flush();
+  }
+
+  /** Incremental process-wide byte reservation owned and closed by the transport. */
+  public interface ByteReservation {
+
+    boolean tryReserve(int bytes);
+
+    void releaseAll();
   }
 }

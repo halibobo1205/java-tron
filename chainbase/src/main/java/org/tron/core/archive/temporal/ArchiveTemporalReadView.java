@@ -16,6 +16,11 @@ public interface ArchiveTemporalReadView extends AutoCloseable {
   /** As {@link ArchiveTemporalStore#getAsOf}, but against this frozen view. */
   Optional<DomainValue> getAsOf(ArchiveDomain domain, byte[] canonicalKey, long txNum);
 
+  /** Conservative number of backend operations used by one {@link #getAsOf} call. */
+  default long getAsOfBackendReadCost() {
+    return 1L;
+  }
+
   /** As {@link ArchiveTemporalStore#latest}, but against this frozen view. */
   Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey);
 
@@ -32,6 +37,11 @@ public interface ArchiveTemporalReadView extends AutoCloseable {
       @Override
       public Optional<DomainValue> getAsOf(ArchiveDomain domain, byte[] canonicalKey, long txNum) {
         return store.getAsOf(domain, canonicalKey, txNum);
+      }
+
+      @Override
+      public long getAsOfBackendReadCost() {
+        return store.getAsOfBackendReadCost();
       }
 
       @Override

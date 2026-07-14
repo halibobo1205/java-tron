@@ -1028,6 +1028,8 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule>
   private void saveGenesisArchiveFeeProperties() {
     saveEnergyFee(getEnergyFee());
     saveTransactionFee(getTransactionFee());
+    saveEnergyPriceHistory(getEnergyPriceHistory());
+    saveBandwidthPriceHistory(getBandwidthPriceHistory());
     saveMaxFeeLimit(getMaxFeeLimit());
     saveMaxCpuTimeOfOneTx(getMaxCpuTimeOfOneTx());
     saveMemoFee(getMemoFee());

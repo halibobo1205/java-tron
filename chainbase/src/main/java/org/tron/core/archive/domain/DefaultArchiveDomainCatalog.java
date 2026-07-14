@@ -105,7 +105,7 @@ public final class DefaultArchiveDomainCatalog implements ArchiveDomainCatalog {
     rootDomain(ArchiveDomain.CONTRACT_STATE, "contract-state", address21,
         new DeterministicProtoValueCodec("contract-state-v1", ContractState.parser()),
         ReaderPolicy.HISTORICAL_VM);
-    // CONTRACT_STORAGE: 32-byte word, semantic 54-byte key (address||slot||version).
+    // CONTRACT_STORAGE: 32-byte word keyed by the exact 32-byte physical Storage.compose row key.
     rootDomain(ArchiveDomain.CONTRACT_STORAGE, "storage-row", new ContractStorageKeyCodec(),
         new StorageWordValueCodec(), ReaderPolicy.PUBLIC_STATE);
     // ACCOUNT_ASSET: TRC10 balance (int64) captured semantically; address||assetId key.

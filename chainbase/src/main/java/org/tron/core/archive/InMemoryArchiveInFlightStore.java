@@ -21,6 +21,21 @@ public final class InMemoryArchiveInFlightStore implements ArchiveInFlightStore 
   }
 
   @Override
+  public synchronized void acknowledgeBlock(ArchiveJournalToken token) {
+    ArchiveInFlightBlock block = blocks.get(token.getBlockNum());
+    if (block == null) {
+      throw new ArchiveException("archive acknowledgement has no journal block "
+          + token.getBlockNum());
+    }
+    if (!token.equals(block.getJournalToken())) {
+      throw new ArchiveException("archive acknowledgement token mismatch for block "
+          + token.getBlockNum());
+    }
+    blocks.put(token.getBlockNum(), block.withJournalState(
+        ArchiveInFlightBlock.JournalState.CANONICAL_COMMITTED));
+  }
+
+  @Override
   public synchronized void deleteBlock(long blockNum) {
     blocks.remove(blockNum);
   }

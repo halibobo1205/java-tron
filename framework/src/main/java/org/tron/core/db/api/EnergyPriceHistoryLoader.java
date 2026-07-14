@@ -20,6 +20,14 @@ public class EnergyPriceHistoryLoader {
     this.chainBaseManager = chainBaseManager;
   }
 
+  /** Returns whether the loader would alter the rooted price-history value. */
+  public boolean wouldChangeArchiveState() {
+    getEnergyProposals();
+    return !proposalCapsuleList.isEmpty()
+        && !parseProposalsToStr().equals(
+            chainBaseManager.getDynamicPropertiesStore().getEnergyPriceHistory());
+  }
+
   public void doWork() {
     long start = System.currentTimeMillis();
     logger.info("Start to load energy price");

@@ -22,6 +22,7 @@ import org.tron.common.storage.leveldb.LevelDbDataSourceImpl;
 import org.tron.common.storage.metric.DbStatService;
 import org.tron.common.storage.rocksdb.RocksDbDataSourceImpl;
 import org.tron.common.utils.StorageUtils;
+import org.tron.core.archive.ArchiveMetrics;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.capsule.ProtoCapsule;
 import org.tron.core.db.common.iterator.DBIterator;
@@ -92,38 +93,69 @@ public abstract class TronStoreWithRevoking<T extends ProtoCapsule> implements I
       return;
     }
 
-    byte[] value = item.getData();
     // L4 archive sidecar: when this store is archived, read the pre-put value (Erigon prev-value)
     // before overwriting it. capturesStore() is false when archive is disabled, so the default path
     // is just revokingDB.put -- byte-identical to a non-archive node, no extra read.
     String dbName = getDbName();
-    boolean capture = ArchiveCaptureHolder.capturesStore(dbName);
+    boolean capture = ArchiveCaptureHolder.capturesStore(dbName, key);
     ArchivePreviousValue previous = capture ? readArchivePreviousValue(dbName, key) : null;
+    putWithArchivePrevious(key, item, capture, previous);
+  }
+
+  /** Canonical put using a previous value already read by a store-specific semantic hook. */
+  protected final void putWithKnownArchivePrevious(
+      byte[] key, T item, ArchivePreviousValue previous) {
+    if (Objects.isNull(key) || Objects.isNull(item)) {
+      return;
+    }
+    boolean capture = ArchiveCaptureHolder.capturesStore(getDbName(), key);
+    putWithArchivePrevious(key, item, capture, previous);
+  }
+
+  private void putWithArchivePrevious(byte[] key, T item, boolean capture,
+      ArchivePreviousValue previous) {
+    byte[] value = item.getData();
     revokingDB.put(key, value);
-    if (capture && previous.isAvailable()) {
-      ArchiveCaptureHolder.capturePut(dbName, key, previous.getValue(), value);
+    if (capture && previous != null && previous.isAvailable()) {
+      ArchiveCaptureHolder.capturePut(getDbName(), key, previous.getValue(), value);
     }
   }
 
   @Override
   public void delete(byte[] key) {
     String dbName = getDbName();
-    boolean capture = ArchiveCaptureHolder.capturesStore(dbName);
+    boolean capture = ArchiveCaptureHolder.capturesStore(dbName, key);
     ArchivePreviousValue previous = (capture && key != null)
         ? readArchivePreviousValue(dbName, key) : null;
+    deleteWithArchivePrevious(key, capture, previous);
+  }
+
+  /** Canonical delete using a previous value already read by a store-specific semantic hook. */
+  protected final void deleteWithKnownArchivePrevious(
+      byte[] key, ArchivePreviousValue previous) {
+    boolean capture = ArchiveCaptureHolder.capturesStore(getDbName(), key);
+    deleteWithArchivePrevious(key, capture, previous);
+  }
+
+  private void deleteWithArchivePrevious(byte[] key, boolean capture,
+      ArchivePreviousValue previous) {
     revokingDB.delete(key);
     if (capture && key == null) {
-      ArchiveCaptureHolder.captureDelete(dbName, null, null);
-    } else if (capture && previous.isAvailable()) {
-      ArchiveCaptureHolder.captureDelete(dbName, key, previous.getValue());
+      ArchiveCaptureHolder.captureDelete(getDbName(), null, null);
+    } else if (capture && previous != null && previous.isAvailable()) {
+      ArchiveCaptureHolder.captureDelete(getDbName(), key, previous.getValue());
     }
   }
 
   /** Isolates the archive-only prev-value read from the canonical store mutation. */
   protected final ArchivePreviousValue readArchivePreviousValue(String dbName, byte[] key) {
+    long startedNanos = ArchiveMetrics.startTimer();
     try {
-      return ArchivePreviousValue.available(revokingDB.getUnchecked(key));
+      ArchivePreviousValue previous = ArchivePreviousValue.available(revokingDB.getUnchecked(key));
+      ArchiveCaptureHolder.recordPreviousValueRead(startedNanos, true);
+      return previous;
     } catch (Exception e) {
+      ArchiveCaptureHolder.recordPreviousValueRead(startedNanos, false);
       ArchiveCaptureHolder.recordFailure("prevRead(" + dbName + ")", e);
       return ArchivePreviousValue.unavailable();
     }

@@ -27,12 +27,16 @@ import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
 import org.tron.core.archive.domain.DefaultArchiveDomainCatalog;
 import org.tron.core.archive.domain.DefaultArchiveDomainRegistry;
+import org.tron.core.archive.domain.ArchiveSchemaChecksum;
 import org.tron.core.archive.reader.ArchiveReadResult;
 import org.tron.core.archive.reader.ArchiveReaderException;
 import org.tron.core.archive.reader.ArchiveReadThrough;
 import org.tron.core.archive.reader.ArchiveStatePoint;
 import org.tron.core.archive.reader.ArchiveStateReader;
+import org.tron.core.archive.query.ArchiveQueryLimits;
+import org.tron.core.archive.query.HistoricalQueryLimitException;
 import org.tron.core.archive.temporal.ArchiveTemporalStore;
+import org.tron.core.archive.temporal.ArchiveTemporalReadView;
 import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.archive.txnum.ArchiveTxPosition;
@@ -60,6 +64,11 @@ public class DefaultArchiveServiceTest {
     byte[] parent = new byte[32];
     parent[31] = seed;
     return new BlockCapsule(num, Sha256Hash.wrap(parent), 1L, ByteString.EMPTY);
+  }
+
+  private static byte[] schemaChecksum() {
+    return ArchiveSchemaChecksum.of(
+        new DefaultArchiveDomainRegistry(), new DefaultArchiveDomainCatalog());
   }
 
   @Test
@@ -116,7 +125,8 @@ public class DefaultArchiveServiceTest {
 
     InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
     ArchiveBlockRange badRange = new ArchiveBlockRange(
-        6, 7, 8, 7, 8, 0, ArchiveSource.NORMAL);
+        6, 7, 8, 7, 8, blockWithParentSeed(6, (byte) 6).getBlockId().getBytes(),
+        0, ArchiveSource.NORMAL, schemaChecksum());
     inFlightStore.putBlock(new ArchiveInFlightBlock(
         badRange, java.util.Collections.emptyList(), java.util.Collections.emptyList()));
 
@@ -305,6 +315,16 @@ public class DefaultArchiveServiceTest {
     service.commitBlock(block);
   }
 
+  private static ArchiveJournalToken journalEmptyBlock(DefaultArchiveService service,
+      BlockCapsule block) {
+    service.beginBlock(block, ArchiveSource.NORMAL);
+    service.beginSystemTx(block, ArchivePhase.BLOCK_PREPARE);
+    service.endTx();
+    service.beginSystemTx(block, ArchivePhase.BLOCK_FINALIZE);
+    service.endTx();
+    return service.commitBlockJournaled(block, 0);
+  }
+
   private static void commitAccountChangeBlock(DefaultArchiveService service, BlockCapsule block,
       byte[] addr, byte[] oldAccount, byte[] newAccount) {
     service.beginBlock(block, ArchiveSource.NORMAL);
@@ -328,6 +348,100 @@ public class DefaultArchiveServiceTest {
       ArchiveInFlightStore inFlightStore, ArchiveReadThrough readThrough) {
     return new DefaultArchiveService(true, index, context, temporal, inFlightStore,
         new DefaultArchiveDomainRegistry(), new DefaultArchiveDomainCatalog(), readThrough);
+  }
+
+  @Test
+  public void journalAcknowledgementIsDurableAndIdempotent() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), new InMemoryArchiveTemporalStore(), inFlightStore);
+    BlockCapsule block = blockWithParentSeed(5, (byte) 5);
+
+    ArchiveJournalToken token = journalEmptyBlock(service, block);
+    ArchiveInFlightBlock journaled = inFlightStore.loadBlocks().get(0);
+    assertEquals(token, journaled.getJournalToken());
+    assertEquals(ArchiveInFlightBlock.JournalState.JOURNALED, journaled.getJournalState());
+
+    service.acknowledgeCanonicalCommit(token);
+    service.acknowledgeCanonicalCommit(token);
+
+    ArchiveInFlightBlock acknowledged = inFlightStore.loadBlocks().get(0);
+    assertEquals(token, acknowledged.getJournalToken());
+    assertEquals(ArchiveInFlightBlock.JournalState.CANONICAL_COMMITTED,
+        acknowledged.getJournalState());
+    service.publishSolidifiedBlocks(5);
+    assertTrue(index.getBlockRange(5).isPresent());
+    assertTrue(inFlightStore.loadBlocks().isEmpty());
+  }
+
+  @Test
+  public void exactJournalRollbackIsIdempotent() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), new InMemoryArchiveTemporalStore(), inFlightStore);
+    ArchiveJournalToken token = journalEmptyBlock(
+        service, blockWithParentSeed(5, (byte) 5));
+
+    service.rollbackJournaledBlock(token);
+    service.rollbackJournaledBlock(token);
+
+    assertTrue(inFlightStore.loadBlocks().isEmpty());
+    assertFalse(index.getBlockRange(5).isPresent());
+    InMemoryArchiveTxNumIndex execution =
+        ReflectUtils.getFieldValue(service, "executionTxNumIndex");
+    assertFalse(execution.getBlockRange(5).isPresent());
+    service.validateAvailable();
+  }
+
+  @Test
+  public void staleJournalTokenCannotDeleteReplacementGeneration() {
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    DefaultArchiveService service = serviceWithInFlightStore(
+        new InMemoryArchiveTxNumIndex(), new ArchiveExecutionContext(),
+        new InMemoryArchiveTemporalStore(), inFlightStore);
+    ArchiveJournalToken token = journalEmptyBlock(
+        service, blockWithParentSeed(5, (byte) 5));
+    byte[] staleNonce = token.getGenerationNonce();
+    staleNonce[0] ^= 1;
+    ArchiveJournalToken stale = new ArchiveJournalToken(token.getBlockNum(),
+        token.getBlockHash(), staleNonce, token.getSchemaChecksum());
+
+    service.rollbackJournaledBlock(stale);
+
+    assertEquals(1, inFlightStore.loadBlocks().size());
+    assertEquals(token, inFlightStore.loadBlocks().get(0).getJournalToken());
+    service.rollbackJournaledBlock(token);
+    assertTrue(inFlightStore.loadBlocks().isEmpty());
+  }
+
+  @Test
+  public void unacknowledgedJournalCannotBePublished() {
+    DefaultArchiveService service = new DefaultArchiveService(
+        true, new InMemoryArchiveTxNumIndex(), new ArchiveExecutionContext());
+    journalEmptyBlock(service, blockWithParentSeed(5, (byte) 5));
+
+    ArchiveException error = assertThrows(ArchiveException.class,
+        () -> service.publishSolidifiedBlocks(5));
+
+    assertTrue(error.getMessage().contains("unacknowledged archive journal"));
+    assertThrows(ArchiveException.class, service::validateAvailable);
+  }
+
+  @Test
+  public void acknowledgedJournalCannotBeCompensated() {
+    DefaultArchiveService service = new DefaultArchiveService(
+        true, new InMemoryArchiveTxNumIndex(), new ArchiveExecutionContext());
+    ArchiveJournalToken token = journalEmptyBlock(
+        service, blockWithParentSeed(5, (byte) 5));
+    service.acknowledgeCanonicalCommit(token);
+
+    ArchiveException error = assertThrows(ArchiveException.class,
+        () -> service.rollbackJournaledBlock(token));
+
+    assertTrue(error.getMessage().contains("canonical-committed"));
+    assertThrows(ArchiveException.class, service::validateAvailable);
   }
 
   @Test
@@ -356,7 +470,182 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
-  public void startupReconcileUnwindsPublishedBlocksAfterCanonicalHead() {
+  public void emptyCanonicalStartupRollsBackOrphanGenesisJournalBeforeReplay() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    BlockCapsule genesis = blockWithParentSeed(0, (byte) 0);
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    journalEmptyBlock(service, genesis);
+    service.close();
+
+    DefaultArchiveService restarted = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    try {
+      restarted.reconcilePublishedHeadOnStartup(-1L);
+      restarted.reconcileInFlightOnStartup(-1L, -1L,
+          blockNum -> {
+            throw new AssertionError("empty canonical startup must not request a block");
+          });
+
+      assertTrue(inFlightStore.loadBlocks().isEmpty());
+      ArchiveJournalToken replacement = journalEmptyBlock(restarted, genesis);
+      assertEquals(0L, replacement.getBlockNum());
+    } finally {
+      restarted.close();
+    }
+  }
+
+  @Test
+  public void emptyCanonicalStartupRejectsAcknowledgedGenesisWithoutMutation() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    commitEmptyBlock(service, blockWithParentSeed(0, (byte) 0));
+    service.close();
+
+    DefaultArchiveService restarted = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    try {
+      ArchiveException error = assertThrows(ArchiveException.class,
+          () -> restarted.reconcileInFlightOnStartup(-1L, -1L, ignored -> null));
+
+      assertTrue(error.getMessage().contains("unacknowledged genesis"));
+      assertEquals(1, inFlightStore.loadBlocks().size());
+      assertEquals(ArchiveInFlightBlock.JournalState.CANONICAL_COMMITTED,
+          inFlightStore.loadBlocks().get(0).getJournalState());
+    } finally {
+      restarted.close();
+    }
+  }
+
+  @Test
+  public void emptyCanonicalStartupRejectsNonGenesisJournalWithoutMutation() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    journalEmptyBlock(service, blockWithParentSeed(5, (byte) 5));
+    service.close();
+
+    DefaultArchiveService restarted = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    try {
+      assertThrows(ArchiveException.class,
+          () -> restarted.reconcileInFlightOnStartup(-1L, -1L, ignored -> null));
+
+      assertEquals(1, inFlightStore.loadBlocks().size());
+      assertEquals(5L, inFlightStore.loadBlocks().get(0).getRange().getBlockNum());
+    } finally {
+      restarted.close();
+    }
+  }
+
+  @Test
+  public void emptyCanonicalStartupRejectsMultipleJournalsWithoutMutation() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    journalEmptyBlock(service, blockWithParentSeed(0, (byte) 0));
+    journalEmptyBlock(service, blockWithParentSeed(1, (byte) 1));
+    service.close();
+
+    DefaultArchiveService restarted = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    try {
+      ArchiveException error = assertThrows(ArchiveException.class,
+          () -> restarted.reconcileInFlightOnStartup(-1L, -1L, ignored -> null));
+
+      assertTrue(error.getMessage().contains("2 in-flight journal blocks"));
+      assertEquals(2, inFlightStore.loadBlocks().size());
+    } finally {
+      restarted.close();
+    }
+  }
+
+  @Test
+  public void emptyCanonicalStartupRejectsPublishedArchiveState() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    DefaultArchiveService service = new DefaultArchiveService(
+        true, index, new ArchiveExecutionContext());
+    commitEmptyBlock(service, blockWithParentSeed(0, (byte) 0));
+    service.publishSolidifiedBlocks(0L);
+
+    ArchiveException error = assertThrows(ArchiveException.class,
+        () -> service.reconcilePublishedHeadOnStartup(-1L));
+
+    assertTrue(error.getMessage().contains("canonical database is empty"));
+    assertThrows(ArchiveException.class, service::validateAvailable);
+  }
+
+  @Test
+  public void residualPublishedJournalIsNotDeletedBeforeEmptyCanonicalFailure() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    BlockCapsule block = blockWithParentSeed(5, (byte) 5);
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    commitEmptyBlock(service, block);
+    ArchiveInFlightBlock residual = inFlightStore.loadBlocks().get(0);
+    service.publishSolidifiedBlocks(5L);
+    service.close();
+    inFlightStore.putBlock(residual);
+
+    DefaultArchiveService restarted = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    try {
+      assertEquals(1, inFlightStore.loadBlocks().size());
+
+      assertThrows(ArchiveException.class,
+          () -> restarted.reconcilePublishedHeadOnStartup(-1L));
+
+      assertEquals(1, inFlightStore.loadBlocks().size());
+      assertEquals(residual.getJournalToken(),
+          inFlightStore.loadBlocks().get(0).getJournalToken());
+    } finally {
+      restarted.close();
+    }
+  }
+
+  @Test
+  public void residualPublishedJournalIsCleanedAfterCanonicalPreflight() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    BlockCapsule block = blockWithParentSeed(5, (byte) 5);
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    commitEmptyBlock(service, block);
+    ArchiveInFlightBlock residual = inFlightStore.loadBlocks().get(0);
+    service.publishSolidifiedBlocks(5L);
+    service.close();
+    inFlightStore.putBlock(residual);
+
+    DefaultArchiveService restarted = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    try {
+      assertEquals(1, inFlightStore.loadBlocks().size());
+
+      restarted.reconcilePublishedHeadOnStartup(5L);
+      assertEquals(1, inFlightStore.loadBlocks().size());
+      restarted.reconcileInFlightOnStartup(5L, 5L, ignored -> block);
+
+      assertTrue(inFlightStore.loadBlocks().isEmpty());
+      assertTrue(index.getBlockRange(5L).isPresent());
+    } finally {
+      restarted.close();
+    }
+  }
+
+  @Test
+  public void startupReconcileRejectsPublishedBlocksAfterCanonicalHead() {
     InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
     InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
     InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
@@ -382,15 +671,13 @@ public class DefaultArchiveServiceTest {
     DefaultArchiveService restarted = serviceWithInFlightStore(
         index, new ArchiveExecutionContext(), temporal, inFlightStore);
     try {
-      restarted.reconcilePublishedHeadOnStartup(5);
-      restarted.reconcileInFlightOnStartup(5, 5, blockNum -> blockNum == 5 ? b5 : null);
-
+      ArchiveException error = assertThrows(ArchiveException.class,
+          () -> restarted.reconcilePublishedHeadOnStartup(5));
+      assertTrue(error.getMessage().contains("published archive head 6"));
       assertTrue(index.getBlockRange(5).isPresent());
-      assertFalse(index.getBlockRange(6).isPresent());
-      Optional<DomainValue> latestAccount = temporal.latest(ArchiveDomain.ACCOUNT, addr);
-      assertTrue(latestAccount.isPresent());
-      assertTrue(latestAccount.get().isDeleted());
-      restarted.validateCanonicalHead(b5);
+      assertTrue(index.getBlockRange(6).isPresent());
+      assertTrue(temporal.latest(ArchiveDomain.ACCOUNT, addr).isPresent());
+      assertThrows(ArchiveException.class, restarted::validateAvailable);
     } finally {
       restarted.close();
     }
@@ -559,7 +846,33 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
-  public void startupReconcileRejectsCanonicalHashMismatch() {
+  public void midChainTemporalMissDoesNotFallbackToLiveHead() throws Exception {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    byte[] addr = new byte[21];
+    addr[0] = 0x41;
+    ArchiveReadThrough liveReadThrough = (domain, key, point) ->
+        Optional.of(DomainValue.present(account(99)));
+    DefaultArchiveService service = serviceWithReadThrough(
+        index, new ArchiveExecutionContext(), temporal,
+        new InMemoryArchiveInFlightStore(), liveReadThrough);
+    BlockCapsule block = blockWithParentSeed(5, (byte) 5);
+    commitEmptyBlock(service, block);
+    service.publishSolidifiedBlocks(5);
+    ArchiveBlockRange range = index.getBlockRange(5).orElseThrow(AssertionError::new);
+
+    ArchiveReaderException error = assertThrows(ArchiveReaderException.class, () -> {
+      try (ArchiveStateReader reader = service.getReaderFactory().open(
+          ArchiveStatePoint.blockEnd(5, range.getBlockHash(), range.getFinalizeTxNum()))) {
+        reader.getAccount(addr);
+      }
+    });
+
+    assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, error.getReason());
+  }
+
+  @Test
+  public void startupReconcileRollsBackCanonicalHashMismatch() {
     InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
     InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
     InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
@@ -572,13 +885,11 @@ public class DefaultArchiveServiceTest {
     DefaultArchiveService restarted = serviceWithInFlightStore(
         index, new ArchiveExecutionContext(), temporal, inFlightStore);
     try {
-      ArchiveException ex = assertThrows(ArchiveException.class,
-          () -> restarted.reconcileInFlightOnStartup(5,
-              blockNum -> blockWithParentSeed(5, (byte) 9)));
-
-      assertTrue(ex.getMessage().contains("hash mismatch"));
+      restarted.reconcileInFlightOnStartup(5,
+          blockNum -> blockWithParentSeed(5, (byte) 9));
       assertFalse(index.getBlockRange(5).isPresent());
-      assertThrows(ArchiveException.class, restarted::validateAvailable);
+      assertTrue(inFlightStore.loadBlocks().isEmpty());
+      restarted.validateAvailable();
     } finally {
       restarted.close();
     }
@@ -612,7 +923,7 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
-  public void startupReconcileRejectsCanonicalBlockNumberMismatch() {
+  public void startupReconcileRollsBackCanonicalBlockNumberMismatch() {
     // reconcile loop, height-mismatch branch: canonical provider resolves in-flight block 5 to a
     // block reporting a different height (6) -> fail closed.
     InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
@@ -628,12 +939,10 @@ public class DefaultArchiveServiceTest {
     DefaultArchiveService restarted = serviceWithInFlightStore(
         index, new ArchiveExecutionContext(), temporal, inFlightStore);
     try {
-      ArchiveException ex = assertThrows(ArchiveException.class,
-          () -> restarted.reconcileInFlightOnStartup(5, blockNum -> wrongHeight));
-
-      assertTrue(ex.getMessage().contains("resolved to canonical block"));
+      restarted.reconcileInFlightOnStartup(5, blockNum -> wrongHeight);
       assertFalse(index.getBlockRange(5).isPresent());
-      assertThrows(ArchiveException.class, restarted::validateAvailable);
+      assertTrue(inFlightStore.loadBlocks().isEmpty());
+      restarted.validateAvailable();
     } finally {
       restarted.close();
     }
@@ -677,7 +986,9 @@ public class DefaultArchiveServiceTest {
 
     long nextTxNum = index.getNextTxNum();
     ArchiveBlockRange gapRange = new ArchiveBlockRange(
-        6, nextTxNum, nextTxNum + 1, nextTxNum, nextTxNum + 1, 0, ArchiveSource.NORMAL);
+        6, nextTxNum, nextTxNum + 1, nextTxNum, nextTxNum + 1,
+        blockWithParentSeed(6, (byte) 6).getBlockId().getBytes(), 0, ArchiveSource.NORMAL,
+        schemaChecksum());
     inFlightStore.putBlock(new ArchiveInFlightBlock(
         gapRange, Collections.emptyList(), Collections.emptyList()));
 
@@ -772,6 +1083,63 @@ public class DefaultArchiveServiceTest {
         // still held for the reader's whole lifetime (as it is on the mid-chain path).
         commitEmptyBlock(service, blockWithParentSeed(1, (byte) 1));
       }
+    } finally {
+      service.close();
+    }
+  }
+
+  @Test
+  public void genesisCompleteReadersRespectIndependentSnapshotLimit() throws Exception {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    DefaultArchiveService service = new DefaultArchiveService(
+        true, index, new ArchiveExecutionContext(), new InMemoryArchiveTemporalStore(),
+        new InMemoryArchiveInFlightStore(), new DefaultArchiveDomainRegistry(),
+        new DefaultArchiveDomainCatalog(), ArchiveReadThrough.NONE,
+        ArchiveLifecycle.Phase.RUNNING,
+        ArchiveQueryLimits.builder()
+            .maxConcurrentQueries(2)
+            .maxOpenSnapshots(1)
+            .build());
+    try {
+      BlockCapsule b0 = blockWithParentSeed(0, (byte) 0);
+      commitEmptyBlock(service, b0);
+      service.publishSolidifiedBlocks(0);
+      ArchiveBlockRange range = index.getBlockRange(0).get();
+      ArchiveStatePoint point = ArchiveStatePoint.blockEnd(
+          0, b0.getBlockId().getBytes(), range.getFinalizeTxNum());
+
+      ArchiveStateReader first = service.openReader(point);
+      HistoricalQueryLimitException failure = assertThrows(
+          HistoricalQueryLimitException.class, () -> service.openReader(point));
+      assertEquals(HistoricalQueryLimitException.Limit.OPEN_SNAPSHOTS, failure.getLimit());
+      first.close();
+      try (ArchiveStateReader ignored = service.openReader(point)) {
+        assertEquals(0L, ignored.getPoint().getBlockNum());
+      }
+    } finally {
+      service.close();
+    }
+  }
+
+  @Test
+  public void dynamicBlockSelectorIsResolvedOnlyAfterQueryAdmissionAndBudgetCheck() {
+    DefaultArchiveService service = new DefaultArchiveService(
+        true, new InMemoryArchiveTxNumIndex(), new ArchiveExecutionContext(),
+        new InMemoryArchiveTemporalStore(), new InMemoryArchiveInFlightStore(),
+        new DefaultArchiveDomainRegistry(), new DefaultArchiveDomainCatalog(),
+        ArchiveReadThrough.NONE, ArchiveLifecycle.Phase.RUNNING,
+        ArchiveQueryLimits.builder().maxBackendReads(0).build());
+    boolean[] providerCalled = {false};
+    try {
+      HistoricalQueryLimitException failure = assertThrows(
+          HistoricalQueryLimitException.class,
+          () -> service.openBlockEndReader(() -> {
+            providerCalled[0] = true;
+            return 0L;
+          }, blockNum -> new byte[32]));
+
+      assertEquals(HistoricalQueryLimitException.Limit.BACKEND_READS, failure.getLimit());
+      assertFalse(providerCalled[0]);
     } finally {
       service.close();
     }
@@ -881,7 +1249,7 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
-  public void startupReconcileRejectsInFlightPastCanonicalHead() {
+  public void startupReconcileRollsBackInFlightPastCanonicalHead() {
     InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
     InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
     InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
@@ -894,11 +1262,11 @@ public class DefaultArchiveServiceTest {
     DefaultArchiveService restarted = serviceWithInFlightStore(
         index, new ArchiveExecutionContext(), temporal, inFlightStore);
     try {
-      ArchiveException ex = assertThrows(ArchiveException.class,
+      ArchiveException error = assertThrows(ArchiveException.class,
           () -> restarted.reconcileInFlightOnStartup(4, 4, blockNum -> stale));
-
-      assertTrue(ex.getMessage().contains("after canonical head"));
+      assertTrue(error.getMessage().contains("has no journal or published range"));
       assertFalse(index.getBlockRange(5).isPresent());
+      assertTrue(inFlightStore.loadBlocks().isEmpty());
       assertThrows(ArchiveException.class, restarted::validateAvailable);
     } finally {
       restarted.close();
@@ -934,17 +1302,19 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
-  public void startupReconcileAllowsEmptyArchiveAtMidChainActivation() {
+  public void startupReconcileRejectsEmptyArchiveAtMidChainActivation() {
     InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
     InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
     InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
     DefaultArchiveService service = serviceWithInFlightStore(
         index, new ArchiveExecutionContext(), temporal, inFlightStore);
     try {
-      service.reconcileInFlightOnStartup(
-          9, 10, blockNum -> blockWithParentSeed(blockNum, (byte) 1));
+      ArchiveException error = assertThrows(ArchiveException.class,
+          () -> service.reconcileInFlightOnStartup(
+              9, 10, blockNum -> blockWithParentSeed(blockNum, (byte) 1)));
 
-      service.validateAvailable();
+      assertTrue(error.getMessage().contains("has no journal or published range"));
+      assertThrows(ArchiveException.class, service::validateAvailable);
       assertEquals(-1L, index.getFirstArchivedBlock());
       assertEquals(-1L, index.getLastArchivedBlock());
       assertEquals(0, inFlightStore.loadBlocks().size());
@@ -1205,7 +1575,7 @@ public class DefaultArchiveServiceTest {
     service.publishSolidifiedBlocks(6);
 
     assertTrue(index.getBlockRange(6).isPresent());
-    assertEquals(1, temporal.changeCount());
+    assertEquals(2, temporal.changeCount());
   }
 
   @Test
@@ -1256,7 +1626,7 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
-  public void deleteMissingKeyDoesNotSeedTemporalTombstone() {
+  public void deleteMissingKeySeedsKnownAbsentTemporalTombstone() {
     InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
     ArchiveExecutionContext context = new ArchiveExecutionContext();
     InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
@@ -1277,8 +1647,9 @@ public class DefaultArchiveServiceTest {
     service.publishSolidifiedBlocks(5);
 
     assertTrue(index.getBlockRange(5).isPresent());
-    assertEquals(0, temporal.changeCount());
-    assertFalse(temporal.latest(ArchiveDomain.ACCOUNT, addr).isPresent());
+    assertEquals(1, temporal.changeCount());
+    assertTrue(temporal.latest(ArchiveDomain.ACCOUNT, addr).isPresent());
+    assertTrue(temporal.latest(ArchiveDomain.ACCOUNT, addr).get().isDeleted());
   }
 
   @Test
@@ -1400,19 +1771,24 @@ public class DefaultArchiveServiceTest {
     assertEquals(1, inFlightStore.loadBlocks().size());
     service.close();
 
-    DefaultArchiveService restarted = serviceWithInFlightStore(
+    DefaultArchiveService failedCleanup = serviceWithInFlightStore(
         index, new ArchiveExecutionContext(), temporal, inFlightStore);
     try {
       assertEquals(1, inFlightStore.loadBlocks().size());
-      restarted.validateAvailable();
+      assertThrows(ArchiveException.class,
+          () -> failedCleanup.reconcileInFlightOnStartup(5L, 5L, ignored -> b));
+      assertEquals("", index.repairReason);
+      assertEquals(1, inFlightStore.loadBlocks().size());
     } finally {
-      restarted.close();
+      failedCleanup.close();
     }
 
     inFlightStore.failDelete = false;
     DefaultArchiveService cleanupRestart = serviceWithInFlightStore(
         index, new ArchiveExecutionContext(), temporal, inFlightStore);
     try {
+      assertEquals(1, inFlightStore.loadBlocks().size());
+      cleanupRestart.reconcileInFlightOnStartup(5L, 5L, ignored -> b);
       assertEquals(0, inFlightStore.loadBlocks().size());
       cleanupRestart.validateAvailable();
     } finally {
@@ -1801,6 +2177,11 @@ public class DefaultArchiveServiceTest {
     @Override
     public Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey) {
       return Optional.empty();
+    }
+
+    @Override
+    public ArchiveTemporalReadView openReadView() {
+      return ArchiveTemporalReadView.passThrough(this);
     }
 
     @Override

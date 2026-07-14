@@ -2,6 +2,7 @@ package org.tron.core.archive.reader;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -11,10 +12,15 @@ import static org.mockito.Mockito.when;
 import com.google.common.primitives.Bytes;
 import com.google.protobuf.ByteString;
 import java.nio.charset.StandardCharsets;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.function.ThrowingRunnable;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.ChainBaseManager;
+import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveSource;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
@@ -22,8 +28,11 @@ import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
 import org.tron.core.archive.domain.ArchiveDomainCatalog;
 import org.tron.core.archive.domain.DefaultArchiveDomainCatalog;
+import org.tron.core.archive.query.ArchiveQueryLimits;
+import org.tron.core.archive.query.QueryContext;
 import org.tron.core.archive.reader.ArchiveReadResult.Status;
 import org.tron.core.archive.temporal.ArchiveTemporalStore;
+import org.tron.core.archive.temporal.ArchiveTemporalReadView;
 import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
 import org.tron.core.archive.txnum.ArchiveTxPosition;
 import org.tron.core.capsule.AccountCapsule;
@@ -226,6 +235,115 @@ public class DefaultArchiveStateReaderTest {
   }
 
   @Test
+  public void rawMemoUsesContentKeysAndDefensiveValueCopies() throws Exception {
+    AtomicInteger backendReads = new AtomicInteger();
+    AtomicInteger closes = new AtomicInteger();
+    byte[] code = new byte[] {1, 2, 3};
+    ArchiveTemporalReadView view = new ArchiveTemporalReadView() {
+      @Override
+      public Optional<DomainValue> getAsOf(ArchiveDomain domain, byte[] canonicalKey, long txNum) {
+        backendReads.incrementAndGet();
+        return Optional.of(DomainValue.present(code));
+      }
+
+      @Override
+      public Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey) {
+        return Optional.empty();
+      }
+
+      @Override
+      public void close() {
+        closes.incrementAndGet();
+      }
+    };
+    DefaultArchiveStateReader reader = new DefaultArchiveStateReader(
+        view, catalog, ArchiveStatePoint.blockEnd(1, new byte[] {1}, 5),
+        ArchiveReadThrough.NONE);
+
+    byte[] first = reader.getCode(addr(1)).getValue();
+    first[0] = 9;
+    byte[] sameContentAddress = addr(1);
+    assertArrayEquals(code, reader.getCode(sameContentAddress).getValue());
+    assertEquals(1, backendReads.get());
+
+    assertNonOwnerRejected(() -> reader.getCode(addr(1)));
+    assertEquals(1, backendReads.get());
+
+    assertNonOwnerRejected(reader::close);
+    assertEquals(0, closes.get());
+
+    reader.close();
+    reader.close();
+    assertEquals(1, closes.get());
+  }
+
+  @Test
+  public void rawMemoEvictsLeastRecentlyUsedAtEntryAndByteBudgetsWithoutChangingResults()
+      throws Exception {
+    AtomicInteger entryLimitedReads = new AtomicInteger();
+    ArchiveTemporalReadView entryLimitedView = countingPresentView(entryLimitedReads);
+    DefaultArchiveStateReader entryLimited = new DefaultArchiveStateReader(
+        entryLimitedView, catalog, ArchiveStatePoint.blockEnd(1, new byte[] {1}, 5),
+        ArchiveReadThrough.NONE, () -> { }, true, 1, 1_024,
+        new QueryContext(ArchiveQueryLimits.unlimited()));
+
+    assertArrayEquals(new byte[] {7}, entryLimited.getCode(addr(1)).getValue());
+    assertArrayEquals(new byte[] {7}, entryLimited.getCode(addr(1)).getValue());
+    assertArrayEquals(new byte[] {7}, entryLimited.getCode(addr(2)).getValue());
+    assertArrayEquals(new byte[] {7}, entryLimited.getCode(addr(2)).getValue());
+    assertEquals(2, entryLimitedReads.get());
+    entryLimited.close();
+
+    AtomicInteger byteLimitedReads = new AtomicInteger();
+    DefaultArchiveStateReader byteLimited = new DefaultArchiveStateReader(
+        countingPresentView(byteLimitedReads), catalog,
+        ArchiveStatePoint.blockEnd(1, new byte[] {1}, 5), ArchiveReadThrough.NONE,
+        () -> { }, true, 10, 0,
+        new QueryContext(ArchiveQueryLimits.unlimited()));
+
+    assertArrayEquals(new byte[] {7}, byteLimited.getCode(addr(3)).getValue());
+    assertArrayEquals(new byte[] {7}, byteLimited.getCode(addr(3)).getValue());
+    assertEquals(2, byteLimitedReads.get());
+    byteLimited.close();
+  }
+
+  private static ArchiveTemporalReadView countingPresentView(AtomicInteger reads) {
+    return new ArchiveTemporalReadView() {
+      @Override
+      public Optional<DomainValue> getAsOf(ArchiveDomain domain, byte[] canonicalKey, long txNum) {
+        reads.incrementAndGet();
+        return Optional.of(DomainValue.present(new byte[] {7}));
+      }
+
+      @Override
+      public Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey) {
+        return Optional.empty();
+      }
+
+      @Override
+      public void close() {
+      }
+    };
+  }
+
+  @Test
+  public void everyPublicReadChecksOwnerBeforeValidationOrShortCircuit() throws Exception {
+    DefaultArchiveStateReader reader = new DefaultArchiveStateReader(
+        store, catalog, ArchiveStatePoint.blockEnd(1, new byte[] {1}, 5));
+
+    assertNonOwnerRejected(reader::getPoint);
+    assertNonOwnerRejected(() -> reader.getAccount(new byte[0]));
+    assertNonOwnerRejected(() -> reader.getAccountAsset(addr(1), null));
+    assertNonOwnerRejected(() -> reader.getContract(new byte[0]));
+    assertNonOwnerRejected(() -> reader.getContractState(new byte[0]));
+    assertNonOwnerRejected(() -> reader.getCode(new byte[0]));
+    assertNonOwnerRejected(() -> reader.getStorage(new byte[0], new byte[0]));
+    assertNonOwnerRejected(() -> reader.getDynamicProperty(new byte[0]));
+
+    reader.close();
+  }
+
+  @Test
   public void midChainReaderUsesCapturedPrevButLeavesUncapturedKeysMissing() throws Exception {
     byte[] existing = "TOTAL_NET_LIMIT".getBytes(StandardCharsets.US_ASCII);
     byte[] gap = "TOTAL_ENERGY_LIMIT".getBytes(StandardCharsets.US_ASCII);
@@ -289,6 +407,24 @@ public class DefaultArchiveStateReaderTest {
         DomainValue.present(v1Word), 5);
 
     assertArrayEquals(v1Word, readerAt(5).getStorage(address, slot).getValue());
+  }
+
+  @Test
+  public void nonVersionOneLogicalSlotAliasesResolveTheSamePhysicalRow() throws Exception {
+    byte[] address = addr(1);
+    byte[] first = new byte[32];
+    byte[] alias = new byte[32];
+    first[0] = 1;
+    alias[0] = 2;
+    first[31] = alias[31] = 7;
+    byte[] word = new byte[32];
+    word[31] = 9;
+    put(ArchiveDomain.CONTRACT, address, DomainValue.present(contract(2)), 5);
+    put(ArchiveDomain.CONTRACT_STORAGE, storageKey(address, first, 2),
+        DomainValue.present(word), 5);
+
+    assertArrayEquals(storageKey(address, first, 2), storageKey(address, alias, 2));
+    assertArrayEquals(word, readerAt(5).getStorage(address, alias).getValue());
   }
 
   @Test
@@ -448,5 +584,23 @@ public class DefaultArchiveStateReaderTest {
     ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
         () -> reader.getAccount(addr(1)));
     assertEquals(ArchiveReaderException.Reason.INTERNAL_IO, e.getReason());
+  }
+
+  private static void assertNonOwnerRejected(ThrowingRunnable action) throws InterruptedException {
+    AtomicReference<Throwable> failure = new AtomicReference<>();
+    Thread thread = new Thread(() -> {
+      try {
+        action.run();
+      } catch (Throwable t) {
+        failure.set(t);
+      }
+    }, "archive-reader-non-owner-test");
+    thread.start();
+    thread.join();
+
+    assertNotNull(failure.get());
+    assertEquals(ArchiveException.class, failure.get().getClass());
+    assertEquals("archive state reader used from a non-owner thread",
+        failure.get().getMessage());
   }
 }

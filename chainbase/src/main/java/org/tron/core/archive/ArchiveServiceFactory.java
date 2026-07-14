@@ -1,27 +1,35 @@
 package org.tron.core.archive;
 
 import java.io.IOException;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Arrays;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Optional;
 import org.tron.common.arch.Arch;
+import org.tron.common.utils.ByteArray;
 import org.tron.core.ChainBaseManager;
 import org.tron.core.archive.domain.ArchiveDomainCatalog;
 import org.tron.core.archive.domain.ArchiveDomainRegistry;
 import org.tron.core.archive.domain.ArchiveSchemaChecksum;
 import org.tron.core.archive.domain.DefaultArchiveDomainCatalog;
 import org.tron.core.archive.domain.DefaultArchiveDomainRegistry;
+import org.tron.core.archive.identity.ArchiveIdentity;
+import org.tron.core.archive.identity.ArchiveIdentityClaim;
+import org.tron.core.archive.identity.ArchiveIdentityProtocol;
+import org.tron.core.archive.identity.ArchiveIdentityState;
+import org.tron.core.archive.identity.LegacyArchiveIdentityPayload;
+import org.tron.core.archive.query.ArchiveQueryLimits;
 import org.tron.core.archive.reader.ArchiveReadThrough;
-import org.tron.core.archive.reader.ChainBaseArchiveReadThrough;
 import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
 import org.tron.core.archive.temporal.RocksDbArchiveTemporalStore;
-import org.tron.core.archive.txnum.ArchiveBlockRange;
-import org.tron.core.archive.txnum.ArchiveTxPosition;
 import org.tron.core.archive.txnum.InMemoryArchiveTxNumIndex;
 import org.tron.core.archive.txnum.PersistentArchiveTxNumIndex;
 import org.tron.core.archive.txnum.RocksDbArchiveBlockRangeStore;
+import org.tron.core.capsule.utils.BlockUtil;
 import org.tron.core.config.args.StorageConfig;
 
 /**
@@ -37,27 +45,37 @@ import org.tron.core.config.args.StorageConfig;
 public final class ArchiveServiceFactory {
 
   private static final String SUPPORTED_COVERAGE = "TVM_STATE_ONLY";
+  private static final String LEGACY_LAYOUT = "LEGACY_V1";
 
   private ArchiveServiceFactory() {
   }
 
   public static ArchiveService create(StorageConfig.ArchiveConfig config) {
-    return create(config, null);
+    return create(config, null, ArchiveReadThrough.NONE, null, null);
   }
 
   public static ArchiveService create(StorageConfig.ArchiveConfig config, String archiveDir) {
-    return create(config, archiveDir, ArchiveReadThrough.NONE);
+    return create(config, archiveDir, ArchiveReadThrough.NONE, null, null);
   }
 
   public static ArchiveService create(StorageConfig.ArchiveConfig config, String archiveDir,
       ChainBaseManager chainBaseManager) {
-    ArchiveReadThrough readThrough = chainBaseManager == null
-        ? ArchiveReadThrough.NONE : new ChainBaseArchiveReadThrough(chainBaseManager);
-    return create(config, archiveDir, readThrough);
+    return create(config, archiveDir, ArchiveReadThrough.NONE, chainBaseManager, null);
+  }
+
+  /** Production entry point with an external identity anchor under the canonical output root. */
+  public static ArchiveService create(StorageConfig.ArchiveConfig config, String archiveDir,
+      ChainBaseManager chainBaseManager, Path identityAnchorDirectory) {
+    if (identityAnchorDirectory == null) {
+      throw new NullPointerException("identityAnchorDirectory");
+    }
+    return create(config, archiveDir, ArchiveReadThrough.NONE, chainBaseManager,
+        identityAnchorDirectory.toAbsolutePath().normalize());
   }
 
   private static ArchiveService create(StorageConfig.ArchiveConfig config, String archiveDir,
-      ArchiveReadThrough readThrough) {
+      ArchiveReadThrough readThrough, ChainBaseManager chainBaseManager,
+      Path identityAnchorDirectory) {
     if (config == null || !config.isEnable()) {
       return NoopArchiveService.INSTANCE;
     }
@@ -76,9 +94,19 @@ public final class ArchiveServiceFactory {
     ArchiveDomainRegistry registry = new DefaultArchiveDomainRegistry();
     ArchiveDomainCatalog catalog = new DefaultArchiveDomainCatalog();
     byte[] schemaChecksum = ArchiveSchemaChecksum.of(registry, catalog);
+    ArchiveQueryLimits queryLimits = queryLimits(config.getQuery());
+    ArchivePublisherConfig publisherConfig = publisherConfig(config.getPublisher());
     if (archiveDir != null && config.getTemporal().isEnable()) {
-      Path archivePath = Paths.get(archiveDir);
+      Path archivePath = Paths.get(archiveDir).toAbsolutePath().normalize();
+      boolean identityAdoption = false;
       try {
+        boolean canonicalHasBlocks = chainBaseManager != null && chainBaseManager.hasBlocks();
+        validateArchiveRootBeforeOpen(archivePath, canonicalHasBlocks);
+        if (identityAnchorDirectory != null) {
+          identityAdoption = validateOrInitializeIdentity(config, archivePath,
+              identityAnchorDirectory,
+              canonicalHasBlocks, catalog, schemaChecksum);
+        }
         Files.createDirectories(archivePath);
       } catch (IOException e) {
         throw new ArchiveException("failed to create archive directory " + archiveDir, e);
@@ -88,28 +116,46 @@ public final class ArchiveServiceFactory {
       RocksDbArchiveBlockRangeStore blockRangeStore = null;
       PersistentArchiveTxNumIndex txNumIndex = null;
       try {
-        temporalStore = new RocksDbArchiveTemporalStore(
-            archivePath.resolve("temporal").toString());
-        inFlightStore = new RocksDbArchiveInFlightStore(
-            archivePath.resolve("inflight").toString(), catalog);
+        boolean fullStartupScrub = config.getDb().isFullScrubOnStartup();
+        boolean allowStoreInitialize = identityAnchorDirectory == null;
         blockRangeStore =
-            new RocksDbArchiveBlockRangeStore(archivePath.resolve("index").toString());
-        txNumIndex = new PersistentArchiveTxNumIndex(blockRangeStore, schemaChecksum);
+            new RocksDbArchiveBlockRangeStore(
+                archivePath.resolve("index").toString(), fullStartupScrub,
+                allowStoreInitialize, false);
+        boolean recoveryScrub = fullStartupScrub || identityAdoption
+            || blockRangeStore.hasRepairRequired();
+        if (recoveryScrub && !fullStartupScrub) {
+          blockRangeStore.validateFullKeyspace();
+        }
+        temporalStore = new RocksDbArchiveTemporalStore(
+            archivePath.resolve("temporal").toString(), recoveryScrub,
+            allowStoreInitialize, false);
+        inFlightStore = new RocksDbArchiveInFlightStore(
+            archivePath.resolve("inflight").toString(), catalog,
+            recoveryScrub, allowStoreInitialize, false);
+        txNumIndex = new PersistentArchiveTxNumIndex(
+            blockRangeStore, schemaChecksum, recoveryScrub, true);
         if (!blockRangeStore.getLastRange().isPresent()
             && temporalStore.hasDataBeyondManifest()) {
           throw new ArchiveException(
               "archive temporal store is non-empty but block-range index is empty");
         }
-        recoverPublishedInFlightBlocks(inFlightStore, blockRangeStore, temporalStore);
         RocksDbArchiveBlockRangeStore committedIndex = blockRangeStore;
-        temporalStore.validateCommitMarkersCovered(
-            blockNum -> committedIndex.getRange(blockNum).isPresent());
-        blockRangeStore.validateCommittedRanges(temporalStore::validateCommittedBlock);
-        temporalStore.validateTxNumsCovered(committedIndex::hasCommittedTxNum);
-        temporalStore.validateDomainRows(catalog);
+        RocksDbArchiveTemporalStore committedTemporal = temporalStore;
+        Runnable startupValidator = () -> {
+          committedTemporal.validateStartupTail(committedIndex.getLastRange());
+          if (recoveryScrub) {
+            committedTemporal.validateCommitMarkersCovered(
+                blockNum -> committedIndex.getRange(blockNum).isPresent());
+            committedIndex.validateCommittedRanges(committedTemporal::validateCommittedBlock);
+            committedTemporal.validateTxNumsCovered(committedIndex::hasCommittedTxNum);
+            committedTemporal.validateDomainRows(catalog);
+          }
+        };
         return new DefaultArchiveService(true, txNumIndex,
             ArchiveExecutionContextHolder.get(), temporalStore, inFlightStore, registry,
-            catalog, readThrough);
+            catalog, readThrough, ArchiveLifecycle.Phase.RECOVERING, queryLimits, publisherConfig,
+            startupValidator);
       } catch (RuntimeException e) {
         closeOnFailure(inFlightStore, e);
         closeOnFailure(temporalStore, e);
@@ -123,7 +169,173 @@ public final class ArchiveServiceFactory {
     }
     return new DefaultArchiveService(true, new InMemoryArchiveTxNumIndex(),
         ArchiveExecutionContextHolder.get(), new InMemoryArchiveTemporalStore(),
-        new InMemoryArchiveInFlightStore(), registry, catalog, readThrough);
+        new InMemoryArchiveInFlightStore(), registry, catalog, readThrough,
+        ArchiveLifecycle.Phase.RECOVERING, queryLimits, publisherConfig, () -> {
+        });
+  }
+
+  private static boolean validateOrInitializeIdentity(StorageConfig.ArchiveConfig config,
+      Path archivePath, Path anchorDirectory, boolean canonicalHasBlocks,
+      ArchiveDomainCatalog catalog, byte[] schemaChecksum) throws IOException {
+    String chainId = BlockUtil.newGenesisBlockCapsule().getBlockId().toString();
+    String schema = ByteArray.toHexString(schemaChecksum);
+    Path rootIdentity = ArchiveIdentityProtocol.rootIdentityPath(archivePath);
+    boolean rootIdentityExists = Files.exists(rootIdentity, LinkOption.NOFOLLOW_LINKS);
+    boolean initialize = config.getIdentity() != null && config.getIdentity().isInitialize();
+    boolean adoptLegacy = config.getIdentity() != null
+        && config.getIdentity().isAdoptLegacy();
+    if (initialize && adoptLegacy) {
+      throw new ArchiveException(
+          "archive identity initialize and adoptLegacy cannot both be true");
+    }
+
+    if (canonicalHasBlocks) {
+      long actualFloor = LegacyArchiveIdentityPayload.inspectFloor(
+          archivePath, catalog, schemaChecksum);
+      ArchiveIdentityProtocol protocol = new ArchiveIdentityProtocol(
+          LegacyArchiveIdentityPayload.forAdoption(catalog, schemaChecksum));
+      if (!adoptLegacy) {
+        if (!rootIdentityExists) {
+          throw new ArchiveException("archive identity is missing; set "
+              + "storage.archive.identity.adoptLegacy=true once for a complete legacy archive");
+        }
+        protocol.validateActive(
+            anchorDirectory, archivePath, chainId, schema, LEGACY_LAYOUT, actualFloor);
+        return false;
+      }
+      Optional<ArchiveIdentityClaim> persisted = protocol.findResumableClaim(
+          anchorDirectory, archivePath, chainId, schema, LEGACY_LAYOUT, actualFloor);
+      ArchiveIdentityClaim claim = persisted.orElseGet(() -> ArchiveIdentityClaim.create(
+          chainId, schema, LEGACY_LAYOUT, archivePath, actualFloor));
+      if (!persisted.isPresent()) {
+        // A corrupt legacy archive must not leave even PREPARED identity metadata behind. The
+        // protocol performs the same read-only scrub again before ACTIVE so crash-resume remains
+        // self-contained, but this first pass establishes claimability before any durable claim.
+        LegacyArchiveIdentityPayload.forAdoption(catalog, schemaChecksum)
+            .verifyForActivation(archivePath,
+                new ArchiveIdentity(claim, ArchiveIdentityState.BOUND));
+        protocol.adopt(anchorDirectory, claim);
+      }
+      protocol.resumeAdoption(anchorDirectory, claim);
+      return true;
+    }
+
+    if (adoptLegacy) {
+      throw new ArchiveException(
+          "archive identity adoptLegacy requires a non-empty canonical database");
+    }
+    ArchiveIdentityProtocol protocol = new ArchiveIdentityProtocol(
+        new LegacyArchiveIdentityPayload(catalog, schemaChecksum));
+    if (!initialize) {
+      if (!rootIdentityExists) {
+        throw new ArchiveException("archive identity is missing; set "
+            + "storage.archive.identity.initialize=true only for a new empty archive");
+      }
+      long actualFloor = LegacyArchiveIdentityPayload.inspectFloor(
+          archivePath, catalog, schemaChecksum);
+      protocol.validateActive(
+          anchorDirectory, archivePath, chainId, schema, LEGACY_LAYOUT, actualFloor);
+      return false;
+    }
+    Optional<ArchiveIdentityClaim> persisted = protocol.findResumableClaim(
+        anchorDirectory, archivePath, chainId, schema, LEGACY_LAYOUT, 0L);
+    ArchiveIdentityClaim claim = persisted.orElseGet(() -> ArchiveIdentityClaim.create(
+        chainId, schema, LEGACY_LAYOUT, archivePath, 0L));
+    if (!persisted.isPresent()) {
+      protocol.init(anchorDirectory, claim);
+    }
+    protocol.resume(anchorDirectory, claim);
+    return false;
+  }
+
+  /**
+   * Classifies the root before any RocksDB is opened with create-if-missing.
+   *
+   * <p>An existing canonical chain may only reopen a complete legacy layout. A missing, empty, or
+   * partial root is treated as a lost/wrong mount and fails closed instead of creating a second
+   * archive at the configured path. A genuinely empty canonical database may create or resume a
+   * partially-created root because genesis has not yet committed any state.
+   */
+  static void validateArchiveRootBeforeOpen(Path archivePath, boolean canonicalHasBlocks)
+      throws IOException {
+    BasicFileAttributes attributes;
+    try {
+      attributes = Files.readAttributes(
+          archivePath, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+    } catch (NoSuchFileException e) {
+      if (canonicalHasBlocks) {
+        throw new ArchiveException(
+            "refusing to create a missing archive root for a non-empty canonical database: "
+                + archivePath);
+      }
+      return;
+    }
+    if (!attributes.isDirectory() || attributes.isSymbolicLink()) {
+      throw new ArchiveException("archive root is not a real directory: " + archivePath);
+    }
+
+    boolean empty;
+    try (DirectoryStream<Path> entries = Files.newDirectoryStream(archivePath)) {
+      empty = !entries.iterator().hasNext();
+    }
+    if (!canonicalHasBlocks) {
+      return;
+    }
+    if (empty) {
+      throw new ArchiveException(
+          "refusing to initialize an empty archive root for a non-empty canonical database: "
+              + archivePath);
+    }
+    requireLegacyDirectory(archivePath.resolve("temporal"));
+    requireLegacyDirectory(archivePath.resolve("index"));
+    requireLegacyDirectory(archivePath.resolve("inflight"));
+  }
+
+  private static void requireLegacyDirectory(Path path) throws IOException {
+    final BasicFileAttributes attributes;
+    try {
+      attributes = Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+    } catch (NoSuchFileException e) {
+      throw new ArchiveException("archive legacy layout is incomplete; missing " + path, e);
+    }
+    if (!attributes.isDirectory() || attributes.isSymbolicLink()) {
+      throw new ArchiveException("archive legacy layout path is not a real directory: " + path);
+    }
+  }
+
+  private static ArchivePublisherConfig publisherConfig(
+      StorageConfig.ArchiveConfig.PublisherConfig config) {
+    if (config == null) {
+      throw new ArchiveException("storage.archive.publisher must not be null");
+    }
+    return new ArchivePublisherConfig(config.isAsync(), config.isBackpressure(),
+        config.getSoftInFlightBlocks(), config.getHardInFlightBlocks(),
+        config.getSoftInFlightBytes(), config.getHardInFlightBytes(),
+        config.getSoftInFlightRecords(), config.getHardInFlightRecords(),
+        config.getSoftMinFreeBytes(), config.getHardMinFreeBytes(),
+        config.getBackpressureTimeoutMs());
+  }
+
+  private static ArchiveQueryLimits queryLimits(StorageConfig.ArchiveConfig.QueryConfig config) {
+    if (config == null) {
+      throw new ArchiveException("storage.archive.query must not be null");
+    }
+    return ArchiveQueryLimits.builder()
+        .maxConcurrentQueries(config.getMaxConcurrentQueries())
+        .maxPendingQueries(config.getMaxPendingQueries())
+        .maxOpenSnapshots(config.getMaxOpenSnapshots())
+        .acquireTimeoutMs(config.getAcquireTimeoutMs())
+        .deadlineMs(config.getDeadlineMs())
+        .maxQueriesPerBatch(config.getMaxQueriesPerBatch())
+        .batchDeadlineMs(config.getBatchDeadlineMs())
+        .maxLogicalReadsPerRequest(config.getMaxLogicalReadsPerRequest())
+        .maxBackendReadsPerRequest(config.getMaxBackendReadsPerRequest())
+        .maxCachedEntries(config.getMaxCachedEntries())
+        .maxCachedBytes(config.getMaxCachedBytes())
+        .maxVmSteps(config.getMaxTraceSteps())
+        .maxTraceBytes(config.getMaxTraceBytes())
+        .maxResponseBytes(config.getMaxTraceResponseBytes())
+        .build();
   }
 
   private static void validateSupportedConfig(StorageConfig.ArchiveConfig config) {
@@ -142,82 +354,6 @@ public final class ArchiveServiceFactory {
       throw new ArchiveException(
           "storage.archive.commitment.persistTxRoots cannot be true in P0");
     }
-  }
-
-  private static void recoverPublishedInFlightBlocks(RocksDbArchiveInFlightStore inFlightStore,
-      RocksDbArchiveBlockRangeStore blockRangeStore, RocksDbArchiveTemporalStore temporalStore) {
-    for (ArchiveInFlightBlock block : inFlightStore.loadBlocks()) {
-      ArchiveBlockRange journalRange = block.getRange();
-      Optional<ArchiveBlockRange> committed = blockRangeStore.getRange(journalRange.getBlockNum());
-      if (!committed.isPresent()) {
-        continue;
-      }
-      ArchiveBlockRange committedRange = committed.get();
-      if (!sameRange(journalRange, committedRange)) {
-        throw new ArchiveException("archive in-flight block does not match published range "
-            + journalRange.getBlockNum());
-      }
-      validateJournalPositionsMatchIndex(block, blockRangeStore);
-      try {
-        temporalStore.validateCommittedBlock(committedRange);
-      } catch (RuntimeException missingTemporalCommit) {
-        if (temporalStore.hasCommitMarker(committedRange.getBlockNum())
-            || temporalStore.hasRowsInRange(committedRange)) {
-          throw missingTemporalCommit;
-        }
-        temporalStore.validateLatestRowsAnchored();
-        temporalStore.putBlockChanges(committedRange, block.getRecords());
-        temporalStore.validateCommittedBlock(committedRange);
-      }
-      deletePublishedInFlightBlock(inFlightStore, journalRange.getBlockNum());
-    }
-  }
-
-  private static void deletePublishedInFlightBlock(RocksDbArchiveInFlightStore inFlightStore,
-      long blockNum) {
-    try {
-      inFlightStore.deleteBlock(blockNum);
-    } catch (RuntimeException deleteFailure) {
-      // The published index and temporal marker are already durable. Keep the journal row so a
-      // later startup can retry cleanup instead of refusing to start a consistent archive.
-    }
-  }
-
-  private static void validateJournalPositionsMatchIndex(ArchiveInFlightBlock block,
-      RocksDbArchiveBlockRangeStore blockRangeStore) {
-    for (ArchiveTxPosition journalPosition : block.getPositions()) {
-      ArchiveTxPosition committedPosition = blockRangeStore.getPosition(journalPosition.getTxNum())
-          .orElseThrow(() -> new ArchiveException(
-              "archive in-flight position is missing from published index txNum "
-                  + journalPosition.getTxNum()));
-      if (!samePosition(journalPosition, committedPosition)) {
-        throw new ArchiveException("archive in-flight position does not match published index "
-            + journalPosition.getTxNum());
-      }
-    }
-  }
-
-  private static boolean samePosition(ArchiveTxPosition left, ArchiveTxPosition right) {
-    return left.getTxNum() == right.getTxNum()
-        && left.getBlockNum() == right.getBlockNum()
-        && left.getPhase() == right.getPhase()
-        && left.getSource() == right.getSource()
-        && left.getTxIndex() == right.getTxIndex()
-        && Arrays.equals(left.getTxId(), right.getTxId())
-        && (left.getBlockHash().length == 0 || Arrays.equals(left.getBlockHash(),
-            right.getBlockHash()));
-  }
-
-  private static boolean sameRange(ArchiveBlockRange left, ArchiveBlockRange right) {
-    return left.getBlockNum() == right.getBlockNum()
-        && left.getFirstTxNum() == right.getFirstTxNum()
-        && left.getLastTxNum() == right.getLastTxNum()
-        && left.getPrepareTxNum() == right.getPrepareTxNum()
-        && left.getFinalizeTxNum() == right.getFinalizeTxNum()
-        && left.getUserTxCount() == right.getUserTxCount()
-        && left.getSource() == right.getSource()
-        && Arrays.equals(left.getBlockHash(), right.getBlockHash())
-        && Arrays.equals(left.getSchemaChecksum(), right.getSchemaChecksum());
   }
 
   private static void closeOnFailure(AutoCloseable resource, RuntimeException failure) {

@@ -3,10 +3,12 @@ package org.tron.core.services.filter;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import org.junit.Before;
 import org.junit.Test;
@@ -65,10 +67,18 @@ public class BufferedResponseWrapperTest {
   }
 
   @Test
-  public void overflow_bufferIsReleasedOnOverflow() throws IOException {
-    BufferedResponseWrapper w = new BufferedResponseWrapper(mockResp, 4);
-    w.getOutputStream().write(new byte[]{1, 2, 3, 4, 5});
+  public void overflow_bufferIsReleasedOnOverflow() throws Exception {
+    int limit = 4 * 1024;
+    BufferedResponseWrapper w = new BufferedResponseWrapper(mockResp, limit);
+    w.getOutputStream().write(new byte[limit]);
+    Field bufferField = BufferedResponseWrapper.class.getDeclaredField("buffer");
+    bufferField.setAccessible(true);
+    Object fullBuffer = bufferField.get(w);
+
+    w.getOutputStream().write(1);
+
     assertTrue(w.isOverflow());
+    assertNotSame("overflow must release the grown backing array", fullBuffer, bufferField.get(w));
     // After overflow, further writes are silently discarded — no exception
     w.getOutputStream().write(new byte[100]);
     assertTrue(w.isOverflow());

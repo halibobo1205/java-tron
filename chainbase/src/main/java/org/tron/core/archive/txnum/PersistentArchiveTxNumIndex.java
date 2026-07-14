@@ -23,14 +23,34 @@ public final class PersistentArchiveTxNumIndex implements ArchiveTxNumIndex, Aut
 
   public PersistentArchiveTxNumIndex(RocksDbArchiveBlockRangeStore store,
       byte[] schemaChecksum) {
+    this(store, schemaChecksum, true);
+  }
+
+  public PersistentArchiveTxNumIndex(RocksDbArchiveBlockRangeStore store,
+      byte[] schemaChecksum, boolean fullStartupValidation) {
+    this(store, schemaChecksum, fullStartupValidation, false);
+  }
+
+  /**
+   * Opens the durable index. {@code deferRepairValidation} is reserved for the production recovery
+   * path, which validates all durable tails and journals before clearing a prior fatal marker.
+   */
+  public PersistentArchiveTxNumIndex(RocksDbArchiveBlockRangeStore store,
+      byte[] schemaChecksum, boolean fullStartupValidation, boolean deferRepairValidation) {
     this.store = store;
     ArchiveBlockRangeCodec.requireSchemaChecksum(schemaChecksum, "archive txNum index");
     this.schemaChecksum = Arrays.copyOf(schemaChecksum, schemaChecksum.length);
-    store.validateNoRepairRequired();
-    store.validateSchemaChecksum(this.schemaChecksum);
-    store.validateCursorConsistentWithLastRange();
-    store.validateContiguousCoverage();
-    store.validatePositionCoverage();
+    if (fullStartupValidation) {
+      if (!deferRepairValidation) {
+        store.validateNoRepairRequired();
+      }
+      store.validateSchemaChecksum(this.schemaChecksum);
+      store.validateCursorConsistentWithLastRange();
+      store.validateContiguousCoverage();
+      store.validatePositionCoverage();
+    } else {
+      store.validateStartupTail(this.schemaChecksum, !deferRepairValidation);
+    }
     // Resume txNum allocation from the persisted cursor so new blocks never collide with old ones.
     this.inner = delegateFromStore();
   }
@@ -162,6 +182,11 @@ public final class PersistentArchiveTxNumIndex implements ArchiveTxNumIndex, Aut
   @Override
   public void markRepairRequired(String reason) {
     store.markRepairRequired(reason);
+  }
+
+  @Override
+  public void clearRepairRequired() {
+    store.clearRepairRequired();
   }
 
   @Override

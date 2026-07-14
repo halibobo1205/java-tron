@@ -165,7 +165,7 @@ id = **u16 flat 顺序**（决策，作废旧 `0x01XX`）；保留第一版枚�
 | 0x0010 | market_order | MARKET_ORDER | **IN_GLOBAL_ROOT** | FULL_HISTORY | GENERIC |
 | 0x0014 | properties | DYNAMIC_PROPERTIES | **IN_GLOBAL_ROOT**(key 级) | FULL_HISTORY | **ALLOWLIST** |
 | 0x0015 | proposal | PROPOSAL | **IN_GLOBAL_ROOT** | FULL_HISTORY | GENERIC |
-| 0x0016 | storage-row | CONTRACT_STORAGE | **IN_GLOBAL_ROOT** | FULL_HISTORY | **SEMANTIC**(拆 addr‖deploymentHash‖slot‖version) |
+| 0x0016 | storage-row | CONTRACT_STORAGE | **IN_GLOBAL_ROOT** | FULL_HISTORY | **SEMANTIC**(精确 32-byte `Storage.compose` physical row key) |
 | 0x0017 | votes | VOTES | **IN_GLOBAL_ROOT** | FULL_HISTORY | GENERIC |
 | 0x0018 | witness | WITNESS | **IN_GLOBAL_ROOT** | FULL_HISTORY | GENERIC |
 | 0x0020 | contract-state | CONTRACT_STATE | **IN_GLOBAL_ROOT** | FULL_HISTORY | GENERIC（EnergyFactor，共识级执行态） |

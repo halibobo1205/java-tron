@@ -1,5 +1,6 @@
 package org.tron.core.archive.reader;
 
+import org.tron.core.archive.query.QueryContext;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.ContractCapsule;
 import org.tron.core.capsule.ContractStateCapsule;
@@ -15,6 +16,15 @@ import org.tron.core.capsule.ContractStateCapsule;
 public interface ArchiveStateReader extends AutoCloseable {
 
   ArchiveStatePoint getPoint();
+
+  default QueryContext getQueryContext() {
+    return null;
+  }
+
+  /** True only when this reader's archive proves continuous coverage from block zero. */
+  default boolean isGenesisComplete() {
+    return false;
+  }
 
   ArchiveReadResult<AccountCapsule> getAccount(byte[] address) throws ArchiveReaderException;
 

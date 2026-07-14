@@ -3,7 +3,6 @@ package org.tron.core.services.jsonrpc;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
-import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.archive.reader.ArchiveReadResult;
 import org.tron.core.archive.reader.ArchiveReadResult.Status;
@@ -226,12 +225,9 @@ public final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDyna
     this.allowTvmFreeze = resolveArchived(reader, "ALLOW_TVM_FREEZE");
     this.allowTvmVote = resolveArchived(reader, "ALLOW_TVM_VOTE");
     this.allowTvmLondon = resolveArchived(reader, "ALLOW_TVM_LONDON");
-    this.allowTvmShangHai = resolveArchived(reader, "ALLOW_TVM_SHANGHAI",
-        CommonParameter.getInstance().getAllowTvmShangHai());
-    this.allowTvmCancun = resolveArchived(reader, "ALLOW_TVM_CANCUN",
-        CommonParameter.getInstance().getAllowTvmCancun());
-    this.allowTvmBlob = resolveArchived(reader, "ALLOW_TVM_BLOB",
-        CommonParameter.getInstance().getAllowTvmBlob());
+    this.allowTvmShangHai = resolveArchivedConfigDefault(reader, "ALLOW_TVM_SHANGHAI");
+    this.allowTvmCancun = resolveArchivedConfigDefault(reader, "ALLOW_TVM_CANCUN");
+    this.allowTvmBlob = resolveArchivedConfigDefault(reader, "ALLOW_TVM_BLOB");
     // Osaka and selfdestruct-restriction default to a hard-coded 0L in their live getters.
     this.allowTvmOsaka = resolve(reader, "ALLOW_TVM_OSAKA", genesisComplete,
         0L);
@@ -251,12 +247,11 @@ public final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDyna
     this.dynamicEnergyThreshold = resolveArchived(reader, "DYNAMIC_ENERGY_THRESHOLD");
     this.dynamicEnergyIncreaseFactor = resolveArchived(reader, "DYNAMIC_ENERGY_INCREASE_FACTOR");
     this.dynamicEnergyMaxFactor = resolveArchived(reader, "DYNAMIC_ENERGY_MAX_FACTOR");
-    this.allowEnergyAdjustment = resolveArchived(reader, "ALLOW_ENERGY_ADJUSTMENT",
-        CommonParameter.getInstance().getAllowEnergyAdjustment());
-    this.allowStrictMath = resolveArchived(reader, "ALLOW_STRICT_MATH",
-        CommonParameter.getInstance().getAllowStrictMath());
-    this.consensusLogicOptimization = resolveArchived(reader, "CONSENSUS_LOGIC_OPTIMIZATION",
-        CommonParameter.getInstance().getConsensusLogicOptimization());
+    this.allowEnergyAdjustment =
+        resolveArchivedConfigDefault(reader, "ALLOW_ENERGY_ADJUSTMENT");
+    this.allowStrictMath = resolveArchivedConfigDefault(reader, "ALLOW_STRICT_MATH");
+    this.consensusLogicOptimization =
+        resolveArchivedConfigDefault(reader, "CONSENSUS_LOGIC_OPTIMIZATION");
     this.allowHardenResourceCalculation =
         resolveArchived(reader, "ALLOW_HARDEN_RESOURCE_CALCULATION");
     this.forkStatsByVersion = resolveForkStats(reader, genesisComplete,
@@ -369,6 +364,26 @@ public final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDyna
     }
     throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
         "archive dynamic property " + key + " is missing from archived history");
+  }
+
+  private static long resolveArchivedConfigDefault(ArchiveStateReader reader, String key)
+      throws ArchiveReaderException {
+    byte[] canonicalKey = key.getBytes(StandardCharsets.US_ASCII);
+    ArchiveReadResult<byte[]> result = reader.getDynamicProperty(canonicalKey);
+    if (result.isPresent()) {
+      byte[] value = result.getValue();
+      if (value.length != Long.BYTES) {
+        throw new ArchiveReaderException(ArchiveReaderException.Reason.CORRUPT_VALUE,
+            "archive dynamic property " + key + " has invalid length " + value.length);
+      }
+      return ByteArray.toLong(value);
+    }
+    // PRESENT is required even for a tombstone: an absent-key default supplied by node config is
+    // not part of historical state, so consulting the current process would silently replay the
+    // target block under potentially different VM rules.
+    throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
+        "archive dynamic property " + key
+            + " has no archived value for its network-configured default");
   }
 
   private static Map<Integer, byte[]> resolveForkStats(ArchiveStateReader reader,

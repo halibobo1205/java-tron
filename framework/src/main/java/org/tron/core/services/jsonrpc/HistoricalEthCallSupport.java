@@ -3,18 +3,13 @@ package org.tron.core.services.jsonrpc;
 import static org.tron.core.Wallet.CONTRACT_VALIDATE_ERROR;
 import static org.tron.core.services.jsonrpc.JsonRpcApiUtil.triggerCallContract;
 
+import com.google.protobuf.ByteString;
 import java.util.Arrays;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.Wallet;
-import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchiveService;
-import org.tron.core.archive.DefaultArchiveService;
 import org.tron.core.archive.reader.ArchiveReaderException;
-import org.tron.core.archive.reader.ArchiveStatePoint;
 import org.tron.core.archive.reader.ArchiveStateReader;
-import org.tron.core.archive.reader.ArchiveStateReaderFactory;
-import org.tron.core.archive.reader.JsonRpcArchiveStatePointResolver;
-import org.tron.core.archive.reader.ResolvedArchiveStatePoint;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
@@ -52,12 +47,10 @@ public final class HistoricalEthCallSupport {
 
   private final Wallet wallet;
   private final ArchiveService archiveService;
-  private final JsonRpcArchiveStatePointResolver resolver;
 
   public HistoricalEthCallSupport(Wallet wallet, ArchiveService archiveService) {
     this.wallet = wallet;
     this.archiveService = archiveService;
-    this.resolver = new JsonRpcArchiveStatePointResolver(wallet, archiveService);
   }
 
   /** True when the call is historical and must not fall back to latest state. */
@@ -66,7 +59,8 @@ public final class HistoricalEthCallSupport {
   }
 
   void validateArchiveAvailable() throws JsonRpcInternalException {
-    readerFactory();
+    requireArchiveEnabled();
+    requireArchiveAvailable();
   }
 
   public String call(byte[] ownerAddress, byte[] contractAddress, long callValue, byte[] data,
@@ -78,39 +72,54 @@ public final class HistoricalEthCallSupport {
   public String call(byte[] ownerAddress, byte[] contractAddress, long callValue, byte[] data,
       String blockNumOrTag, byte[] requestedBlockHash) throws JsonRpcInvalidParamsException,
       JsonRpcInvalidRequestException, JsonRpcInternalException {
-    if (JsonRpcApiUtil.LATEST_STR.equalsIgnoreCase(blockNumOrTag)) {
+    if (blockNumOrTag != null && JsonRpcApiUtil.LATEST_STR.equalsIgnoreCase(blockNumOrTag)) {
       throw new JsonRpcInternalException("historical eth_call invoked for the latest tag");
     }
-    validateHistoricalSelectorSyntax(blockNumOrTag);
+    if (blockNumOrTag != null) {
+      validateHistoricalSelectorSyntax(blockNumOrTag);
+    }
     requireArchiveEnabled();
     // The reader (openReader) owns read consistency: a genesis-complete point runs against a
     // released-lock snapshot, a mid-chain point holds the read lock until the reader closes. So the
     // whole request no longer sits under the write-blocking lock -- only the snapshot capture does.
     try {
-      ResolvedArchiveStatePoint resolved = resolver.resolveBlockEnd(blockNumOrTag);
-      if (resolved.isLatest()) {
-        // shouldUseArchive already filters latest; reaching here means a caller skipped that guard.
-        throw new JsonRpcInternalException("historical eth_call invoked for the latest tag");
+      BlockCapsule[] resolvedBlock = new BlockCapsule[1];
+      ArchiveStateReader admittedReader;
+      if (blockNumOrTag == null) {
+        admittedReader = archiveService.openBlockHashReader(requestedBlockHash,
+            blockHash -> resolveCanonicalBlock(blockHash, resolvedBlock));
+      } else if (JsonRpcApiUtil.FINALIZED_STR.equalsIgnoreCase(blockNumOrTag)) {
+        admittedReader = archiveService.openBlockEndReader(wallet::getSolidBlockNum,
+            blockNum -> resolveCanonicalBlock(blockNum, resolvedBlock));
+      } else {
+        long requestedBlockNum = JsonRpcApiUtil.isBlockTag(blockNumOrTag)
+            ? JsonRpcApiUtil.parseBlockTag(blockNumOrTag, wallet)
+            : JsonRpcApiUtil.parseBlockNumber(blockNumOrTag);
+        admittedReader = archiveService.openBlockEndReader(requestedBlockNum,
+            blockNum -> resolveCanonicalBlock(blockNum, resolvedBlock));
       }
-      ArchiveStatePoint point = resolved.getPoint();
-      if (requestedBlockHash != null) {
-        requireResolvedBlockHash(point, requestedBlockHash);
-      }
-      boolean genesisComplete = isGenesisComplete();
+      try (ArchiveStateReader reader = admittedReader) {
+        BlockCapsule historicalBlock = resolvedBlock[0];
+        long blockNum = reader.getPoint().getBlockNum();
+        byte[] canonicalBlockHash = reader.getPoint().getBlockHash();
+        if (requestedBlockHash != null) {
+          requireResolvedBlockHash(blockNum, canonicalBlockHash, requestedBlockHash);
+        }
+        reader.getQueryContext().recordBackendReads(2L);
+        Block currentBlock = wallet.getBlockByNum(blockNum);
+        byte[] currentBlockHash = currentBlock == null
+            ? null
+            : new BlockCapsule(currentBlock).getBlockId().getBytes();
+        requireResolvedBlockHash(blockNum, currentBlockHash, reader.getPoint().getBlockHash());
 
-      Block block = wallet.getBlockByNum(point.getBlockNum());
-      if (block == null) {
-        throw new JsonRpcInternalException("archive history unavailable for block "
-            + point.getBlockNum());
-      }
-      BlockCapsule historicalBlock = new BlockCapsule(block);
-      requireResolvedBlockHash(point, historicalBlock.getBlockId().getBytes());
-      DynamicPropertiesStore latestStore =
-          StoreFactory.getInstance().getChainBaseManager().getDynamicPropertiesStore();
-      TriggerSmartContract trigger =
-          triggerCallContract(ownerAddress, contractAddress, callValue, data, 0, null);
-
-      try (ArchiveStateReader reader = archiveService.openReader(point)) {
+        // Coverage and canonical identity are proven before touching the live VM configuration or
+        // constructing the call. This keeps unsupported historical points on the archive error
+        // surface even when the request payload itself is incomplete.
+        DynamicPropertiesStore latestStore =
+            StoreFactory.getInstance().getChainBaseManager().getDynamicPropertiesStore();
+        TriggerSmartContract trigger =
+            triggerCallContract(ownerAddress, contractAddress, callValue, data, 0, null);
+        boolean genesisComplete = reader.isGenesisComplete();
         // Execution parameters are read from the archive at the target point, so proposal writes
         // made later in the same block cannot leak into historical replay.
         long historicalEnergyFee =
@@ -122,6 +131,7 @@ public final class HistoricalEthCallSupport {
         HistoricalConstantCallResult result = new HistoricalConstantCallExecutor()
             .execute(reader, vmProperties, historicalBlock, trxCap, genesisComplete);
         if (result.isReverted()) {
+          recordJsonHexResponse(reader, result.getResult());
           // Mirror the latest path: message carries the decoded revert reason, data the raw bytes.
           throw new JsonRpcInternalException(
               "REVERT opcode executed" + TronJsonRpcImpl.tryDecodeRevertReason(result.getResult()),
@@ -130,8 +140,11 @@ public final class HistoricalEthCallSupport {
         if (result.getRuntimeError() != null && !result.getRuntimeError().isEmpty()) {
           throw new JsonRpcInternalException(result.getRuntimeError());
         }
+        recordJsonHexResponse(reader, result.getResult());
         return ByteArray.toJsonHex(result.getResult());
       }
+    } catch (BlockHeaderNotFoundException e) {
+      throw new JsonRpcInvalidParamsException("block header not found");
     } catch (ContractValidateException e) {
       // Match the latest eth_call path, which maps a validate failure to an invalid-request error.
       throw new JsonRpcInvalidRequestException(
@@ -143,36 +156,42 @@ public final class HistoricalEthCallSupport {
     }
   }
 
-  private ArchiveStateReaderFactory readerFactory() throws JsonRpcInternalException {
-    if (!(archiveService instanceof DefaultArchiveService)) {
-      throw new JsonRpcInternalException("archive is not available");
+  private byte[] resolveCanonicalBlock(long blockNum, BlockCapsule[] resolvedBlock) {
+    Block block = wallet.getBlockByNum(blockNum);
+    if (block == null) {
+      throw new BlockHeaderNotFoundException();
     }
-    requireArchiveAvailable();
-    ArchiveStateReaderFactory factory = ((DefaultArchiveService) archiveService).getReaderFactory();
-    if (factory == null) {
-      throw new JsonRpcInternalException("archive reader is not available");
-    }
-    return factory;
+    BlockCapsule blockCapsule = new BlockCapsule(block);
+    resolvedBlock[0] = blockCapsule;
+    return blockCapsule.getBlockId().getBytes();
   }
 
-  /**
-   * True when the archive covers block 0, so a MISSING dynamic-property flag is the in-memory
-   * default rather than an un-captured pre-coverage change. A mid-chain archive (or an empty index)
-   * returns false, and missing execution-affecting flags fail closed instead of using latest.
-   */
-  private boolean isGenesisComplete() throws JsonRpcInternalException {
-    if (!(archiveService instanceof DefaultArchiveService)) {
-      return false;
+  private BlockCapsule resolveCanonicalBlock(byte[] requestedHash,
+      BlockCapsule[] resolvedBlock) {
+    Block requested = wallet.getBlockById(ByteString.copyFrom(requestedHash));
+    if (requested == null) {
+      throw new BlockHeaderNotFoundException();
     }
-    requireArchiveAvailable();
-    long first = ((DefaultArchiveService) archiveService).getTxNumIndex().getFirstArchivedBlock();
-    return first == 0;
+    long blockNum = requested.getBlockHeader().getRawData().getNumber();
+    Block canonical = wallet.getBlockByNum(blockNum);
+    if (canonical == null
+        || !JsonRpcApiUtil.getBlockID(canonical).equals(JsonRpcApiUtil.getBlockID(requested))) {
+      throw new BlockHeaderNotFoundException();
+    }
+    BlockCapsule blockCapsule = new BlockCapsule(requested);
+    resolvedBlock[0] = blockCapsule;
+    return blockCapsule;
+  }
+
+  private static void recordJsonHexResponse(ArchiveStateReader reader, byte[] value) {
+    long rawBytes = value == null ? 0L : value.length;
+    reader.getQueryContext().recordResponseBytes(2L + rawBytes * 2L);
   }
 
   private void requireArchiveAvailable() throws JsonRpcInternalException {
     try {
       archiveService.validateAvailable();
-    } catch (ArchiveException e) {
+    } catch (RuntimeException e) {
       throw new JsonRpcInternalException(e.getMessage());
     }
   }
@@ -208,15 +227,20 @@ public final class HistoricalEthCallSupport {
     return trxCap;
   }
 
-  private static void requireResolvedBlockHash(ArchiveStatePoint point, byte[] blockHash)
+  private static void requireResolvedBlockHash(long blockNum, byte[] canonicalHash,
+      byte[] requestedHash)
       throws JsonRpcInternalException {
-    byte[] pointHash = point.getBlockHash();
-    if (pointHash == null || pointHash.length != ArchiveBlockRange.BLOCK_HASH_LENGTH
-        || blockHash == null || blockHash.length != ArchiveBlockRange.BLOCK_HASH_LENGTH
-        || !Arrays.equals(pointHash, blockHash)) {
+    if (canonicalHash == null || canonicalHash.length != ArchiveBlockRange.BLOCK_HASH_LENGTH
+        || requestedHash == null || requestedHash.length != ArchiveBlockRange.BLOCK_HASH_LENGTH
+        || !Arrays.equals(canonicalHash, requestedHash)) {
       throw new JsonRpcInternalException(
-          "archive history hash mismatch for block " + point.getBlockNum());
+          "archive history hash mismatch for block " + blockNum);
     }
+  }
+
+  private static final class BlockHeaderNotFoundException extends RuntimeException {
+
+    private static final long serialVersionUID = 1L;
   }
 
 }

@@ -6,9 +6,11 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.NavigableMap;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
+import java.util.TreeMap;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchivePhase;
@@ -36,7 +38,7 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
   private ArchiveSource pendingSource;
   private final List<ArchiveTxPosition> pendingPositions = new ArrayList<>();
 
-  private final Map<Long, ArchiveBlockRange> blockRanges = new HashMap<>();
+  private final NavigableMap<Long, ArchiveBlockRange> blockRanges = new TreeMap<>();
   private final Map<Long, ArchiveTxPosition> positionsByTxNum = new HashMap<>();
   private final Map<String, Long> txNumByBlockAndIndex = new HashMap<>();
   private final Map<String, Long> txNumByTxId = new HashMap<>();
@@ -229,13 +231,9 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
     if (discardThrough <= discardedThroughBlock) {
       return;
     }
-    List<ArchiveBlockRange> discarded = new ArrayList<>();
-    for (ArchiveBlockRange range : blockRanges.values()) {
-      if (range.getBlockNum() <= discardThrough) {
-        discarded.add(range);
-      }
-    }
-    for (ArchiveBlockRange range : discarded) {
+    while (!blockRanges.isEmpty()
+        && blockRanges.firstKey() <= discardThrough) {
+      ArchiveBlockRange range = blockRanges.firstEntry().getValue();
       removeCommittedRange(range);
     }
     discardedThroughBlock = discardThrough;
@@ -422,23 +420,11 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
   }
 
   private long findLastCommittedBlock() {
-    long last = -1L;
-    for (Long blockNum : blockRanges.keySet()) {
-      if (blockNum > last) {
-        last = blockNum;
-      }
-    }
-    return last;
+    return blockRanges.isEmpty() ? -1L : blockRanges.lastKey();
   }
 
   private long findFirstCommittedBlock() {
-    long first = -1L;
-    for (Long blockNum : blockRanges.keySet()) {
-      if (first < 0 || blockNum < first) {
-        first = blockNum;
-      }
-    }
-    return first;
+    return blockRanges.isEmpty() ? -1L : blockRanges.firstKey();
   }
 
   private static String blockIndexKey(long blockNum, int txIndex) {

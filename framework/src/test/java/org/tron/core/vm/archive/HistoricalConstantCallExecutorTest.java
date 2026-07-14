@@ -1,6 +1,9 @@
 package org.tron.core.vm.archive;
 
 import static org.junit.Assert.assertArrayEquals;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -14,6 +17,10 @@ import org.tron.common.parameter.CommonParameter;
 import org.tron.common.runtime.TvmTestUtils;
 import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.utils.Sha256Hash;
+import org.tron.core.archive.query.ArchiveQueryLimits;
+import org.tron.core.archive.query.HistoricalQueryLimitException;
+import org.tron.core.archive.query.QueryContext;
+import org.tron.core.archive.query.QueryContextHolder;
 import org.tron.core.archive.reader.ArchiveReadResult;
 import org.tron.core.archive.reader.ArchiveStatePoint;
 import org.tron.core.archive.reader.ArchiveStateReader;
@@ -110,12 +117,33 @@ public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
         () -> runViewCall(push0, ArchiveReadResult.missing(), 0L));
   }
 
+  @Test
+  public void vmCatchAllCannotHideHistoricalStepLimit() {
+    QueryContext queryContext = new QueryContext(ArchiveQueryLimits.builder()
+        .maxVmSteps(0)
+        .build());
+
+    HistoricalQueryLimitException failure = assertThrows(
+        HistoricalQueryLimitException.class,
+        () -> runViewCall(SLOAD_CODE, ArchiveReadResult.missing(), 0L, queryContext));
+
+    assertEquals(HistoricalQueryLimitException.Limit.VM_STEPS, failure.getLimit());
+    assertSame(failure, queryContext.getTerminalException());
+    assertEquals(1L, queryContext.getVmSteps());
+    assertNull(QueryContextHolder.current());
+  }
+
   private byte[] runViewCall(byte[] code, ArchiveReadResult<byte[]> archivedSlot) throws Exception {
     return runViewCall(code, archivedSlot, 0L);
   }
 
   private byte[] runViewCall(byte[] code, ArchiveReadResult<byte[]> slot, long allowShangHai)
       throws Exception {
+    return runViewCall(code, slot, allowShangHai, null);
+  }
+
+  private byte[] runViewCall(byte[] code, ArchiveReadResult<byte[]> slot, long allowShangHai,
+      QueryContext queryContext) throws Exception {
     byte[] contractAddr = new byte[21];
     contractAddr[0] = 0x41;
     contractAddr[20] = 0x11;
@@ -124,6 +152,7 @@ public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
     caller[20] = 0x22;
 
     FakeReader reader = new FakeReader();
+    reader.queryContext = queryContext;
     reader.account = ArchiveReadResult.present(new AccountCapsule(
         Account.newBuilder().setAddress(ByteString.copyFrom(contractAddr)).build()));
     reader.contract = ArchiveReadResult.present(new ContractCapsule(SmartContract.newBuilder()
@@ -155,6 +184,7 @@ public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
 
   /** Returns the configured archived state for any address. */
   private static final class FakeReader implements ArchiveStateReader {
+    QueryContext queryContext;
     ArchiveReadResult<AccountCapsule> account = ArchiveReadResult.missing();
     ArchiveReadResult<ContractCapsule> contract = ArchiveReadResult.missing();
     ArchiveReadResult<ContractStateCapsule> contractState = ArchiveReadResult.missing();
@@ -163,6 +193,10 @@ public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
 
     public ArchiveStatePoint getPoint() {
       return null;
+    }
+
+    public QueryContext getQueryContext() {
+      return queryContext;
     }
 
     public ArchiveReadResult<AccountCapsule> getAccount(byte[] address) {

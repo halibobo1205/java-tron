@@ -149,8 +149,36 @@ public class StorageConfigTest {
     StorageConfig.ArchiveConfig a = StorageConfig.fromConfig(withRef()).getArchive();
     assertFalse(a.isEnable());
     assertEquals("archive", a.getDb().getDirectory());
+    assertFalse(a.getDb().isFullScrubOnStartup());
     assertTrue(a.getTxnum().isEnable());
     assertTrue(a.getTemporal().isEnable());
+    StorageConfig.ArchiveConfig.PublisherConfig publisher = a.getPublisher();
+    assertFalse(publisher.isAsync());
+    assertTrue(publisher.isBackpressure());
+    assertEquals(32_768, publisher.getSoftInFlightBlocks());
+    assertEquals(65_536, publisher.getHardInFlightBlocks());
+    assertEquals(128L * 1024 * 1024, publisher.getSoftInFlightBytes());
+    assertEquals(256L * 1024 * 1024, publisher.getHardInFlightBytes());
+    assertEquals(1_000_000, publisher.getSoftInFlightRecords());
+    assertEquals(2_000_000, publisher.getHardInFlightRecords());
+    assertEquals(5L * 1024 * 1024 * 1024, publisher.getSoftMinFreeBytes());
+    assertEquals(1L * 1024 * 1024 * 1024, publisher.getHardMinFreeBytes());
+    assertEquals(30_000, publisher.getBackpressureTimeoutMs());
+    StorageConfig.ArchiveConfig.QueryConfig query = a.getQuery();
+    assertEquals(8, query.getMaxConcurrentQueries());
+    assertEquals(16, query.getMaxPendingQueries());
+    assertEquals(8, query.getMaxOpenSnapshots());
+    assertEquals(0, query.getAcquireTimeoutMs());
+    assertEquals(30_000, query.getDeadlineMs());
+    assertEquals(1_000_000, query.getMaxLogicalReadsPerRequest());
+    assertEquals(100_000, query.getMaxBackendReadsPerRequest());
+    assertEquals(4_096, query.getMaxCachedEntries());
+    assertEquals(4L * 1024 * 1024, query.getMaxCachedBytes());
+    assertEquals(1_000_000, query.getMaxTraceSteps());
+    assertEquals(64L * 1024 * 1024, query.getMaxTraceBytes());
+    assertEquals(24L * 1024 * 1024, query.getMaxTraceResponseBytes());
+    assertFalse(a.getIdentity().isInitialize());
+    assertFalse(a.getIdentity().isAdoptLegacy());
     assertFalse(a.getCommitment().isEnable());
     assertFalse(a.getCommitment().isPersistTxRoots());
     assertFalse(a.getDebug().isEnable());
@@ -161,20 +189,154 @@ public class StorageConfigTest {
   @Test
   public void testArchiveOverride() {
     StorageConfig.ArchiveConfig a = StorageConfig.fromConfig(withRef(
-        "storage.archive { enable = true, db { directory = arc }, txnum { enable = true },"
+        "storage.archive { enable = true,"
+            + " db { directory = arc, fullScrubOnStartup = true }, txnum { enable = true },"
             + " temporal { enable = true },"
+            + " identity { adoptLegacy = true },"
             + " commitment { enable = false, persistTxRoots = false },"
             + " debug { enable = false }, coverage = TVM_STATE_ONLY }"))
         .getArchive();
     assertTrue(a.isEnable());
     assertEquals("arc", a.getDb().getDirectory());
+    assertTrue(a.getDb().isFullScrubOnStartup());
     assertTrue(a.getTxnum().isEnable());
     assertTrue(a.getTemporal().isEnable());
+    assertTrue(a.getIdentity().isAdoptLegacy());
     assertFalse(a.getCommitment().isEnable());
     assertFalse(a.getCommitment().isPersistTxRoots());
     assertFalse(a.getDebug().isEnable());
     assertEquals("TVM_STATE_ONLY", a.getCoverage());
     assertTrue(a.isWarnUnclassifiedStoreWrites());
+  }
+
+  @Test
+  public void testArchiveQueryLimitsOverride() {
+    StorageConfig.ArchiveConfig.QueryConfig query = StorageConfig.fromConfig(withRef(
+        "storage.archive.query { maxConcurrentQueries = 1, maxPendingQueries = 2,"
+            + " maxOpenSnapshots = 12,"
+            + " acquireTimeoutMs = 3, deadlineMs = 4, maxQueriesPerBatch = 13,"
+            + " batchDeadlineMs = 14, maxLogicalReadsPerRequest = 5,"
+            + " maxBackendReadsPerRequest = 6, maxCachedEntries = 7, maxCachedBytes = 8,"
+            + " maxTraceSteps = 9, maxTraceBytes = 10, maxTraceResponseBytes = 11 }"))
+        .getArchive().getQuery();
+
+    assertEquals(1, query.getMaxConcurrentQueries());
+    assertEquals(2, query.getMaxPendingQueries());
+    assertEquals(12, query.getMaxOpenSnapshots());
+    assertEquals(3, query.getAcquireTimeoutMs());
+    assertEquals(4, query.getDeadlineMs());
+    assertEquals(13, query.getMaxQueriesPerBatch());
+    assertEquals(14, query.getBatchDeadlineMs());
+    assertEquals(5, query.getMaxLogicalReadsPerRequest());
+    assertEquals(6, query.getMaxBackendReadsPerRequest());
+    assertEquals(7, query.getMaxCachedEntries());
+    assertEquals(8, query.getMaxCachedBytes());
+    assertEquals(9, query.getMaxTraceSteps());
+    assertEquals(10, query.getMaxTraceBytes());
+    assertEquals(11, query.getMaxTraceResponseBytes());
+  }
+
+  @Test
+  public void testArchivePublisherOverride() {
+    StorageConfig.ArchiveConfig.PublisherConfig publisher = StorageConfig.fromConfig(withRef(
+        "storage.archive.publisher { async = true, backpressure = false,"
+            + " softInFlightBlocks = 2, hardInFlightBlocks = 3,"
+            + " softInFlightBytes = 4, hardInFlightBytes = 5,"
+            + " softInFlightRecords = 6, hardInFlightRecords = 7,"
+            + " softMinFreeBytes = 9, hardMinFreeBytes = 8,"
+            + " backpressureTimeoutMs = 10 }"))
+        .getArchive().getPublisher();
+
+    assertTrue(publisher.isAsync());
+    assertFalse(publisher.isBackpressure());
+    assertEquals(2, publisher.getSoftInFlightBlocks());
+    assertEquals(3, publisher.getHardInFlightBlocks());
+    assertEquals(4, publisher.getSoftInFlightBytes());
+    assertEquals(5, publisher.getHardInFlightBytes());
+    assertEquals(6, publisher.getSoftInFlightRecords());
+    assertEquals(7, publisher.getHardInFlightRecords());
+    assertEquals(9, publisher.getSoftMinFreeBytes());
+    assertEquals(8, publisher.getHardMinFreeBytes());
+    assertEquals(10, publisher.getBackpressureTimeoutMs());
+  }
+
+  @Test
+  public void testArchivePublisherRejectsInvalidWatermarks() {
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef(
+            "storage.archive.publisher.softInFlightBlocks = 0")));
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef(
+            "storage.archive.publisher { softInFlightBlocks = 4, hardInFlightBlocks = 3 }")));
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef(
+            "storage.archive.publisher.softInFlightBytes = 0")));
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef(
+            "storage.archive.publisher { softInFlightBytes = 4, hardInFlightBytes = 3 }")));
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef(
+            "storage.archive.publisher.softInFlightRecords = 0")));
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef(
+            "storage.archive.publisher { softInFlightRecords = 4, hardInFlightRecords = 3 }")));
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef(
+            "storage.archive.publisher.hardMinFreeBytes = -1")));
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef(
+            "storage.archive.publisher { softMinFreeBytes = 3, hardMinFreeBytes = 4 }")));
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef(
+            "storage.archive.publisher.backpressureTimeoutMs = -1")));
+  }
+
+  @Test
+  public void testArchiveQueryAcceptsZeroForNonConcurrencyLimits() {
+    StorageConfig.ArchiveConfig.QueryConfig query = StorageConfig.fromConfig(withRef(
+        "storage.archive.query { maxConcurrentQueries = 1, maxPendingQueries = 0,"
+            + " maxOpenSnapshots = 0,"
+            + " acquireTimeoutMs = 0, deadlineMs = 0, maxLogicalReadsPerRequest = 0,"
+            + " maxBackendReadsPerRequest = 0, maxCachedEntries = 0, maxCachedBytes = 0,"
+            + " maxTraceSteps = 0, maxTraceBytes = 0, maxTraceResponseBytes = 0 }"))
+        .getArchive().getQuery();
+
+    assertEquals(1, query.getMaxConcurrentQueries());
+    assertEquals(0, query.getMaxPendingQueries());
+    assertEquals(0, query.getMaxOpenSnapshots());
+    assertEquals(0, query.getDeadlineMs());
+    assertEquals(0, query.getMaxCachedEntries());
+    assertEquals(0, query.getMaxCachedBytes());
+    assertEquals(0, query.getMaxTraceResponseBytes());
+  }
+
+  @Test
+  public void testArchiveQueryRejectsInvalidConcurrencyLimit() {
+    assertArchiveQueryRejected("maxConcurrentQueries", 0);
+    assertArchiveQueryRejected("maxConcurrentQueries", -2);
+  }
+
+  @Test
+  public void testArchiveQueryRejectsNegativeLimitsOtherThanUnlimited() {
+    String[] keys = {
+        "maxPendingQueries",
+        "maxOpenSnapshots",
+        "acquireTimeoutMs",
+        "deadlineMs",
+        "batchDeadlineMs",
+        "maxLogicalReadsPerRequest",
+        "maxBackendReadsPerRequest",
+        "maxTraceSteps",
+        "maxTraceBytes",
+        "maxTraceResponseBytes"
+    };
+    for (String key : keys) {
+      assertArchiveQueryRejected(key, -2);
+    }
+    assertArchiveQueryRejected("maxCachedEntries", -1);
+    assertArchiveQueryRejected("maxCachedBytes", -1);
+    assertArchiveQueryRejected("maxQueriesPerBatch", 0);
+    assertArchiveQueryRejected("maxQueriesPerBatch", -2);
   }
 
   @Test
@@ -238,11 +400,29 @@ public class StorageConfigTest {
   }
 
   @Test
+  public void testArchiveRejectsConflictingIdentityModes() {
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef(
+            "storage.archive.identity { initialize = true, adoptLegacy = true }")));
+  }
+
+  @Test
   public void testArchiveRejectsUnknownKeys() {
     assertThrows(IllegalArgumentException.class,
         () -> StorageConfig.fromConfig(withRef("storage.archive.enabled = true")));
     assertThrows(IllegalArgumentException.class,
         () -> StorageConfig.fromConfig(withRef("storage.archive.debug.enabled = true")));
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef("storage.archive.query.maxReads = 1")));
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef("storage.archive.publisher.queueSize = 1")));
+  }
+
+  private static void assertArchiveQueryRejected(String key, long value) {
+    IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef(
+            "storage.archive.query." + key + " = " + value)));
+    assertTrue(failure.getMessage().contains("storage.archive.query." + key));
   }
 
   // ---- readProperties() ----

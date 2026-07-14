@@ -48,6 +48,10 @@ public class MetricsHistogram {
     init(MetricKeys.Histogram.BLOCK_FETCH_LATENCY, "fetch block latency.");
     init(MetricKeys.Histogram.BLOCK_RECEIVE_DELAY,
         "receive block delay time, receiveTime - blockTime.");
+    init(MetricKeys.Histogram.ARCHIVE_STAGE_LATENCY,
+        "Archive block stage latency.", "stage");
+    init(MetricKeys.Histogram.ARCHIVE_QUERY_LATENCY,
+        "Archive historical query lifetime.", "result");
 
     init(MetricKeys.Histogram.BLOCK_TRANSACTION_COUNT,
         "Distribution of transaction counts per block.",
@@ -109,4 +113,3 @@ public class MetricsHistogram {
   }
 
 }
-

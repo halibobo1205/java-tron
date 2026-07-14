@@ -26,15 +26,12 @@ public class CanonicalCodecTest {
   }
 
   @Test
-  public void contractStorageCodecValidatesLengthAndVersion() {
+  public void contractStorageCodecValidatesPhysicalKeyLength() {
     ContractStorageKeyCodec codec = new ContractStorageKeyCodec();
-    byte[] key = new byte[ContractStorageKeyCodec.LENGTH]; // 86, version byte 0
+    byte[] key = new byte[ContractStorageKeyCodec.LENGTH];
     assertArrayEquals(key, codec.normalize(key));
-    key[ContractStorageKeyCodec.LENGTH - 1] = 1; // version 1 ok
+    key[ContractStorageKeyCodec.LENGTH - 1] = 2;
     codec.validate(key);
-    byte[] badVersion = new byte[ContractStorageKeyCodec.LENGTH];
-    badVersion[ContractStorageKeyCodec.LENGTH - 1] = 2;
-    assertThrows(ArchiveException.class, () -> codec.validate(badVersion));
     assertThrows(ArchiveException.class,
         () -> codec.normalize(new byte[ContractStorageKeyCodec.LENGTH - 1]));
   }

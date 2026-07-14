@@ -107,45 +107,29 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
   }
 
   @Test
-  public void tombstonedArchivedForkFlagResolvesToOff() throws Exception {
-    // G2 repro: on a mid-chain archive, a fork flag first ACTIVATED inside the coverage window has
-    // its pre-activation prev-value captured as a tombstone. A historical call at a block before
-    // activation reads that tombstone; it must resolve to 0 (off) -- the flag's unset value -- not
-    // throw. Cancun takes the resolveArchived() path, the stricter one that used to fail closed.
+  public void tombstonedConfigBackedForkFlagFailsClosed() {
+    // Cancun's absent-key value comes from deployment config. A tombstone proves that the property
+    // was unset, but the archive cannot reconstruct which config supplied that historical default.
     FakeReader reader = new FakeReader();
-    reader.putVmDefaults();                                 // every other fork gate present (0)
-    reader.putTombstone("ALLOW_TVM_CANCUN");                // first activation is later, in-window
+    reader.putVmDefaults();
+    reader.putTombstone("ALLOW_TVM_CANCUN");
     VmDynamicProperties latest = mock(VmDynamicProperties.class);
-    when(latest.getAllowTvmCancun()).thenReturn(1L);   // latest ON; the historical block is not
 
-    HistoricalArchiveVmDynamicProperties view =
-        new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true);
-
-    assertEquals(0L, view.getAllowTvmCancun());
+    ArchiveReaderException error = assertThrows(ArchiveReaderException.class,
+        () -> new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true));
+    assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, error.getReason());
   }
 
   @Test
-  public void tombstonedConfigDefaultedFlagResolvesToConfigDefaultNotZero() throws Exception {
-    // A config-defaulted fork flag (its live getter falls back to CommonParameter, not a hard 0):
-    // on a custom deployment where allowTvmShangHai == 1, a tombstone (unset as of this block) must
-    // resolve to that config default, NOT a hardwired 0 -- else a historical replay wrongly turns
-    // OFF a rule (PUSH0) that was active from genesis. The archive never wrote a different value.
-    CommonParameter p = CommonParameter.getInstance();
-    long original = p.getAllowTvmShangHai();
-    try {
-      p.setAllowTvmShangHai(1L);
-      FakeReader reader = new FakeReader();
-      reader.putVmDefaults();
-      reader.putTombstone("ALLOW_TVM_SHANGHAI");
-      VmDynamicProperties latest = mock(VmDynamicProperties.class);
+  public void tombstonedConfigDefaultedFlagDoesNotUseCurrentNodeConfig() {
+    FakeReader reader = new FakeReader();
+    reader.putVmDefaults();
+    reader.putTombstone("ALLOW_TVM_SHANGHAI");
+    VmDynamicProperties latest = mock(VmDynamicProperties.class);
 
-      HistoricalArchiveVmDynamicProperties view =
-          new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true);
-
-      assertEquals(1L, view.getAllowTvmShangHai());
-    } finally {
-      p.setAllowTvmShangHai(original);
-    }
+    ArchiveReaderException error = assertThrows(ArchiveReaderException.class,
+        () -> new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true));
+    assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, error.getReason());
   }
 
   @Test

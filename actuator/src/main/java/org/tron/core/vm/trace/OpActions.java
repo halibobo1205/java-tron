@@ -1,7 +1,5 @@
 package org.tron.core.vm.trace;
 
-import static org.tron.common.utils.ByteArray.toHexString;
-
 import com.fasterxml.jackson.annotation.JsonInclude;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -71,7 +69,21 @@ public class OpActions {
   public Action addMemoryWrite(int address, byte[] data, int size) {
     return addAction(memory, Action.Name.write)
         .addParam("address", address)
-        .addParam("data", toHexString(data).substring(0, size * 2));
+        .addParam("data", toHexPrefix(data, size));
+  }
+
+  private static String toHexPrefix(byte[] data, int size) {
+    if (data == null || size < 0 || size > data.length) {
+      throw new IllegalArgumentException("memory trace size is outside the source data");
+    }
+    final char[] digits = "0123456789abcdef".toCharArray();
+    char[] encoded = new char[size * 2];
+    for (int i = 0; i < size; i++) {
+      int value = data[i] & 0xff;
+      encoded[i * 2] = digits[value >>> 4];
+      encoded[i * 2 + 1] = digits[value & 0x0f];
+    }
+    return new String(encoded);
   }
 
   public Action addStoragePut(DataWord key, DataWord value) {
