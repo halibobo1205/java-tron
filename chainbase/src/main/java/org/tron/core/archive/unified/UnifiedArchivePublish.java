@@ -104,6 +104,12 @@ public final class UnifiedArchivePublish {
       return this;
     }
 
+    public Builder delete(UnifiedArchiveColumnFamily columnFamily, byte[] key) {
+      requirePublishDataColumnFamily(columnFamily);
+      mutations.add(Mutation.delete(columnFamily, key));
+      return this;
+    }
+
     public UnifiedArchivePublish build() {
       if (journal == null) {
         throw new ArchiveException("UNIFIED_V1 publish journal is required");
@@ -120,7 +126,8 @@ public final class UnifiedArchivePublish {
         if (!mutationKeys.add(new MutationKey(mutation))) {
           throw new ArchiveException("UNIFIED_V1 publish contains a duplicate mutation key");
         }
-        if (mutation.columnFamily == UnifiedArchiveColumnFamily.INDEX) {
+        if (!mutation.delete
+            && mutation.columnFamily == UnifiedArchiveColumnFamily.INDEX) {
           hasIndexRow = true;
         }
       }
@@ -182,18 +189,25 @@ public final class UnifiedArchivePublish {
     private final UnifiedArchiveColumnFamily columnFamily;
     private final byte[] key;
     private final byte[] value;
+    private final boolean delete;
 
-    private Mutation(UnifiedArchiveColumnFamily columnFamily, byte[] key, byte[] value) {
+    private Mutation(UnifiedArchiveColumnFamily columnFamily, byte[] key, byte[] value,
+        boolean delete) {
       this.columnFamily = columnFamily;
       this.key = requiredKey(key, "publish mutation");
-      this.value = Arrays.copyOf(value, value.length);
+      this.value = value == null ? null : Arrays.copyOf(value, value.length);
+      this.delete = delete;
     }
 
     static Mutation put(UnifiedArchiveColumnFamily columnFamily, byte[] key, byte[] value) {
       if (value == null || value.length == 0) {
         throw new ArchiveException("UNIFIED_V1 publish mutation value is required");
       }
-      return new Mutation(columnFamily, key, value);
+      return new Mutation(columnFamily, key, value, false);
+    }
+
+    static Mutation delete(UnifiedArchiveColumnFamily columnFamily, byte[] key) {
+      return new Mutation(columnFamily, key, null, true);
     }
 
     UnifiedArchiveColumnFamily columnFamily() {
@@ -206,6 +220,10 @@ public final class UnifiedArchivePublish {
 
     byte[] value() {
       return value;
+    }
+
+    boolean isDelete() {
+      return delete;
     }
   }
 

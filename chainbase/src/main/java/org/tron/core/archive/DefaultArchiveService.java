@@ -57,6 +57,7 @@ import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.archive.txnum.ArchiveTxPosition;
 import org.tron.core.archive.txnum.ArchiveTxNumIndex;
 import org.tron.core.archive.txnum.InMemoryArchiveTxNumIndex;
+import org.tron.core.archive.txnum.UnifiedArchiveTxNumIndex;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.db2.common.WrappedByteArray;
@@ -83,6 +84,7 @@ public final class DefaultArchiveService implements ArchiveService {
   private final ArchiveCaptureEngine captureEngine;
   private final ArchiveTemporalStore temporalStore;
   private final ArchiveInFlightStore inFlightStore;
+  private final UnifiedArchiveBackend unifiedBackend;
   private final DefaultArchiveStateReaderFactory readerFactory;
   private final byte[] schemaChecksum;
   private final ReentrantReadWriteLock consistencyLock = new ReentrantReadWriteLock(true);
@@ -221,6 +223,17 @@ public final class DefaultArchiveService implements ArchiveService {
       ArchiveDomainCatalog catalog, ArchiveReadThrough liveReadThrough,
       ArchiveLifecycle.Phase initialPhase, ArchiveQueryLimits queryLimits,
       ArchivePublisherConfig publisherConfig, Runnable startupValidator) {
+    this(enabled, txNumIndex, executionContext, temporalStore, inFlightStore, registry, catalog,
+        liveReadThrough, initialPhase, queryLimits, publisherConfig, startupValidator, null);
+  }
+
+  DefaultArchiveService(boolean enabled, ArchiveTxNumIndex txNumIndex,
+      ArchiveExecutionContext executionContext, ArchiveTemporalStore temporalStore,
+      ArchiveInFlightStore inFlightStore, ArchiveDomainRegistry registry,
+      ArchiveDomainCatalog catalog, ArchiveReadThrough liveReadThrough,
+      ArchiveLifecycle.Phase initialPhase, ArchiveQueryLimits queryLimits,
+      ArchivePublisherConfig publisherConfig, Runnable startupValidator,
+      UnifiedArchiveBackend unifiedBackend) {
     if (startupValidator == null) {
       throw new NullPointerException("startupValidator");
     }
@@ -234,6 +247,7 @@ public final class DefaultArchiveService implements ArchiveService {
     this.queryCoordinator = new ArchiveQueryCoordinator(queryLimits);
     this.startupValidator = startupValidator;
     this.publisherConfig = publisherConfig;
+    this.unifiedBackend = unifiedBackend;
     this.maxInFlightBlocks = publisherConfig.getHardInFlightBlocks();
     if (enabled) {
       this.schemaChecksum = ArchiveSchemaChecksum.of(registry, catalog);
@@ -1037,6 +1051,18 @@ public final class DefaultArchiveService implements ArchiveService {
       throw new ArchiveException("cannot publish unacknowledged archive journal block "
           + range.getBlockNum());
     }
+    if (unifiedBackend != null) {
+      long startedNanos = ArchiveMetrics.startTimer();
+      try {
+        ArchiveBlockRange publishedRange = unifiedBackend.publishBlock(block);
+        validatePublishedRange(range, publishedRange);
+        ArchiveMetrics.publishFinished(startedNanos, true);
+        return;
+      } catch (RuntimeException e) {
+        ArchiveMetrics.publishFinished(startedNanos, false);
+        throw e;
+      }
+    }
     boolean indexPublished = false;
     boolean temporalPublished = false;
     long startedNanos = ArchiveMetrics.startTimer();
@@ -1826,9 +1852,10 @@ public final class DefaultArchiveService implements ArchiveService {
       validateAvailableForRead();
       throw e;
     }
-    boolean genesisComplete = txNumIndex.getFirstArchivedBlock() == 0L;
+    boolean genesisComplete = unifiedBackend == null
+        && txNumIndex.getFirstArchivedBlock() == 0L;
     ArchiveSnapshotPermit snapshotPermit = null;
-    if (genesisComplete) {
+    if (unifiedBackend != null || genesisComplete) {
       try {
         snapshotPermit = queryCoordinator.acquireSnapshot(queryLease);
       } catch (RuntimeException e) {
@@ -1904,6 +1931,41 @@ public final class DefaultArchiveService implements ArchiveService {
       }
       validateAvailableForRead();
       queryContext.checkDeadline();
+      if (unifiedBackend != null) {
+        UnifiedArchiveBackend.ReadSession readSession = unifiedBackend.openReadSession();
+        ArchiveStateReader unifiedReader = null;
+        boolean readerOwnsSession = false;
+        try {
+          ArchiveStatePoint point;
+          try (UnifiedArchiveTxNumIndex.ReadScope ignoredIndex = readSession.bindIndex()) {
+            genesisComplete = txNumIndex.getFirstArchivedBlock() == 0L;
+            try (QueryContextHolder.Scope ignored = QueryContextHolder.attach(queryContext)) {
+              point = pointResolver.resolve(queryContext);
+            }
+            queryContext.recordBackendRead();
+            Runnable onClose = genesisComplete ? () -> { } : readLock::unlock;
+            unifiedReader = readerFactory.openSnapshot(point, readSession.getTemporalView(),
+                onClose, genesisComplete, queryContext);
+            readerOwnsSession = true;
+          }
+          if (genesisComplete) {
+            readLock.unlock();
+          }
+          lockTransferred = true;
+          ManagedArchiveStateReader managed = new ManagedArchiveStateReader(
+              unifiedReader, lifecycleLease, queryLease, snapshotPermit);
+          leaseTransferred = true;
+          snapshotPermitTransferred = true;
+          return managed;
+        } catch (RuntimeException | Error | ArchiveReaderException e) {
+          if (readerOwnsSession) {
+            closeAndSuppress(unifiedReader, e);
+          } else {
+            closeAndSuppress(readSession, e);
+          }
+          throw e;
+        }
+      }
       ArchiveStatePoint point;
       try (QueryContextHolder.Scope ignored = QueryContextHolder.attach(queryContext)) {
         point = pointResolver.resolve(queryContext);
@@ -2084,6 +2146,16 @@ public final class DefaultArchiveService implements ArchiveService {
 
     private RetryableStartupCleanupException(String message, Throwable cause) {
       super(message, cause);
+    }
+  }
+
+  private static void closeAndSuppress(AutoCloseable resource, Throwable failure) {
+    try {
+      resource.close();
+    } catch (Throwable closeFailure) {
+      if (failure != closeFailure) {
+        failure.addSuppressed(closeFailure);
+      }
     }
   }
 

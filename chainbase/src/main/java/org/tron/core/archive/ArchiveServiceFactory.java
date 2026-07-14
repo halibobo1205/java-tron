@@ -23,13 +23,17 @@ import org.tron.core.archive.identity.ArchiveIdentityException;
 import org.tron.core.archive.identity.ArchiveIdentityProtocol;
 import org.tron.core.archive.identity.ArchiveIdentityState;
 import org.tron.core.archive.identity.LegacyArchiveIdentityPayload;
+import org.tron.core.archive.identity.UnifiedArchiveIdentityPayload;
 import org.tron.core.archive.query.ArchiveQueryLimits;
 import org.tron.core.archive.reader.ArchiveReadThrough;
 import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
 import org.tron.core.archive.temporal.RocksDbArchiveTemporalStore;
+import org.tron.core.archive.temporal.UnifiedArchiveTemporalStore;
 import org.tron.core.archive.txnum.InMemoryArchiveTxNumIndex;
 import org.tron.core.archive.txnum.PersistentArchiveTxNumIndex;
 import org.tron.core.archive.txnum.RocksDbArchiveBlockRangeStore;
+import org.tron.core.archive.txnum.UnifiedArchiveTxNumIndex;
+import org.tron.core.archive.unified.UnifiedArchiveDb;
 import org.tron.core.capsule.utils.BlockUtil;
 import org.tron.core.config.args.StorageConfig;
 
@@ -46,7 +50,9 @@ import org.tron.core.config.args.StorageConfig;
 public final class ArchiveServiceFactory {
 
   private static final String SUPPORTED_COVERAGE = "TVM_STATE_ONLY";
-  private static final String LEGACY_LAYOUT = "LEGACY_V1";
+  private static final String LEGACY_LAYOUT = StorageConfig.ArchiveConfig.DbConfig.LEGACY_V1;
+  private static final String UNIFIED_LAYOUT = StorageConfig.ArchiveConfig.DbConfig.UNIFIED_V1;
+  private static final String AUTO_LAYOUT = StorageConfig.ArchiveConfig.DbConfig.AUTO;
 
   private ArchiveServiceFactory() {
   }
@@ -100,19 +106,27 @@ public final class ArchiveServiceFactory {
     if (archiveDir != null && config.getTemporal().isEnable()) {
       Path archivePath = Paths.get(archiveDir).toAbsolutePath().normalize();
       boolean identityAdoption = false;
+      boolean canonicalHasBlocks = chainBaseManager != null && chainBaseManager.hasBlocks();
+      String layout;
       try {
-        boolean canonicalHasBlocks = chainBaseManager != null && chainBaseManager.hasBlocks();
-        validateArchiveRootBeforeOpen(archivePath, canonicalHasBlocks);
+        layout = resolveArchiveLayout(config, archivePath);
+        validateArchiveRootBeforeOpen(archivePath, canonicalHasBlocks, layout);
         if (identityAnchorDirectory != null) {
           identityAdoption = validateOrInitializeIdentity(config, archivePath,
               identityAnchorDirectory,
-              canonicalHasBlocks, catalog, schemaChecksum);
+              canonicalHasBlocks, catalog, schemaChecksum, layout);
+        } else if (UNIFIED_LAYOUT.equals(layout)) {
+          validateUnanchoredUnifiedInitialization(config, archivePath, canonicalHasBlocks);
         }
         Files.createDirectories(archivePath);
       } catch (ArchiveIdentityException e) {
         throw new ArchiveException("archive identity validation failed: " + e.getMessage(), e);
       } catch (IOException e) {
         throw new ArchiveException("failed to create archive directory " + archiveDir, e);
+      }
+      if (UNIFIED_LAYOUT.equals(layout)) {
+        return openUnifiedArchive(config, archivePath, readThrough, registry, catalog,
+            schemaChecksum, queryLimits, publisherConfig);
       }
       RocksDbArchiveTemporalStore temporalStore = null;
       RocksDbArchiveInFlightStore inFlightStore = null;
@@ -179,7 +193,14 @@ public final class ArchiveServiceFactory {
 
   private static boolean validateOrInitializeIdentity(StorageConfig.ArchiveConfig config,
       Path archivePath, Path anchorDirectory, boolean canonicalHasBlocks,
-      ArchiveDomainCatalog catalog, byte[] schemaChecksum) throws IOException {
+      ArchiveDomainCatalog catalog, byte[] schemaChecksum, String layout) throws IOException {
+    if (UNIFIED_LAYOUT.equals(layout)) {
+      return validateOrInitializeUnifiedIdentity(config, archivePath, anchorDirectory,
+          canonicalHasBlocks, catalog, schemaChecksum);
+    }
+    if (!LEGACY_LAYOUT.equals(layout)) {
+      throw new ArchiveException("unsupported archive layout " + layout);
+    }
     String chainId = BlockUtil.newGenesisBlockCapsule().getBlockId().toString();
     String schema = ByteArray.toHexString(schemaChecksum);
     Path rootIdentity = ArchiveIdentityProtocol.rootIdentityPath(archivePath);
@@ -251,6 +272,140 @@ public final class ArchiveServiceFactory {
     return false;
   }
 
+  private static boolean validateOrInitializeUnifiedIdentity(
+      StorageConfig.ArchiveConfig config, Path archivePath, Path anchorDirectory,
+      boolean canonicalHasBlocks, ArchiveDomainCatalog catalog, byte[] schemaChecksum)
+      throws IOException {
+    String chainId = BlockUtil.newGenesisBlockCapsule().getBlockId().toString();
+    String schema = ByteArray.toHexString(schemaChecksum);
+    boolean initialize = config.getIdentity() != null && config.getIdentity().isInitialize();
+    boolean adoptLegacy = config.getIdentity() != null
+        && config.getIdentity().isAdoptLegacy();
+    if (adoptLegacy) {
+      throw new ArchiveException(
+          "storage.archive.identity.adoptLegacy cannot target UNIFIED_V1");
+    }
+
+    Path rootIdentity = ArchiveIdentityProtocol.rootIdentityPath(archivePath);
+    boolean rootIdentityExists = Files.exists(rootIdentity, LinkOption.NOFOLLOW_LINKS);
+    UnifiedArchiveIdentityPayload payload =
+        new UnifiedArchiveIdentityPayload(catalog, schemaChecksum);
+    ArchiveIdentityProtocol protocol = new ArchiveIdentityProtocol(payload);
+
+    if (canonicalHasBlocks || !initialize) {
+      if (!rootIdentityExists) {
+        String remedy = canonicalHasBlocks
+            ? "restore the registered UNIFIED_V1 archive; automatic migration is disabled"
+            : "set storage.archive.identity.initialize=true only for a new empty archive";
+        throw new ArchiveException("archive identity is missing; " + remedy);
+      }
+      long actualFloor = UnifiedArchiveIdentityPayload.inspectFloor(
+          archivePath, catalog, schemaChecksum);
+      protocol.validateActive(
+          anchorDirectory, archivePath, chainId, schema, UNIFIED_LAYOUT, actualFloor);
+      return false;
+    }
+
+    Optional<ArchiveIdentityClaim> persisted = protocol.findResumableClaim(
+        anchorDirectory, archivePath, chainId, schema, UNIFIED_LAYOUT, 0L);
+    ArchiveIdentityClaim claim = persisted.orElseGet(() -> ArchiveIdentityClaim.create(
+        chainId, schema, UNIFIED_LAYOUT, archivePath, 0L));
+    if (!persisted.isPresent()) {
+      protocol.init(anchorDirectory, claim);
+    }
+    protocol.resume(anchorDirectory, claim);
+    return false;
+  }
+
+  private static void validateUnanchoredUnifiedInitialization(
+      StorageConfig.ArchiveConfig config, Path archivePath, boolean canonicalHasBlocks) {
+    if (config.getIdentity() != null && config.getIdentity().isAdoptLegacy()) {
+      throw new ArchiveException(
+          "storage.archive.identity.adoptLegacy cannot target UNIFIED_V1");
+    }
+    Path databasePath = UnifiedArchiveIdentityPayload.databasePath(archivePath);
+    if (Files.exists(databasePath, LinkOption.NOFOLLOW_LINKS)) {
+      return;
+    }
+    if (canonicalHasBlocks) {
+      throw new ArchiveException(
+          "refusing to create UNIFIED_V1 for a non-empty canonical database");
+    }
+    if (config.getIdentity() == null || !config.getIdentity().isInitialize()) {
+      throw new ArchiveException("new UNIFIED_V1 archive requires explicit "
+          + "storage.archive.identity.initialize=true");
+    }
+  }
+
+  private static String resolveArchiveLayout(StorageConfig.ArchiveConfig config,
+      Path archivePath) throws IOException {
+    if (config.getDb() == null) {
+      throw new ArchiveException("storage.archive.db must not be null");
+    }
+    String configured = config.getDb().getLayout();
+    if (!AUTO_LAYOUT.equals(configured)) {
+      if (LEGACY_LAYOUT.equals(configured) || UNIFIED_LAYOUT.equals(configured)) {
+        return configured;
+      }
+      throw new ArchiveException("unsupported archive layout " + configured);
+    }
+    if (!Files.isDirectory(archivePath, LinkOption.NOFOLLOW_LINKS)) {
+      throw new ArchiveException(
+          "storage.archive.db.layout=AUTO requires an existing registered archive root");
+    }
+    if (!Files.isRegularFile(ArchiveIdentityProtocol.rootIdentityPath(archivePath),
+        LinkOption.NOFOLLOW_LINKS)) {
+      throw new ArchiveException(
+          "storage.archive.db.layout=AUTO requires an ACTIVE root identity");
+    }
+    ArchiveIdentity identity = ArchiveIdentityProtocol.inspectRootIdentity(archivePath);
+    if (identity.getState() != ArchiveIdentityState.ACTIVE) {
+      throw new ArchiveException(
+          "storage.archive.db.layout=AUTO requires an ACTIVE root identity");
+    }
+    String detected = identity.getLayout();
+    if (!LEGACY_LAYOUT.equals(detected) && !UNIFIED_LAYOUT.equals(detected)) {
+      throw new ArchiveException("archive root identity uses unsupported layout " + detected);
+    }
+    return detected;
+  }
+
+  private static ArchiveService openUnifiedArchive(StorageConfig.ArchiveConfig config,
+      Path archivePath, ArchiveReadThrough readThrough, ArchiveDomainRegistry registry,
+      ArchiveDomainCatalog catalog, byte[] schemaChecksum, ArchiveQueryLimits queryLimits,
+      ArchivePublisherConfig publisherConfig) {
+    Path databasePath = UnifiedArchiveIdentityPayload.databasePath(archivePath);
+    UnifiedArchiveDb db = null;
+    UnifiedArchiveTxNumIndex txNumIndex = null;
+    try {
+      db = Files.exists(databasePath, LinkOption.NOFOLLOW_LINKS)
+          ? UnifiedArchiveDb.open(databasePath, schemaChecksum)
+          : UnifiedArchiveDb.initialize(databasePath, schemaChecksum);
+      boolean fullStartupScrub = config.getDb().isFullScrubOnStartup();
+      txNumIndex = new UnifiedArchiveTxNumIndex(
+          db, schemaChecksum, false, true);
+      boolean recoveryScrub = fullStartupScrub || txNumIndex.hasRepairRequired();
+      UnifiedArchiveTemporalStore temporalStore =
+          new UnifiedArchiveTemporalStore(db, catalog);
+      UnifiedArchiveInFlightStore inFlightStore =
+          new UnifiedArchiveInFlightStore(db, catalog);
+      UnifiedArchiveBackend backend =
+          new UnifiedArchiveBackend(db, txNumIndex, temporalStore);
+      Runnable startupValidator = () -> backend.validateStartup(recoveryScrub, true);
+      return new DefaultArchiveService(true, txNumIndex,
+          ArchiveExecutionContextHolder.get(), temporalStore, inFlightStore, registry,
+          catalog, readThrough, ArchiveLifecycle.Phase.RECOVERING, queryLimits, publisherConfig,
+          startupValidator, backend);
+    } catch (RuntimeException e) {
+      if (txNumIndex == null) {
+        closeOnFailure(db, e);
+      } else {
+        closeOnFailure(txNumIndex, e);
+      }
+      throw e;
+    }
+  }
+
   /**
    * Classifies the root before any RocksDB is opened with create-if-missing.
    *
@@ -261,6 +416,11 @@ public final class ArchiveServiceFactory {
    */
   static void validateArchiveRootBeforeOpen(Path archivePath, boolean canonicalHasBlocks)
       throws IOException {
+    validateArchiveRootBeforeOpen(archivePath, canonicalHasBlocks, LEGACY_LAYOUT);
+  }
+
+  static void validateArchiveRootBeforeOpen(Path archivePath, boolean canonicalHasBlocks,
+      String layout) throws IOException {
     BasicFileAttributes attributes;
     try {
       attributes = Files.readAttributes(
@@ -289,9 +449,17 @@ public final class ArchiveServiceFactory {
           "refusing to initialize an empty archive root for a non-empty canonical database: "
               + archivePath);
     }
-    requireLegacyDirectory(archivePath.resolve("temporal"));
-    requireLegacyDirectory(archivePath.resolve("index"));
-    requireLegacyDirectory(archivePath.resolve("inflight"));
+    if (LEGACY_LAYOUT.equals(layout)) {
+      requireLegacyDirectory(archivePath.resolve("temporal"));
+      requireLegacyDirectory(archivePath.resolve("index"));
+      requireLegacyDirectory(archivePath.resolve("inflight"));
+      return;
+    }
+    if (UNIFIED_LAYOUT.equals(layout)) {
+      requireUnifiedDirectory(UnifiedArchiveIdentityPayload.databasePath(archivePath));
+      return;
+    }
+    throw new ArchiveException("unsupported archive layout " + layout);
   }
 
   private static void requireLegacyDirectory(Path path) throws IOException {
@@ -303,6 +471,18 @@ public final class ArchiveServiceFactory {
     }
     if (!attributes.isDirectory() || attributes.isSymbolicLink()) {
       throw new ArchiveException("archive legacy layout path is not a real directory: " + path);
+    }
+  }
+
+  private static void requireUnifiedDirectory(Path path) throws IOException {
+    final BasicFileAttributes attributes;
+    try {
+      attributes = Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+    } catch (NoSuchFileException e) {
+      throw new ArchiveException("archive UNIFIED_V1 layout is incomplete; missing " + path, e);
+    }
+    if (!attributes.isDirectory() || attributes.isSymbolicLink()) {
+      throw new ArchiveException("archive UNIFIED_V1 path is not a real directory: " + path);
     }
   }
 

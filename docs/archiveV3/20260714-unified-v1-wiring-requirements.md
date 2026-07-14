@@ -2,7 +2,15 @@
 
 **Base:** `feat/archive-node` @ `daae901b7c`.
 **Author:** claude (recon-grounded; every requirement cites `file:line` so codex can verify implementation against it).
-**Status of the feature today:** UNIFIED_V1 is a **complete storage primitive** but a **semantically incomplete, 100%-unwired prototype**. This doc specifies exactly what "wiring it" means, the invariants an implementation must satisfy, and the pass/fail gates — so codex can either implement it or validate an implementation against it.
+**Status (2026-07-14):** M1-M2 are implemented in the working tree: explicit layout selection,
+identity binding, typed adapters, one-batch publication, shared-snapshot reads, and unified startup
+validation are wired into `ArchiveServiceFactory`/`DefaultArchiveService`. UNIFIED_V1 remains
+off-by-default while fault/soak gates are completed.
+
+**Deployment scope decision:** this is a greenfield implementation. No previous archive binary or
+deployed LEGACY dataset exists, so an offline migrator and previous-binary downgrade matrix are not
+current delivery requirements. They become mandatory again before any real LEGACY dataset is
+created or an older archive-aware binary is released.
 
 > Scope note / recommendation: this is a **multi-milestone effort**, not a quick switch. The perf-hardening plan
 > (`20260713-archive-performance-hardening-plan.md` §10) deliberately keeps UNIFIED_V1 *outside* the factory
@@ -149,12 +157,12 @@ Gates 3/7 currently **unrun** for UNIFIED (`plan:886`); they gate *activation*, 
 
 ## 6. Milestones (gating order)
 
-1. **M1 — Config + factory branch + identity (FR-1, FR-2, FR-6, FR-12), off-by-default.** No behavior change unless `layout=UNIFIED_V1`.
-2. **M2 — Adapters + atomic publish + single-snapshot reader (FR-3, FR-4, FR-5, FR-7, FR-8).** Feature-complete UNIFIED backend behind the off-by-default key.
-3. **M3 — Differential + crash tests (TEST-1..3, TEST-6).** Correctness/durability proven.
-4. **M4 — Downgrade/mis-point guard + integration test (FR-9, TEST-4, gate 10).**
-5. **M5 — Offline migrator (FR-10, TEST-5, gate 9) + recovery runbook + rollback drill.**
-6. **M6 — Soak + perf (gates 3/7)** → only then is *default-unified* even discussed (N1).
+1. **M1 — COMPLETE.** Config + factory branch + identity (FR-1, FR-2, FR-6, FR-12), off-by-default.
+2. **M2 — COMPLETE.** Typed adapters + atomic publish + single-snapshot reader + full-scrub fail-stop checks (FR-3, FR-4, FR-5, FR-7, FR-8).
+3. **M3 — IN PROGRESS.** Batch-failure atomicity, restart, service E2E, corruption, and concurrent-snapshot tests exist; process-crash/ENOSPC and broader differential runs remain.
+4. **M4 — NOT CURRENTLY APPLICABLE.** There is no previous archive-aware binary. Current-binary cross-layout mis-point rejection remains required.
+5. **M5 — NOT CURRENTLY APPLICABLE.** There is no deployed LEGACY dataset to migrate.
+6. **M6 — PENDING.** Soak + perf (gates 3/7) remain required before changing the default.
 
 **Landing rule:** M1–M2 may land **off-by-default**; **activation** (any non-LEGACY default, or documenting UNIFIED as production-ready) is blocked until M3–M6 pass.
 
@@ -162,12 +170,12 @@ Gates 3/7 currently **unrun** for UNIFIED (`plan:886`); they gate *activation*, 
 
 ## 7. Open questions codex must resolve (decide + record in the doc)
 
-- **OQ-1 Adapter granularity.** Three independent adapters (keeps the service structurally unchanged but each writes separately — loses single-batch atomicity) **vs.** a unified-aware publish branch in the service that builds `UnifiedArchivePublish` directly (achieves atomicity, forks the publish path). The atomic-publish goal (G2) implies the latter; confirm.
-- **OQ-2 AUTO signal authority.** For `AUTO`, which on-disk signal is authoritative — the identity record's `layout` field (`archive.identity`) or the UNIFIED RocksDB manifest row? Both exist; neither is consulted today.
-- **OQ-3 MIGRATING state.** Blue-green migration (`plan:600`) implies `PREPARED→BOUND→MIGRATING→ACTIVE`, but `ArchiveIdentityState` has no `MIGRATING`. Persisted new state or tool-only phase?
-- **OQ-4 publishSync surfacing.** If/when a config key surfaces `publishSync`, name + default + which benchmark matrix cell it maps to (`plan:164`). Default must keep WAL on (FR-8).
-- **OQ-5 "Previous binary" identity.** Which released tag is the "real previous-version binary" for FR-9/gate-10, and where does TEST-4 live?
-- **OQ-6 Schema-checksum equivalence.** Does the factory's `ArchiveSchemaChecksum.of(registry+catalog)` equal the bytes `UnifiedArchiveManifest` stores as `archive-schema`, so the UNIFIED payload validates the manifest with the same checksum? Verify or reconcile.
+- **OQ-1 RESOLVED.** `UnifiedArchiveBackend` coordinates a dedicated service publish branch; adapters stage rows into one `UnifiedArchivePublish` rather than writing independently.
+- **OQ-2 RESOLVED.** The ACTIVE root `archive.identity` selects AUTO. The selected payload must then pass the UNIFIED manifest/CF validation; AUTO never classifies an empty directory.
+- **OQ-3 DEFERRED/NOT APPLICABLE.** No migration exists in the greenfield scope, so no `MIGRATING` state is introduced.
+- **OQ-4 RESOLVED FOR M1-M2.** No `publishSync` setting is exposed. Production publication is forced-sync and WAL is always enabled.
+- **OQ-5 DEFERRED/NOT APPLICABLE.** No previous archive-aware binary exists. Record the first released archive binary before reviving this gate.
+- **OQ-6 RESOLVED.** Factory and identity payload pass the same `ArchiveSchemaChecksum.of(registry, catalog)` bytes to `UnifiedArchiveDb` manifest validation.
 
 ---
 
@@ -179,8 +187,11 @@ Gates 3/7 currently **unrun** for UNIFIED (`plan:886`); they gate *activation*, 
 - [ ] FR-9 downgrade/mis-point integration test proves explicit failure (gate 10).
 - [ ] FR-10 migrator passes on ≥3 real-scale datasets (gate 9).
 - [ ] Gate 8 crash/ENOSPC matrix passes.
-- [ ] OQ-1..OQ-6 resolved and recorded.
+- [x] OQ-1..OQ-6 resolved or explicitly deferred for the recorded greenfield scope.
 - [ ] Off-by-default preserved; no auto-migration; empty-dir+AUTO never births UNIFIED.
 - [ ] Gates 3/7 (soak/perf) scheduled as the activation gate (may post-date the off-by-default landing).
 
-**Bottom line for the reviewer:** the primitive is done and the seam is interface-clean, so M1–M2 is well-defined adapter + re-plumb work. The *cost and risk* live in M4–M6 (downgrade matrix, offline migrator with digest parity, soak) — those are the true gate to production, and none of that machinery exists yet.
+**Bottom line for the reviewer:** M1-M2 wiring is implemented and remains opt-in. The remaining
+near-term risk is operational proof: real process-crash/ENOSPC recovery, differential workload
+coverage, and soak/performance. Migration/downgrade machinery is intentionally deferred because
+there is no prior binary or deployed archive dataset.

@@ -617,7 +617,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
     }
   }
 
-  private static void validateDomainRow(ArchiveDomainCatalog catalog, byte[] key, byte[] value,
+  static void validateDomainRow(ArchiveDomainCatalog catalog, byte[] key, byte[] value,
       boolean validateValue, DynamicKeyPolicy dynamicKeyPolicy) {
     ArchiveDomain domain;
     byte[] canonicalKey;
@@ -684,33 +684,15 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
   // readOptions == null -> a live read; a snapshot ReadOptions -> an isolated point-in-time read.
   private Optional<DomainValue> getAsOf(ArchiveDomain domain, byte[] canonicalKey, long txNum,
       ReadOptions readOptions, RocksIterator reusableHistoryIterator) {
-    if (txNum < 0) {
-      throw new ArchiveException("archive temporal txNum must be non-negative");
+    if (reusableHistoryIterator != null) {
+      return ArchiveTemporalReadSupport.getAsOf(domain, canonicalKey, txNum,
+          reusableHistoryIterator, key -> get(key, readOptions), "getAsOf");
     }
-    // The first change strictly after txNum; its pre-value is the value as of txNum (end of txNum).
-    if (txNum != Long.MAX_VALUE) {
-      byte[] prefix = ArchiveTemporalCodec.historyPrefix(domain, canonicalKey);
-      byte[] seek = ArchiveTemporalCodec.historyKey(domain, canonicalKey, txNum + 1);
-      if (reusableHistoryIterator != null) {
-        RocksIterator it = reusableHistoryIterator;
-        it.seek(seek);
-        ArchiveRocksIterators.requireOk(it, "getAsOf: history seek");
-        if (it.isValid() && ArchiveTemporalCodec.startsWith(it.key(), prefix)) {
-          return Optional.of(ArchiveTemporalCodec.decodeValue(it.value()));
-        }
-      } else {
-        try (RocksIterator it = readOptions == null
-            ? db.newIterator() : db.newIterator(readOptions)) {
-          it.seek(seek);
-          ArchiveRocksIterators.requireOk(it, "getAsOf: history seek");
-          if (it.isValid() && ArchiveTemporalCodec.startsWith(it.key(), prefix)) {
-            return Optional.of(ArchiveTemporalCodec.decodeValue(it.value()));
-          }
-        }
-      }
+    try (RocksIterator iterator = readOptions == null
+        ? db.newIterator() : db.newIterator(readOptions)) {
+      return ArchiveTemporalReadSupport.getAsOf(domain, canonicalKey, txNum,
+          iterator, key -> get(key, readOptions), "getAsOf");
     }
-    // No change after txNum: the key has not changed since, so its value then == latest.
-    return latest(domain, canonicalKey, readOptions);
   }
 
   @Override
@@ -720,12 +702,14 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
 
   private Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey,
       ReadOptions readOptions) {
+    byte[] value = get(ArchiveTemporalCodec.latestKey(domain, canonicalKey), readOptions);
+    return value == null ? Optional.empty()
+        : Optional.of(ArchiveTemporalCodec.decodeValue(value));
+  }
+
+  private byte[] get(byte[] key, ReadOptions readOptions) {
     try {
-      byte[] key = ArchiveTemporalCodec.latestKey(domain, canonicalKey);
-      byte[] value = readOptions == null ? db.get(key) : db.get(readOptions, key);
-      return (value == null)
-          ? Optional.empty()
-          : Optional.of(ArchiveTemporalCodec.decodeValue(value));
+      return readOptions == null ? db.get(key) : db.get(readOptions, key);
     } catch (RocksDBException e) {
       throw new ArchiveException("archive temporal latest failed", e);
     }
