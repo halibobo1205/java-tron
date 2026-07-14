@@ -653,7 +653,7 @@ public class NoopArchiveServiceTest {
     RocksDbArchiveTemporalStore temporal =
         new RocksDbArchiveTemporalStore(dir.resolve("temporal").toString());
     try {
-      temporal.putBlockChanges(last, Collections.emptyList());
+      temporal.putBlockChanges(withChecksum(last), Collections.emptyList());
     } finally {
       temporal.close();
     }
@@ -666,7 +666,9 @@ public class NoopArchiveServiceTest {
       index.close();
     }
     try {
-      assertThrows(ArchiveException.class, () -> createArchive(config, dir.toString()));
+      ArchiveException ex = assertThrows(ArchiveException.class,
+          () -> createArchive(config, dir.toString()));
+      assertTrue(ex.getMessage(), ex.getMessage().contains("commit marker missing for block 7"));
     } finally {
       deleteRecursively(dir.toFile());
     }
@@ -842,12 +844,24 @@ public class NoopArchiveServiceTest {
     assertThrows(ArchiveException.class, () -> service.publishSolidifiedBlocks(1));
     service.close();
 
+    ArchiveBlockRange unreconciled = new ArchiveBlockRange(
+        1, 0, 1, 0, 1, blockHash(1), 0, ArchiveSource.NORMAL);
+    try (RocksDbArchiveBlockRangeStore index =
+        new RocksDbArchiveBlockRangeStore(dir.resolve("index").toString())) {
+      index.commitRange(withChecksum(unreconciled), 2);
+    }
+
+    DefaultArchiveService reopened =
+        (DefaultArchiveService) createRecoveringArchive(config, dir.toString());
     try {
-      DefaultArchiveService reopened =
-          (DefaultArchiveService) createArchive(config, dir.toString());
-      assertThrows(ArchiveException.class, reopened::completeRecovery);
-      reopened.close();
+      try (ArchiveWorkLease recovery = reopened.acquireRecoveryLease()) {
+        recovery.start();
+        ArchiveException ex = assertThrows(ArchiveException.class, reopened::completeRecovery);
+        assertTrue(ex.getMessage(),
+            ex.getMessage().contains("no temporal commit marker for block 1"));
+      }
     } finally {
+      reopened.close();
       deleteRecursively(dir.toFile());
     }
   }
