@@ -1,8 +1,12 @@
 package org.tron.core.db;
 
+import com.google.common.primitives.Bytes;
 import com.google.common.primitives.Longs;
 import com.google.protobuf.ByteString;
 
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import javax.annotation.Resource;
@@ -142,6 +146,29 @@ public class AccountAssetStoreTest extends BaseTest {
   }
 
   @Test
+  public void scanPhysicalAssetsStreamsOnlyTheRequestedPrefixInKeyOrder() {
+    byte[] address = ByteArray.fromHexString(OWNER_ADDRESS);
+    address[20] = 0x66;
+    byte[] otherAddress = address.clone();
+    otherAddress[20] = 0x67;
+    String[] assetIds = {"10003", "10001", "10002"};
+    for (int i = 0; i < assetIds.length; i++) {
+      accountAssetStore.put(Bytes.concat(address,
+          assetIds[i].getBytes(StandardCharsets.US_ASCII)), Longs.toByteArray(i + 1L));
+    }
+    accountAssetStore.put(Bytes.concat(otherAddress, "00000".getBytes(StandardCharsets.US_ASCII)),
+        Longs.toByteArray(99L));
+    List<String> scanned = new ArrayList<>();
+
+    long rows = accountAssetStore.scanPhysicalAssets(address,
+        (assetId, balance) -> scanned.add(
+            new String(assetId, StandardCharsets.US_ASCII) + "=" + balance));
+
+    Assert.assertEquals(3L, rows);
+    Assert.assertEquals(Arrays.asList("10001=2", "10002=3", "10003=1"), scanned);
+  }
+
+  @Test
   public void archiveAccountAssetDoesNotEmitForImportedUnchangedOptimizedAsset() {
     chainBaseManager.getDynamicPropertiesStore().setAllowAssetOptimization(1);
     byte[] address = ByteArray.fromHexString(OWNER_ADDRESS);
@@ -156,7 +183,6 @@ public class AccountAssetStoreTest extends BaseTest {
         .setAssetOptimized(true)
         .build());
     accountStore.put(address, stripped);
-
     DefaultArchiveService archiveService =
         new DefaultArchiveService(true, new InMemoryArchiveTemporalStore());
     try {
@@ -196,6 +222,11 @@ public class AccountAssetStoreTest extends BaseTest {
         .setAssetOptimized(true)
         .build());
     accountStore.put(address, stripped);
+    Assert.assertEquals(7L, accountAssetStore.getBalance(
+        address, "30002".getBytes(StandardCharsets.US_ASCII)));
+    Assert.assertEquals(1L, accountAssetStore.scanPhysicalAssets(address,
+        (assetId, balance) -> {
+        }));
 
     DefaultArchiveService archiveService =
         new DefaultArchiveService(true, new InMemoryArchiveTemporalStore());
@@ -206,6 +237,10 @@ public class AccountAssetStoreTest extends BaseTest {
       accountStore.delete(address);
       archiveService.endTx();
 
+      Assert.assertFalse(archiveService.getCaptureEngine().failure()
+          .map(Throwable::getMessage).orElse("archive capture failed"),
+          archiveService.getCaptureEngine().failure().isPresent());
+      Assert.assertEquals(1L, archiveService.getCaptureEngine().accountAssetPrefixRows());
       List<ArchiveChangeRecord> records = archiveService.getCaptureEngine().records();
       Assert.assertEquals(1L, records.stream()
           .filter(r -> r.getDomain() == ArchiveDomain.ACCOUNT_ASSET)

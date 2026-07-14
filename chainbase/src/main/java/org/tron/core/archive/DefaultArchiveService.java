@@ -2,19 +2,29 @@ package org.tron.core.archive;
 
 import com.google.common.primitives.Bytes;
 import com.google.common.primitives.Ints;
-import com.google.common.primitives.Longs;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Deque;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.TreeMap;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.LongFunction;
+import java.util.function.LongSupplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.tron.core.archive.capture.ArchiveCaptureEngine;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
@@ -32,6 +42,14 @@ import org.tron.core.archive.reader.ArchiveStateReaderFactory;
 import org.tron.core.archive.reader.ArchiveStatePoint;
 import org.tron.core.archive.reader.ArchiveStateReader;
 import org.tron.core.archive.reader.DefaultArchiveStateReaderFactory;
+import org.tron.core.archive.reader.ManagedArchiveStateReader;
+import org.tron.core.archive.query.ArchiveQueryCoordinator;
+import org.tron.core.archive.query.ArchiveQueryLimits;
+import org.tron.core.archive.query.ArchiveSnapshotPermit;
+import org.tron.core.archive.query.HistoricalQueryLimitException;
+import org.tron.core.archive.query.QueryContext;
+import org.tron.core.archive.query.QueryContextHolder;
+import org.tron.core.archive.query.QueryLease;
 import org.tron.core.archive.temporal.ArchiveTemporalReadView;
 import org.tron.core.archive.temporal.ArchiveTemporalStore;
 import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
@@ -52,6 +70,10 @@ import org.tron.core.db2.common.WrappedByteArray;
  */
 public final class DefaultArchiveService implements ArchiveService {
 
+  private static final Logger logger = LoggerFactory.getLogger("archive");
+  private static final long DISK_SAMPLE_INTERVAL_NANOS = TimeUnit.SECONDS.toNanos(1L);
+  private static final long MIN_JOURNAL_DISK_HEADROOM_BYTES = 16L * 1024 * 1024;
+
   private final boolean enabled;
   /** Published, durable archive index visible to readers. */
   private final ArchiveTxNumIndex txNumIndex;
@@ -62,23 +84,39 @@ public final class DefaultArchiveService implements ArchiveService {
   private final ArchiveTemporalStore temporalStore;
   private final ArchiveInFlightStore inFlightStore;
   private final DefaultArchiveStateReaderFactory readerFactory;
-  private final ArchiveReadThrough liveReadThrough;
   private final byte[] schemaChecksum;
   private final ReentrantReadWriteLock consistencyLock = new ReentrantReadWriteLock(true);
   private final NavigableMap<Long, ArchiveInFlightBlock> inFlightBlocks = new TreeMap<>();
-  private final Map<WrappedByteArray, DomainValue> inFlightLatest = new LinkedHashMap<>();
-  // Per-key txNum -> prev-value index over the in-flight blocks. Lets a read-through for a key that
-  // is about to change in-flight resolve via an O(log) higherEntry lookup instead of scanning every
-  // in-flight block and record. Maintained in lock-step with inFlightLatest (same write lock).
-  private final Map<WrappedByteArray, NavigableMap<Long, DomainValue>> inFlightPrevByKey =
-      new HashMap<>();
+  // Journals whose ranges are already published remain durable until canonical startup
+  // preflight proves that the matching canonical block is available.
+  private final NavigableMap<Long, ArchiveInFlightBlock> pendingPublishedJournals =
+      new TreeMap<>();
+  // Per-key append-tail/publish-head/unwind-tail versions. Startup builds this once from durable
+  // journals; steady-state transitions only touch records belonging to the current block.
+  private final Map<WrappedByteArray, Deque<InFlightVersion>> inFlightVersions = new HashMap<>();
   // Defensive backstop on the committed-not-solidified in-flight buffer. Healthy DPoS
   // solidification lags the head by tens of blocks; this cap sits far above any legitimate lag and
   // only fires if solidification stalls while the head keeps advancing -- so the node fail-stops
   // instead of OOMing.
   static final int DEFAULT_MAX_IN_FLIGHT_BLOCKS = 65_536;
   private int maxInFlightBlocks = DEFAULT_MAX_IN_FLIGHT_BLOCKS;
-  private volatile RuntimeException fatalFailure;
+  private final Object backlogMonitor = new Object();
+  private volatile int inFlightBlockCount;
+  private volatile long inFlightRecordCount;
+  private volatile long inFlightRetainedBytes;
+  private final Object diskSampleMonitor = new Object();
+  private volatile long lastDiskSampleNanos = Long.MIN_VALUE;
+  private volatile long lastUsableSpaceBytes = Long.MAX_VALUE;
+  private final ArchiveLifecycle lifecycle;
+  private final ArchiveMutationBarrier mutationBarrier = new ArchiveMutationBarrier();
+  private final ArchiveQueryCoordinator queryCoordinator;
+  private final BoundedArchivePublisher publisher;
+  private final ArchiveFatalController fatalController;
+  private final ArchivePublisherConfig publisherConfig;
+  private final Runnable startupValidator;
+  private boolean startupStorageValidated;
+  private final AtomicBoolean closed = new AtomicBoolean();
+  private final Object closeMutex = new Object();
 
   public DefaultArchiveService(boolean enabled) {
     this(enabled, enabled ? new InMemoryArchiveTemporalStore() : null);
@@ -121,31 +159,118 @@ public final class DefaultArchiveService implements ArchiveService {
       ArchiveExecutionContext executionContext, ArchiveTemporalStore temporalStore,
       ArchiveInFlightStore inFlightStore, ArchiveDomainRegistry registry,
       ArchiveDomainCatalog catalog, ArchiveReadThrough liveReadThrough) {
+    this(enabled, txNumIndex, executionContext, temporalStore, inFlightStore, registry, catalog,
+        liveReadThrough, ArchiveLifecycle.Phase.RUNNING);
+  }
+
+  DefaultArchiveService(boolean enabled, ArchiveTxNumIndex txNumIndex,
+      ArchiveExecutionContext executionContext, ArchiveTemporalStore temporalStore,
+      ArchiveInFlightStore inFlightStore, ArchiveDomainRegistry registry,
+      ArchiveDomainCatalog catalog, ArchiveReadThrough liveReadThrough,
+      ArchiveLifecycle.Phase initialPhase) {
+    this(enabled, txNumIndex, executionContext, temporalStore, inFlightStore, registry, catalog,
+        liveReadThrough, initialPhase, ArchiveQueryLimits.unlimited());
+  }
+
+  DefaultArchiveService(boolean enabled, ArchiveTxNumIndex txNumIndex,
+      ArchiveExecutionContext executionContext, ArchiveTemporalStore temporalStore,
+      ArchiveInFlightStore inFlightStore, ArchiveDomainRegistry registry,
+      ArchiveDomainCatalog catalog, ArchiveReadThrough liveReadThrough,
+      ArchiveLifecycle.Phase initialPhase, Runnable startupValidator) {
+    this(enabled, txNumIndex, executionContext, temporalStore, inFlightStore, registry, catalog,
+        liveReadThrough, initialPhase, ArchiveQueryLimits.unlimited(), false, startupValidator);
+  }
+
+  DefaultArchiveService(boolean enabled, ArchiveTxNumIndex txNumIndex,
+      ArchiveExecutionContext executionContext, ArchiveTemporalStore temporalStore,
+      ArchiveInFlightStore inFlightStore, ArchiveDomainRegistry registry,
+      ArchiveDomainCatalog catalog, ArchiveReadThrough liveReadThrough,
+      ArchiveLifecycle.Phase initialPhase, ArchiveQueryLimits queryLimits) {
+    this(enabled, txNumIndex, executionContext, temporalStore, inFlightStore, registry, catalog,
+        liveReadThrough, initialPhase, queryLimits, false);
+  }
+
+  DefaultArchiveService(boolean enabled, ArchiveTxNumIndex txNumIndex,
+      ArchiveExecutionContext executionContext, ArchiveTemporalStore temporalStore,
+      ArchiveInFlightStore inFlightStore, ArchiveDomainRegistry registry,
+      ArchiveDomainCatalog catalog, ArchiveReadThrough liveReadThrough,
+      ArchiveLifecycle.Phase initialPhase, ArchiveQueryLimits queryLimits,
+      boolean asyncPublisher) {
+    this(enabled, txNumIndex, executionContext, temporalStore, inFlightStore, registry, catalog,
+        liveReadThrough, initialPhase, queryLimits, asyncPublisher, () -> {
+        });
+  }
+
+  DefaultArchiveService(boolean enabled, ArchiveTxNumIndex txNumIndex,
+      ArchiveExecutionContext executionContext, ArchiveTemporalStore temporalStore,
+      ArchiveInFlightStore inFlightStore, ArchiveDomainRegistry registry,
+      ArchiveDomainCatalog catalog, ArchiveReadThrough liveReadThrough,
+      ArchiveLifecycle.Phase initialPhase, ArchiveQueryLimits queryLimits,
+      boolean asyncPublisher, Runnable startupValidator) {
+    this(enabled, txNumIndex, executionContext, temporalStore, inFlightStore, registry, catalog,
+        liveReadThrough, initialPhase, queryLimits,
+        new ArchivePublisherConfig(asyncPublisher, asyncPublisher,
+            ArchivePublisherConfig.DEFAULT_SOFT_IN_FLIGHT_BLOCKS,
+            ArchivePublisherConfig.DEFAULT_HARD_IN_FLIGHT_BLOCKS,
+            ArchivePublisherConfig.DEFAULT_BACKPRESSURE_TIMEOUT_MS), startupValidator);
+  }
+
+  DefaultArchiveService(boolean enabled, ArchiveTxNumIndex txNumIndex,
+      ArchiveExecutionContext executionContext, ArchiveTemporalStore temporalStore,
+      ArchiveInFlightStore inFlightStore, ArchiveDomainRegistry registry,
+      ArchiveDomainCatalog catalog, ArchiveReadThrough liveReadThrough,
+      ArchiveLifecycle.Phase initialPhase, ArchiveQueryLimits queryLimits,
+      ArchivePublisherConfig publisherConfig, Runnable startupValidator) {
+    if (startupValidator == null) {
+      throw new NullPointerException("startupValidator");
+    }
+    if (publisherConfig == null) {
+      throw new NullPointerException("publisherConfig");
+    }
     this.enabled = enabled;
     this.txNumIndex = txNumIndex;
     this.executionContext = executionContext;
+    this.lifecycle = new ArchiveLifecycle(initialPhase);
+    this.queryCoordinator = new ArchiveQueryCoordinator(queryLimits);
+    this.startupValidator = startupValidator;
+    this.publisherConfig = publisherConfig;
+    this.maxInFlightBlocks = publisherConfig.getHardInFlightBlocks();
     if (enabled) {
-      this.liveReadThrough = liveReadThrough == null ? ArchiveReadThrough.NONE : liveReadThrough;
       this.schemaChecksum = ArchiveSchemaChecksum.of(registry, catalog);
       this.captureEngine = new ArchiveCaptureEngine(registry, catalog, new DynamicKeyPolicy(),
-          executionContext);
+          executionContext, publisherConfig.getHardInFlightRecords(),
+          publisherConfig.getHardInFlightBytes());
       this.temporalStore = temporalStore;
       this.inFlightStore = inFlightStore;
       this.executionTxNumIndex = new InMemoryArchiveTxNumIndex(txNumIndex.getNextTxNum());
       loadInFlightBlocks();
+      if (initialPhase == ArchiveLifecycle.Phase.RUNNING) {
+        // Direct RUNNING construction is retained for unit/in-memory callers without a startup
+        // RecoveryLease. Production factory instances start in RECOVERING and defer this work.
+        validateStartupStorageLocked();
+      }
       this.readerFactory = new DefaultArchiveStateReaderFactory(temporalStore, catalog,
-          txNumIndex, this::validateAvailableForRead, this::readThrough);
+          txNumIndex, this::validateAvailableForRead, this::readThrough, queryLimits);
+      this.fatalController = new ArchiveFatalController("archive-fatal-control");
+      this.publisher = publisherConfig.isAsync()
+          ? new BoundedArchivePublisher(
+              "archive-publisher", this::publishNextTarget, this::markFatal)
+          : null;
       executionContext.clear();
       captureEngine.clear();
       ArchiveCaptureHolder.set(captureEngine);
+      if (publisher != null && initialPhase == ArchiveLifecycle.Phase.RUNNING) {
+        publisher.activate();
+      }
     } else {
-      this.liveReadThrough = ArchiveReadThrough.NONE;
       this.schemaChecksum = new byte[0];
       this.captureEngine = null;
       this.temporalStore = null;
       this.inFlightStore = null;
       this.executionTxNumIndex = null;
       this.readerFactory = null;
+      this.publisher = null;
+      this.fatalController = null;
     }
   }
 
@@ -154,20 +279,43 @@ public final class DefaultArchiveService implements ArchiveService {
   }
 
   private void loadInFlightBlocks() {
-    for (ArchiveInFlightBlock block : inFlightStore.loadBlocks()) {
+    long[] loadedBytes = {0L};
+    long[] loadedRecords = {0L};
+    int[] loadedBlocks = {0};
+    long[] staleBytes = {0L};
+    int[] staleBlocks = {0};
+    inFlightStore.forEachBlock(block -> {
       ArchiveBlockRange range = block.getRange();
       Optional<ArchiveBlockRange> published = txNumIndex.getBlockRange(range.getBlockNum());
       if (published.isPresent()) {
+        staleBlocks[0]++;
+        staleBytes[0] = addSaturated(staleBytes[0], block.estimatedRetainedBytes());
+        if (staleBlocks[0] > maxInFlightBlocks
+            || staleBytes[0] > publisherConfig.getHardInFlightBytes()) {
+          throw new ArchiveException(
+              "archive startup stale journals exceed configured hard limit: blocks="
+                  + staleBlocks[0] + ", bytes=" + staleBytes[0]);
+        }
         validatePublishedRange(range, published.get());
-        temporalStore.validateCommittedBlock(published.get());
-        deletePublishedInFlightBlock(range.getBlockNum());
-        continue;
+        validateJournalPositionsMatchIndex(block);
+        pendingPublishedJournals.put(range.getBlockNum(), block);
+        return;
+      }
+      loadedBlocks[0]++;
+      loadedBytes[0] = addSaturated(loadedBytes[0], block.estimatedRetainedBytes());
+      loadedRecords[0] = addSaturated(loadedRecords[0], block.getRecords().size());
+      if (loadedBlocks[0] > maxInFlightBlocks
+          || loadedBytes[0] > publisherConfig.getHardInFlightBytes()
+          || loadedRecords[0] > publisherConfig.getHardInFlightRecords()) {
+        throw new ArchiveException("archive startup journal exceeds configured hard limit: blocks="
+            + loadedBlocks[0] + ", records=" + loadedRecords[0]
+            + ", bytes=" + loadedBytes[0]);
       }
       validateInFlightAppend(block);
       validateInFlightPrevValueChain(block);
       replayExecutionInFlightBlock(block);
       rememberInFlightInMemory(block);
-    }
+    });
   }
 
   private void validateInFlightPrevValueChain(ArchiveInFlightBlock block) {
@@ -207,6 +355,22 @@ public final class DefaultArchiveService implements ArchiveService {
     }
   }
 
+  private void validateJournalPositionsMatchIndex(ArchiveInFlightBlock block) {
+    for (ArchiveTxPosition expected : block.getPositions()) {
+      ArchiveTxPosition actual = txNumIndex.getPosition(expected.getTxNum())
+          .orElseThrow(() -> new ArchiveException(
+              "archive in-flight position is missing from published index txNum "
+                  + expected.getTxNum()));
+      try {
+        validatePublishedPosition(expected, actual);
+      } catch (ArchiveException mismatch) {
+        throw new ArchiveException(
+            "archive in-flight position does not match published index "
+                + expected.getTxNum(), mismatch);
+      }
+    }
+  }
+
   public ArchiveCaptureEngine getCaptureEngine() {
     return captureEngine;
   }
@@ -216,13 +380,150 @@ public final class DefaultArchiveService implements ArchiveService {
   }
 
   /** Opens historical state readers over the temporal store; null when archive is disabled. */
-  public ArchiveStateReaderFactory getReaderFactory() {
+  ArchiveStateReaderFactory getReaderFactory() {
     return readerFactory;
+  }
+
+  /** Internal startup-only reader; callers must already own the recovery/mutation scope. */
+  public ArchiveStateReader openRecoveryReader(ArchiveStatePoint point)
+      throws ArchiveReaderException {
+    if (lifecycle.getPhase() != ArchiveLifecycle.Phase.RECOVERING) {
+      throw new ArchiveReaderException(ArchiveReaderException.Reason.INTERNAL_IO,
+          "archive recovery reader is available only during startup recovery");
+    }
+    mutationBarrier.requireHeldByCurrentThread();
+    Lock readLock = consistencyLock.readLock();
+    readLock.lock();
+    try {
+      return readerFactory.open(point, readLock::unlock);
+    } catch (RuntimeException | ArchiveReaderException e) {
+      readLock.unlock();
+      throw e;
+    }
   }
 
   @Override
   public boolean isEnabled() {
     return enabled;
+  }
+
+  @Override
+  public ArchiveWorkLease acquireRecoveryLease() {
+    return enabled
+        ? lifecycle.acquire(ArchiveLifecycle.WorkType.RECOVERY)
+        : ArchiveService.NOOP_WORK_LEASE;
+  }
+
+  @Override
+  public ArchiveWorkLease acquireWriterLease() {
+    return enabled
+        ? lifecycle.acquire(ArchiveLifecycle.WorkType.WRITER)
+        : ArchiveService.NOOP_WORK_LEASE;
+  }
+
+  @Override
+  public ArchiveWorkLease acquirePublisherLease() {
+    return enabled
+        ? lifecycle.acquire(ArchiveLifecycle.WorkType.PUBLISHER)
+        : ArchiveService.NOOP_WORK_LEASE;
+  }
+
+  @Override
+  public ArchiveMutationLease acquireMutationReadLease() {
+    return enabled ? mutationBarrier.acquireShared() : ArchiveService.NOOP_MUTATION_LEASE;
+  }
+
+  @Override
+  public ArchiveMutationLease acquireMutationWriteLease() {
+    return enabled ? mutationBarrier.acquireExclusive() : ArchiveService.NOOP_MUTATION_LEASE;
+  }
+
+  @Override
+  public void awaitWriterCapacity() {
+    if (!enabled) {
+      return;
+    }
+    long timeoutNanos = TimeUnit.MILLISECONDS.toNanos(
+        publisherConfig.getBackpressureTimeoutMs());
+    long deadline = System.nanoTime() + timeoutNanos;
+    synchronized (backlogMonitor) {
+      while (true) {
+        validateAvailable();
+        long usableSpace;
+        try {
+          usableSpace = sampleUsableSpaceBytes();
+        } catch (RuntimeException e) {
+          markFatal(e);
+          throw e;
+        }
+        boolean hardLimitReached =
+            inFlightBlockCount >= publisherConfig.getHardInFlightBlocks()
+                || inFlightRecordCount >= publisherConfig.getHardInFlightRecords()
+                || inFlightRetainedBytes >= publisherConfig.getHardInFlightBytes()
+                || usableSpace < publisherConfig.getHardMinFreeBytes();
+        if (hardLimitReached) {
+          ArchiveException failure = new ArchiveException(
+              "archive in-flight journal reached hard watermark: blocks="
+                  + inFlightBlockCount + ", records=" + inFlightRecordCount
+                  + ", bytes=" + inFlightRetainedBytes + ", diskFree=" + usableSpace);
+          markFatal(failure);
+          throw failure;
+        }
+        boolean softLimitReached =
+            inFlightBlockCount >= publisherConfig.getSoftInFlightBlocks()
+                || inFlightRecordCount >= publisherConfig.getSoftInFlightRecords()
+                || inFlightRetainedBytes >= publisherConfig.getSoftInFlightBytes()
+                || usableSpace < publisherConfig.getSoftMinFreeBytes();
+        if (!softLimitReached || publisher == null || !publisherConfig.isBackpressure()) {
+          return;
+        }
+        long remaining = deadline - System.nanoTime();
+        if (timeoutNanos == 0 || remaining <= 0) {
+          ArchiveException failure = new ArchiveException(
+              "archive publisher backpressure timed out: blocks=" + inFlightBlockCount
+                  + ", records=" + inFlightRecordCount + ", bytes=" + inFlightRetainedBytes
+                  + ", diskFree=" + usableSpace);
+          markFatal(failure);
+          throw failure;
+        }
+        try {
+          TimeUnit.NANOSECONDS.timedWait(backlogMonitor, remaining);
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+          throw new ArchiveException("archive publisher backpressure interrupted", e);
+        }
+      }
+    }
+  }
+
+  @Override
+  public void completeRecovery() {
+    if (enabled) {
+      Lock writeLock = consistencyLock.writeLock();
+      writeLock.lock();
+      try {
+        validateAvailable();
+        validateStartupStorageLocked();
+        txNumIndex.clearRepairRequired();
+        lifecycle.completeRecovery(() -> {
+          if (publisher != null) {
+            publisher.activate();
+          }
+        });
+      } catch (RuntimeException e) {
+        markFatal(e);
+        throw e;
+      } finally {
+        writeLock.unlock();
+      }
+    }
+  }
+
+  @Override
+  public void setFatalFailureHandler(Consumer<RuntimeException> fatalHandler) {
+    if (enabled) {
+      fatalController.setHandler(fatalHandler);
+    }
   }
 
   @Override
@@ -269,13 +570,55 @@ public final class DefaultArchiveService implements ArchiveService {
 
   @Override
   public void commitBlock(BlockCapsule block, int userTxCount) {
+    ArchiveJournalToken token = commitBlockJournaled(block, userTxCount);
+    acknowledgeCanonicalCommit(token);
+  }
+
+  @Override
+  public ArchiveJournalToken commitBlockJournaled(BlockCapsule block, int userTxCount) {
     if (!enabled) {
+      return null;
+    }
+    Lock writeLock = consistencyLock.writeLock();
+    writeLock.lock();
+    try {
+      return commitBlockLocked(block, userTxCount);
+    } finally {
+      writeLock.unlock();
+    }
+  }
+
+  @Override
+  public void acknowledgeCanonicalCommit(ArchiveJournalToken token) {
+    if (!enabled || token == null) {
       return;
     }
     Lock writeLock = consistencyLock.writeLock();
     writeLock.lock();
     try {
-      commitBlockLocked(block, userTxCount);
+      validateAvailable();
+      acknowledgeCanonicalCommitLocked(token);
+    } catch (RuntimeException e) {
+      markFatal(e);
+      throw e;
+    } finally {
+      writeLock.unlock();
+    }
+  }
+
+  @Override
+  public void rollbackJournaledBlock(ArchiveJournalToken token) {
+    if (!enabled || token == null) {
+      return;
+    }
+    Lock writeLock = consistencyLock.writeLock();
+    writeLock.lock();
+    try {
+      validateAvailable();
+      rollbackJournaledBlockLocked(token, false);
+    } catch (RuntimeException e) {
+      markFatal(e);
+      throw e;
     } finally {
       writeLock.unlock();
     }
@@ -302,14 +645,66 @@ public final class DefaultArchiveService implements ArchiveService {
   }
 
   @Override
+  public void recoverSynchronouslyTo(long solidifiedBlockNum) {
+    publishSolidifiedBlocks(solidifiedBlockNum);
+  }
+
+  @Override
+  public void requestPublishSolidifiedBlocks(long solidifiedBlockNum,
+      byte[] solidifiedBlockHash) {
+    if (!enabled) {
+      return;
+    }
+    if (publisher == null) {
+      publishSolidifiedBlocks(solidifiedBlockNum);
+      return;
+    }
+    mutationBarrier.requireHeldByCurrentThread();
+    ArchivePublishTarget target = new ArchivePublishTarget(
+        solidifiedBlockNum, solidifiedBlockHash, mutationBarrier.getEpoch());
+    Lock writeLock = consistencyLock.writeLock();
+    writeLock.lock();
+    try {
+      validateAvailable();
+      // The canonical block thread owns execution-allocation pruning. The background publisher
+      // never touches this allocator, so it cannot race beginBlock(N+1).
+      executionTxNumIndex.discardBlocksThrough(solidifiedBlockNum);
+      updatePublisherLag(solidifiedBlockNum);
+    } catch (RuntimeException e) {
+      markFatal(e);
+      throw e;
+    } finally {
+      writeLock.unlock();
+    }
+    try {
+      publisher.request(target);
+    } catch (RuntimeException e) {
+      markFatal(e);
+      throw e;
+    }
+  }
+
+  @Override
+  public boolean requiresPublishTargetHash() {
+    return publisher != null;
+  }
+
+  @Override
   public void reconcileInFlightOnStartup(long solidifiedBlockNum,
       LongFunction<BlockCapsule> canonicalBlockProvider) {
-    reconcileInFlightOnStartup(solidifiedBlockNum, -1L, canonicalBlockProvider);
+    reconcileInFlightOnStartup(
+        solidifiedBlockNum, -1L, canonicalBlockProvider, false);
   }
 
   @Override
   public void reconcileInFlightOnStartup(long solidifiedBlockNum, long canonicalHeadNum,
       LongFunction<BlockCapsule> canonicalBlockProvider) {
+    reconcileInFlightOnStartup(
+        solidifiedBlockNum, canonicalHeadNum, canonicalBlockProvider, true);
+  }
+
+  private void reconcileInFlightOnStartup(long solidifiedBlockNum, long canonicalHeadNum,
+      LongFunction<BlockCapsule> canonicalBlockProvider, boolean canonicalHeadKnown) {
     if (!enabled) {
       return;
     }
@@ -321,21 +716,130 @@ public final class DefaultArchiveService implements ArchiveService {
         if (canonicalBlockProvider == null) {
           throw new ArchiveException("archive startup reconciliation requires canonical blocks");
         }
-        BlockCapsule previousCanonical = null;
-        for (ArchiveInFlightBlock block : inFlightBlocks.values()) {
-          validateInFlightNotAfterCanonicalHead(block, canonicalHeadNum);
-          BlockCapsule canonical = validateInFlightMatchesCanonical(block, canonicalBlockProvider);
-          validateCanonicalParentLink(previousCanonical, canonical);
-          previousCanonical = canonical;
+        if (pendingPublishedJournals.isEmpty()) {
+          validateStartupStorageLocked();
+        } else {
+          // A published range can legitimately be ahead of its temporal commit marker after a
+          // crash. Check capacity now, then run the full tail/scrub validator after the durable
+          // journal has been matched to canonical chain and replayed idempotently.
+          validateStartupDiskSpaceLocked();
         }
-        validateCanonicalTailCovered(canonicalHeadNum, canonicalBlockProvider);
+        List<ArchiveInFlightBlock> blocks = new ArrayList<>(inFlightBlocks.values());
+        if (canonicalHeadKnown && canonicalHeadNum < 0) {
+          validateEmptyCanonicalJournal(blocks, txNumIndex.getLastArchivedBlock());
+        }
+        validatePendingPublishedJournals(
+            canonicalHeadNum, canonicalBlockProvider, canonicalHeadKnown);
+        BlockCapsule previousCanonical = null;
+        int retained = 0;
+        if (!canonicalHeadKnown || canonicalHeadNum >= 0) {
+          for (ArchiveInFlightBlock block : blocks) {
+            if (canonicalHeadKnown && block.getRange().getBlockNum() > canonicalHeadNum) {
+              break;
+            }
+            BlockCapsule canonical = canonicalBlockProvider.apply(block.getRange().getBlockNum());
+            if (canonical == null) {
+              throw new ArchiveException("archive in-flight block "
+                  + block.getRange().getBlockNum() + " has no canonical block");
+            }
+            if (canonical.getNum() != block.getRange().getBlockNum()
+                || !Arrays.equals(canonical.getBlockId().getBytes(),
+                    block.getRange().getBlockHash())) {
+              break;
+            }
+            validateCanonicalParentLink(previousCanonical, canonical);
+            previousCanonical = canonical;
+            retained++;
+          }
+        }
+        reconcilePendingPublishedJournals();
+        validateStartupStorageLocked();
+        for (int i = blocks.size() - 1; i >= retained; i--) {
+          rollbackJournaledBlockLocked(blocks.get(i).getJournalToken(), true);
+        }
+        for (ArchiveInFlightBlock block : new ArrayList<>(inFlightBlocks.values())) {
+          acknowledgeCanonicalCommitLocked(block.getJournalToken());
+        }
+        if (canonicalHeadKnown) {
+          validateCanonicalTailCovered(canonicalHeadNum, canonicalBlockProvider);
+        }
         publishSolidifiedBlocksLocked(solidifiedBlockNum);
       } catch (RuntimeException e) {
-        markFatal(e);
+        if (!(e instanceof RetryableStartupCleanupException)) {
+          markFatal(e);
+        }
         throw e;
       }
     } finally {
       writeLock.unlock();
+    }
+  }
+
+  private static void validateEmptyCanonicalJournal(
+      List<ArchiveInFlightBlock> blocks, long publishedHead) {
+    if (publishedHead >= 0) {
+      throw new ArchiveException("published archive head " + publishedHead
+          + " exists while canonical database is empty");
+    }
+    if (blocks.isEmpty()) {
+      return;
+    }
+    if (blocks.size() != 1) {
+      throw new ArchiveException("empty canonical database has " + blocks.size()
+          + " in-flight journal blocks; refusing destructive recovery");
+    }
+    ArchiveInFlightBlock block = blocks.get(0);
+    if (block.getRange().getBlockNum() != 0
+        || block.getJournalState() != ArchiveInFlightBlock.JournalState.JOURNALED) {
+      throw new ArchiveException("empty canonical database may only discard one unacknowledged "
+          + "genesis journal");
+    }
+  }
+
+  private void validatePendingPublishedJournals(long canonicalHeadNum,
+      LongFunction<BlockCapsule> canonicalBlockProvider, boolean canonicalHeadKnown) {
+    for (ArchiveInFlightBlock block : pendingPublishedJournals.values()) {
+      long blockNum = block.getRange().getBlockNum();
+      if (canonicalHeadKnown && blockNum > canonicalHeadNum) {
+        throw new ArchiveException("published archive journal block " + blockNum
+            + " is after canonical head " + canonicalHeadNum);
+      }
+      validateInFlightMatchesCanonical(block, canonicalBlockProvider);
+    }
+  }
+
+  private void reconcilePendingPublishedJournals() {
+    for (ArchiveInFlightBlock block : new ArrayList<>(pendingPublishedJournals.values())) {
+      ArchiveBlockRange published = txNumIndex.getBlockRange(
+          block.getRange().getBlockNum()).orElseThrow(
+              () -> new ArchiveException("published archive journal lost its index range for block "
+                  + block.getRange().getBlockNum()));
+      temporalStore.reconcilePublishedBlock(published, block.getRecords());
+      try {
+        deletePublishedInFlightBlock(block.getRange().getBlockNum(), true);
+      } catch (RuntimeException e) {
+        throw new RetryableStartupCleanupException(
+            "failed to delete reconciled published journal for block "
+                + block.getRange().getBlockNum(), e);
+      }
+      pendingPublishedJournals.remove(block.getRange().getBlockNum());
+    }
+  }
+
+  private void validateStartupStorageLocked() {
+    if (startupStorageValidated) {
+      return;
+    }
+    validateStartupDiskSpaceLocked();
+    startupValidator.run();
+    startupStorageValidated = true;
+  }
+
+  private void validateStartupDiskSpaceLocked() {
+    long usableSpace = sampleUsableSpaceBytes();
+    if (usableSpace < publisherConfig.getHardMinFreeBytes()) {
+      throw new ArchiveException("archive journal filesystem is below hard free-space watermark: "
+          + usableSpace + " < " + publisherConfig.getHardMinFreeBytes());
     }
   }
 
@@ -360,31 +864,16 @@ public final class DefaultArchiveService implements ArchiveService {
   }
 
   private void unwindPublishedBlocksAfterCanonicalHead(long canonicalHeadNum) {
-    if (canonicalHeadNum < 0) {
-      return;
-    }
-    boolean unwound = false;
     long archiveHead = txNumIndex.getLastArchivedBlock();
-    while (archiveHead > canonicalHeadNum) {
-      ArchiveBlockRange range = txNumIndex.getHeadBlockRange(archiveHead);
-      temporalStore.unwindBlock(range);
-      txNumIndex.unwindBlock(archiveHead);
-      unwound = true;
-      archiveHead = txNumIndex.getLastArchivedBlock();
-    }
-    if (unwound) {
-      executionTxNumIndex = new InMemoryArchiveTxNumIndex(txNumIndex.getNextTxNum());
-    }
-  }
-
-  private static void validateInFlightNotAfterCanonicalHead(ArchiveInFlightBlock block,
-      long canonicalHeadNum) {
     if (canonicalHeadNum < 0) {
+      if (archiveHead >= 0) {
+        throw new ArchiveException("published archive head " + archiveHead
+            + " exists while canonical database is empty");
+      }
       return;
     }
-    long blockNum = block.getRange().getBlockNum();
-    if (blockNum > canonicalHeadNum) {
-      throw new ArchiveException("archive in-flight block " + blockNum
+    if (archiveHead > canonicalHeadNum) {
+      throw new ArchiveException("published archive head " + archiveHead
           + " is after canonical head " + canonicalHeadNum);
     }
   }
@@ -397,7 +886,11 @@ public final class DefaultArchiveService implements ArchiveService {
     long archiveTail = inFlightBlocks.isEmpty()
         ? txNumIndex.getLastArchivedBlock()
         : inFlightBlocks.lastKey();
-    if (archiveTail < 0 || archiveTail >= canonicalHeadNum) {
+    if (archiveTail < 0) {
+      throw new ArchiveException("archive has no journal or published range while canonical head is "
+          + canonicalHeadNum);
+    }
+    if (archiveTail >= canonicalHeadNum) {
       return;
     }
     long missingBlock = archiveTail + 1;
@@ -414,11 +907,99 @@ public final class DefaultArchiveService implements ArchiveService {
     while (!inFlightBlocks.isEmpty()
         && inFlightBlocks.firstKey() <= solidifiedBlockNum) {
       ArchiveInFlightBlock block = inFlightBlocks.firstEntry().getValue();
+      validateInFlightVersionHead(block);
       publishInFlightBlock(block);
       inFlightBlocks.remove(block.getRange().getBlockNum());
+      removeInFlightVersionHead(block);
+      removeInFlightUsage(block);
     }
-    executionTxNumIndex.discardBlocksThrough(solidifiedBlockNum);
-    rebuildInFlightLatest();
+    if (solidifiedBlockNum >= 0) {
+      executionTxNumIndex.discardBlocksThrough(solidifiedBlockNum);
+    }
+    updatePublisherLag(solidifiedBlockNum);
+  }
+
+  /** Worker callback: publish at most one block, releasing every lock between backlog blocks. */
+  private boolean publishNextTarget(ArchivePublishTarget target) {
+    ArchiveWorkLease reservedPublisherLease;
+    try {
+      reservedPublisherLease = acquirePublisherLease();
+    } catch (ArchiveException e) {
+      ArchiveLifecycle.Phase phase = lifecycle.getPhase();
+      if (lifecycle.getFatalFailure() == null
+          && (phase == ArchiveLifecycle.Phase.DRAINING
+              || phase == ArchiveLifecycle.Phase.CLOSED)) {
+        // Drain closed admission after the worker took a target but before it reserved a lease.
+        return true;
+      }
+      throw e;
+    }
+    try (ArchiveWorkLease publisherLease = reservedPublisherLease;
+         ArchiveMutationLease mutationLease = acquireMutationReadLease()) {
+      if (target.getCanonicalEpoch() != mutationLease.getEpoch()) {
+        return true;
+      }
+      try {
+        publisherLease.start();
+      } catch (ArchiveException e) {
+        ArchiveLifecycle.Phase phase = lifecycle.getPhase();
+        if (lifecycle.getFatalFailure() == null
+            && (phase == ArchiveLifecycle.Phase.DRAINING
+                || phase == ArchiveLifecycle.Phase.CLOSED)) {
+          // Drain won before this reserved publisher touched any archive state.
+          return true;
+        }
+        throw e;
+      }
+      Lock writeLock = consistencyLock.writeLock();
+      writeLock.lock();
+      try {
+        validateAvailable();
+        validatePublishTargetLocked(target);
+        if (inFlightBlocks.isEmpty()
+            || inFlightBlocks.firstKey() > target.getBlockNum()) {
+          return true;
+        }
+        ArchiveInFlightBlock block = inFlightBlocks.firstEntry().getValue();
+        validateInFlightVersionHead(block);
+        publishInFlightBlock(block);
+        inFlightBlocks.remove(block.getRange().getBlockNum());
+        removeInFlightVersionHead(block);
+        removeInFlightUsage(block);
+        updatePublisherLag(target.getBlockNum());
+        return inFlightBlocks.isEmpty()
+            || inFlightBlocks.firstKey() > target.getBlockNum();
+      } finally {
+        writeLock.unlock();
+      }
+    }
+  }
+
+  private void validatePublishTargetLocked(ArchivePublishTarget target) {
+    ArchiveBlockRange targetRange = txNumIndex.getBlockRange(target.getBlockNum()).orElse(null);
+    if (targetRange == null) {
+      ArchiveInFlightBlock targetBlock = inFlightBlocks.get(target.getBlockNum());
+      targetRange = targetBlock == null ? null : targetBlock.getRange();
+    }
+    if (targetRange != null) {
+      if (!Arrays.equals(targetRange.getBlockHash(), target.getBlockHash())) {
+        throw new ArchiveException("archive publish target hash mismatch for block "
+            + target.getBlockNum());
+      }
+      return;
+    }
+    long firstArchived = txNumIndex.getFirstArchivedBlock();
+    if (firstArchived < 0 && !inFlightBlocks.isEmpty()) {
+      firstArchived = inFlightBlocks.firstKey();
+    }
+    long archiveTail = inFlightBlocks.isEmpty()
+        ? txNumIndex.getLastArchivedBlock()
+        : inFlightBlocks.lastKey();
+    if (firstArchived >= 0 && target.getBlockNum() >= firstArchived
+        && target.getBlockNum() <= archiveTail) {
+      throw new ArchiveException("archive publish target has no indexed or journaled block "
+          + target.getBlockNum());
+    }
   }
 
   private static BlockCapsule validateInFlightMatchesCanonical(ArchiveInFlightBlock block,
@@ -452,8 +1033,13 @@ public final class DefaultArchiveService implements ArchiveService {
 
   private void publishInFlightBlock(ArchiveInFlightBlock block) {
     ArchiveBlockRange range = block.getRange();
+    if (block.getJournalState() != ArchiveInFlightBlock.JournalState.CANONICAL_COMMITTED) {
+      throw new ArchiveException("cannot publish unacknowledged archive journal block "
+          + range.getBlockNum());
+    }
     boolean indexPublished = false;
     boolean temporalPublished = false;
+    long startedNanos = ArchiveMetrics.startTimer();
     try {
       txNumIndex.beginBlock(range.getBlockNum(), range.getSource());
       for (ArchiveTxPosition position : block.getPositions()) {
@@ -466,8 +1052,10 @@ public final class DefaultArchiveService implements ArchiveService {
       validatePublishedRange(range, publishedRange);
       temporalStore.putBlockChanges(publishedRange, block.getRecords());
       temporalPublished = true;
-      deletePublishedInFlightBlock(range.getBlockNum());
+      deletePublishedInFlightBlock(range.getBlockNum(), false);
+      ArchiveMetrics.publishFinished(startedNanos, true);
     } catch (RuntimeException e) {
+      ArchiveMetrics.publishFinished(startedNanos, false);
       if (!temporalPublished) {
         try {
           if (indexPublished) {
@@ -483,12 +1071,18 @@ public final class DefaultArchiveService implements ArchiveService {
     }
   }
 
-  private void deletePublishedInFlightBlock(long blockNum) {
+  private void deletePublishedInFlightBlock(long blockNum, boolean required) {
     try {
       inFlightStore.deleteBlock(blockNum);
     } catch (RuntimeException deleteFailure) {
       // The reader-visible index and temporal rows are already durable. Leave the journal row for
       // startup cleanup instead of marking the archive repair-required.
+      ArchiveMetrics.staleJournalDeleteFailed();
+      logger.warn("Could not delete published archive journal for block {}; startup will retry",
+          blockNum, deleteFailure);
+      if (required) {
+        throw deleteFailure;
+      }
     }
   }
 
@@ -537,39 +1131,29 @@ public final class DefaultArchiveService implements ArchiveService {
     }
   }
 
-  private void commitBlockLocked(BlockCapsule block, int userTxCount) {
+  private ArchiveJournalToken commitBlockLocked(BlockCapsule block, int userTxCount) {
     boolean executionCommitted = false;
     try {
       validateAvailable();
       if (captureEngine.failure().isPresent()) {
         throw captureEngine.failure().get();
       }
-      // Drain captured changes into the temporal store, then clear the buffer.
-      // Collapse repeated (domain,key,txNum) captures within this block into one change:
-      // keep the FIRST prevValue (the value before the tx's first sub-change, so history stores the
-      // true pre-tx value -- Erigon AddPrevValue) and the LAST value (after its last sub-change).
-      Map<WrappedByteArray, ArchiveChangeRecord> merged = new LinkedHashMap<>();
-      for (ArchiveChangeRecord record : captureEngine.records()) {
-        WrappedByteArray id = mergeKey(record);
-        ArchiveChangeRecord prior = merged.get(id);
-        if (prior == null) {
-          merged.put(id, record);
-          continue;
-        }
-        if (!sameDomainValue(prior.getValue(), record.getPrevValue())) {
-          throw new ArchiveException("archive capture prev-value chain mismatch for txNum "
-              + record.getTxNum());
-        }
-        merged.put(id, new ArchiveChangeRecord(prior.getPosition(), prior.getDomain(),
-            prior.getCanonicalKey(), prior.getPrevValue(), record.getValue()));
-      }
-      List<ArchiveChangeRecord> records = new ArrayList<>(merged.values());
-      records.removeIf(this::isKnownNoop);
+      // Keep semantic no-ops in the durable journal. In particular, a tombstone->tombstone record
+      // can be the first proof that a key was absent after a mid-chain coverage floor. Filtering
+      // here would also put one random temporal read per unique key on the canonical commit path.
+      List<ArchiveChangeRecord> records = captureEngine.records();
+      ArchiveMetrics.captureBlock(captureEngine.rawRecordCount(), records,
+          captureEngine.previousValueReads(), captureEngine.previousValueReadFailures(),
+          captureEngine.previousValueReadNanos(), captureEngine.accountAssetPrefixRows(),
+          captureEngine.accountAssetPointReads(), captureEngine.accountAssetLookups(),
+          captureEngine.accountAssetLookupNanos());
       ArchiveBlockRange range = executionTxNumIndex.commitBlock(
           block.getNum(), block.getBlockId().getBytes(), userTxCount, schemaChecksum);
       executionCommitted = true;
       List<ArchiveTxPosition> positions = positionsOf(range, executionTxNumIndex);
-      rememberInFlight(new ArchiveInFlightBlock(range, positions, records));
+      ArchiveInFlightBlock journal = new ArchiveInFlightBlock(range, positions, records);
+      rememberInFlight(journal);
+      return journal.getJournalToken();
     } catch (RuntimeException e) {
       try {
         if (executionCommitted) {
@@ -588,21 +1172,70 @@ public final class DefaultArchiveService implements ArchiveService {
     }
   }
 
-  private boolean isKnownNoop(ArchiveChangeRecord record) {
-    if (!record.isSameValue()) {
-      return false;
+  private void rollbackJournaledBlockLocked(ArchiveJournalToken token,
+      boolean allowCanonicalCommitted) {
+    ArchiveInFlightBlock block = inFlightBlocks.get(token.getBlockNum());
+    if (block == null) {
+      if (txNumIndex.getBlockRange(token.getBlockNum()).isPresent()) {
+        throw new ArchiveException("cannot rollback published archive journal block "
+            + token.getBlockNum());
+      }
+      return;
     }
-    if (record.getValue().isDeleted()) {
-      return true;
+    if (!token.equals(block.getJournalToken())) {
+      return;
     }
-    Optional<DomainValue> latest = latestWithInFlight(record.getDomain(),
-        record.getCanonicalKey());
-    return latest.isPresent() && sameDomainValue(latest.get(), record.getValue());
+    if (!allowCanonicalCommitted
+        && block.getJournalState() == ArchiveInFlightBlock.JournalState.CANONICAL_COMMITTED) {
+      throw new ArchiveException("cannot rollback canonical-committed archive journal block "
+          + token.getBlockNum());
+    }
+    if (inFlightBlocks.lastKey() != token.getBlockNum()) {
+      throw new ArchiveException("cannot rollback archive journal block " + token.getBlockNum()
+          + ": not in-flight head");
+    }
+    executionTxNumIndex.getHeadBlockRange(token.getBlockNum());
+    validateInFlightVersionTail(block);
+    inFlightStore.deleteBlock(token.getBlockNum());
+    executionTxNumIndex.unwindBlock(token.getBlockNum());
+    inFlightBlocks.remove(token.getBlockNum());
+    removeInFlightVersionTail(block);
+    removeInFlightUsage(block);
+  }
+
+  private void acknowledgeCanonicalCommitLocked(ArchiveJournalToken token) {
+    ArchiveInFlightBlock block = inFlightBlocks.get(token.getBlockNum());
+    if (block == null) {
+      Optional<ArchiveBlockRange> published = txNumIndex.getBlockRange(token.getBlockNum());
+      if (published.isPresent() && token.matches(published.get())) {
+        return;
+      }
+      throw new ArchiveException("archive journal token has no in-flight block "
+          + token.getBlockNum());
+    }
+    if (!token.equals(block.getJournalToken())) {
+      return;
+    }
+    if (block.getJournalState() == ArchiveInFlightBlock.JournalState.CANONICAL_COMMITTED) {
+      return;
+    }
+    ArchiveInFlightBlock acknowledged = block.withJournalState(
+        ArchiveInFlightBlock.JournalState.CANONICAL_COMMITTED);
+    inFlightStore.acknowledgeBlock(token);
+    inFlightBlocks.put(token.getBlockNum(), acknowledged);
+  }
+
+  private Optional<DomainValue> latestInFlight(WrappedByteArray key) {
+    Deque<InFlightVersion> versions = inFlightVersions.get(key);
+    return versions == null || versions.isEmpty()
+        ? Optional.empty() : Optional.of(versions.peekLast().value);
   }
 
   private Optional<DomainValue> latestWithInFlight(ArchiveDomain domain, byte[] canonicalKey) {
-    DomainValue inFlight = inFlightLatest.get(latestKey(domain, canonicalKey));
-    return inFlight == null ? temporalStore.latest(domain, canonicalKey) : Optional.of(inFlight);
+    Deque<InFlightVersion> versions = inFlightVersions.get(latestKey(domain, canonicalKey));
+    return versions == null || versions.isEmpty()
+        ? temporalStore.latest(domain, canonicalKey)
+        : Optional.of(versions.peekLast().value);
   }
 
   private void rememberInFlight(ArchiveInFlightBlock block) {
@@ -613,7 +1246,8 @@ public final class DefaultArchiveService implements ArchiveService {
 
   private void rememberInFlightInMemory(ArchiveInFlightBlock block) {
     inFlightBlocks.put(block.getRange().getBlockNum(), block);
-    applyInFlightLatest(block);
+    appendInFlightVersions(block);
+    addInFlightUsage(block);
   }
 
   // Test-only: shrink the in-flight cap so the fail-stop can be exercised without 65k real blocks.
@@ -621,11 +1255,67 @@ public final class DefaultArchiveService implements ArchiveService {
     this.maxInFlightBlocks = max;
   }
 
+  private void addInFlightUsage(ArchiveInFlightBlock block) {
+    synchronized (backlogMonitor) {
+      inFlightBlockCount = inFlightBlocks.size();
+      inFlightRecordCount = addSaturated(inFlightRecordCount, block.getRecords().size());
+      inFlightRetainedBytes = addSaturated(
+          inFlightRetainedBytes, block.estimatedRetainedBytes());
+      backlogMonitor.notifyAll();
+    }
+    ArchiveMetrics.setInFlight(
+        inFlightBlockCount, inFlightRecordCount, inFlightRetainedBytes);
+  }
+
+  private void removeInFlightUsage(ArchiveInFlightBlock block) {
+    synchronized (backlogMonitor) {
+      inFlightBlockCount = inFlightBlocks.size();
+      inFlightRecordCount = subtractChecked(
+          inFlightRecordCount, block.getRecords().size(), "records");
+      inFlightRetainedBytes = subtractChecked(
+          inFlightRetainedBytes, block.estimatedRetainedBytes(), "bytes");
+      backlogMonitor.notifyAll();
+    }
+    ArchiveMetrics.setInFlight(
+        inFlightBlockCount, inFlightRecordCount, inFlightRetainedBytes);
+  }
+
+  private void updatePublisherLag(long targetBlockNum) {
+    long publishedThrough = txNumIndex.getLastArchivedBlock();
+    if (publishedThrough < 0 && !inFlightBlocks.isEmpty()) {
+      publishedThrough = inFlightBlocks.firstKey() - 1L;
+    }
+    long lag = publishedThrough < 0 ? 0L : Math.max(0L, targetBlockNum - publishedThrough);
+    ArchiveMetrics.setPublisherLag(lag);
+  }
+
   private void validateInFlightAppend(ArchiveInFlightBlock block) {
     long blockNum = block.getRange().getBlockNum();
     if (inFlightBlocks.size() >= maxInFlightBlocks) {
       throw new ArchiveException("archive in-flight buffer reached its cap of " + maxInFlightBlocks
           + " committed-not-solidified blocks; refusing to append block " + blockNum);
+    }
+    long projectedBytes = addSaturated(
+        inFlightRetainedBytes, block.estimatedRetainedBytes());
+    if (projectedBytes > publisherConfig.getHardInFlightBytes()) {
+      throw new ArchiveException("archive in-flight buffer would exceed hard byte watermark "
+          + publisherConfig.getHardInFlightBytes() + " while appending block " + blockNum
+          + ": projectedBytes=" + projectedBytes);
+    }
+    long projectedRecords = addSaturated(inFlightRecordCount, block.getRecords().size());
+    if (projectedRecords > publisherConfig.getHardInFlightRecords()) {
+      throw new ArchiveException("archive in-flight buffer would exceed hard record watermark "
+          + publisherConfig.getHardInFlightRecords() + " while appending block " + blockNum
+          + ": projectedRecords=" + projectedRecords);
+    }
+    long usableSpace = sampleUsableSpaceBytes(true);
+    long journalHeadroom = Math.max(
+        MIN_JOURNAL_DISK_HEADROOM_BYTES, multiplySaturated(block.estimatedRetainedBytes(), 2L));
+    long requiredFree = addSaturated(publisherConfig.getHardMinFreeBytes(), journalHeadroom);
+    if (usableSpace < requiredFree) {
+      throw new ArchiveException("archive journal filesystem cannot reserve the next durable write"
+          + " while appending block " + blockNum + ": requiredFree=" + requiredFree
+          + ", diskFree=" + usableSpace);
     }
     if (inFlightBlocks.containsKey(blockNum)) {
       throw new ArchiveException("archive in-flight block already exists for block "
@@ -647,20 +1337,97 @@ public final class DefaultArchiveService implements ArchiveService {
     }
   }
 
-  private void applyInFlightLatest(ArchiveInFlightBlock block) {
-    for (ArchiveChangeRecord record : block.getRecords()) {
-      WrappedByteArray key = latestKey(record.getDomain(), record.getCanonicalKey());
-      inFlightLatest.put(key, record.getValue());
-      inFlightPrevByKey.computeIfAbsent(key, k -> new TreeMap<>())
-          .put(record.getTxNum(), record.getPrevValue());
+  private long sampleUsableSpaceBytes() {
+    return sampleUsableSpaceBytes(false);
+  }
+
+  private long sampleUsableSpaceBytes(boolean force) {
+    long now = System.nanoTime();
+    long sampledAt = lastDiskSampleNanos;
+    if (!force && sampledAt != Long.MIN_VALUE
+        && now - sampledAt < DISK_SAMPLE_INTERVAL_NANOS) {
+      return lastUsableSpaceBytes;
+    }
+    synchronized (diskSampleMonitor) {
+      sampledAt = lastDiskSampleNanos;
+      if (force || sampledAt == Long.MIN_VALUE
+          || now - sampledAt >= DISK_SAMPLE_INTERVAL_NANOS) {
+        long usableSpace = inFlightStore.usableSpaceBytes();
+        lastUsableSpaceBytes = usableSpace;
+        lastDiskSampleNanos = now;
+        ArchiveMetrics.setDiskFree(usableSpace);
+      }
+      return lastUsableSpaceBytes;
     }
   }
 
-  private void rebuildInFlightLatest() {
-    inFlightLatest.clear();
-    inFlightPrevByKey.clear();
-    for (ArchiveInFlightBlock block : inFlightBlocks.values()) {
-      applyInFlightLatest(block);
+  private static long multiplySaturated(long left, long right) {
+    return left != 0L && right > Long.MAX_VALUE / left ? Long.MAX_VALUE : left * right;
+  }
+
+  private void appendInFlightVersions(ArchiveInFlightBlock block) {
+    long blockNum = block.getRange().getBlockNum();
+    for (ArchiveChangeRecord record : block.getRecords()) {
+      WrappedByteArray key = latestKey(record.getDomain(), record.getCanonicalKey());
+      inFlightVersions.computeIfAbsent(key, ignored -> new ArrayDeque<>())
+          .addLast(new InFlightVersion(
+              blockNum, record.getTxNum(), record.getPrevValue(), record.getValue()));
+    }
+  }
+
+  private void validateInFlightVersionHead(ArchiveInFlightBlock block) {
+    Map<WrappedByteArray, Iterator<InFlightVersion>> iterators = new HashMap<>();
+    for (ArchiveChangeRecord record : block.getRecords()) {
+      WrappedByteArray key = latestKey(record.getDomain(), record.getCanonicalKey());
+      Deque<InFlightVersion> versions = inFlightVersions.get(key);
+      Iterator<InFlightVersion> iterator = iterators.computeIfAbsent(key,
+          ignored -> versions == null ? null : versions.iterator());
+      if (iterator == null || !iterator.hasNext()
+          || !iterator.next().matches(block.getRange().getBlockNum(), record)) {
+        throw new ArchiveException("archive in-flight version head mismatch for block "
+            + block.getRange().getBlockNum() + " txNum " + record.getTxNum());
+      }
+    }
+  }
+
+  private void removeInFlightVersionHead(ArchiveInFlightBlock block) {
+    for (ArchiveChangeRecord record : block.getRecords()) {
+      WrappedByteArray key = latestKey(record.getDomain(), record.getCanonicalKey());
+      Deque<InFlightVersion> versions = inFlightVersions.get(key);
+      versions.removeFirst();
+      if (versions.isEmpty()) {
+        inFlightVersions.remove(key);
+      }
+    }
+  }
+
+  private void validateInFlightVersionTail(ArchiveInFlightBlock block) {
+    Map<WrappedByteArray, Iterator<InFlightVersion>> iterators = new HashMap<>();
+    List<ArchiveChangeRecord> records = block.getRecords();
+    for (int i = records.size() - 1; i >= 0; i--) {
+      ArchiveChangeRecord record = records.get(i);
+      WrappedByteArray key = latestKey(record.getDomain(), record.getCanonicalKey());
+      Deque<InFlightVersion> versions = inFlightVersions.get(key);
+      Iterator<InFlightVersion> iterator = iterators.computeIfAbsent(key,
+          ignored -> versions == null ? null : versions.descendingIterator());
+      if (iterator == null || !iterator.hasNext()
+          || !iterator.next().matches(block.getRange().getBlockNum(), record)) {
+        throw new ArchiveException("archive in-flight version tail mismatch for block "
+            + block.getRange().getBlockNum() + " txNum " + record.getTxNum());
+      }
+    }
+  }
+
+  private void removeInFlightVersionTail(ArchiveInFlightBlock block) {
+    List<ArchiveChangeRecord> records = block.getRecords();
+    for (int i = records.size() - 1; i >= 0; i--) {
+      ArchiveChangeRecord record = records.get(i);
+      WrappedByteArray key = latestKey(record.getDomain(), record.getCanonicalKey());
+      Deque<InFlightVersion> versions = inFlightVersions.get(key);
+      versions.removeLast();
+      if (versions.isEmpty()) {
+        inFlightVersions.remove(key);
+      }
     }
   }
 
@@ -683,16 +1450,18 @@ public final class DefaultArchiveService implements ArchiveService {
   }
 
   private static boolean sameDomainValue(DomainValue left, DomainValue right) {
-    return left.isDeleted() == right.isDeleted()
-        && Arrays.equals(left.getValue(), right.getValue());
+    return left.contentEquals(right);
   }
 
-  /** Identity for within-block change collapsing: (domainId, txNum, canonicalKey). */
-  private static WrappedByteArray mergeKey(ArchiveChangeRecord record) {
-    return WrappedByteArray.of(Bytes.concat(
-        Ints.toByteArray(record.getDomain().getId()),
-        Longs.toByteArray(record.getTxNum()),
-        record.getCanonicalKey()));
+  private static long addSaturated(long left, long right) {
+    return left > Long.MAX_VALUE - right ? Long.MAX_VALUE : left + right;
+  }
+
+  private static long subtractChecked(long current, long removed, String what) {
+    if (removed < 0L || removed > current) {
+      throw new ArchiveException("archive in-flight " + what + " accounting underflow");
+    }
+    return current - removed;
   }
 
   private void validateAvailableForRead() throws ArchiveReaderException {
@@ -700,34 +1469,39 @@ public final class DefaultArchiveService implements ArchiveService {
       validateAvailable();
     } catch (RuntimeException e) {
       throw new ArchiveReaderException(ArchiveReaderException.Reason.INTERNAL_IO,
-          "archive is unavailable", e);
+          e.getMessage() == null ? "archive is unavailable" : e.getMessage(), e);
     }
   }
 
   private Optional<DomainValue> readThrough(ArchiveDomain domain, byte[] canonicalKey,
       ArchiveStatePoint point) throws ArchiveReaderException {
-    if (!canUseLiveReadThrough(point)) {
+    if (!canUseInFlightShield(point)) {
       return Optional.empty();
     }
-    Optional<DomainValue> inFlight = readThroughInFlight(domain, canonicalKey, point.getTxNum());
-    return inFlight.isPresent() ? inFlight : liveReadThrough.read(domain, canonicalKey, point);
+    // Ordinary ChainBase head may include pending/packing overlays. Until a dedicated canonical
+    // committed view exists, only the same-generation in-flight earliest-prev shield is safe.
+    return readThroughInFlight(domain, canonicalKey, point.getTxNum());
   }
 
-  private boolean canUseLiveReadThrough(ArchiveStatePoint point) {
+  private boolean canUseInFlightShield(ArchiveStatePoint point) {
     long firstArchivedBlock = txNumIndex.getFirstArchivedBlock();
     return firstArchivedBlock > 0 && point.getBlockNum() >= firstArchivedBlock;
   }
 
   private Optional<DomainValue> readThroughInFlight(ArchiveDomain domain, byte[] canonicalKey,
       long pointTxNum) {
-    NavigableMap<Long, DomainValue> prevByTxNum =
-        inFlightPrevByKey.get(latestKey(domain, canonicalKey));
-    if (prevByTxNum == null) {
+    Deque<InFlightVersion> versions = inFlightVersions.get(latestKey(domain, canonicalKey));
+    if (versions == null) {
       return Optional.empty();
     }
-    // The value at pointTxNum is the pre-value of the earliest in-flight change strictly after it.
-    Map.Entry<Long, DomainValue> firstAfter = prevByTxNum.higherEntry(pointTxNum);
-    return firstAfter == null ? Optional.empty() : Optional.of(firstAfter.getValue());
+    // Reader points are resolved only from the published index, so every retained in-flight
+    // version must be strictly newer. The head prev is therefore the O(1) shield value.
+    InFlightVersion first = versions.peekFirst();
+    if (first.txNum <= pointTxNum) {
+      throw new ArchiveException("archive in-flight shield is not after reader point txNum "
+          + pointTxNum);
+    }
+    return Optional.of(first.prevValue);
   }
 
   @Override
@@ -786,10 +1560,12 @@ public final class DefaultArchiveService implements ArchiveService {
                 + ": not archive in-flight head");
           }
           executionTxNumIndex.getHeadBlockRange(block.getNum());
+          validateInFlightVersionTail(inFlight);
           inFlightStore.deleteBlock(block.getNum());
           inFlightBlocks.remove(block.getNum());
           executionTxNumIndex.unwindBlock(block.getNum());
-          rebuildInFlightLatest();
+          removeInFlightVersionTail(inFlight);
+          removeInFlightUsage(inFlight);
         } else {
           Optional<ArchiveBlockRange> committed = txNumIndex.getBlockRange(block.getNum());
           long firstArchivedBlock = txNumIndex.getFirstArchivedBlock();
@@ -826,14 +1602,28 @@ public final class DefaultArchiveService implements ArchiveService {
   }
 
   @Override
+  public void markRebuildRequired(String reason) {
+    if (!enabled) {
+      return;
+    }
+    if (reason == null || reason.isEmpty()) {
+      throw new IllegalArgumentException("archive rebuild reason must not be empty");
+    }
+    Lock writeLock = consistencyLock.writeLock();
+    writeLock.lock();
+    try {
+      txNumIndex.markRepairRequired(reason);
+    } finally {
+      writeLock.unlock();
+    }
+  }
+
+  @Override
   public void validateAvailable() {
     if (!enabled) {
       return;
     }
-    RuntimeException failure = fatalFailure;
-    if (failure != null) {
-      throw new ArchiveException("archive is unavailable after fatal failure", failure);
-    }
+    lifecycle.validateCurrentOperation();
     if (!ArchiveCaptureHolder.isCurrent(captureEngine)) {
       throw new ArchiveException("archive capture engine is not active");
     }
@@ -857,43 +1647,324 @@ public final class DefaultArchiveService implements ArchiveService {
 
   @Override
   public ArchiveStateReader openReader(ArchiveStatePoint point) throws ArchiveReaderException {
+    return openResolvedReader(context -> point);
+  }
+
+  @Override
+  public ArchiveStateReader openBlockEndReader(long blockNum, byte[] canonicalBlockHash)
+      throws ArchiveReaderException {
+    return openResolvedReader(context -> {
+      context.recordBackendRead();
+      ArchiveBlockRange range = txNumIndex.getBlockRange(blockNum)
+          .orElseThrow(() -> historyUnavailable(blockNum));
+      validateCanonicalRangeHash(range, canonicalBlockHash);
+      return ArchiveStatePoint.blockEnd(
+          blockNum, canonicalBlockHash, range.getFinalizeTxNum());
+    });
+  }
+
+  @Override
+  public ArchiveStateReader openBlockEndReader(long blockNum,
+      LongFunction<byte[]> canonicalBlockHashProvider) throws ArchiveReaderException {
+    if (canonicalBlockHashProvider == null) {
+      throw new NullPointerException("canonicalBlockHashProvider");
+    }
+    return openResolvedReader(context -> {
+      context.recordBackendRead();
+      ArchiveBlockRange range = txNumIndex.getBlockRange(blockNum)
+          .orElseThrow(() -> historyUnavailable(blockNum));
+      context.recordBackendRead();
+      byte[] canonicalBlockHash = canonicalBlockHashProvider.apply(blockNum);
+      validateCanonicalRangeHash(range, canonicalBlockHash);
+      return ArchiveStatePoint.blockEnd(
+          blockNum, canonicalBlockHash, range.getFinalizeTxNum());
+    });
+  }
+
+  @Override
+  public ArchiveStateReader openBlockEndReader(LongSupplier blockNumProvider,
+      LongFunction<byte[]> canonicalBlockHashProvider) throws ArchiveReaderException {
+    if (blockNumProvider == null) {
+      throw new NullPointerException("blockNumProvider");
+    }
+    if (canonicalBlockHashProvider == null) {
+      throw new NullPointerException("canonicalBlockHashProvider");
+    }
+    return openResolvedReader(context -> {
+      context.recordBackendRead();
+      long blockNum = blockNumProvider.getAsLong();
+      context.recordBackendRead();
+      ArchiveBlockRange range = txNumIndex.getBlockRange(blockNum)
+          .orElseThrow(() -> historyUnavailable(blockNum));
+      context.recordBackendRead();
+      byte[] canonicalBlockHash = canonicalBlockHashProvider.apply(blockNum);
+      validateCanonicalRangeHash(range, canonicalBlockHash);
+      return ArchiveStatePoint.blockEnd(
+          blockNum, canonicalBlockHash, range.getFinalizeTxNum());
+    });
+  }
+
+  @Override
+  public ArchiveStateReader openBlockHashReader(byte[] requestedBlockHash,
+      Function<byte[], BlockCapsule> canonicalBlockProvider) throws ArchiveReaderException {
+    if (requestedBlockHash == null
+        || requestedBlockHash.length != ArchiveBlockRange.BLOCK_HASH_LENGTH) {
+      throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
+          "archive block hash must be 32 bytes");
+    }
+    if (canonicalBlockProvider == null) {
+      throw new NullPointerException("canonicalBlockProvider");
+    }
+    byte[] immutableRequestedHash = Arrays.copyOf(
+        requestedBlockHash, requestedBlockHash.length);
+    return openResolvedReader(context -> {
+      context.recordBackendReads(2L);
+      BlockCapsule canonicalBlock = canonicalBlockProvider.apply(immutableRequestedHash);
+      if (canonicalBlock == null
+          || !Arrays.equals(canonicalBlock.getBlockId().getBytes(), immutableRequestedHash)) {
+        throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
+            "archive block hash is not canonical");
+      }
+      long blockNum = canonicalBlock.getNum();
+      context.recordBackendRead();
+      ArchiveBlockRange range = txNumIndex.getBlockRange(blockNum)
+          .orElseThrow(() -> historyUnavailable(blockNum));
+      validateCanonicalRangeHash(range, immutableRequestedHash);
+      return ArchiveStatePoint.blockEnd(
+          blockNum, immutableRequestedHash, range.getFinalizeTxNum());
+    });
+  }
+
+  @Override
+  public ArchiveStateReader openTransactionReader(byte[] txId, long expectedBlockNum,
+      byte[] canonicalBlockHash) throws ArchiveReaderException {
+    return openTransactionReader(
+        txId, expectedBlockNum, canonicalBlockHash, null);
+  }
+
+  @Override
+  public ArchiveStateReader openTransactionReader(byte[] txId,
+      LongFunction<byte[]> canonicalBlockHashProvider) throws ArchiveReaderException {
+    if (canonicalBlockHashProvider == null) {
+      throw new NullPointerException("canonicalBlockHashProvider");
+    }
+    return openTransactionReader(
+        txId, -1L, null, canonicalBlockHashProvider);
+  }
+
+  private ArchiveStateReader openTransactionReader(byte[] txId, long expectedBlockNum,
+      byte[] canonicalBlockHash, LongFunction<byte[]> canonicalBlockHashProvider)
+      throws ArchiveReaderException {
+    if (txId == null || txId.length != ArchiveBlockRange.BLOCK_HASH_LENGTH) {
+      throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
+          "archive transaction id must be 32 bytes");
+    }
+    return openResolvedReader(context -> {
+      // txId row + referenced position + referenced committed range validation.
+      context.recordBackendReads(3L);
+      OptionalLong resolvedTxNum = txNumIndex.findTxNumByTxId(txId);
+      if (!resolvedTxNum.isPresent()) {
+        throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
+            "transaction not in archive");
+      }
+      long txNum = resolvedTxNum.getAsLong();
+      if (txNum < 1) {
+        throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
+            "transaction has no pre-state archive point");
+      }
+      // Position lookup revalidates its committed block range.
+      context.recordBackendReads(2L);
+      ArchiveTxPosition position = txNumIndex.getPosition(txNum)
+          .orElseThrow(() -> new ArchiveReaderException(
+              ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
+              "archive tx-position missing for transaction"));
+      if (position.getPhase() != ArchivePhase.USER_TX
+          || expectedBlockNum >= 0 && position.getBlockNum() != expectedBlockNum
+          || !Arrays.equals(position.getTxId(), txId)) {
+        throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
+            "archive transaction position mismatch");
+      }
+      long blockNum = position.getBlockNum();
+      context.recordBackendRead();
+      ArchiveBlockRange range = txNumIndex.getBlockRange(blockNum)
+          .orElseThrow(() -> historyUnavailable(blockNum));
+      if (txNum < range.getFirstTxNum() || txNum > range.getLastTxNum()) {
+        throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
+            "archive transaction range mismatch");
+      }
+      byte[] resolvedBlockHash = canonicalBlockHashProvider == null
+          ? canonicalBlockHash
+          : canonicalBlockHash(context, canonicalBlockHashProvider, blockNum);
+      validateCanonicalRangeHash(range, resolvedBlockHash);
+      return ArchiveStatePoint.txBefore(blockNum, resolvedBlockHash, txNum - 1);
+    });
+  }
+
+  private static byte[] canonicalBlockHash(QueryContext context,
+      LongFunction<byte[]> canonicalBlockHashProvider, long blockNum) {
+    // Canonical block lookup resolves both the height index and the block row.
+    context.recordBackendReads(2L);
+    return canonicalBlockHashProvider.apply(blockNum);
+  }
+
+  private ArchiveStateReader openResolvedReader(PointResolver pointResolver)
+      throws ArchiveReaderException {
     if (!enabled) {
       throw new ArchiveReaderException(ArchiveReaderException.Reason.ARCHIVE_DISABLED,
           "archive temporal store is not available");
     }
-    Lock readLock = consistencyLock.readLock();
-    readLock.lock();
-    boolean lockTransferred = false;
+    // Preserve the archive-unavailable error surface after a fatal failure or during shutdown.
+    // Budget/admission errors are meaningful only while the archive lifecycle is RUNNING.
+    validateAvailableForRead();
+    QueryLease queryLease;
     try {
-      validateAvailable();
+      queryLease = queryCoordinator.acquire();
+    } catch (RuntimeException e) {
+      if (e instanceof HistoricalQueryLimitException) {
+        ArchiveMetrics.queryRejected((HistoricalQueryLimitException) e);
+      }
+      validateAvailableForRead();
+      throw e;
+    }
+    boolean genesisComplete = txNumIndex.getFirstArchivedBlock() == 0L;
+    ArchiveSnapshotPermit snapshotPermit = null;
+    if (genesisComplete) {
+      try {
+        snapshotPermit = queryCoordinator.acquireSnapshot(queryLease);
+      } catch (RuntimeException e) {
+        if (e instanceof HistoricalQueryLimitException) {
+          ArchiveMetrics.queryRejected((HistoricalQueryLimitException) e);
+        }
+        queryLease.close();
+        validateAvailableForRead();
+        throw e;
+      }
+    }
+    ArchiveWorkLease lifecycleLease;
+    try {
+      lifecycleLease = lifecycle.acquire(ArchiveLifecycle.WorkType.QUERY);
+    } catch (RuntimeException e) {
+      if (snapshotPermit != null) {
+        snapshotPermit.close();
+      }
+      queryLease.close();
+      validateAvailableForRead();
+      throw new ArchiveReaderException(ArchiveReaderException.Reason.INTERNAL_IO,
+          e.getMessage() == null ? "archive query admission failed" : e.getMessage(), e);
+    }
+    Lock readLock = consistencyLock.readLock();
+    QueryContext queryContext = queryLease.getContext();
+    boolean lockAcquired = false;
+    boolean lockTransferred = false;
+    boolean leaseTransferred = false;
+    boolean snapshotPermitTransferred = false;
+    try {
+      try {
+        long remaining = queryContext.getRemainingNanos();
+        if (remaining == Long.MAX_VALUE) {
+          readLock.lockInterruptibly();
+          lockAcquired = true;
+        } else {
+          lockAcquired = readLock.tryLock(remaining, TimeUnit.NANOSECONDS);
+        }
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        HistoricalQueryLimitException interrupted = new HistoricalQueryLimitException(
+            HistoricalQueryLimitException.Reason.RESOURCE_EXHAUSTED,
+            HistoricalQueryLimitException.Limit.INTERRUPTED,
+            "interrupted while waiting for archive consistency lock");
+        ArchiveMetrics.queryRejected(interrupted);
+        throw interrupted;
+      }
+      if (!lockAcquired) {
+        try {
+          queryContext.checkDeadline();
+        } catch (HistoricalQueryLimitException e) {
+          ArchiveMetrics.queryRejected(e);
+          throw e;
+        }
+        HistoricalQueryLimitException deadline = new HistoricalQueryLimitException(
+            HistoricalQueryLimitException.Reason.DEADLINE,
+            HistoricalQueryLimitException.Limit.DEADLINE,
+            "historical query deadline exceeded while waiting for archive consistency lock");
+        ArchiveMetrics.queryRejected(deadline);
+        throw deadline;
+      }
+      lifecycleLease.start();
+      validateAvailableForRead();
+      queryContext.checkDeadline();
+      ArchiveStatePoint point;
+      try (QueryContextHolder.Scope ignored = QueryContextHolder.attach(queryContext)) {
+        point = pointResolver.resolve(queryContext);
+      }
+      queryContext.recordBackendRead();
       ArchiveStateReader reader;
-      if (txNumIndex.getFirstArchivedBlock() == 0L) {
+      if (genesisComplete) {
         // Genesis-complete: freeze temporal reads in a snapshot, release the lock, and let the VM
         // run against the snapshot -- so a long historical eth_call/trace no longer stalls block
         // commit. The live/in-flight read-through is gated on firstArchivedBlock > 0, so it is
         // unused here; the temporal snapshot alone is a complete, consistent view.
         ArchiveTemporalReadView view = temporalStore.openReadView();
         try {
-          reader = readerFactory.openSnapshot(point, view);
+          reader = readerFactory.openSnapshot(point, view, queryLease.getContext());
         } catch (RuntimeException | ArchiveReaderException e) {
           view.close();
           throw e;
         }
         readLock.unlock();
         lockTransferred = true;
-        return reader;
+        ManagedArchiveStateReader managed = new ManagedArchiveStateReader(
+            reader, lifecycleLease, queryLease, snapshotPermit);
+        leaseTransferred = true;
+        snapshotPermitTransferred = true;
+        return managed;
       }
-      // Mid-chain: the read-through reads the live main DB, consistent only while this
-      // write-blocking lock is held (pushBlock commits the archive before the canonical session).
-      // Keep today's behaviour -- the reader holds the read lock until it is closed.
-      reader = readerFactory.open(point, readLock::unlock);
+      // Mid-chain: keep the read lock for the reader lifetime so the temporal snapshot and
+      // in-flight earliest-prev shield belong to one generation. Missing shield evidence fails
+      // closed; ordinary ChainBase head is never consulted.
+      reader = readerFactory.openLocked(point, readLock::unlock, queryLease.getContext());
+      ManagedArchiveStateReader managed =
+          new ManagedArchiveStateReader(reader, lifecycleLease, queryLease, null);
       lockTransferred = true;
-      return reader;
+      leaseTransferred = true;
+      return managed;
     } finally {
-      if (!lockTransferred) {
+      if (lockAcquired && !lockTransferred) {
         readLock.unlock();
       }
+      if (snapshotPermit != null && !snapshotPermitTransferred) {
+        snapshotPermit.close();
+      }
+      if (!leaseTransferred) {
+        lifecycleLease.close();
+        queryLease.close();
+      }
     }
+  }
+
+  private ArchiveReaderException historyUnavailable(long blockNum) {
+    long first = txNumIndex.getFirstArchivedBlock();
+    String suffix = first >= 0 && blockNum < first
+        ? "; lowest supported block is " + first
+        : "";
+    return new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
+        "archive history unavailable for block " + blockNum + suffix);
+  }
+
+  private static void validateCanonicalRangeHash(ArchiveBlockRange range,
+      byte[] canonicalBlockHash) throws ArchiveReaderException {
+    if (canonicalBlockHash == null
+        || canonicalBlockHash.length != ArchiveBlockRange.BLOCK_HASH_LENGTH
+        || !Arrays.equals(range.getBlockHash(), canonicalBlockHash)) {
+      throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
+          "archive history hash mismatch for block " + range.getBlockNum());
+    }
+  }
+
+  @FunctionalInterface
+  private interface PointResolver {
+
+    ArchiveStatePoint resolve(QueryContext context) throws ArchiveReaderException;
   }
 
   @Override
@@ -904,27 +1975,95 @@ public final class DefaultArchiveService implements ArchiveService {
 
   @Override
   public void close() {
-    boolean currentCaptureEngine =
-        captureEngine != null && ArchiveCaptureHolder.isCurrent(captureEngine);
-    if (currentCaptureEngine) {
-      executionContext.clear();
-    }
-    if (captureEngine != null) {
-      captureEngine.clear();
-    }
-    ArchiveCaptureHolder.clearIf(captureEngine);
-    RuntimeException failure = null;
-    failure = closeResource(inFlightStore, "in-flight store", failure);
-    failure = closeResource(temporalStore, "temporal store", failure);
-    failure = closeResource(txNumIndex, "txNum index", failure);
-    if (failure != null) {
-      throw failure;
+    synchronized (closeMutex) {
+      if (closed.get()) {
+        return;
+      }
+      if (publisher != null) {
+        publisher.beginDrain();
+      }
+      synchronized (backlogMonitor) {
+        backlogMonitor.notifyAll();
+      }
+      queryCoordinator.beginDrain();
+      lifecycle.beginDrain();
+      try {
+        if (!lifecycle.awaitDrained(30, TimeUnit.SECONDS)) {
+          throw new ArchiveException("archive drain timed out with active operations");
+        }
+        if (!queryCoordinator.awaitDrained(30, TimeUnit.SECONDS)) {
+          throw new ArchiveException("archive query drain timed out with active readers");
+        }
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        throw new ArchiveException("archive drain interrupted", e);
+      }
+      if (publisher != null) {
+        publisher.close();
+      }
+      if (fatalController != null) {
+        fatalController.close();
+      }
+      Lock writeLock = consistencyLock.writeLock();
+      writeLock.lock();
+      try {
+        boolean currentCaptureEngine =
+            captureEngine != null && ArchiveCaptureHolder.isCurrent(captureEngine);
+        if (currentCaptureEngine) {
+          executionContext.clear();
+        }
+        if (captureEngine != null) {
+          captureEngine.clear();
+        }
+        ArchiveCaptureHolder.clearIf(captureEngine);
+        RuntimeException failure = null;
+        failure = closeResource(inFlightStore, "in-flight store", failure);
+        failure = closeResource(temporalStore, "temporal store", failure);
+        failure = closeResource(txNumIndex, "txNum index", failure);
+        closed.set(true);
+        lifecycle.markClosed();
+        queryCoordinator.close();
+        if (failure != null) {
+          throw failure;
+        }
+      } finally {
+        writeLock.unlock();
+      }
     }
   }
 
   private void clearExecutionContextIfCurrent() {
     if (captureEngine != null && ArchiveCaptureHolder.isCurrent(captureEngine)) {
       executionContext.clear();
+    }
+  }
+
+  private static final class InFlightVersion {
+
+    private final long blockNum;
+    private final long txNum;
+    private final DomainValue prevValue;
+    private final DomainValue value;
+
+    private InFlightVersion(long blockNum, long txNum, DomainValue prevValue, DomainValue value) {
+      this.blockNum = blockNum;
+      this.txNum = txNum;
+      this.prevValue = prevValue;
+      this.value = value;
+    }
+
+    private boolean matches(long expectedBlockNum, ArchiveChangeRecord record) {
+      return blockNum == expectedBlockNum
+          && txNum == record.getTxNum()
+          && sameDomainValue(prevValue, record.getPrevValue())
+          && sameDomainValue(value, record.getValue());
+    }
+  }
+
+  private static final class RetryableStartupCleanupException extends ArchiveException {
+
+    private RetryableStartupCleanupException(String message, Throwable cause) {
+      super(message, cause);
     }
   }
 
@@ -947,15 +2086,27 @@ public final class DefaultArchiveService implements ArchiveService {
   }
 
   private void markFatal(RuntimeException failure) {
-    if (fatalFailure == null) {
-      try {
-        txNumIndex.markRepairRequired(failure.getMessage() == null
-            ? failure.getClass().getSimpleName()
-            : failure.getMessage());
-      } catch (RuntimeException markerFailure) {
-        failure.addSuppressed(markerFailure);
-      }
-      fatalFailure = failure;
+    if (!lifecycle.markFatal(failure)) {
+      return;
+    }
+    queryCoordinator.beginDrain();
+    if (publisher != null) {
+      publisher.beginDrain();
+    }
+    synchronized (backlogMonitor) {
+      backlogMonitor.notifyAll();
+    }
+    // Arm the watchdog before durable marker I/O, but do not let the application exit callback
+    // race ahead of the repair marker.
+    fatalController.arm(failure);
+    try {
+      txNumIndex.markRepairRequired(failure.getMessage() == null
+          ? failure.getClass().getSimpleName()
+          : failure.getMessage());
+    } catch (RuntimeException markerFailure) {
+      failure.addSuppressed(markerFailure);
+    } finally {
+      fatalController.deliver();
     }
   }
 }

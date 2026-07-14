@@ -1,6 +1,9 @@
 package org.tron.core.db;
 
 import static org.fusesource.leveldbjni.JniDBFactory.factory;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import java.io.File;
 import java.io.IOException;
@@ -17,6 +20,7 @@ import org.junit.rules.TemporaryFolder;
 import org.rocksdb.ReadOptions;
 import org.rocksdb.RocksDB;
 import org.rocksdb.RocksDBException;
+import org.rocksdb.RocksIterator;
 import org.tron.common.TestConstants;
 import org.tron.core.db.common.iterator.RockStoreIterator;
 import org.tron.core.db.common.iterator.StoreIterator;
@@ -117,6 +121,32 @@ public class DBIteratorTest {
         iterator.next();
       }
     }
+  }
+
+  @Test
+  public void strictLevelIteratorPropagatesReadFailure() throws Exception {
+    org.iq80.leveldb.DBIterator nativeIterator = mock(org.iq80.leveldb.DBIterator.class);
+    when(nativeIterator.hasNext()).thenThrow(new IllegalStateException("read failed"));
+    StoreIterator iterator = new StoreIterator(nativeIterator, true);
+
+    IllegalStateException failure = Assert.assertThrows(
+        IllegalStateException.class, iterator::hasNext);
+
+    Assert.assertTrue(failure.getMessage().contains("leveldb iterator failed"));
+  }
+
+  @Test
+  public void strictRocksIteratorChecksStatusAtEndOfScan() throws Exception {
+    RocksIterator nativeIterator = mock(RocksIterator.class);
+    when(nativeIterator.isValid()).thenReturn(false);
+    doThrow(new RocksDBException("checksum failed")).when(nativeIterator).status();
+    RockStoreIterator iterator = new RockStoreIterator(
+        nativeIterator, new ReadOptions(), true);
+
+    IllegalStateException failure = Assert.assertThrows(
+        IllegalStateException.class, iterator::hasNext);
+
+    Assert.assertTrue(failure.getMessage().contains("rocksdb iterator failed"));
   }
 
 }

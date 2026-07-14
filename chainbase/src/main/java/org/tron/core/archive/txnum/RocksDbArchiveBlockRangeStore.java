@@ -38,11 +38,28 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
   private volatile long firstArchivedBlock;
 
   public RocksDbArchiveBlockRangeStore(String path) {
-    this.options = new Options().setCreateIfMissing(true);
+    this(path, true);
+  }
+
+  /**
+   * Opens the index. Production startup may defer the full row scrub and validate only the
+   * manifest plus committed tail; offline/full-scrub callers keep {@code validateFullKeyspace}.
+   */
+  public RocksDbArchiveBlockRangeStore(String path, boolean validateFullKeyspace) {
+    this(path, validateFullKeyspace, true, false);
+  }
+
+  /** Strict existing-store and read-only adoption entry point. */
+  public RocksDbArchiveBlockRangeStore(String path, boolean validateFullKeyspace,
+      boolean allowInitialize, boolean readOnly) {
+    if (readOnly && allowInitialize) {
+      throw new IllegalArgumentException("read-only block-range store cannot initialize");
+    }
+    this.options = new Options().setCreateIfMissing(allowInitialize);
     RocksDB opened = null;
     try {
-      opened = RocksDB.open(options, path);
-      validateOrInstallManifest(opened);
+      opened = readOnly ? RocksDB.openReadOnly(options, path) : RocksDB.open(options, path);
+      validateOrInstallManifest(opened, validateFullKeyspace, allowInitialize);
       byte[] value = opened.get(ArchiveBlockRangeCodec.FIRST_BLOCK_KEY);
       this.firstArchivedBlock =
           (value == null) ? NO_FIRST_BLOCK : ArchiveBlockRangeCodec.decodeFirstBlock(value);
@@ -64,14 +81,20 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
     }
   }
 
-  private static void validateOrInstallManifest(RocksDB db) throws RocksDBException {
+  private static void validateOrInstallManifest(RocksDB db, boolean validateFullKeyspace,
+      boolean allowInitialize) throws RocksDBException {
     byte[] manifest = db.get(ArchiveBlockRangeCodec.manifestKey());
     if (manifest != null) {
       if (ArchiveBlockRangeCodec.manifestMatches(manifest)) {
-        validateCurrentKeyspace(db);
+        if (validateFullKeyspace) {
+          validateCurrentKeyspace(db);
+        }
         return;
       }
       if (ArchiveBlockRangeCodec.legacySchemaThreeManifestMatches(manifest)) {
+        if (!allowInitialize) {
+          throw new ArchiveException("archive txNum schema=3 requires rebuild or resync");
+        }
         if (isOnlyKey(db, ArchiveBlockRangeCodec.manifestKey())) {
           installManifest(db);
           return;
@@ -85,9 +108,12 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
     if (legacyManifest != null) {
       if (ArchiveBlockRangeCodec.legacySchemaOneManifestMatches(legacyManifest)
           || ArchiveBlockRangeCodec.legacySchemaTwoManifestMatches(legacyManifest)) {
+        if (!allowInitialize) {
+          throw new ArchiveException("archive txNum legacy schema requires rebuild or resync");
+        }
         if (isOnlyKey(db, ArchiveBlockRangeCodec.legacyManifestKey())) {
           try (WriteBatch batch = new WriteBatch();
-               WriteOptions writeOptions = ArchiveRocksDbWriteOptions.create()) {
+               WriteOptions writeOptions = ArchiveRocksDbWriteOptions.createForcedSync()) {
             batch.delete(ArchiveBlockRangeCodec.legacyManifestKey());
             batch.put(ArchiveBlockRangeCodec.manifestKey(), ArchiveBlockRangeCodec.manifestValue());
             db.write(writeOptions, batch);
@@ -101,11 +127,19 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
     if (!isEmpty(db)) {
       throw new ArchiveException("archive txNum store is non-empty but missing manifest");
     }
+    if (!allowInitialize) {
+      throw new ArchiveException("archive txNum store is empty or missing manifest");
+    }
     installManifest(db);
   }
 
+  /** Full raw-keyspace scrub used when a durable repair marker is present. */
+  public void validateFullKeyspace() {
+    validateCurrentKeyspace(db);
+  }
+
   private static void installManifest(RocksDB db) throws RocksDBException {
-    try (WriteOptions writeOptions = ArchiveRocksDbWriteOptions.create()) {
+    try (WriteOptions writeOptions = ArchiveRocksDbWriteOptions.createForcedSync()) {
       db.put(writeOptions, ArchiveBlockRangeCodec.manifestKey(),
           ArchiveBlockRangeCodec.manifestValue());
     }
@@ -130,6 +164,7 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
 
   private static boolean hasSecondRow(RocksIterator it) {
     it.next();
+    ArchiveRocksIterators.requireOk(it, "isOnlyKey: scan second row");
     return it.isValid();
   }
 
@@ -203,12 +238,78 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
     }
   }
 
+  /** Returns whether recovery must run a full scrub before the durable marker can be cleared. */
+  public boolean hasRepairRequired() {
+    try {
+      byte[] value = db.get(ArchiveBlockRangeCodec.REPAIR_REQUIRED_KEY);
+      if (value == null) {
+        return false;
+      }
+      ArchiveBlockRangeCodec.decodeRepairRequired(value);
+      return true;
+    } catch (RocksDBException e) {
+      throw new ArchiveException("archive repair marker read failed", e);
+    }
+  }
+
+  /** Bounded normal-startup validation of cursor, floor, tail range, and tail positions. */
+  public void validateStartupTail(byte[] schemaChecksum) {
+    validateStartupTail(schemaChecksum, true);
+  }
+
+  /**
+   * Bounded normal-startup validation. Production recovery may defer the repair-marker check until
+   * durable journals have had one fail-closed reconciliation attempt.
+   */
+  public void validateStartupTail(byte[] schemaChecksum, boolean validateRepairRequired) {
+    ArchiveBlockRangeCodec.requireSchemaChecksum(schemaChecksum, "archive schema");
+    if (validateRepairRequired) {
+      validateNoRepairRequired();
+    }
+    validateCursorConsistentWithLastRange();
+    Optional<ArchiveBlockRange> last = getLastRange();
+    if (!last.isPresent()) {
+      return;
+    }
+    ArchiveBlockRange tail = last.get();
+    validateRangeShape(tail);
+    if (!Arrays.equals(tail.getSchemaChecksum(), schemaChecksum)) {
+      throw new ArchiveException("archive block range schema checksum mismatch for block "
+          + tail.getBlockNum());
+    }
+    ArchiveBlockRange first = getRange(firstArchivedBlock)
+        .orElseThrow(() -> new ArchiveException(
+            "archive first-block marker has no committed range " + firstArchivedBlock));
+    validateRangeShape(first);
+    validateFirstRange(first);
+    if (!Arrays.equals(first.getSchemaChecksum(), schemaChecksum)) {
+      throw new ArchiveException("archive first block range schema checksum mismatch");
+    }
+    for (long txNum = tail.getFirstTxNum(); txNum <= tail.getLastTxNum(); txNum++) {
+      validatePosition(tail, txNum);
+    }
+  }
+
   public void markRepairRequired(String reason) {
-    try (WriteOptions writeOptions = ArchiveRocksDbWriteOptions.create()) {
+    try (WriteOptions writeOptions = ArchiveRocksDbWriteOptions.createForcedSync()) {
       db.put(writeOptions, ArchiveBlockRangeCodec.REPAIR_REQUIRED_KEY,
           ArchiveBlockRangeCodec.encodeRepairRequired(reason));
     } catch (RocksDBException e) {
       throw new ArchiveException("archive repair marker write failed", e);
+    }
+  }
+
+  /** Clears a prior fatal marker only after startup reconciliation has fully succeeded. */
+  public void clearRepairRequired() {
+    try {
+      if (db.get(ArchiveBlockRangeCodec.REPAIR_REQUIRED_KEY) == null) {
+        return;
+      }
+      try (WriteOptions writeOptions = ArchiveRocksDbWriteOptions.createForcedSync()) {
+        db.delete(writeOptions, ArchiveBlockRangeCodec.REPAIR_REQUIRED_KEY);
+      }
+    } catch (RocksDBException e) {
+      throw new ArchiveException("archive repair marker clear failed", e);
     }
   }
 
@@ -223,7 +324,7 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
     validateAppendOnlyCommit(range, committedNextTxNum);
     validatePositionsForCommit(range, positions);
     try (WriteBatch batch = new WriteBatch();
-         WriteOptions writeOptions = ArchiveRocksDbWriteOptions.create()) {
+         WriteOptions writeOptions = ArchiveRocksDbWriteOptions.createForcedSync()) {
       batch.put(ArchiveBlockRangeCodec.rangeKey(range.getBlockNum()),
           ArchiveBlockRangeCodec.encodeRange(range));
       batch.put(ArchiveBlockRangeCodec.CURSOR_KEY,
@@ -267,7 +368,7 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
   public void unwindRange(ArchiveBlockRange range, long committedNextTxNum) {
     validateHeadUnwind(range, committedNextTxNum);
     try (WriteBatch batch = new WriteBatch();
-         WriteOptions writeOptions = ArchiveRocksDbWriteOptions.create()) {
+         WriteOptions writeOptions = ArchiveRocksDbWriteOptions.createForcedSync()) {
       batch.delete(ArchiveBlockRangeCodec.rangeKey(range.getBlockNum()));
       batch.put(ArchiveBlockRangeCodec.CURSOR_KEY,
           ArchiveBlockRangeCodec.encodeCursor(committedNextTxNum));
@@ -426,9 +527,15 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
       throw new ArchiveException("archive block range block number must be non-negative");
     }
     try {
-      byte[] value = db.get(ArchiveBlockRangeCodec.rangeKey(blockNum));
-      return (value == null) ? Optional.empty()
-          : Optional.of(ArchiveBlockRangeCodec.decodeRange(value));
+      byte[] key = ArchiveBlockRangeCodec.rangeKey(blockNum);
+      byte[] value = db.get(key);
+      if (value == null) {
+        return Optional.empty();
+      }
+      ArchiveBlockRange range = ArchiveBlockRangeCodec.decodeRange(value);
+      validateRangeKeyMatchesValue(key, range);
+      validateRangeShape(range);
+      return Optional.of(range);
     } catch (RocksDBException e) {
       throw new ArchiveException("archive block-range read failed", e);
     }
@@ -446,7 +553,10 @@ public final class RocksDbArchiveBlockRangeStore implements AutoCloseable {
       if (!it.isValid() || it.key()[0] != ArchiveBlockRangeCodec.TXNUM_BLOCK_PREFIX) {
         return Optional.empty();
       }
-      return Optional.of(ArchiveBlockRangeCodec.decodeRange(it.value()));
+      ArchiveBlockRange range = ArchiveBlockRangeCodec.decodeRange(it.value());
+      validateRangeKeyMatchesValue(it.key(), range);
+      validateRangeShape(range);
+      return Optional.of(range);
     }
   }
 

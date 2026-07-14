@@ -58,6 +58,7 @@ import org.tron.common.parameter.CommonParameter;
 import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.ByteUtil;
+import org.tron.core.Constant;
 import org.tron.core.Wallet;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
@@ -114,6 +115,9 @@ import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
 @Slf4j(topic = "API")
 @Component
 public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
+
+  private static final long MAX_HISTORICAL_CALL_DATA_HEX_CHARS =
+      Constant.TRANSACTION_MAX_BYTE_SIZE * 2L + 2L;
 
   public enum RequestSource {
     FULLNODE,
@@ -1035,11 +1039,16 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
 
     if (historicalEthCallSupport != null
         && historicalEthCallSupport.shouldUseArchive(blockNumOrTag)) {
+      String callData = transactionCall.resolveData();
+      if (callData != null && callData.length() > MAX_HISTORICAL_CALL_DATA_HEX_CHARS) {
+        throw new JsonRpcInvalidParamsException(
+            "historical call data exceeds maximum transaction size");
+      }
       return historicalEthCallSupport.call(
           addressCompatibleToByteArray(transactionCall.getFrom()),
           addressCompatibleToByteArray(transactionCall.getTo()),
           transactionCall.parseValue(),
-          ByteArray.fromHexString(transactionCall.resolveData()),
+          ByteArray.fromHexString(callData),
           blockNumOrTag,
           blockParam.getRequestedBlockHash());
     }
@@ -1105,20 +1114,12 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
           throw new JsonRpcInvalidParamsException(JSON_ERROR);
         }
         String blockNumOrTag = getObjectBlockParamString(paramMap, "blockNumber");
-        if (wallet.getBlockByNum(parseObjectBlockNumber(blockNumOrTag)) == null) {
-          throw new JsonRpcInternalException(NO_BLOCK_HEADER);
-        }
+        parseObjectBlockNumber(blockNumOrTag);
         return ResolvedBlockParam.of(blockNumOrTag);
       }
       validateRequireCanonical(paramMap);
       String blockHash = getObjectBlockParamString(paramMap, "blockHash");
-      Block objectFormBlock = getBlockByJsonHash(blockHash);
-      if (objectFormBlock == null || !isCanonicalBlock(objectFormBlock)) {
-        throw new JsonRpcInternalException(NO_BLOCK_HEADER_BY_HASH);
-      }
-      return ResolvedBlockParam.of(
-          ByteArray.toJsonHex(objectFormBlock.getBlockHeader().getRawData().getNumber()),
-          hashToByteArray(blockHash));
+      return ResolvedBlockParam.ofHash(hashToByteArray(blockHash));
     }
     throw new JsonRpcInvalidRequestException(JSON_ERROR);
   }
@@ -1147,8 +1148,8 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
       return new ResolvedBlockParam(blockNumOrTag, null);
     }
 
-    static ResolvedBlockParam of(String blockNumOrTag, byte[] requestedBlockHash) {
-      return new ResolvedBlockParam(blockNumOrTag, requestedBlockHash);
+    static ResolvedBlockParam ofHash(byte[] requestedBlockHash) {
+      return new ResolvedBlockParam(null, requestedBlockHash);
     }
 
     String getBlockNumOrTag() {
@@ -1183,13 +1184,6 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
     if (paramMap.containsKey("requireCanonical")) {
       throw new JsonRpcInvalidParamsException(JSON_ERROR);
     }
-  }
-
-  private boolean isCanonicalBlock(Block block) {
-    long blockNumber = block.getBlockHeader().getRawData().getNumber();
-    Block canonicalBlock = wallet.getBlockByNum(blockNumber);
-    return canonicalBlock != null
-        && JsonRpcApiUtil.getBlockID(canonicalBlock).equals(JsonRpcApiUtil.getBlockID(block));
   }
 
   @Override

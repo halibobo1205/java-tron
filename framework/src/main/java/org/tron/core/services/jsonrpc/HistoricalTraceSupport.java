@@ -8,22 +8,14 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
-import java.util.OptionalLong;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.Wallet;
-import org.tron.core.archive.ArchiveException;
-import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveService;
-import org.tron.core.archive.DefaultArchiveService;
+import org.tron.core.archive.query.QueryContext;
+import org.tron.core.archive.query.QueryContextHolder;
 import org.tron.core.archive.reader.ArchiveReaderException;
-import org.tron.core.archive.reader.ArchiveStatePoint;
 import org.tron.core.archive.reader.ArchiveStateReader;
-import org.tron.core.archive.reader.JsonRpcArchiveStatePointResolver;
-import org.tron.core.archive.reader.ResolvedArchiveStatePoint;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
-import org.tron.core.archive.txnum.ArchiveTxNumIndex;
-import org.tron.core.archive.txnum.ArchiveTxPosition;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.exception.ContractExeException;
@@ -62,12 +54,10 @@ public final class HistoricalTraceSupport {
 
   private final Wallet wallet;
   private final ArchiveService archiveService;
-  private final JsonRpcArchiveStatePointResolver resolver;
 
   public HistoricalTraceSupport(Wallet wallet, ArchiveService archiveService) {
     this.wallet = wallet;
     this.archiveService = archiveService;
-    this.resolver = new JsonRpcArchiveStatePointResolver(wallet, archiveService);
   }
 
   /** True when the trace is historical and must not fall back to latest state. */
@@ -110,26 +100,37 @@ public final class HistoricalTraceSupport {
       byte[] data, String blockNumOrTag, byte[] requestedBlockHash)
       throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
       JsonRpcInternalException {
-    ResolvedArchiveStatePoint resolved = resolver.resolveBlockEnd(blockNumOrTag);
-    if (resolved.isLatest()) {
-      throw new JsonRpcInternalException("historical debug_traceCall invoked for the latest tag");
+    BlockCapsule[] resolvedBlock = new BlockCapsule[1];
+    try {
+      ArchiveStateReader admittedReader;
+      if (JsonRpcApiUtil.FINALIZED_STR.equalsIgnoreCase(blockNumOrTag)) {
+        admittedReader = archiveService.openBlockEndReader(wallet::getSolidBlockNum,
+            blockNum -> resolveCanonicalBlock(blockNum, resolvedBlock));
+      } else {
+        long requestedBlockNum = JsonRpcApiUtil.isBlockTag(blockNumOrTag)
+            ? JsonRpcApiUtil.parseBlockTag(blockNumOrTag, wallet)
+            : JsonRpcApiUtil.parseBlockNumber(blockNumOrTag);
+        admittedReader = archiveService.openBlockEndReader(
+            requestedBlockNum, blockNum -> resolveCanonicalBlock(blockNum, resolvedBlock));
+      }
+      try (ArchiveStateReader reader = admittedReader) {
+        BlockCapsule historicalBlock = resolvedBlock[0];
+        if (requestedBlockHash != null) {
+          requireBlockHashesMatch(
+              reader.getPoint().getBlockHash(), requestedBlockHash, historicalBlock.getNum());
+        }
+        requireCanonicalBlockUnchanged(reader, historicalBlock.getNum());
+        TriggerSmartContract trigger =
+            triggerCallContract(ownerAddress, contractAddress, callValue, data, 0, null);
+        TransactionCapsule trxCap = createHistoricalCallTransaction(trigger, historicalBlock);
+        return runTrace(historicalBlock, reader, trxCap, true,
+            "historical debug_traceCall");
+      }
+    } catch (BlockHeaderNotFoundException e) {
+      throw new JsonRpcInvalidParamsException("block header not found");
+    } catch (ArchiveReaderException e) {
+      throw new JsonRpcInternalException(e.getMessage());
     }
-    ArchiveStatePoint point = resolved.getPoint();
-    if (requestedBlockHash != null) {
-      requireResolvedBlockHash(point, requestedBlockHash);
-    }
-
-    Block block = wallet.getBlockByNum(point.getBlockNum());
-    if (block == null) {
-      throw new JsonRpcInternalException("archive history unavailable for block "
-          + point.getBlockNum());
-    }
-    BlockCapsule historicalBlock = new BlockCapsule(block);
-    requireResolvedBlockHash(point, historicalBlock.getBlockId().getBytes());
-    TriggerSmartContract trigger =
-        triggerCallContract(ownerAddress, contractAddress, callValue, data, 0, null);
-    TransactionCapsule trxCap = createHistoricalCallTransaction(trigger, historicalBlock);
-    return runTrace(historicalBlock, point, trxCap, true, "historical debug_traceCall");
   }
 
   /**
@@ -160,90 +161,98 @@ public final class HistoricalTraceSupport {
     validateTraceOptions(traceOptions);
     requireArchiveEnabled();
     requireTxId(txId);
-    ByteString txIdBs = ByteString.copyFrom(txId);
-    ArchiveTxNumIndex index = txNumIndex();
-    OptionalLong txNum = index.findTxNumByTxId(txId);
-    if (!txNum.isPresent()) {
-      throw new JsonRpcInternalException("transaction not in archive");
-    }
-    long t = txNum.getAsLong();
-    if (t < 1) {
-      throw new JsonRpcInternalException("transaction has no pre-state archive point");
-    }
-    Optional<ArchiveTxPosition> position = index.getPosition(t);
-    if (!position.isPresent()) {
-      throw new JsonRpcInternalException("archive tx-position missing for transaction");
-    }
-    ArchiveTxPosition archivePosition = position.get();
-    if (archivePosition.getPhase() != ArchivePhase.USER_TX
-        || !Arrays.equals(archivePosition.getTxId(), txId)) {
-      throw new JsonRpcInternalException("archive transaction position mismatch");
-    }
-    long blockNum = archivePosition.getBlockNum();
-    Optional<ArchiveBlockRange> range = index.getBlockRange(blockNum);
-    if (!range.isPresent()) {
-      long first = index.getFirstArchivedBlock();
-      if (first >= 0 && blockNum < first) {
-        throw new JsonRpcInternalException("archive history unavailable for block " + blockNum
-            + "; lowest supported block is " + first);
+    TraceTransactionLookup lookup = new TraceTransactionLookup(txId);
+    try (ArchiveStateReader reader = archiveService.openTransactionReader(txId, lookup::resolve)) {
+      // The archive index is resolved before the callback performs any Wallet lookup. Once the
+      // reader snapshot is fixed, re-read only the canonical header to close the final fork race.
+      requireCanonicalBlockUnchanged(reader, reader.getPoint().getBlockNum());
+      if (!lookup.traceable) {
+        // Only TriggerSmartContract and CreateSmartContract produce TVM opcode traces; other types
+        // (transfers, votes, etc.) have no VM execution to replay. Canonical validation still runs
+        // first so a pre-archive or forked transaction cannot be reported as a successful empty
+        // trace.
+        reader.getQueryContext().recordResponseBytes(64L);
+        return emptyTrace();
       }
-      throw new JsonRpcInternalException("archive history unavailable for block " + blockNum);
+      // Reuse the real transaction so feeLimit (hence the energy limit) is preserved.
+      return runTrace(lookup.historicalBlock, reader, lookup.transaction, false,
+          "historical debug_traceTransaction",
+          lookup.transactionInfo.getReceipt().getEnergyUsageTotal());
+    } catch (TraceLookupFailure e) {
+      if (e.invalidParams) {
+        throw new JsonRpcInvalidParamsException(e.getMessage());
+      }
+      throw new JsonRpcInternalException(e.getMessage());
+    } catch (ArchiveReaderException e) {
+      throw new JsonRpcInternalException(e.getMessage());
     }
-    ArchiveBlockRange blockRange = range.get();
-    if (t < blockRange.getFirstTxNum() || t > blockRange.getLastTxNum()) {
-      throw new JsonRpcInternalException("archive transaction range mismatch");
+  }
+
+  private final class TraceTransactionLookup {
+
+    private final byte[] requestedTxId;
+    private TransactionCapsule transaction;
+    private TransactionInfo transactionInfo;
+    private BlockCapsule historicalBlock;
+    private boolean traceable;
+
+    private TraceTransactionLookup(byte[] requestedTxId) {
+      this.requestedTxId = Arrays.copyOf(requestedTxId, requestedTxId.length);
     }
 
-    Transaction tx = wallet.getTransactionById(txIdBs);
-    if (tx == null) {
-      throw new JsonRpcInvalidParamsException("transaction not found");
+    private byte[] resolve(long archiveBlockNum) {
+      ByteString txId = ByteString.copyFrom(requestedTxId);
+      Transaction fetched = wallet.getTransactionById(txId);
+      if (fetched == null) {
+        throw TraceLookupFailure.invalidParams("transaction not found");
+      }
+      transaction = new TransactionCapsule(fetched);
+      if (!Arrays.equals(transaction.getTransactionId().getBytes(), requestedTxId)) {
+        throw TraceLookupFailure.internal("transaction hash mismatch");
+      }
+      if (fetched.getRawData().getContractCount() > 0) {
+        Contract contract = fetched.getRawData().getContract(0);
+        ContractType contractType = contract.getType();
+        traceable = contractType == ContractType.TriggerSmartContract
+            || contractType == ContractType.CreateSmartContract;
+      }
+
+      recordBackendRead();
+      transactionInfo = wallet.getTransactionInfoById(txId);
+      if (transactionInfo == null) {
+        throw TraceLookupFailure.internal("transaction info not found");
+      }
+      if (transactionInfo.getBlockNumber() != archiveBlockNum) {
+        throw TraceLookupFailure.internal("archive transaction position mismatch");
+      }
+
+      recordBackendRead();
+      Block block = wallet.getBlockByNum(archiveBlockNum);
+      if (block == null) {
+        throw TraceLookupFailure.internal(
+            "archive history unavailable for block " + archiveBlockNum);
+      }
+      historicalBlock = new BlockCapsule(block);
+      return historicalBlock.getBlockId().getBytes();
     }
-    TransactionCapsule trxCap = new TransactionCapsule(tx);
-    if (!Arrays.equals(trxCap.getTransactionId().getBytes(), txId)) {
-      throw new JsonRpcInternalException("transaction hash mismatch");
-    }
-    ContractType contractType = null;
-    boolean traceable = false;
-    if (tx.getRawData().getContractCount() > 0) {
-      Contract contract = tx.getRawData().getContract(0);
-      contractType = contract.getType();
-      traceable = contractType == ContractType.TriggerSmartContract
-          || contractType == ContractType.CreateSmartContract;
+  }
+
+  private static final class TraceLookupFailure extends RuntimeException {
+
+    private final boolean invalidParams;
+
+    private TraceLookupFailure(String message, boolean invalidParams) {
+      super(message);
+      this.invalidParams = invalidParams;
     }
 
-    TransactionInfo info = wallet.getTransactionInfoById(txIdBs);
-    if (info == null) {
-      throw new JsonRpcInternalException("transaction info not found");
-    }
-    if (info.getBlockNumber() != blockNum) {
-      throw new JsonRpcInternalException("archive transaction position mismatch");
+    private static TraceLookupFailure invalidParams(String message) {
+      return new TraceLookupFailure(message, true);
     }
 
-    Block block = wallet.getBlockByNum(blockNum);
-    if (block == null) {
-      throw new JsonRpcInternalException("archive history unavailable for block " + blockNum);
+    private static TraceLookupFailure internal(String message) {
+      return new TraceLookupFailure(message, false);
     }
-    BlockCapsule historicalBlock = new BlockCapsule(block);
-    byte[] blockHash = historicalBlock.getBlockId().getBytes();
-    byte[] archivedHash = blockRange.getBlockHash();
-    requireBlockHash(archivedHash, "archive history", blockNum);
-    requireBlockHash(blockHash, "canonical block", blockNum);
-    if (!Arrays.equals(archivedHash, blockHash)) {
-      throw new JsonRpcInternalException("archive history hash mismatch for block " + blockNum);
-    }
-    if (!traceable) {
-      // Only TriggerSmartContract and CreateSmartContract produce TVM opcode traces; other types
-      // (transfers, votes, etc.) have no VM execution to replay. Still do the archive/canonical
-      // validation first so a pre-archive or forked transaction cannot be reported as a successful
-      // empty trace.
-      return emptyTrace();
-    }
-    // The pre-tx state is read as-of t - 1 (getAsOf inclusive-after; t is the tx's own txNum whose
-    // writes must NOT be included). The reader reads getAsOf(point.getTxNum()).
-    ArchiveStatePoint point = ArchiveStatePoint.txBefore(blockNum, blockHash, t - 1);
-    // Reuse the real transaction so feeLimit (hence the energy limit) is preserved.
-    return runTrace(historicalBlock, point, trxCap, false, "historical debug_traceTransaction",
-        info.getReceipt().getEnergyUsageTotal());
   }
 
   private static void requireTxId(byte[] txId) throws JsonRpcInvalidParamsException {
@@ -259,14 +268,42 @@ public final class HistoricalTraceSupport {
     }
   }
 
-  private static void requireResolvedBlockHash(ArchiveStatePoint point, byte[] blockHash)
+  private static void requireBlockHashesMatch(byte[] left, byte[] right, long blockNum)
       throws JsonRpcInternalException {
-    byte[] pointHash = point.getBlockHash();
-    requireBlockHash(pointHash, "archive point", point.getBlockNum());
-    requireBlockHash(blockHash, "canonical block", point.getBlockNum());
-    if (!Arrays.equals(pointHash, blockHash)) {
+    requireBlockHash(left, "canonical block", blockNum);
+    requireBlockHash(right, "requested block", blockNum);
+    if (!Arrays.equals(left, right)) {
       throw new JsonRpcInternalException(
-          "archive history hash mismatch for block " + point.getBlockNum());
+          "archive history hash mismatch for block " + blockNum);
+    }
+  }
+
+  private byte[] canonicalBlockHash(long blockNum) {
+    Block block = wallet.getBlockByNum(blockNum);
+    return block == null ? null : new BlockCapsule(block).getBlockId().getBytes();
+  }
+
+  private void requireCanonicalBlockUnchanged(ArchiveStateReader reader, long blockNum)
+      throws JsonRpcInternalException {
+    reader.getQueryContext().recordBackendRead();
+    requireBlockHashesMatch(canonicalBlockHash(blockNum), reader.getPoint().getBlockHash(),
+        blockNum);
+  }
+
+  private byte[] resolveCanonicalBlock(long blockNum, BlockCapsule[] resolvedBlock) {
+    Block block = wallet.getBlockByNum(blockNum);
+    if (block == null) {
+      throw new BlockHeaderNotFoundException();
+    }
+    BlockCapsule blockCapsule = new BlockCapsule(block);
+    resolvedBlock[0] = blockCapsule;
+    return blockCapsule.getBlockId().getBytes();
+  }
+
+  private static void recordBackendRead() {
+    QueryContext queryContext = QueryContextHolder.current();
+    if (queryContext != null) {
+      queryContext.recordBackendRead();
     }
   }
 
@@ -317,24 +354,25 @@ public final class HistoricalTraceSupport {
   }
 
   /**
-   * Shared core: open the archive reader at {@code point}, build the historical config view at the
+   * Shared core: open the admitted archive reader, build the historical config view at the
    * block (energy fee and fork flags resolved from the archived point), run the trace executor
    * with the given {@link TransactionCapsule}, and render the Geth structLogs result.
    */
-  private TraceResult runTrace(BlockCapsule historicalBlock, ArchiveStatePoint point,
+  private TraceResult runTrace(BlockCapsule historicalBlock, ArchiveStateReader reader,
       TransactionCapsule trxCap, boolean useConstantEnergyCap, String label)
       throws JsonRpcInvalidRequestException, JsonRpcInternalException {
-    return runTrace(historicalBlock, point, trxCap, useConstantEnergyCap, label, -1L);
+    return runTrace(
+        historicalBlock, reader, trxCap, useConstantEnergyCap, label, -1L);
   }
 
-  private TraceResult runTrace(BlockCapsule historicalBlock, ArchiveStatePoint point,
+  private TraceResult runTrace(BlockCapsule historicalBlock, ArchiveStateReader reader,
       TransactionCapsule trxCap, boolean useConstantEnergyCap, String label, long gasOverride)
       throws JsonRpcInvalidRequestException, JsonRpcInternalException {
     DynamicPropertiesStore latestStore =
         StoreFactory.getInstance().getChainBaseManager().getDynamicPropertiesStore();
-    boolean genesisComplete = isGenesisComplete();
 
-    try (ArchiveStateReader reader = archiveService.openReader(point)) {
+    try {
+      boolean genesisComplete = reader.isGenesisComplete();
       long historicalEnergyFee =
           HistoricalArchiveVmDynamicProperties.resolveEnergyFee(reader, genesisComplete);
       VmDynamicProperties vmProperties = new HistoricalArchiveVmDynamicProperties(
@@ -358,20 +396,18 @@ public final class HistoricalTraceSupport {
     return new TraceResult(0L, false, "", Collections.emptyList());
   }
 
-  private ArchiveTxNumIndex txNumIndex() throws JsonRpcInternalException {
-    if (!(archiveService instanceof DefaultArchiveService)) {
-      throw new JsonRpcInternalException("archive is not available");
-    }
-    requireArchiveAvailable();
-    return ((DefaultArchiveService) archiveService).getTxNumIndex();
-  }
-
   /** Renders the executor outcome as the Geth-shaped struct-log trace result. */
   public static TraceResult toTraceResult(HistoricalTraceCallResult result) {
     return toTraceResult(result, -1L);
   }
 
   private static TraceResult toTraceResult(HistoricalTraceCallResult result, long gasOverride) {
+    QueryContext queryContext = result.getTrace() == null
+        ? null : result.getTrace().historicalQueryContext();
+    if (queryContext != null) {
+      long rawBytes = result.getHReturn() == null ? 0L : result.getHReturn().length;
+      queryContext.recordResponseBytes(rawBytes * 2L);
+    }
     List<StructLog> structLogs = StructLogReconstructor.reconstruct(result.getTrace());
     // Geth returnValue is the return data as hex WITHOUT a 0x prefix (empty string when none).
     String returnValue = ByteArray.toHexString(result.getHReturn());
@@ -379,27 +415,15 @@ public final class HistoricalTraceSupport {
     return new TraceResult(gas, result.isFailed(), returnValue, structLogs);
   }
 
-  private boolean isGenesisComplete() throws JsonRpcInternalException {
-    if (!(archiveService instanceof DefaultArchiveService)) {
-      return false;
-    }
-    requireArchiveAvailable();
-    long first = ((DefaultArchiveService) archiveService).getTxNumIndex().getFirstArchivedBlock();
-    return first == 0;
-  }
-
-  private void requireArchiveAvailable() throws JsonRpcInternalException {
-    try {
-      archiveService.validateAvailable();
-    } catch (ArchiveException e) {
-      throw new JsonRpcInternalException(e.getMessage());
-    }
-  }
-
   private void requireArchiveEnabled() throws JsonRpcInternalException {
     if (!archiveService.isEnabled()) {
       throw new JsonRpcInternalException("archive is not available");
     }
+  }
+
+  private static final class BlockHeaderNotFoundException extends RuntimeException {
+
+    private static final long serialVersionUID = 1L;
   }
 
 }

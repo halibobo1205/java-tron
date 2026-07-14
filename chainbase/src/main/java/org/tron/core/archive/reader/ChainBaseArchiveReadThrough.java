@@ -4,7 +4,6 @@ import com.google.common.primitives.Longs;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Optional;
-import org.tron.common.crypto.Hash;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.ChainBaseManager;
 import org.tron.core.archive.ArchiveException;
@@ -29,9 +28,6 @@ import org.tron.core.store.DynamicPropertiesStore;
 public final class ChainBaseArchiveReadThrough implements ArchiveReadThrough {
 
   private static final int ADDRESS_LEN = 21;
-  private static final int DEPLOYMENT_HASH_LEN = 32;
-  private static final int SLOT_LEN = 32;
-  private static final int PREFIX_BYTES = 16;
 
   private final ChainBaseManager chainBaseManager;
   private final ArchiveDomainCatalog catalog;
@@ -82,6 +78,23 @@ public final class ChainBaseArchiveReadThrough implements ArchiveReadThrough {
     }
   }
 
+  @Override
+  public long backendReadCost(ArchiveDomain domain) {
+    switch (domain) {
+      case ACCOUNT:
+        return 1L;
+      case ACCOUNT_ASSET:
+      case CODE:
+      case CONTRACT:
+      case CONTRACT_STATE:
+      case CONTRACT_STORAGE:
+      case DYNAMIC_PROPERTIES:
+        return 2L;
+      default:
+        return 0L;
+    }
+  }
+
   private Optional<DomainValue> readAccount(byte[] canonicalKey) throws ArchiveReaderException {
     AccountCapsule account = chainBaseManager.getAccountStore().get(canonicalKey);
     return account == null ? tombstone(ArchiveDomain.ACCOUNT)
@@ -90,10 +103,6 @@ public final class ChainBaseArchiveReadThrough implements ArchiveReadThrough {
 
   private Optional<DomainValue> readAccountAsset(byte[] canonicalKey)
       throws ArchiveReaderException {
-    byte[] raw = chainBaseManager.getAccountAssetStore().get(canonicalKey);
-    if (raw != null && raw.length != 0) {
-      return present(ArchiveDomain.ACCOUNT_ASSET, raw);
-    }
     byte[] address = Arrays.copyOfRange(canonicalKey, 0, ADDRESS_LEN);
     AccountCapsule account = chainBaseManager.getAccountStore().get(address);
     if (account == null) {
@@ -101,8 +110,17 @@ public final class ChainBaseArchiveReadThrough implements ArchiveReadThrough {
     }
     String assetId = new String(canonicalKey, ADDRESS_LEN,
         canonicalKey.length - ADDRESS_LEN, StandardCharsets.US_ASCII);
-    Long balance = account.getInstance().getAssetV2Map().get(assetId);
-    if (balance == null || balance == 0L) {
+    Long overlay = account.getInstance().getAssetV2Map().get(assetId);
+    long balance;
+    if (overlay != null) {
+      balance = overlay;
+    } else if (account.getAssetOptimized()) {
+      byte[] raw = chainBaseManager.getAccountAssetStore().get(canonicalKey);
+      balance = raw == null || raw.length == 0 ? 0L : Longs.fromByteArray(raw);
+    } else {
+      balance = 0L;
+    }
+    if (balance == 0L) {
       return tombstone(ArchiveDomain.ACCOUNT_ASSET);
     }
     return present(ArchiveDomain.ACCOUNT_ASSET, Longs.toByteArray(balance));
@@ -141,17 +159,10 @@ public final class ChainBaseArchiveReadThrough implements ArchiveReadThrough {
       throws ArchiveReaderException {
     ContractStorageKeyCodec codec = new ContractStorageKeyCodec();
     codec.validate(canonicalKey);
-    byte[] address = Arrays.copyOfRange(canonicalKey, 0, ADDRESS_LEN);
-    byte[] deploymentHash = Arrays.copyOfRange(canonicalKey, ADDRESS_LEN,
-        ADDRESS_LEN + DEPLOYMENT_HASH_LEN);
-    int slotOffset = ADDRESS_LEN + DEPLOYMENT_HASH_LEN;
-    byte[] slot = Arrays.copyOfRange(canonicalKey, slotOffset, slotOffset + SLOT_LEN);
-    int version = canonicalKey[ContractStorageKeyCodec.LENGTH - 1] & 0xff;
-    byte[] rowKey = storageRowKey(address, deploymentHash, slot, version);
-    if (!chainBaseManager.getStorageRowStore().has(rowKey)) {
+    if (!chainBaseManager.getStorageRowStore().has(canonicalKey)) {
       return tombstone(ArchiveDomain.CONTRACT_STORAGE);
     }
-    StorageRowCapsule row = chainBaseManager.getStorageRowStore().getUnchecked(rowKey);
+    StorageRowCapsule row = chainBaseManager.getStorageRowStore().getUnchecked(canonicalKey);
     return row == null || row.getInstance() == null
         ? tombstone(ArchiveDomain.CONTRACT_STORAGE)
         : present(ArchiveDomain.CONTRACT_STORAGE, row.getValue());
@@ -202,25 +213,6 @@ public final class ChainBaseArchiveReadThrough implements ArchiveReadThrough {
     return present(ArchiveDomain.DYNAMIC_PROPERTIES, ByteArray.fromLong(value));
   }
 
-  private byte[] storageRowKey(byte[] address, byte[] deploymentHash, byte[] slot, int version) {
-    byte[] addrHash = contractAddressHash(address, deploymentHash);
-    byte[] slotKey = version == 1 ? Hash.sha3(slot) : slot;
-    byte[] rowKey = new byte[SLOT_LEN];
-    System.arraycopy(addrHash, 0, rowKey, 0, PREFIX_BYTES);
-    System.arraycopy(slotKey, PREFIX_BYTES, rowKey, PREFIX_BYTES, PREFIX_BYTES);
-    return rowKey;
-  }
-
-  private byte[] contractAddressHash(byte[] address, byte[] deploymentHash) {
-    if (isNullOrZero(deploymentHash)) {
-      return Hash.sha3(address);
-    }
-    byte[] merged = new byte[address.length + deploymentHash.length];
-    System.arraycopy(address, 0, merged, 0, address.length);
-    System.arraycopy(deploymentHash, 0, merged, address.length, deploymentHash.length);
-    return Hash.sha3(merged);
-  }
-
   private Optional<DomainValue> present(ArchiveDomain domain, byte[] value)
       throws ArchiveReaderException {
     try {
@@ -249,15 +241,4 @@ public final class ChainBaseArchiveReadThrough implements ArchiveReadThrough {
     return descriptor;
   }
 
-  private static boolean isNullOrZero(byte[] bytes) {
-    if (bytes == null || bytes.length == 0) {
-      return true;
-    }
-    for (byte b : bytes) {
-      if (b != 0) {
-        return false;
-      }
-    }
-    return true;
-  }
 }

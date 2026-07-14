@@ -1,7 +1,6 @@
 package org.tron.core.archive.temporal;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.EnumMap;
@@ -123,8 +122,7 @@ public final class InMemoryArchiveTemporalStore implements ArchiveTemporalStore 
   }
 
   private static boolean sameDomainValue(DomainValue left, DomainValue right) {
-    return left.isDeleted() == right.isDeleted()
-        && Arrays.equals(left.getValue(), right.getValue());
+    return left.contentEquals(right);
   }
 
   private static int compareRecords(ArchiveChangeRecord left, ArchiveChangeRecord right) {

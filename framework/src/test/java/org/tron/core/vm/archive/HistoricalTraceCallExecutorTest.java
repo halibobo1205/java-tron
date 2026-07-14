@@ -2,7 +2,13 @@ package org.tron.core.vm.archive;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -15,6 +21,11 @@ import org.tron.common.BaseMethodTest;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.runtime.TvmTestUtils;
 import org.tron.common.utils.Sha256Hash;
+import org.tron.core.actuator.VMActuator;
+import org.tron.core.archive.query.ArchiveQueryLimits;
+import org.tron.core.archive.query.HistoricalQueryLimitException;
+import org.tron.core.archive.query.QueryContext;
+import org.tron.core.archive.query.QueryContextHolder;
 import org.tron.core.archive.reader.ArchiveReadResult;
 import org.tron.core.archive.reader.ArchiveStatePoint;
 import org.tron.core.archive.reader.ArchiveStateReader;
@@ -23,10 +34,14 @@ import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.ContractCapsule;
 import org.tron.core.capsule.ContractStateCapsule;
 import org.tron.core.capsule.TransactionCapsule;
+import org.tron.core.db.TransactionContext;
 import org.tron.core.services.jsonrpc.StructLogReconstructor;
 import org.tron.core.services.jsonrpc.types.StructLog;
 import org.tron.core.store.VmDynamicProperties;
 import org.tron.core.vm.config.VMConfig;
+import org.tron.core.vm.program.Program;
+import org.tron.core.vm.program.Program.OutOfTimeException;
+import org.tron.core.vm.trace.ProgramTrace;
 import org.tron.protos.Protocol.Account;
 import org.tron.protos.Protocol.Transaction.Contract.ContractType;
 import org.tron.protos.contract.SmartContractOuterClass.SmartContract;
@@ -131,8 +146,145 @@ public class HistoricalTraceCallExecutorTest extends BaseMethodTest {
     assertEquals(java.util.Collections.singletonList(word(0)), logs.get(1).getStack());
   }
 
+  @Test
+  public void vmCatchAllCannotHideHistoricalStepLimit() {
+    QueryContext queryContext = new QueryContext(ArchiveQueryLimits.builder()
+        .maxVmSteps(0)
+        .build());
+
+    HistoricalQueryLimitException failure = assertThrows(
+        HistoricalQueryLimitException.class,
+        () -> runTrace(ADD_CODE, ArchiveReadResult.missing(), queryContext));
+
+    assertEquals(HistoricalQueryLimitException.Limit.VM_STEPS, failure.getLimit());
+    assertSame(failure, queryContext.getTerminalException());
+    assertEquals(1L, queryContext.getVmSteps());
+    assertNull(QueryContextHolder.current());
+    assertFalse(VMConfig.vmTrace());
+  }
+
+  @Test
+  public void vmCatchAllCannotHideHistoricalTraceByteLimit() {
+    QueryContext queryContext = new QueryContext(ArchiveQueryLimits.builder()
+        .maxTraceBytes(0)
+        .build());
+
+    HistoricalQueryLimitException failure = assertThrows(
+        HistoricalQueryLimitException.class,
+        () -> runTrace(ADD_CODE, ArchiveReadResult.missing(), queryContext));
+
+    assertEquals(HistoricalQueryLimitException.Limit.TRACE_BYTES, failure.getLimit());
+    assertSame(failure, queryContext.getTerminalException());
+    assertTrue(queryContext.getTraceBytes() > 0L);
+    assertNull(QueryContextHolder.current());
+    assertFalse(VMConfig.vmTrace());
+  }
+
+  @Test
+  public void responseReconstructionRestoresTheTraceQueryContext() throws Exception {
+    QueryContext queryContext = new QueryContext(ArchiveQueryLimits.builder()
+        .maxResponseBytes(0)
+        .build());
+    HistoricalTraceCallResult result =
+        runTrace(ADD_CODE, ArchiveReadResult.missing(), queryContext);
+    assertNull(QueryContextHolder.current());
+    assertSame(queryContext, result.getTrace().historicalQueryContext());
+
+    HistoricalQueryLimitException failure = assertThrows(
+        HistoricalQueryLimitException.class,
+        () -> StructLogReconstructor.reconstruct(result.getTrace()));
+
+    assertEquals(HistoricalQueryLimitException.Limit.RESPONSE_BYTES, failure.getLimit());
+    assertSame(failure, queryContext.getTerminalException());
+    assertTrue(queryContext.getVmSteps() > 0L);
+    assertTrue(queryContext.getTraceBytes() > 0L);
+    assertTrue(queryContext.getResponseBytes() > 0L);
+    assertNull(QueryContextHolder.current());
+  }
+
+  @Test
+  public void directCpuTimeoutIsNotOverwrittenByFinallyDeadlineCheck() throws Exception {
+    QueryContext queryContext = new QueryContext(ArchiveQueryLimits.builder()
+        .deadlineMs(0)
+        .build());
+    VMActuator vmActuator = mock(VMActuator.class);
+    OutOfTimeException cpuTimeout = new OutOfTimeException("direct CPU timeout");
+    doThrow(cpuTimeout).when(vmActuator).execute(any(TransactionContext.class));
+    HistoricalTraceCallExecutor executor = new HistoricalTraceCallExecutor(() -> vmActuator);
+
+    OutOfTimeException failure = assertThrows(
+        OutOfTimeException.class,
+        () -> runTrace(ADD_CODE, ArchiveReadResult.missing(), queryContext, executor));
+
+    assertSame(cpuTimeout, failure);
+    assertNull(QueryContextHolder.current());
+    assertFalse(VMConfig.vmTrace());
+  }
+
+  @Test
+  public void capturedCpuTimeoutResultIsNotOverwrittenByFinallyDeadlineCheck() throws Exception {
+    QueryContext queryContext = new QueryContext(ArchiveQueryLimits.builder()
+        .deadlineMs(0)
+        .build());
+    VMActuator vmActuator = mock(VMActuator.class);
+    Program program = mock(Program.class);
+    ProgramTrace trace = new ProgramTrace();
+    OutOfTimeException cpuTimeout = new OutOfTimeException("captured CPU timeout");
+    when(vmActuator.getProgram()).thenReturn(program);
+    when(program.getTrace()).thenReturn(trace);
+    doAnswer(invocation -> {
+      TransactionContext context = invocation.getArgument(0);
+      context.getProgramResult().setException(cpuTimeout);
+      context.getProgramResult().setRuntimeError(cpuTimeout.getMessage());
+      return null;
+    }).when(vmActuator).execute(any(TransactionContext.class));
+    HistoricalTraceCallExecutor executor = new HistoricalTraceCallExecutor(() -> vmActuator);
+
+    HistoricalTraceCallResult result =
+        runTrace(ADD_CODE, ArchiveReadResult.missing(), queryContext, executor);
+
+    assertTrue(result.isFailed());
+    assertEquals(cpuTimeout.getMessage(), result.getRuntimeError());
+    assertNull(queryContext.getRecordedTerminalException());
+    assertNull(QueryContextHolder.current());
+    assertFalse(VMConfig.vmTrace());
+  }
+
+  @Test
+  public void recordedQueryLimitWinsOverLaterDirectCpuTimeout() throws Exception {
+    QueryContext queryContext = new QueryContext(ArchiveQueryLimits.builder()
+        .maxVmSteps(0)
+        .build());
+    VMActuator vmActuator = mock(VMActuator.class);
+    OutOfTimeException cpuTimeout = new OutOfTimeException("later CPU timeout");
+    doAnswer(invocation -> {
+      assertThrows(HistoricalQueryLimitException.class, queryContext::recordVmStep);
+      throw cpuTimeout;
+    }).when(vmActuator).execute(any(TransactionContext.class));
+    HistoricalTraceCallExecutor executor = new HistoricalTraceCallExecutor(() -> vmActuator);
+
+    HistoricalQueryLimitException failure = assertThrows(
+        HistoricalQueryLimitException.class,
+        () -> runTrace(ADD_CODE, ArchiveReadResult.missing(), queryContext, executor));
+
+    assertSame(queryContext.getRecordedTerminalException(), failure);
+    assertEquals(HistoricalQueryLimitException.Limit.VM_STEPS, failure.getLimit());
+    assertNull(QueryContextHolder.current());
+    assertFalse(VMConfig.vmTrace());
+  }
+
   private HistoricalTraceCallResult runTrace(byte[] code, ArchiveReadResult<byte[]> slot)
       throws Exception {
+    return runTrace(code, slot, null);
+  }
+
+  private HistoricalTraceCallResult runTrace(byte[] code, ArchiveReadResult<byte[]> slot,
+      QueryContext queryContext) throws Exception {
+    return runTrace(code, slot, queryContext, new HistoricalTraceCallExecutor());
+  }
+
+  private HistoricalTraceCallResult runTrace(byte[] code, ArchiveReadResult<byte[]> slot,
+      QueryContext queryContext, HistoricalTraceCallExecutor executor) throws Exception {
     byte[] contractAddr = new byte[21];
     contractAddr[0] = 0x41;
     contractAddr[20] = 0x11;
@@ -141,6 +293,7 @@ public class HistoricalTraceCallExecutorTest extends BaseMethodTest {
     caller[20] = 0x22;
 
     FakeReader reader = new FakeReader();
+    reader.queryContext = queryContext;
     reader.account = ArchiveReadResult.present(new AccountCapsule(
         Account.newBuilder().setAddress(ByteString.copyFrom(contractAddr)).build()));
     reader.contract = ArchiveReadResult.present(new ContractCapsule(SmartContract.newBuilder()
@@ -165,11 +318,12 @@ public class HistoricalTraceCallExecutorTest extends BaseMethodTest {
         TvmTestUtils.buildTriggerSmartContract(caller, contractAddr, new byte[0], 0L);
     TransactionCapsule trxCap = new TransactionCapsule(trigger, ContractType.TriggerSmartContract);
 
-    return new HistoricalTraceCallExecutor().execute(reader, vmProps, block, trxCap);
+    return executor.execute(reader, vmProps, block, trxCap);
   }
 
   /** Returns the configured archived state for any address. */
   private static final class FakeReader implements ArchiveStateReader {
+    QueryContext queryContext;
     ArchiveReadResult<AccountCapsule> account = ArchiveReadResult.missing();
     ArchiveReadResult<ContractCapsule> contract = ArchiveReadResult.missing();
     ArchiveReadResult<ContractStateCapsule> contractState = ArchiveReadResult.missing();
@@ -178,6 +332,10 @@ public class HistoricalTraceCallExecutorTest extends BaseMethodTest {
 
     public ArchiveStatePoint getPoint() {
       return null;
+    }
+
+    public QueryContext getQueryContext() {
+      return queryContext;
     }
 
     public ArchiveReadResult<AccountCapsule> getAccount(byte[] address) {

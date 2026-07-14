@@ -59,8 +59,8 @@ public final class DefaultArchiveDomainRegistry implements ArchiveDomainRegistry
             + "store puts ignored, read-through source");
     add("storage-row", StoreBindingKind.SEMANTIC_BACKING, ArchiveDomain.CONTRACT_STORAGE,
         RawHookMode.SEMANTIC_ONLY, RootPolicy.IN_GLOBAL_ROOT, HistoryPolicy.FULL_HISTORY,
-        "raw storage-row key is irreversible; CONTRACT_STORAGE comes from a semantic hook "
-            + "(address|slot|version)");
+        "CONTRACT_STORAGE uses the exact physical row key; the Storage semantic hook preserves "
+            + "per-tx position and zero-delete semantics while raw flush writes stay ignored");
 
     // --- EXCLUDED (explicit, with reason) ---
     excluded("reward-vi", "one-time immutable accumulator with its own main-net root "

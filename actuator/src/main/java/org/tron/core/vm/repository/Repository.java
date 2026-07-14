@@ -151,6 +151,11 @@ public interface Repository {
 
   BlockCapsule getBlockByNum(final long num);
 
+  default byte[] getBlockHashByNum(long num) {
+    BlockCapsule block = getBlockByNum(num);
+    return block == null ? null : block.getBlockId().getBytes();
+  }
+
   AccountCapsule createNormalAccount(byte[] address);
 
   WitnessCapsule getWitness(byte[] address);

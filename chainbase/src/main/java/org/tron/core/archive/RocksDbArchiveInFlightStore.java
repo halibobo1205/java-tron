@@ -1,5 +1,9 @@
 package org.tron.core.archive;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -7,10 +11,14 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 import org.rocksdb.Options;
+import org.rocksdb.ReadOptions;
 import org.rocksdb.RocksDB;
 import org.rocksdb.RocksDBException;
 import org.rocksdb.RocksIterator;
+import org.rocksdb.Snapshot;
+import org.rocksdb.WriteBatch;
 import org.rocksdb.WriteOptions;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
 import org.tron.core.archive.domain.ArchiveDomain;
@@ -31,23 +39,40 @@ public final class RocksDbArchiveInFlightStore implements ArchiveInFlightStore {
 
   private final Options options;
   private final RocksDB db;
+  private final Path dbPath;
   private final ArchiveDomainCatalog catalog;
   private final DynamicKeyPolicy dynamicKeyPolicy = new DynamicKeyPolicy();
 
   public RocksDbArchiveInFlightStore(String path) {
-    this(path, new DefaultArchiveDomainCatalog());
+    this(path, new DefaultArchiveDomainCatalog(), true);
   }
 
   public RocksDbArchiveInFlightStore(String path, ArchiveDomainCatalog catalog) {
+    this(path, catalog, true);
+  }
+
+  /** Opens the journal, optionally deferring its duplicate full scan to streamed service loading. */
+  public RocksDbArchiveInFlightStore(String path, ArchiveDomainCatalog catalog,
+      boolean validateFullKeyspace) {
+    this(path, catalog, validateFullKeyspace, true, false);
+  }
+
+  /** Strict existing-store and read-only adoption entry point. */
+  public RocksDbArchiveInFlightStore(String path, ArchiveDomainCatalog catalog,
+      boolean validateFullKeyspace, boolean allowInitialize, boolean readOnly) {
     if (catalog == null) {
       throw new ArchiveException("archive in-flight store requires a domain catalog");
     }
+    if (readOnly && allowInitialize) {
+      throw new IllegalArgumentException("read-only in-flight store cannot initialize");
+    }
     this.catalog = catalog;
-    this.options = new Options().setCreateIfMissing(true);
+    this.dbPath = Paths.get(path).toAbsolutePath().normalize();
+    this.options = new Options().setCreateIfMissing(allowInitialize);
     RocksDB opened = null;
     try {
-      opened = RocksDB.open(options, path);
-      validateOrInstallManifest(opened, catalog);
+      opened = readOnly ? RocksDB.openReadOnly(options, path) : RocksDB.open(options, path);
+      validateOrInstallManifest(opened, catalog, validateFullKeyspace, allowInitialize);
       this.db = opened;
     } catch (RocksDBException e) {
       closeQuietly(opened);
@@ -66,20 +91,25 @@ public final class RocksDbArchiveInFlightStore implements ArchiveInFlightStore {
     }
   }
 
-  private static void validateOrInstallManifest(RocksDB db, ArchiveDomainCatalog catalog)
-      throws RocksDBException {
+  private static void validateOrInstallManifest(RocksDB db, ArchiveDomainCatalog catalog,
+      boolean validateFullKeyspace, boolean allowInitialize) throws RocksDBException {
     byte[] manifest = db.get(ArchiveInFlightCodec.manifestKey());
     if (manifest != null) {
       if (!ArchiveInFlightCodec.manifestMatches(manifest)) {
         throw new ArchiveException("archive in-flight manifest mismatch");
       }
-      validateCurrentKeyspace(db, catalog);
+      if (validateFullKeyspace) {
+        validateCurrentKeyspace(db, catalog);
+      }
       return;
     }
     if (!isEmpty(db)) {
       throw new ArchiveException("archive in-flight store is non-empty but missing manifest");
     }
-    try (WriteOptions writeOptions = ArchiveRocksDbWriteOptions.create()) {
+    if (!allowInitialize) {
+      throw new ArchiveException("archive in-flight store is empty or missing manifest");
+    }
+    try (WriteOptions writeOptions = ArchiveRocksDbWriteOptions.createForcedSync()) {
       db.put(writeOptions, ArchiveInFlightCodec.manifestKey(),
           ArchiveInFlightCodec.manifestValue());
     }
@@ -95,6 +125,8 @@ public final class RocksDbArchiveInFlightStore implements ArchiveInFlightStore {
 
   private static void validateCurrentKeyspace(RocksDB db, ArchiveDomainCatalog catalog) {
     byte[] blockPrefix = ArchiveInFlightCodec.blockPrefix();
+    byte[] acknowledgementPrefix = ArchiveInFlightCodec.acknowledgementPrefix();
+    byte[] tokenPrefix = ArchiveInFlightCodec.tokenPrefix();
     try (RocksIterator it = db.newIterator()) {
       it.seekToFirst();
       while (it.isValid()) {
@@ -104,6 +136,16 @@ public final class RocksDbArchiveInFlightStore implements ArchiveInFlightStore {
           if (!ArchiveInFlightCodec.manifestMatches(value)) {
             throw new ArchiveException("archive in-flight manifest mismatch");
           }
+          it.next();
+          continue;
+        }
+        if (ArchiveInFlightCodec.startsWith(key, acknowledgementPrefix)) {
+          validateAcknowledgementRow(db, key, value);
+          it.next();
+          continue;
+        }
+        if (ArchiveInFlightCodec.startsWith(key, tokenPrefix)) {
+          validateTokenRow(db, key, value);
           it.next();
           continue;
         }
@@ -123,36 +165,164 @@ public final class RocksDbArchiveInFlightStore implements ArchiveInFlightStore {
     }
   }
 
+  private static void validateTokenRow(RocksDB db, byte[] key, byte[] value) {
+    long blockNum = ArchiveInFlightCodec.blockNumOfTokenKey(key);
+    ArchiveJournalToken token = ArchiveInFlightCodec.decodeAcknowledgement(value);
+    if (token.getBlockNum() != blockNum) {
+      throw new ArchiveException("archive journal token key/value mismatch for block "
+          + blockNum);
+    }
+    try {
+      byte[] blockValue = db.get(ArchiveInFlightCodec.blockKey(blockNum));
+      if (blockValue == null) {
+        throw new ArchiveException("archive journal token has no journal block " + blockNum);
+      }
+      ArchiveInFlightBlock block = ArchiveInFlightCodec.decodeBlock(blockValue);
+      if (!token.equals(block.getJournalToken())) {
+        throw new ArchiveException("archive journal token mismatch for block " + blockNum);
+      }
+    } catch (RocksDBException e) {
+      throw new ArchiveException("archive journal token validation failed for block "
+          + blockNum, e);
+    }
+  }
+
+  private static void validateAcknowledgementRow(RocksDB db, byte[] key, byte[] value) {
+    long blockNum = ArchiveInFlightCodec.blockNumOfAcknowledgementKey(key);
+    ArchiveJournalToken token = ArchiveInFlightCodec.decodeAcknowledgement(value);
+    if (token.getBlockNum() != blockNum) {
+      throw new ArchiveException("archive acknowledgement key/value mismatch for block "
+          + blockNum);
+    }
+    try {
+      byte[] blockValue = db.get(ArchiveInFlightCodec.blockKey(blockNum));
+      if (blockValue == null) {
+        throw new ArchiveException("archive acknowledgement has no journal block " + blockNum);
+      }
+      ArchiveInFlightBlock block = ArchiveInFlightCodec.decodeBlock(blockValue);
+      if (!token.equals(block.getJournalToken())) {
+        throw new ArchiveException("archive acknowledgement token mismatch for block " + blockNum);
+      }
+    } catch (RocksDBException e) {
+      throw new ArchiveException("archive acknowledgement validation failed for block "
+          + blockNum, e);
+    }
+  }
+
   @Override
   public List<ArchiveInFlightBlock> loadBlocks() {
     List<ArchiveInFlightBlock> blocks = new ArrayList<>();
+    forEachBlock(blocks::add);
+    return blocks;
+  }
+
+  @Override
+  public void forEachBlock(Consumer<ArchiveInFlightBlock> consumer) {
+    if (consumer == null) {
+      throw new NullPointerException("consumer");
+    }
     byte[] prefix = ArchiveInFlightCodec.blockPrefix();
-    try (RocksIterator it = db.newIterator()) {
+    Snapshot snapshot = db.getSnapshot();
+    try (ReadOptions readOptions = new ReadOptions().setSnapshot(snapshot);
+         RocksIterator it = db.newIterator(readOptions)) {
       it.seek(prefix);
       while (it.isValid() && ArchiveInFlightCodec.startsWith(it.key(), prefix)) {
         long blockNum = ArchiveInFlightCodec.blockNumOfKey(it.key());
-        ArchiveInFlightBlock block = ArchiveInFlightCodec.decodeBlock(it.value());
+        ArchiveInFlightBlock block = applyAcknowledgement(
+            ArchiveInFlightCodec.decodeBlock(it.value()));
         validateBlock(block, catalog, dynamicKeyPolicy);
         if (block.getRange().getBlockNum() != blockNum) {
           throw new ArchiveException("archive in-flight block key/value mismatch for block "
               + blockNum);
         }
-        blocks.add(block);
+        consumer.accept(block);
         it.next();
       }
       ArchiveRocksIterators.requireOk(it, "loadBlocks: scan in-flight blocks");
-      return blocks;
+    } finally {
+      db.releaseSnapshot(snapshot);
+    }
+  }
+
+  private ArchiveInFlightBlock applyAcknowledgement(ArchiveInFlightBlock block) {
+    long blockNum = block.getRange().getBlockNum();
+    try {
+      byte[] value = db.get(ArchiveInFlightCodec.acknowledgementKey(blockNum));
+      if (value == null) {
+        return block;
+      }
+      ArchiveJournalToken token = ArchiveInFlightCodec.decodeAcknowledgement(value);
+      if (!token.equals(block.getJournalToken())) {
+        throw new ArchiveException("archive acknowledgement token mismatch for block " + blockNum);
+      }
+      return block.getJournalState() == ArchiveInFlightBlock.JournalState.CANONICAL_COMMITTED
+          ? block
+          : block.withJournalState(ArchiveInFlightBlock.JournalState.CANONICAL_COMMITTED);
+    } catch (RocksDBException e) {
+      throw new ArchiveException("archive acknowledgement read failed for block " + blockNum, e);
     }
   }
 
   @Override
   public void putBlock(ArchiveInFlightBlock block) {
     validateBlock(block, catalog, dynamicKeyPolicy);
-    try (WriteOptions writeOptions = ArchiveRocksDbWriteOptions.create()) {
-      db.put(writeOptions, ArchiveInFlightCodec.blockKey(block.getRange().getBlockNum()),
-          ArchiveInFlightCodec.encodeBlock(block));
+    long blockNum = block.getRange().getBlockNum();
+    byte[] encodedBlock = ArchiveInFlightCodec.encodeBlock(block);
+    long startedNanos = ArchiveMetrics.startTimer();
+    try (WriteBatch batch = new WriteBatch();
+         WriteOptions writeOptions = ArchiveRocksDbWriteOptions.createForcedSync()) {
+      batch.put(ArchiveInFlightCodec.blockKey(blockNum), encodedBlock);
+      batch.put(ArchiveInFlightCodec.tokenKey(blockNum),
+          ArchiveInFlightCodec.encodeAcknowledgement(block.getJournalToken()));
+      if (block.getJournalState() == ArchiveInFlightBlock.JournalState.CANONICAL_COMMITTED) {
+        batch.put(ArchiveInFlightCodec.acknowledgementKey(blockNum),
+            ArchiveInFlightCodec.encodeAcknowledgement(block.getJournalToken()));
+      } else {
+        batch.delete(ArchiveInFlightCodec.acknowledgementKey(blockNum));
+      }
+      db.write(writeOptions, batch);
+      ArchiveMetrics.journalWritten(encodedBlock.length, startedNanos);
     } catch (RocksDBException e) {
       throw new ArchiveException("archive in-flight put failed", e);
+    }
+  }
+
+  @Override
+  public void acknowledgeBlock(ArchiveInFlightBlock block) {
+    if (block.getJournalState() != ArchiveInFlightBlock.JournalState.CANONICAL_COMMITTED) {
+      throw new ArchiveException("archive acknowledgement requires canonical-committed state");
+    }
+    acknowledgeBlock(block.getJournalToken());
+  }
+
+  @Override
+  public void acknowledgeBlock(ArchiveJournalToken token) {
+    long blockNum = token.getBlockNum();
+    try {
+      byte[] persistedValue = db.get(ArchiveInFlightCodec.tokenKey(blockNum));
+      ArchiveJournalToken persistedToken;
+      if (persistedValue == null) {
+        // Compatibility fallback for journals written before compact token headers existed.
+        byte[] blockValue = db.get(ArchiveInFlightCodec.blockKey(blockNum));
+        if (blockValue == null) {
+          throw new ArchiveException("archive acknowledgement has no journal block " + blockNum);
+        }
+        persistedToken = ArchiveInFlightCodec.decodeBlock(blockValue).getJournalToken();
+      } else {
+        persistedToken = ArchiveInFlightCodec.decodeAcknowledgement(persistedValue);
+      }
+      if (!persistedToken.equals(token)) {
+        throw new ArchiveException("archive acknowledgement token mismatch for block " + blockNum);
+      }
+      byte[] acknowledgement = ArchiveInFlightCodec.encodeAcknowledgement(token);
+      long startedNanos = ArchiveMetrics.startTimer();
+      try (WriteOptions writeOptions = ArchiveRocksDbWriteOptions.createWalOnly()) {
+        db.put(writeOptions, ArchiveInFlightCodec.acknowledgementKey(blockNum),
+            acknowledgement);
+      }
+      ArchiveMetrics.journalAcknowledged(acknowledgement.length, startedNanos);
+    } catch (RocksDBException e) {
+      throw new ArchiveException("archive acknowledgement write failed for block " + blockNum, e);
     }
   }
 
@@ -411,10 +581,23 @@ public final class RocksDbArchiveInFlightStore implements ArchiveInFlightStore {
 
   @Override
   public void deleteBlock(long blockNum) {
-    try (WriteOptions writeOptions = ArchiveRocksDbWriteOptions.create()) {
-      db.delete(writeOptions, ArchiveInFlightCodec.blockKey(blockNum));
+    try (WriteBatch batch = new WriteBatch();
+         WriteOptions writeOptions = ArchiveRocksDbWriteOptions.createForcedSync()) {
+      batch.delete(ArchiveInFlightCodec.blockKey(blockNum));
+      batch.delete(ArchiveInFlightCodec.acknowledgementKey(blockNum));
+      batch.delete(ArchiveInFlightCodec.tokenKey(blockNum));
+      db.write(writeOptions, batch);
     } catch (RocksDBException e) {
       throw new ArchiveException("archive in-flight delete failed", e);
+    }
+  }
+
+  @Override
+  public long usableSpaceBytes() {
+    try {
+      return Files.getFileStore(dbPath).getUsableSpace();
+    } catch (IOException e) {
+      throw new ArchiveException("archive in-flight filesystem capacity read failed", e);
     }
   }
 

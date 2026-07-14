@@ -12,12 +12,18 @@ import org.iq80.leveldb.DBIterator;
 public final class StoreIterator implements org.tron.core.db.common.iterator.DBIterator {
 
   private final DBIterator dbIterator;
+  private final boolean failOnReadError;
   private boolean first = true;
 
   private final AtomicBoolean close = new AtomicBoolean(false);
 
   public StoreIterator(DBIterator dbIterator) {
+    this(dbIterator, false);
+  }
+
+  public StoreIterator(DBIterator dbIterator, boolean failOnReadError) {
     this.dbIterator = dbIterator;
+    this.failOnReadError = failOnReadError;
   }
 
   @Override
@@ -45,12 +51,17 @@ public final class StoreIterator implements org.tron.core.db.common.iterator.DBI
         close();
       }
     } catch (Exception e) {
-      logger.error(e.getMessage(), e);
+      RuntimeException strictFailure = new IllegalStateException(
+          "leveldb iterator failed while reading", e);
       try {
         close();
       } catch (Exception e1) {
-        logger.error(e1.getMessage(), e1);
+        strictFailure.addSuppressed(e1);
       }
+      if (failOnReadError) {
+        throw strictFailure;
+      }
+      logger.error(e.getMessage(), e);
     }
 
     return hasNext;
@@ -115,4 +126,3 @@ public final class StoreIterator implements org.tron.core.db.common.iterator.DBI
     }
   }
 }
-

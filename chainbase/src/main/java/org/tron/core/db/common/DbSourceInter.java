@@ -26,11 +26,15 @@ import java.util.Map;
 import java.util.Set;
 import org.tron.common.utils.FileUtil;
 import org.tron.common.utils.PropUtil;
+import org.tron.core.db.common.iterator.DBIterator;
 import org.tron.core.db2.common.WrappedByteArray;
 import org.tron.core.exception.TronError;
 
 public interface DbSourceInter<V> extends BatchSourceInter<byte[], V>,
     Iterable<Map.Entry<byte[], V>> {
+
+  /** Native byte-array iterator for stores whose values are raw bytes. */
+  DBIterator rawIterator();
 
   String ENGINE_KEY = "ENGINE";
   String ENGINE_FILE = "engine.properties";

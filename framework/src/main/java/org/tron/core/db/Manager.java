@@ -90,9 +90,13 @@ import org.tron.core.ChainBaseManager;
 import org.tron.core.Constant;
 import org.tron.core.Wallet;
 import org.tron.core.actuator.ActuatorCreator;
+import org.tron.core.archive.ArchiveException;
+import org.tron.core.archive.ArchiveJournalToken;
+import org.tron.core.archive.ArchiveMutationLease;
 import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveService;
 import org.tron.core.archive.ArchiveSource;
+import org.tron.core.archive.ArchiveWorkLease;
 import org.tron.core.archive.DefaultArchiveService;
 import org.tron.core.archive.NoopArchiveService;
 import org.tron.core.archive.reader.ArchiveReaderException;
@@ -499,6 +503,19 @@ public class Manager {
 
   @PostConstruct
   public void init() {
+    archiveService.setFatalFailureHandler(failure -> {
+      throw new TronError("fatal archive sidecar failure", failure,
+          TronError.ErrCode.ARCHIVE_RUNTIME);
+    });
+    try (ArchiveWorkLease recoveryLease = archiveService.acquireRecoveryLease();
+         ArchiveMutationLease mutationLease = archiveService.acquireMutationWriteLease()) {
+      recoveryLease.start();
+      initInternal();
+      archiveService.completeRecovery();
+    }
+  }
+
+  private void initInternal() {
     ChainBaseManager.init(chainBaseManager);
     Message.setDynamicPropertiesStore(this.getDynamicPropertiesStore());
     mortgageService
@@ -525,23 +542,34 @@ public class Manager {
     this.filterCapsuleQueue = new LinkedBlockingQueue<>();
     chainBaseManager.setMerkleContainer(getMerkleContainer());
     chainBaseManager.setMortgageService(mortgageService);
+    boolean canonicalHasBlocks = chainBaseManager.hasBlocks();
+    validateArchiveStartupStateMigrations(canonicalHasBlocks);
+    if (archiveService.isEnabled() && !canonicalHasBlocks) {
+      // A crash can leave a durable genesis journal before the canonical session commits. Remove
+      // that orphan before initGenesis tries to allocate block 0 again. Published archive state
+      // against an empty canonical database is never auto-repaired and fails closed.
+      archiveService.reconcilePublishedHeadOnStartup(-1L);
+      archiveService.reconcileInFlightOnStartup(-1L, -1L, ignored -> null);
+    }
     this.initGenesis();
     try {
       BlockCapsule canonicalHead = chainBaseManager.getBlockById(
           getDynamicPropertiesStore().getLatestBlockHeaderHash());
       this.khaosDb.start(canonicalHead);
-      long solidifiedNum = Math.min(
-          getDynamicPropertiesStore().getLatestSolidifiedBlockNum(), canonicalHead.getNum());
-      archiveService.reconcilePublishedHeadOnStartup(canonicalHead.getNum());
-      archiveService.reconcileInFlightOnStartup(solidifiedNum, canonicalHead.getNum(),
-          blockNum -> getArchiveCanonicalBlock(blockNum, canonicalHead));
-      BlockCapsule archiveValidationHead = solidifiedNum == canonicalHead.getNum()
-          ? canonicalHead
-          : chainBaseManager.getBlockByNum(solidifiedNum);
-      archiveService.validateCanonicalHead(archiveValidationHead);
-      // Validate genesis coverage only after reconcile has republished any solidified in-flight
-      // genesis, so a recoverable archive is not mis-read as "genesis not captured" and bricked.
-      validateGenesisArchiveCoverage();
+      if (archiveService.isEnabled()) {
+        long solidifiedNum = Math.min(
+            getDynamicPropertiesStore().getLatestSolidifiedBlockNum(), canonicalHead.getNum());
+        archiveService.reconcilePublishedHeadOnStartup(canonicalHead.getNum());
+        archiveService.reconcileInFlightOnStartup(solidifiedNum, canonicalHead.getNum(),
+            blockNum -> getArchiveCanonicalBlock(blockNum, canonicalHead));
+        BlockCapsule archiveValidationHead = solidifiedNum == canonicalHead.getNum()
+            ? canonicalHead
+            : chainBaseManager.getBlockByNum(solidifiedNum);
+        archiveService.validateCanonicalHead(archiveValidationHead);
+        // Validate genesis coverage only after reconcile has republished any solidified in-flight
+        // genesis, so a recoverable archive is not mis-read as "genesis not captured" and bricked.
+        validateGenesisArchiveCoverage();
+      }
     } catch (ItemNotFoundException e) {
       logger.error(
           "Can not find Dynamic highest block from DB! \nnumber={} \nhash={}",
@@ -653,7 +681,10 @@ public class Manager {
         Args.getInstance().setChainId(genesisBlock.getBlockId().toString());
 
         boolean archivePending = false;
-        try {
+        ArchiveJournalToken archiveJournalToken = null;
+        boolean canonicalCommitStarted = false;
+        try (ISession genesisSession = archiveService.isEnabled()
+            ? revokingStore.buildSession(true) : null) {
           archiveService.beginBlock(genesisBlock, ArchiveSource.NORMAL);
           archivePending = archiveService.isEnabled();
           archiveService.beginSystemTx(genesisBlock, ArchivePhase.BLOCK_PREPARE);
@@ -670,6 +701,8 @@ public class Manager {
             chainBaseManager.getDynamicPropertiesStore().saveLatestBlockHeaderTimestamp(
                 genesisBlock.getTimeStamp());
             if (archiveService.isEnabled()) {
+              // Config-driven rooted values must be final before their block-0 archive snapshot.
+              chainBaseManager.getDynamicPropertiesStore().updateDynamicStoreByConfig();
               chainBaseManager.getDynamicPropertiesStore().saveGenesisArchiveDynamicProperties();
             }
             this.initAccount();
@@ -677,6 +710,9 @@ public class Manager {
               resetBlackholeAccountPermission();
             }
             this.initWitness();
+            if (archiveService.isEnabled()) {
+              applyArchiveGenesisStartupStateMigrations();
+            }
             this.khaosDb.start(genesisBlock);
             this.updateRecentBlock(genesisBlock);
             initAccountHistoryBalance();
@@ -689,14 +725,28 @@ public class Manager {
           } finally {
             archiveService.endTx();
           }
-          archiveService.commitBlock(genesisBlock, 0);
-          archiveService.publishSolidifiedBlocks(
+          if (archiveService.isEnabled()) {
+            // Genesis follows the same journal-first ordering as ordinary blocks. The forced
+            // revoking session keeps canonical writes reversible until the journal is durable,
+            // then commits the sole snapshot into the canonical root stores.
+            archiveJournalToken = archiveService.commitBlockJournaled(genesisBlock, 0);
+            canonicalCommitStarted = true;
+            genesisSession.commitToRoot();
+            archiveService.acknowledgeCanonicalCommit(archiveJournalToken);
+          } else {
+            archiveService.commitBlock(genesisBlock, 0);
+          }
+          archiveService.recoverSynchronouslyTo(
               chainBaseManager.getDynamicPropertiesStore().getLatestSolidifiedBlockNum());
           archivePending = false;
         } catch (RuntimeException | Error t) {
           if (archivePending) {
             try {
-              archiveService.abortBlock(genesisBlock);
+              if (!canonicalCommitStarted && archiveJournalToken != null) {
+                archiveService.rollbackJournaledBlock(archiveJournalToken);
+              } else if (archiveJournalToken == null) {
+                archiveService.abortBlock(genesisBlock);
+              }
             } catch (RuntimeException cleanupFailure) {
               t.addSuppressed(cleanupFailure);
             }
@@ -704,6 +754,92 @@ public class Manager {
           throw t;
         }
       }
+    }
+  }
+
+  void validateArchiveStartupStateMigrations(boolean canonicalHasBlocks) {
+    if (!archiveService.isEnabled() || !canonicalHasBlocks) {
+      return;
+    }
+    List<String> pending = new ArrayList<>();
+    if (Args.getInstance().isNeedToUpdateAsset() && needToUpdateAsset()
+        && new AssetUpdateHelper(chainBaseManager).wouldChangeArchiveState()) {
+      pending.add("asset-v2");
+    }
+    if (needToMoveAbi() && new MoveAbiHelper(chainBaseManager).wouldChangeArchiveState()) {
+      pending.add("contract-abi");
+    }
+    if (needToLoadEnergyPriceHistory()
+        && new EnergyPriceHistoryLoader(chainBaseManager).wouldChangeArchiveState()) {
+      pending.add("energy-price-history");
+    }
+    if (needToLoadBandwidthPriceHistory()
+        && new BandwidthPriceHistoryLoader(chainBaseManager).wouldChangeArchiveState()) {
+      pending.add("bandwidth-price-history");
+    }
+    if (needToSetBlackholePermission() && wouldResetBlackholeAccountPermission()) {
+      pending.add("blackhole-permission");
+    }
+    if (wouldUpdateDynamicStoreByConfig()) {
+      pending.add("dynamic-config");
+    }
+    if (!pending.isEmpty()) {
+      String message = "archive cannot apply startup state migrations outside a block: "
+          + String.join(",", pending)
+          + "; complete the migration with archive disabled, then rebuild/adopt the archive";
+      try {
+        archiveService.markRebuildRequired(message);
+      } catch (RuntimeException markerFailure) {
+        throw new ArchiveException(message + "; failed to persist archive rebuild marker",
+            markerFailure);
+      }
+      throw new ArchiveException(message);
+    }
+  }
+
+  private boolean wouldResetBlackholeAccountPermission() {
+    AccountCapsule current = getAccountStore().getBlackhole();
+    if (current == null) {
+      return true;
+    }
+    AccountCapsule expected = new AccountCapsule(current.getData());
+    byte[] zeroAddress = new byte[21];
+    zeroAddress[0] = Wallet.getAddressPreFixByte();
+    Permission owner = AccountCapsule
+        .createDefaultOwnerPermission(ByteString.copyFrom(zeroAddress));
+    expected.updatePermissions(owner, null, null);
+    return !Arrays.equals(current.getData(), expected.getData());
+  }
+
+  private boolean wouldUpdateDynamicStoreByConfig() {
+    long configured = CommonParameter.getInstance().getAllowTvmConstantinople();
+    if (configured == 0) {
+      return false;
+    }
+    DynamicPropertiesStore dynamic = chainBaseManager.getDynamicPropertiesStore();
+    return dynamic.getAllowTvmConstantinople() != configured
+        || !hasSystemContractBit(dynamic.getAvailableContractType(), 48)
+        || !hasSystemContractBit(dynamic.getActiveDefaultOperations(), 48);
+  }
+
+  private static boolean hasSystemContractBit(byte[] value, int contractId) {
+    int byteIndex = contractId / Byte.SIZE;
+    return value != null && value.length > byteIndex
+        && (value[byteIndex] & (1 << contractId % Byte.SIZE)) != 0;
+  }
+
+  private void applyArchiveGenesisStartupStateMigrations() {
+    if (Args.getInstance().isNeedToUpdateAsset() && needToUpdateAsset()) {
+      new AssetUpdateHelper(chainBaseManager).doWork();
+    }
+    if (needToMoveAbi()) {
+      new MoveAbiHelper(chainBaseManager).doWork();
+    }
+    if (needToLoadEnergyPriceHistory()) {
+      new EnergyPriceHistoryLoader(chainBaseManager).doWork();
+    }
+    if (needToLoadBandwidthPriceHistory()) {
+      new BandwidthPriceHistoryLoader(chainBaseManager).doWork();
     }
   }
 
@@ -745,7 +881,7 @@ public class Manager {
     ArchiveBlockRange range = defaultArchiveService.getTxNumIndex().getBlockRange(0L)
         .orElseThrow(() -> new TronError("Archive enabled but genesis block range is unavailable",
             TronError.ErrCode.GENESIS_BLOCK_INIT));
-    try (ArchiveStateReader reader = defaultArchiveService.getReaderFactory().open(
+    try (ArchiveStateReader reader = defaultArchiveService.openRecoveryReader(
         ArchiveStatePoint.blockEnd(0L, chainBaseManager.getGenesisBlock().getBlockId().getBytes(),
             range.getFinalizeTxNum()))) {
       HistoricalArchiveVmDynamicProperties.validateGenesisArchiveRows(
@@ -1181,6 +1317,23 @@ public class Manager {
     publishArchiveSolidifiedOrFailStop(block, action);
   }
 
+  ArchiveJournalToken journalArchiveBlockOnlyOrFailStop(BlockCapsule block, String action) {
+    try {
+      return archiveService.commitBlockJournaled(block, block.getTransactions().size());
+    } catch (RuntimeException e) {
+      throw archiveRuntimeError(action, block, e);
+    }
+  }
+
+  void acknowledgeArchiveJournalOrFailStop(ArchiveJournalToken token, BlockCapsule block,
+      String action) {
+    try {
+      archiveService.acknowledgeCanonicalCommit(token);
+    } catch (RuntimeException e) {
+      throw archiveRuntimeError(action, block, e);
+    }
+  }
+
   void commitArchiveBlockOnlyOrFailStop(BlockCapsule block, String action) {
     try {
       archiveService.commitBlock(block);
@@ -1190,10 +1343,25 @@ public class Manager {
   }
 
   void publishArchiveSolidifiedOrFailStop(BlockCapsule block, String action) {
+    if (!archiveService.isEnabled()) {
+      return;
+    }
+    publishArchiveSolidifiedOrFailStop(
+        block, action, getDynamicPropertiesStore().getLatestSolidifiedBlockNum());
+  }
+
+  private void publishArchiveSolidifiedOrFailStop(BlockCapsule block, String action,
+      long solidifiedBlockNum) {
     try {
-      archiveService.publishSolidifiedBlocks(
-          getDynamicPropertiesStore().getLatestSolidifiedBlockNum());
-    } catch (RuntimeException e) {
+      byte[] solidifiedBlockHash = null;
+      if (archiveService.requiresPublishTargetHash()) {
+        solidifiedBlockHash = block.getNum() == solidifiedBlockNum
+            ? block.getBlockId().getBytes()
+            : chainBaseManager.getBlockIdByNum(solidifiedBlockNum).getBytes();
+      }
+      archiveService.requestPublishSolidifiedBlocks(
+          solidifiedBlockNum, solidifiedBlockHash);
+    } catch (ItemNotFoundException | RuntimeException e) {
       throw archiveRuntimeError(action, block, e);
     }
   }
@@ -1212,6 +1380,16 @@ public class Manager {
     } catch (RuntimeException e) {
       primary.addSuppressed(e);
       logger.error("Archive {} abort failed for block {}.", action, block.getNum(), e);
+    }
+  }
+
+  void rollbackArchiveJournalBestEffort(ArchiveJournalToken token, BlockCapsule block,
+      String action, Throwable primary) {
+    try {
+      archiveService.rollbackJournaledBlock(token);
+    } catch (RuntimeException e) {
+      primary.addSuppressed(e);
+      logger.error("Archive {} journal rollback failed for block {}.", action, block.getNum(), e);
     }
   }
 
@@ -1274,6 +1452,21 @@ public class Manager {
       TooBigTransactionException, TooBigTransactionResultException, DupTransactionException,
       TransactionExpirationException, NonCommonBlockException, ReceiptCheckErrException,
       VMIllegalException, ZksnarkException, BadBlockException, EventBloomException {
+    archiveService.awaitWriterCapacity();
+    try (ArchiveWorkLease writerLease = archiveService.acquireWriterLease();
+         ArchiveMutationLease mutationLease = archiveService.acquireMutationWriteLease()) {
+      writerLease.start();
+      switchForkWithArchiveLease(newHead);
+      publishArchiveSolidifiedOrFailStop(newHead, "switch fork");
+    }
+  }
+
+  private void switchForkWithArchiveLease(BlockCapsule newHead)
+      throws ValidateSignatureException, ContractValidateException, ContractExeException,
+      ValidateScheduleException, AccountResourceInsufficientException, TaposException,
+      TooBigTransactionException, TooBigTransactionResultException, DupTransactionException,
+      TransactionExpirationException, NonCommonBlockException, ReceiptCheckErrException,
+      VMIllegalException, ZksnarkException, BadBlockException, EventBloomException {
 
     MetricsUtil.meterMark(MetricsKey.BLOCKCHAIN_FORK_COUNT);
     Metrics.counterInc(MetricKeys.Counter.BLOCK_FORK, 1, MetricLabels.ALL);
@@ -1315,7 +1508,9 @@ public class Manager {
       List<KhaosBlock> first = new ArrayList<>(binaryTree.getKey());
       Collections.reverse(first);
       for (KhaosBlock item : first) {
-        Exception exception = null;
+        Throwable exception = null;
+        ArchiveJournalToken archiveJournalToken = null;
+        boolean canonicalCommitted = false;
         // todo  process the exception carefully later
         archiveService.beginBlock(item.getBlk(), ArchiveSource.REPLAY);
         try (ISession tmpSession = revokingStore.buildSession()) {
@@ -1332,9 +1527,12 @@ public class Manager {
             tx.setVerified(false);
           }
           applyBlock(item.getBlk().setSwitch(true));
+          archiveJournalToken = journalArchiveBlockOnlyOrFailStop(
+              item.getBlk(), "switch fork replay");
           tmpSession.commit();
-          // Archive commit inside try, after canonical commit (catch handles any failure).
-          commitArchiveBlockOrFailStop(item.getBlk(), "switch fork replay");
+          canonicalCommitted = true;
+          acknowledgeArchiveJournalOrFailStop(
+              archiveJournalToken, item.getBlk(), "switch fork replay");
         } catch (AccountResourceInsufficientException
             | ValidateSignatureException
             | ContractValidateException
@@ -1350,9 +1548,15 @@ public class Manager {
             | ZksnarkException
             | BadBlockException
             | EventBloomException
-            | RuntimeException e) {
+            | RuntimeException
+            | TronError e) {
           exception = e;
-          abortArchiveBlockBestEffort(item.getBlk(), "switch fork replay", e);
+          if (!canonicalCommitted && archiveJournalToken != null) {
+            rollbackArchiveJournalBestEffort(
+                archiveJournalToken, item.getBlk(), "switch fork replay", e);
+          } else if (archiveJournalToken == null) {
+            abortArchiveBlockBestEffort(item.getBlk(), "switch fork replay", e);
+          }
           logger.warn(e.getMessage(), e);
           throw e;
         } finally {
@@ -1372,13 +1576,18 @@ public class Manager {
             List<KhaosBlock> second = new ArrayList<>(binaryTree.getValue());
             Collections.reverse(second);
             for (KhaosBlock khaosBlock : second) {
+              ArchiveJournalToken recoveryJournalToken = null;
+              boolean recoveryCanonicalCommitted = false;
               // todo  process the exception carefully later
               archiveService.beginBlock(khaosBlock.getBlk(), ArchiveSource.RECOVERY);
               try (ISession tmpSession = revokingStore.buildSession()) {
                 applyBlock(khaosBlock.getBlk().setSwitch(true));
+                recoveryJournalToken = journalArchiveBlockOnlyOrFailStop(
+                    khaosBlock.getBlk(), "switch fork recovery");
                 tmpSession.commit();
-                // Archive commit inside try; recovery failures fail-stop below.
-                commitArchiveBlockOrFailStop(khaosBlock.getBlk(), "switch fork recovery");
+                recoveryCanonicalCommitted = true;
+                acknowledgeArchiveJournalOrFailStop(
+                    recoveryJournalToken, khaosBlock.getBlk(), "switch fork recovery");
               } catch (AccountResourceInsufficientException
                   | ValidateSignatureException
                   | ContractValidateException
@@ -1394,9 +1603,17 @@ public class Manager {
                   | ZksnarkException
                   | BadBlockException
                   | EventBloomException
-                  | RuntimeException e) {
+                  | RuntimeException
+                  | TronError e) {
                 logger.warn(e.getMessage(), e);
-                abortArchiveBlockAndFailStop(khaosBlock.getBlk(), "switch fork recovery", e);
+                if (!recoveryCanonicalCommitted && recoveryJournalToken != null) {
+                  rollbackArchiveJournalBestEffort(
+                      recoveryJournalToken, khaosBlock.getBlk(), "switch fork recovery", e);
+                } else if (recoveryJournalToken == null) {
+                  abortArchiveBlockBestEffort(
+                      khaosBlock.getBlk(), "switch fork recovery", e);
+                }
+                throw archiveRuntimeError("switch fork recovery", khaosBlock.getBlk(), e);
               }
             }
           }
@@ -1578,26 +1795,44 @@ public class Manager {
 
               return;
             }
-            long oldSolidNum = getDynamicPropertiesStore().getLatestSolidifiedBlockNum();
-            archiveService.beginBlock(newBlock, ArchiveSource.NORMAL);
-            try (ISession tmpSession = revokingStore.buildSession()) {
-              applyBlock(newBlock, txs);
-              // Persist the archive journal before the canonical session commit. A crash between
-              // the two commits must fail-stop on restart, not silently skip the first archive
-              // block as a mid-chain activation.
-              commitArchiveBlockOnlyOrFailStop(newBlock, "push block");
-              tmpSession.commit();
-            } catch (Throwable throwable) {
-              abortArchiveBlockBestEffort(newBlock, "push block", throwable);
-              logger.error(throwable.getMessage(), throwable);
-              khaosDb.removeBlk(block.getBlockId());
-              clearSolidityContractTriggerCache(block.getNum());
-              throw throwable;
+            archiveService.awaitWriterCapacity();
+            try (ArchiveWorkLease writerLease = archiveService.acquireWriterLease();
+                 ArchiveMutationLease mutationLease =
+                     archiveService.acquireMutationReadLease()) {
+              writerLease.start();
+              long oldSolidNum = getDynamicPropertiesStore().getLatestSolidifiedBlockNum();
+              ArchiveJournalToken archiveJournalToken = null;
+              boolean canonicalCommitted = false;
+              archiveService.beginBlock(newBlock, ArchiveSource.NORMAL);
+              try (ISession tmpSession = revokingStore.buildSession()) {
+                applyBlock(newBlock, txs);
+                // Persist the archive journal before the canonical session commit. A crash between
+                // the two commits must fail-stop on restart, not silently skip the first archive
+                // block as a mid-chain activation.
+                archiveJournalToken = journalArchiveBlockOnlyOrFailStop(newBlock, "push block");
+                tmpSession.commit();
+                canonicalCommitted = true;
+              } catch (Throwable throwable) {
+                if (!canonicalCommitted && archiveJournalToken != null) {
+                  rollbackArchiveJournalBestEffort(
+                      archiveJournalToken, newBlock, "push block", throwable);
+                } else if (archiveJournalToken == null) {
+                  abortArchiveBlockBestEffort(newBlock, "push block", throwable);
+                }
+                logger.error(throwable.getMessage(), throwable);
+                if (!canonicalCommitted) {
+                  khaosDb.removeBlk(block.getBlockId());
+                  clearSolidityContractTriggerCache(block.getNum());
+                }
+                throw throwable;
+              }
+              acknowledgeArchiveJournalOrFailStop(archiveJournalToken, newBlock, "push block");
+              // Publish only after the canonical session commit and journal acknowledgement.
+              long newSolidNum = getDynamicPropertiesStore().getLatestSolidifiedBlockNum();
+              publishArchiveSolidifiedOrFailStop(
+                  newBlock, "push block", newSolidNum);
+              blockTrigger(newBlock, oldSolidNum, newSolidNum);
             }
-            // Publish only after the canonical session commit is durable.
-            publishArchiveSolidifiedOrFailStop(newBlock, "push block");
-            long newSolidNum = getDynamicPropertiesStore().getLatestSolidifiedBlockNum();
-            blockTrigger(newBlock, oldSolidNum, newSolidNum);
           }
           logger.info(SAVE_BLOCK, newBlock);
         }
@@ -2878,14 +3113,55 @@ public class Manager {
   }
 
   public void close() {
-    stopRePushThread();
-    stopRePushTriggerThread();
-    EventPluginLoader.getInstance().stopPlugin();
-    stopFilterProcessThread();
-    stopValidateSignThread();
-    chainBaseManager.shutdown();
-    revokingStore.shutdown();
-    session.reset();
+    Throwable failure = null;
+    failure = runShutdownStage(failure, "repush thread", this::stopRePushThread);
+    failure = runShutdownStage(
+        failure, "repush trigger thread", this::stopRePushTriggerThread);
+    failure = runShutdownStage(
+        failure, "event plugin", () -> EventPluginLoader.getInstance().stopPlugin());
+    failure = runShutdownStage(failure, "filter thread", this::stopFilterProcessThread);
+    failure = runShutdownStage(failure, "signature thread", this::stopValidateSignThread);
+    try {
+      archiveService.close();
+    } catch (RuntimeException | Error archiveFailure) {
+      logger.warn("Manager shutdown stage 'archive' failed; preserving dependent stores",
+          archiveFailure);
+      if (failure != null) {
+        archiveFailure.addSuppressed(failure);
+      }
+      if (archiveFailure instanceof Error) {
+        throw (Error) archiveFailure;
+      }
+      throw (RuntimeException) archiveFailure;
+    }
+    failure = runShutdownStage(failure, "chainbase", chainBaseManager::shutdown);
+    failure = runShutdownStage(failure, "revoking store", revokingStore::shutdown);
+    failure = runShutdownStage(failure, "session", session::reset);
+    throwIfShutdownFailed(failure);
+  }
+
+  private static Throwable runShutdownStage(
+      Throwable failure, String stage, Runnable action) {
+    try {
+      action.run();
+      return failure;
+    } catch (RuntimeException | Error next) {
+      logger.warn("Manager shutdown stage '{}' failed", stage, next);
+      if (failure == null) {
+        return next;
+      }
+      failure.addSuppressed(next);
+      return failure;
+    }
+  }
+
+  private static void throwIfShutdownFailed(Throwable failure) {
+    if (failure instanceof Error) {
+      throw (Error) failure;
+    }
+    if (failure instanceof RuntimeException) {
+      throw (RuntimeException) failure;
+    }
   }
 
   private static class ValidateSignTask implements Callable<Boolean> {
