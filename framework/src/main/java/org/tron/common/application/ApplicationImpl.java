@@ -53,17 +53,50 @@ public class ApplicationImpl implements Application {
 
   @Override
   public void shutdown() {
-    this.shutdownServices();
-    if (!Args.getInstance().isSolidityNode() && !Args.getInstance().p2pDisable) {
-      tronNetService.close();
+    Throwable failure = null;
+    try {
+      failure = runShutdownStage(failure, "services", this::shutdownServices);
+      failure = runShutdownStage(failure, "network", () -> {
+        if (!Args.getInstance().isSolidityNode() && !Args.getInstance().p2pDisable) {
+          tronNetService.close();
+        }
+      });
+      failure = runShutdownStage(failure, "consensus", consensusService::stop);
+      failure = runShutdownStage(failure, "events", eventService::close);
+      failure = runShutdownStage(failure, "solidity node", () -> {
+        if (solidityNode != null) {
+          solidityNode.close();
+        }
+      });
+      failure = runShutdownStage(failure, "database manager", dbManager::close);
+    } finally {
+      shutdown.countDown();
     }
-    consensusService.stop();
-    eventService.close();
-    if (solidityNode != null) {
-      solidityNode.close();
+    throwIfShutdownFailed(failure);
+  }
+
+  private static Throwable runShutdownStage(
+      Throwable failure, String stage, Runnable action) {
+    try {
+      action.run();
+      return failure;
+    } catch (RuntimeException | Error next) {
+      logger.warn("Application shutdown stage '{}' failed", stage, next);
+      if (failure == null) {
+        return next;
+      }
+      failure.addSuppressed(next);
+      return failure;
     }
-    dbManager.close();
-    shutdown.countDown();
+  }
+
+  private static void throwIfShutdownFailed(Throwable failure) {
+    if (failure instanceof Error) {
+      throw (Error) failure;
+    }
+    if (failure instanceof RuntimeException) {
+      throw (RuntimeException) failure;
+    }
   }
 
   @Override

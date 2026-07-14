@@ -23,6 +23,8 @@ import org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract;
 @Slf4j(topic = "DB")
 public class AssetUpdateHelper {
 
+  private static final long INITIAL_TOKEN_ID = 1_000_000L;
+
   private ChainBaseManager chainBaseManager;
 
   private HashMap<String, byte[]> assetNameToIdMap = new HashMap<>();
@@ -44,6 +46,35 @@ public class AssetUpdateHelper {
         System.currentTimeMillis() - start);
   }
 
+  /**
+   * Returns false only when running the migration can write completion metadata and nothing else.
+   */
+  public boolean wouldChangeArchiveState() {
+    if (chainBaseManager.getAssetIssueV2Store().isNotEmpty()
+        || chainBaseManager.getExchangeV2Store().isNotEmpty()
+        || chainBaseManager.getAssetIssueStore().iterator().hasNext()
+        || chainBaseManager.getExchangeStore().iterator().hasNext()
+        || chainBaseManager.getDynamicPropertiesStore().getTokenIdNum() != INITIAL_TOKEN_ID) {
+      return true;
+    }
+    Iterator<Entry<byte[], AccountCapsule>> accounts =
+        chainBaseManager.getAccountStore().iterator();
+    while (accounts.hasNext()) {
+      AccountCapsule account = accounts.next().getValue();
+      if (!account.getInstance().getAssetMap().isEmpty()
+          || !account.getInstance().getAssetV2Map().isEmpty()
+          || !account.getInstance().getFreeAssetNetUsageMap().isEmpty()
+          || !account.getInstance().getFreeAssetNetUsageV2Map().isEmpty()
+          || !account.getInstance().getLatestAssetOperationTimeMap().isEmpty()
+          || !account.getInstance().getLatestAssetOperationTimeV2Map().isEmpty()
+          || !account.getAssetIssuedName().isEmpty()
+          || !account.getAssetIssuedID().isEmpty()) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   public void init() {
     if (chainBaseManager.getAssetIssueV2Store().isNotEmpty()) {
       logger.warn("AssetIssueV2Store is not empty");
@@ -53,7 +84,7 @@ public class AssetUpdateHelper {
       logger.warn("ExchangeV2Store is not empty");
     }
     chainBaseManager.getExchangeV2Store().reset();
-    chainBaseManager.getDynamicPropertiesStore().saveTokenIdNum(1000000L);
+    chainBaseManager.getDynamicPropertiesStore().saveTokenIdNum(INITIAL_TOKEN_ID);
   }
 
   public List<AssetIssueCapsule> getAllAssetIssues() {

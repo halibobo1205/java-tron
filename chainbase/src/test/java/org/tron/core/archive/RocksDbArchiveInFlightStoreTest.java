@@ -1,6 +1,9 @@
 package org.tron.core.archive;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
@@ -25,8 +28,12 @@ import org.tron.core.archive.txnum.ArchiveTxPosition;
 
 public class RocksDbArchiveInFlightStoreTest {
 
+  private static final int TOKEN_ENCODED_SIZE = Long.BYTES
+      + Integer.BYTES + ArchiveBlockRange.BLOCK_HASH_LENGTH
+      + Integer.BYTES + ArchiveJournalToken.GENERATION_NONCE_LENGTH
+      + Integer.BYTES + ArchiveBlockRange.SCHEMA_CHECKSUM_LENGTH;
   private static final int BLOCK_HASH_LENGTH_OFFSET =
-      1 + 5 * Long.BYTES + Integer.BYTES + 1;
+      2 + TOKEN_ENCODED_SIZE + 5 * Long.BYTES + Integer.BYTES + 1;
   private static final int POSITION_COUNT_OFFSET = BLOCK_HASH_LENGTH_OFFSET
       + Integer.BYTES + ArchiveBlockRange.BLOCK_HASH_LENGTH
       + Integer.BYTES + ArchiveBlockRange.SCHEMA_CHECKSUM_LENGTH;
@@ -61,13 +68,42 @@ public class RocksDbArchiveInFlightStoreTest {
     store = new RocksDbArchiveInFlightStore(dir.toString());
 
     assertEquals(1, store.loadBlocks().size());
-    assertEquals(7, store.loadBlocks().get(0).getRange().getBlockNum());
+    ArchiveInFlightBlock loaded = store.loadBlocks().get(0);
+    assertEquals(7, loaded.getRange().getBlockNum());
+    assertEquals(block.getJournalToken(), loaded.getJournalToken());
+    assertEquals(ArchiveInFlightBlock.JournalState.JOURNALED, loaded.getJournalState());
+  }
+
+  @Test
+  public void compactAcknowledgementSurvivesRestartWithoutRewritingJournalPayload()
+      throws Exception {
+    ArchiveInFlightBlock block = block(7);
+    store.putBlock(block);
+    store.close();
+    store = null;
+    byte[] journalBefore = readRaw(ArchiveInFlightCodec.blockKey(7));
+
+    store = new RocksDbArchiveInFlightStore(dir.toString());
+    store.acknowledgeBlock(block.withJournalState(
+        ArchiveInFlightBlock.JournalState.CANONICAL_COMMITTED));
+    store.close();
+    store = null;
+
+    assertArrayEquals(journalBefore, readRaw(ArchiveInFlightCodec.blockKey(7)));
+    assertNotNull(readRaw(ArchiveInFlightCodec.acknowledgementKey(7)));
+
+    store = new RocksDbArchiveInFlightStore(dir.toString());
+
+    ArchiveInFlightBlock loaded = store.loadBlocks().get(0);
+    assertEquals(block.getJournalToken(), loaded.getJournalToken());
+    assertEquals(ArchiveInFlightBlock.JournalState.CANONICAL_COMMITTED,
+        loaded.getJournalState());
   }
 
   @Test
   public void openRejectsCorruptBlockValue() throws Exception {
     closeForRawEdit();
-    putRaw(ArchiveInFlightCodec.blockKey(7), new byte[] {1});
+    putRaw(ArchiveInFlightCodec.blockKey(7), new byte[] {2});
 
     assertOpenFails("decode failed");
   }
@@ -248,6 +284,58 @@ public class RocksDbArchiveInFlightStoreTest {
   }
 
   @Test
+  public void openRejectsOrphanAcknowledgement() throws Exception {
+    ArchiveInFlightBlock block = block(7);
+    closeForRawEdit();
+    putRaw(ArchiveInFlightCodec.acknowledgementKey(7),
+        ArchiveInFlightCodec.encodeAcknowledgement(block.getJournalToken()));
+
+    assertOpenFails("has no journal block 7");
+  }
+
+  @Test
+  public void openRejectsOrphanJournalToken() throws Exception {
+    ArchiveInFlightBlock block = block(7);
+    closeForRawEdit();
+    putRaw(ArchiveInFlightCodec.tokenKey(7),
+        ArchiveInFlightCodec.encodeAcknowledgement(block.getJournalToken()));
+
+    assertOpenFails("token has no journal block 7");
+  }
+
+  @Test
+  public void openRejectsJournalTokenThatDoesNotMatchBlock() throws Exception {
+    ArchiveInFlightBlock block = block(7);
+    ArchiveInFlightBlock other = block(8);
+    ArchiveJournalToken mismatched = new ArchiveJournalToken(
+        7L, other.getJournalToken().getBlockHash(),
+        other.getJournalToken().getGenerationNonce(),
+        other.getJournalToken().getSchemaChecksum());
+    closeForRawEdit();
+    putRaw(ArchiveInFlightCodec.blockKey(7), ArchiveInFlightCodec.encodeBlock(block));
+    putRaw(ArchiveInFlightCodec.tokenKey(7),
+        ArchiveInFlightCodec.encodeAcknowledgement(mismatched));
+
+    assertOpenFails("journal token mismatch for block 7");
+  }
+
+  @Test
+  public void deleteRemovesJournalAndAcknowledgementTogether() throws Exception {
+    ArchiveInFlightBlock block = block(7);
+    store.putBlock(block);
+    store.acknowledgeBlock(block.withJournalState(
+        ArchiveInFlightBlock.JournalState.CANONICAL_COMMITTED));
+    store.deleteBlock(7);
+    store.close();
+    store = null;
+
+    assertNull(readRaw(ArchiveInFlightCodec.blockKey(7)));
+    assertNull(readRaw(ArchiveInFlightCodec.acknowledgementKey(7)));
+    store = new RocksDbArchiveInFlightStore(dir.toString());
+    assertTrue(store.loadBlocks().isEmpty());
+  }
+
+  @Test
   public void openRejectsNegativeBlockKey() throws Exception {
     closeForRawEdit();
     putRaw(rawBlockKey(-1), new byte[] {1});
@@ -273,6 +361,14 @@ public class RocksDbArchiveInFlightStoreTest {
     try (Options options = new Options().setCreateIfMissing(false);
         RocksDB rawDb = RocksDB.open(options, dir.toString())) {
       rawDb.put(key, value);
+    }
+  }
+
+  private byte[] readRaw(byte[] key) throws RocksDBException {
+    RocksDB.loadLibrary();
+    try (Options options = new Options().setCreateIfMissing(false);
+        RocksDB rawDb = RocksDB.openReadOnly(options, dir.toString())) {
+      return rawDb.get(key);
     }
   }
 

@@ -57,12 +57,44 @@ public final class ArchiveCaptureHolder {
     logger.warn("archive capture helper failed during {}: {}", operation, cause.getMessage());
   }
 
+  /** Aggregates a previous-value read without invoking a metrics reporter on the Store hot path. */
+  public static void recordPreviousValueRead(long startedNanos, boolean success) {
+    ArchiveCaptureEngine active = engine;
+    if (active != null) {
+      active.recordPreviousValueRead(startedNanos, success);
+    }
+  }
+
+  /** Aggregates account-asset lookup work without invoking metrics on the Store hot path. */
+  public static void recordAccountAssetLookup(boolean prefixScan, long physicalRowsRead,
+      long startedNanos) {
+    ArchiveCaptureEngine active = engine;
+    if (active != null) {
+      active.recordAccountAssetLookup(prefixScan, physicalRowsRead, startedNanos);
+    }
+  }
+
+  /** Lets streaming semantic hooks stop work once the current block is already doomed. */
+  public static boolean hasFailure() {
+    ArchiveCaptureEngine active = engine;
+    return active != null && active.failure().isPresent();
+  }
+
   /**
    * Whether writes to {@code dbName} are archived. The Store path calls this BEFORE a put/delete so
    * it can skip the prev-value read (an extra get per write, the Erigon-model cost) for
    * non-archived stores; returns false when archive is off, so the default path does no extra work.
    */
   public static boolean capturesStore(String dbName) {
+    return capturesStore(dbName, null, false);
+  }
+
+  /** Key-aware admission used by generic Store hooks to skip excluded allowlist prev-reads. */
+  public static boolean capturesStore(String dbName, byte[] key) {
+    return capturesStore(dbName, key, true);
+  }
+
+  private static boolean capturesStore(String dbName, byte[] key, boolean keyAware) {
     ArchiveCaptureEngine active = engine;
     if (active == null) {
       return false;
@@ -71,7 +103,8 @@ public final class ArchiveCaptureHolder {
       return false;
     }
     try {
-      boolean captures = active.capturesStore(dbName);
+      boolean captures = keyAware
+          ? active.capturesStore(dbName, key) : active.capturesStore(dbName);
       if (captures && active.hasActiveBlock() && !active.hasCurrentPosition()) {
         active.recordFailure("capturesStore(" + dbName + ")",
             new IllegalStateException("archive captured store write without current tx context"));
@@ -143,6 +176,24 @@ public final class ArchiveCaptureHolder {
     }
     try {
       active.captureAccountAsset(addressKey, oldAccount, newAccount);
+    } catch (Exception e) {
+      active.recordFailure("captureAccountAsset", e);
+      logger.warn("archive account-asset capture failed (dropped): {}", e.getMessage());
+    }
+  }
+
+  /** Capture one effective TRC10 balance transition; isolated like capturePut. */
+  public static void captureAccountAsset(byte[] addressKey, byte[] assetId,
+      long oldBalance, long newBalance) {
+    ArchiveCaptureEngine active = engine;
+    if (active == null) {
+      return;
+    }
+    if (!ensureCurrentTx(active, "captureAccountAsset")) {
+      return;
+    }
+    try {
+      active.captureAccountAsset(addressKey, assetId, oldBalance, newBalance);
     } catch (Exception e) {
       active.recordFailure("captureAccountAsset", e);
       logger.warn("archive account-asset capture failed (dropped): {}", e.getMessage());

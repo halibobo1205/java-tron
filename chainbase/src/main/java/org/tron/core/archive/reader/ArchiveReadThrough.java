@@ -16,4 +16,9 @@ public interface ArchiveReadThrough {
 
   Optional<DomainValue> read(ArchiveDomain domain, byte[] canonicalKey,
       ArchiveStatePoint point) throws ArchiveReaderException;
+
+  /** Conservative number of canonical-store operations used by {@link #read}. */
+  default long backendReadCost(ArchiveDomain domain) {
+    return 0L;
+  }
 }

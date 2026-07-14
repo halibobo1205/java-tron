@@ -3,6 +3,7 @@ package org.tron.core.archive.capture;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import java.nio.charset.StandardCharsets;
 import org.junit.After;
 import org.junit.Test;
 import org.tron.core.archive.ArchiveExecutionContext;
@@ -32,6 +33,10 @@ public class ArchiveCaptureHolderTest {
   private static ArchiveCaptureEngine engineWithoutActiveContext() {
     return new ArchiveCaptureEngine(new DefaultArchiveDomainRegistry(),
         new DefaultArchiveDomainCatalog(), new DynamicKeyPolicy(), new ArchiveExecutionContext());
+  }
+
+  private static byte[] ascii(String value) {
+    return value.getBytes(StandardCharsets.US_ASCII);
   }
 
   @Test
@@ -68,6 +73,8 @@ public class ArchiveCaptureHolderTest {
     ArchiveCaptureHolder.set(engineWithActiveContext());
     assertTrue(ArchiveCaptureHolder.capturesStore("account"));    // captured store
     assertFalse(ArchiveCaptureHolder.capturesStore("block"));     // excluded store
+    assertTrue(ArchiveCaptureHolder.capturesStore("properties", ascii("ENERGY_FEE")));
+    assertFalse(ArchiveCaptureHolder.capturesStore("properties", ascii("ABI_MOVE_DONE")));
   }
 
   @Test

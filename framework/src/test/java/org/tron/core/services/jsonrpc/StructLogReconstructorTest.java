@@ -1,6 +1,8 @@
 package org.tron.core.services.jsonrpc;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import java.math.BigInteger;
@@ -11,6 +13,10 @@ import java.util.Map;
 import org.bouncycastle.util.encoders.Hex;
 import org.junit.Test;
 import org.tron.common.runtime.vm.DataWord;
+import org.tron.core.archive.query.ArchiveQueryLimits;
+import org.tron.core.archive.query.HistoricalQueryLimitException;
+import org.tron.core.archive.query.QueryContext;
+import org.tron.core.archive.query.QueryContextHolder;
 import org.tron.core.services.jsonrpc.types.StructLog;
 import org.tron.core.vm.trace.OpActions;
 import org.tron.core.vm.trace.ProgramTrace;
@@ -126,6 +132,39 @@ public class StructLogReconstructorTest {
     assertEquals(Arrays.asList(word(2)), logs.get(4).getStack());
   }
 
+  @Test
+  public void responseBudgetRejectsBeforeLargeMemoryExpansion() {
+    ProgramTrace trace = new ProgramTrace();
+    trace.setOps(Arrays.asList(op(0x00, 0, 0, 1000L, memoryExtend(1_000_000L))));
+    QueryContext context = new QueryContext(ArchiveQueryLimits.builder()
+        .maxResponseBytes(1_024L)
+        .build());
+
+    HistoricalQueryLimitException failure;
+    try (QueryContextHolder.Scope ignored = QueryContextHolder.attach(context)) {
+      failure = assertThrows(HistoricalQueryLimitException.class,
+          () -> StructLogReconstructor.reconstruct(trace));
+    }
+
+    assertEquals(HistoricalQueryLimitException.Limit.RESPONSE_BYTES, failure.getLimit());
+    assertTrue(context.getResponseBytes() > 1_024L);
+  }
+
+  @Test
+  public void liveStructLogReconstructionRemainsUnmetered() {
+    ProgramTrace trace = new ProgramTrace();
+    trace.setOps(Arrays.asList(op(0x00, 0, 0, 1000L, actions())));
+    QueryContext unrelated = new QueryContext(ArchiveQueryLimits.builder()
+        .maxResponseBytes(0)
+        .build());
+
+    List<StructLog> logs = StructLogReconstructor.reconstruct(trace);
+
+    assertEquals(1, logs.size());
+    assertEquals(0L, unrelated.getResponseBytes());
+    assertFalse(unrelated.isTerminated());
+  }
+
   private static org.tron.core.vm.trace.Op op(int code, int pc, int deep, long energy,
       OpActions actions) {
     org.tron.core.vm.trace.Op op = new org.tron.core.vm.trace.Op();
@@ -169,6 +208,12 @@ public class StructLogReconstructorTest {
   private static OpActions memoryWrite(int address, byte[] data) {
     OpActions actions = new OpActions();
     actions.addMemoryWrite(address, data, data.length);
+    return actions;
+  }
+
+  private static OpActions memoryExtend(long delta) {
+    OpActions actions = new OpActions();
+    actions.addMemoryExtend(delta);
     return actions;
   }
 

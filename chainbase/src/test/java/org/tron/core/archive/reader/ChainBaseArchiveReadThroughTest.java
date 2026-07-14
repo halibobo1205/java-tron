@@ -6,7 +6,10 @@ import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.google.common.primitives.Bytes;
+import com.google.common.primitives.Longs;
 import com.google.protobuf.ByteString;
+import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 import org.junit.Before;
 import org.junit.Test;
@@ -17,10 +20,13 @@ import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.CodeCapsule;
 import org.tron.core.capsule.ContractCapsule;
 import org.tron.core.capsule.ContractStateCapsule;
+import org.tron.core.capsule.StorageRowCapsule;
 import org.tron.core.store.AccountStore;
+import org.tron.core.store.AccountAssetStore;
 import org.tron.core.store.CodeStore;
 import org.tron.core.store.ContractStateStore;
 import org.tron.core.store.ContractStore;
+import org.tron.core.store.StorageRowStore;
 import org.tron.protos.Protocol.Account;
 import org.tron.protos.contract.SmartContractOuterClass.SmartContract;
 
@@ -43,22 +49,28 @@ public class ChainBaseArchiveReadThroughTest {
   }
 
   private AccountStore accountStore;
+  private AccountAssetStore accountAssetStore;
   private CodeStore codeStore;
   private ContractStore contractStore;
   private ContractStateStore contractStateStore;
+  private StorageRowStore storageRowStore;
   private ChainBaseArchiveReadThrough readThrough;
 
   @Before
   public void setUp() {
     ChainBaseManager cbm = mock(ChainBaseManager.class);
     accountStore = mock(AccountStore.class);
+    accountAssetStore = mock(AccountAssetStore.class);
     codeStore = mock(CodeStore.class);
     contractStore = mock(ContractStore.class);
     contractStateStore = mock(ContractStateStore.class);
+    storageRowStore = mock(StorageRowStore.class);
     when(cbm.getAccountStore()).thenReturn(accountStore);
+    when(cbm.getAccountAssetStore()).thenReturn(accountAssetStore);
     when(cbm.getCodeStore()).thenReturn(codeStore);
     when(cbm.getContractStore()).thenReturn(contractStore);
     when(cbm.getContractStateStore()).thenReturn(contractStateStore);
+    when(cbm.getStorageRowStore()).thenReturn(storageRowStore);
     readThrough = new ChainBaseArchiveReadThrough(cbm);
   }
 
@@ -111,5 +123,58 @@ public class ChainBaseArchiveReadThroughTest {
     when(contractStateStore.has(ADDR)).thenReturn(true);
     when(contractStateStore.get(ADDR)).thenReturn(new ContractStateCapsule(0L));
     assertFalse(read(ArchiveDomain.CONTRACT_STATE).isDeleted());
+  }
+
+  @Test
+  public void contractStorageUsesCanonicalPhysicalRowKeyDirectly() throws Exception {
+    byte[] rowKey = new byte[32];
+    rowKey[0] = 1;
+    rowKey[31] = 2;
+    when(storageRowStore.has(rowKey)).thenReturn(false);
+
+    DomainValue absent = readThrough.read(ArchiveDomain.CONTRACT_STORAGE, rowKey, null).get();
+    assertTrue(absent.isDeleted());
+
+    byte[] word = new byte[32];
+    word[31] = 9;
+    when(storageRowStore.has(rowKey)).thenReturn(true);
+    when(storageRowStore.getUnchecked(rowKey)).thenReturn(new StorageRowCapsule(rowKey, word));
+    DomainValue present = readThrough.read(ArchiveDomain.CONTRACT_STORAGE, rowKey, null).get();
+    assertFalse(present.isDeleted());
+    assertArrayEquals(word, present.getValue());
+  }
+
+  @Test
+  public void accountAssetOverlayWinsOverPhysicalRows() throws Exception {
+    byte[] assetId = "1000001".getBytes(StandardCharsets.US_ASCII);
+    byte[] key = Bytes.concat(ADDR, assetId);
+    when(accountAssetStore.get(key)).thenReturn(Longs.toByteArray(99L));
+    when(accountStore.get(ADDR)).thenReturn(new AccountCapsule(Account.newBuilder()
+        .putAssetV2("1000001", 7L)
+        .build()));
+
+    DomainValue overlay = readThrough.read(ArchiveDomain.ACCOUNT_ASSET, key, null).get();
+    assertArrayEquals(Longs.toByteArray(7L), overlay.getValue());
+
+    when(accountStore.get(ADDR)).thenReturn(new AccountCapsule(Account.newBuilder()
+        .setAssetOptimized(true)
+        .putAssetV2("1000001", 0L)
+        .build()));
+    assertTrue(readThrough.read(ArchiveDomain.ACCOUNT_ASSET, key, null).get().isDeleted());
+  }
+
+  @Test
+  public void accountAssetPhysicalFallbackRequiresOptimizedAccount() throws Exception {
+    byte[] assetId = "1000001".getBytes(StandardCharsets.US_ASCII);
+    byte[] key = Bytes.concat(ADDR, assetId);
+    when(accountAssetStore.get(key)).thenReturn(Longs.toByteArray(9L));
+    when(accountStore.get(ADDR)).thenReturn(
+        new AccountCapsule(Account.newBuilder().setAssetOptimized(true).build()));
+
+    assertArrayEquals(Longs.toByteArray(9L),
+        readThrough.read(ArchiveDomain.ACCOUNT_ASSET, key, null).get().getValue());
+
+    when(accountStore.get(ADDR)).thenReturn(new AccountCapsule(Account.newBuilder().build()));
+    assertTrue(readThrough.read(ArchiveDomain.ACCOUNT_ASSET, key, null).get().isDeleted());
   }
 }

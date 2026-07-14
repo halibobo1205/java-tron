@@ -172,6 +172,9 @@ public class StorageConfig {
     private DbConfig db = new DbConfig();
     private TxNumConfig txnum = new TxNumConfig();
     private TemporalConfig temporal = new TemporalConfig();
+    private PublisherConfig publisher = new PublisherConfig();
+    private QueryConfig query = new QueryConfig();
+    private IdentityConfig identity = new IdentityConfig();
     private CommitmentConfig commitment = new CommitmentConfig();
     private DebugConfig debug = new DebugConfig();
     private String coverage = "TVM_STATE_ONLY";
@@ -199,6 +202,21 @@ public class StorageConfig {
       if (enable && (temporal == null || !temporal.isEnable())) {
         throw new IllegalArgumentException("storage.archive.temporal.enable cannot be false in P0");
       }
+      if (publisher == null) {
+        throw new IllegalArgumentException("storage.archive.publisher must not be null");
+      }
+      publisher.postProcess();
+      if (query == null) {
+        throw new IllegalArgumentException("storage.archive.query must not be null");
+      }
+      query.postProcess();
+      if (identity == null) {
+        throw new IllegalArgumentException("storage.archive.identity must not be null");
+      }
+      if (identity.isInitialize() && identity.isAdoptLegacy()) {
+        throw new IllegalArgumentException(
+            "storage.archive.identity initialize and adoptLegacy cannot both be true");
+      }
       if (enable && commitment != null && commitment.isEnable()) {
         throw new IllegalArgumentException(
             "storage.archive.commitment.enable is not supported in P0");
@@ -217,6 +235,16 @@ public class StorageConfig {
     public static class DbConfig {
 
       private String directory = "archive";
+      private boolean fullScrubOnStartup;
+    }
+
+    /** One-time opt-in for creating or resuming the canonical/archive ACTIVE identity pair. */
+    @Getter
+    @Setter
+    public static class IdentityConfig {
+
+      private boolean initialize;
+      private boolean adoptLegacy;
     }
 
     @Getter
@@ -231,6 +259,144 @@ public class StorageConfig {
     public static class TemporalConfig {
 
       private boolean enable = true;
+    }
+
+    /** Runtime solidified-journal publisher. Async is opt-in until the soak gate is complete. */
+    @Getter
+    @Setter
+    public static class PublisherConfig {
+
+      private boolean async;
+      private boolean backpressure = true;
+      private int softInFlightBlocks = 32_768;
+      private int hardInFlightBlocks = 65_536;
+      private long softInFlightBytes = 128L * 1024 * 1024;
+      private long hardInFlightBytes = 256L * 1024 * 1024;
+      private long softInFlightRecords = 1_000_000L;
+      private long hardInFlightRecords = 2_000_000L;
+      private long softMinFreeBytes = 5L * 1024 * 1024 * 1024;
+      private long hardMinFreeBytes = 1L * 1024 * 1024 * 1024;
+      private long backpressureTimeoutMs = 30_000L;
+
+      void postProcess() {
+        if (softInFlightBlocks <= 0) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.softInFlightBlocks must be positive");
+        }
+        if (hardInFlightBlocks < softInFlightBlocks) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.hardInFlightBlocks must be greater than or equal to "
+                  + "softInFlightBlocks");
+        }
+        if (softInFlightBytes <= 0) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.softInFlightBytes must be positive");
+        }
+        if (hardInFlightBytes < softInFlightBytes) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.hardInFlightBytes must be greater than or equal to "
+                  + "softInFlightBytes");
+        }
+        if (softInFlightRecords <= 0) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.softInFlightRecords must be positive");
+        }
+        if (hardInFlightRecords < softInFlightRecords) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.hardInFlightRecords must be greater than or equal to "
+                  + "softInFlightRecords");
+        }
+        if (hardMinFreeBytes < 0) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.hardMinFreeBytes must be non-negative");
+        }
+        if (softMinFreeBytes < hardMinFreeBytes) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.softMinFreeBytes must be greater than or equal to "
+                  + "hardMinFreeBytes");
+        }
+        if (backpressureTimeoutMs < 0) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.backpressureTimeoutMs must be non-negative");
+        }
+      }
+    }
+
+    /** Historical-query admission and per-request budgets. -1 is the unlimited sentinel. */
+    @Getter
+    @Setter
+    public static class QueryConfig {
+
+      private static final long UNLIMITED = -1L;
+      private static final long DEFAULT_MAX_CONCURRENT_QUERIES = 8L;
+      private static final long DEFAULT_MAX_PENDING_QUERIES = 16L;
+      private static final long DEFAULT_MAX_OPEN_SNAPSHOTS = 8L;
+      private static final long DEFAULT_ACQUIRE_TIMEOUT_MS = 0L;
+      private static final long DEFAULT_DEADLINE_MS = 30_000L;
+      private static final long DEFAULT_MAX_QUERIES_PER_BATCH = 8L;
+      private static final long DEFAULT_BATCH_DEADLINE_MS = 30_000L;
+      private static final long DEFAULT_MAX_LOGICAL_READS = 1_000_000L;
+      private static final long DEFAULT_MAX_BACKEND_READS = 100_000L;
+      private static final long DEFAULT_MAX_TRACE_STEPS = 1_000_000L;
+      private static final long DEFAULT_MAX_TRACE_BYTES = 64L * 1024 * 1024;
+      private static final long DEFAULT_MAX_TRACE_RESPONSE_BYTES = 24L * 1024 * 1024;
+
+      private long maxConcurrentQueries = DEFAULT_MAX_CONCURRENT_QUERIES;
+      private long maxPendingQueries = DEFAULT_MAX_PENDING_QUERIES;
+      private long maxOpenSnapshots = DEFAULT_MAX_OPEN_SNAPSHOTS;
+      private long acquireTimeoutMs = DEFAULT_ACQUIRE_TIMEOUT_MS;
+      private long deadlineMs = DEFAULT_DEADLINE_MS;
+      private long maxQueriesPerBatch = DEFAULT_MAX_QUERIES_PER_BATCH;
+      private long batchDeadlineMs = DEFAULT_BATCH_DEADLINE_MS;
+      private long maxLogicalReadsPerRequest = DEFAULT_MAX_LOGICAL_READS;
+      private long maxBackendReadsPerRequest = DEFAULT_MAX_BACKEND_READS;
+      private int maxCachedEntries = 4_096;
+      private long maxCachedBytes = 4L * 1024 * 1024;
+      private long maxTraceSteps = DEFAULT_MAX_TRACE_STEPS;
+      private long maxTraceBytes = DEFAULT_MAX_TRACE_BYTES;
+      private long maxTraceResponseBytes = DEFAULT_MAX_TRACE_RESPONSE_BYTES;
+
+      void postProcess() {
+        requirePositiveOrUnlimited("maxConcurrentQueries", maxConcurrentQueries);
+        requireNonNegativeOrUnlimited("maxPendingQueries", maxPendingQueries);
+        requireNonNegativeOrUnlimited("maxOpenSnapshots", maxOpenSnapshots);
+        requireNonNegativeOrUnlimited("acquireTimeoutMs", acquireTimeoutMs);
+        requireNonNegativeOrUnlimited("deadlineMs", deadlineMs);
+        requirePositiveOrUnlimited("maxQueriesPerBatch", maxQueriesPerBatch);
+        requireNonNegativeOrUnlimited("batchDeadlineMs", batchDeadlineMs);
+        requireNonNegativeOrUnlimited(
+            "maxLogicalReadsPerRequest", maxLogicalReadsPerRequest);
+        requireNonNegativeOrUnlimited(
+            "maxBackendReadsPerRequest", maxBackendReadsPerRequest);
+        requireNonNegative("maxCachedEntries", maxCachedEntries);
+        requireNonNegative("maxCachedBytes", maxCachedBytes);
+        requireNonNegativeOrUnlimited("maxTraceSteps", maxTraceSteps);
+        requireNonNegativeOrUnlimited("maxTraceBytes", maxTraceBytes);
+        requireNonNegativeOrUnlimited("maxTraceResponseBytes", maxTraceResponseBytes);
+      }
+
+      private static void requirePositiveOrUnlimited(String key, long value) {
+        if (value != UNLIMITED && value <= 0) {
+          throw invalidLimit(key, "must be positive or -1");
+        }
+      }
+
+      private static void requireNonNegativeOrUnlimited(String key, long value) {
+        if (value < 0 && value != UNLIMITED) {
+          throw invalidLimit(key, "must be non-negative or -1");
+        }
+      }
+
+      private static void requireNonNegative(String key, long value) {
+        if (value < 0) {
+          throw invalidLimit(key, "must be non-negative");
+        }
+      }
+
+      private static IllegalArgumentException invalidLimit(String key, String requirement) {
+        return new IllegalArgumentException(
+            "storage.archive.query." + key + " " + requirement);
+      }
     }
 
     @Getter
@@ -287,15 +453,36 @@ public class StorageConfig {
     }
     Config archive = section.getConfig("archive");
     requireOnlyKeys("storage.archive", archive.root(), "enable", "db", "txnum", "temporal",
-        "commitment", "debug", "coverage", "warnUnclassifiedStoreWrites");
+        "publisher", "query", "identity", "commitment", "debug", "coverage",
+        "warnUnclassifiedStoreWrites");
     if (archive.hasPath("db")) {
-      requireOnlyKeys("storage.archive.db", archive.getConfig("db").root(), "directory");
+      requireOnlyKeys("storage.archive.db", archive.getConfig("db").root(), "directory",
+          "fullScrubOnStartup");
     }
     if (archive.hasPath("txnum")) {
       requireOnlyKeys("storage.archive.txnum", archive.getConfig("txnum").root(), "enable");
     }
     if (archive.hasPath("temporal")) {
       requireOnlyKeys("storage.archive.temporal", archive.getConfig("temporal").root(), "enable");
+    }
+    if (archive.hasPath("publisher")) {
+      requireOnlyKeys("storage.archive.publisher", archive.getConfig("publisher").root(),
+          "async", "backpressure", "softInFlightBlocks", "hardInFlightBlocks",
+          "softInFlightBytes", "hardInFlightBytes", "softInFlightRecords",
+          "hardInFlightRecords", "softMinFreeBytes", "hardMinFreeBytes",
+          "backpressureTimeoutMs");
+    }
+    if (archive.hasPath("query")) {
+      requireOnlyKeys("storage.archive.query", archive.getConfig("query").root(),
+          "maxConcurrentQueries", "maxPendingQueries", "acquireTimeoutMs", "deadlineMs",
+          "maxQueriesPerBatch", "batchDeadlineMs",
+          "maxOpenSnapshots", "maxLogicalReadsPerRequest", "maxBackendReadsPerRequest",
+          "maxCachedEntries", "maxCachedBytes", "maxTraceSteps", "maxTraceBytes",
+          "maxTraceResponseBytes");
+    }
+    if (archive.hasPath("identity")) {
+      requireOnlyKeys("storage.archive.identity", archive.getConfig("identity").root(),
+          "initialize", "adoptLegacy");
     }
     if (archive.hasPath("commitment")) {
       requireOnlyKeys("storage.archive.commitment", archive.getConfig("commitment").root(),

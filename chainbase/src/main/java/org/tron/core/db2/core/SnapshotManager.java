@@ -218,6 +218,17 @@ public class SnapshotManager implements RevokingDatabase {
     });
   }
 
+  private synchronized void commitToRoot() {
+    if (activeSession != 1 || size != 1) {
+      throw new RevokingStoreIllegalStateException(
+          String.format("root commit requires one active top-level snapshot, active=%d, size=%d",
+              activeSession, size));
+    }
+    dbs.forEach(db -> db.getHead().getRoot().merge(db.getHead()));
+    retreat();
+    --activeSession;
+  }
+
   public synchronized void pop() {
     if (activeSession != 0) {
       throw new RevokingStoreIllegalStateException(
@@ -583,6 +594,12 @@ public class SnapshotManager implements RevokingDatabase {
     public void commit() {
       applySnapshot = false;
       snapshotManager.commit();
+    }
+
+    @Override
+    public void commitToRoot() {
+      snapshotManager.commitToRoot();
+      applySnapshot = false;
     }
 
     @Override

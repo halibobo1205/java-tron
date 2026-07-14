@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.LongPredicate;
 import org.rocksdb.Options;
 import org.rocksdb.ReadOptions;
@@ -60,11 +61,28 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
   private final DynamicKeyPolicy dynamicKeyPolicy = new DynamicKeyPolicy();
 
   public RocksDbArchiveTemporalStore(String path) {
-    this.options = new Options().setCreateIfMissing(true);
+    this(path, true);
+  }
+
+  /** Opens the store, optionally deferring its full row scrub to an explicit maintenance run. */
+  public RocksDbArchiveTemporalStore(String path, boolean validateFullKeyspace) {
+    this(path, validateFullKeyspace, true, false);
+  }
+
+  /**
+   * Opens with an explicit initialization policy. Strict existing-store opens never create a
+   * missing RocksDB or install a missing manifest; adoption additionally uses read-only mode.
+   */
+  public RocksDbArchiveTemporalStore(String path, boolean validateFullKeyspace,
+      boolean allowInitialize, boolean readOnly) {
+    if (readOnly && allowInitialize) {
+      throw new IllegalArgumentException("read-only temporal store cannot initialize");
+    }
+    this.options = new Options().setCreateIfMissing(allowInitialize);
     RocksDB opened = null;
     try {
-      opened = RocksDB.open(options, path);
-      validateOrInstallManifest(opened);
+      opened = readOnly ? RocksDB.openReadOnly(options, path) : RocksDB.open(options, path);
+      validateOrInstallManifest(opened, validateFullKeyspace, allowInitialize);
       this.db = opened;
     } catch (RocksDBException e) {
       closeQuietly(opened);
@@ -77,19 +95,25 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
     }
   }
 
-  private static void validateOrInstallManifest(RocksDB db) throws RocksDBException {
+  private static void validateOrInstallManifest(RocksDB db, boolean validateFullKeyspace,
+      boolean allowInitialize) throws RocksDBException {
     byte[] manifest = db.get(ArchiveTemporalCodec.manifestKey());
     if (manifest != null) {
       if (!ArchiveTemporalCodec.manifestMatches(manifest)) {
         throw new ArchiveException("archive temporal manifest mismatch");
       }
-      validateCurrentKeyspace(db);
+      if (validateFullKeyspace) {
+        validateCurrentKeyspace(db);
+      }
       return;
     }
     if (!isEmpty(db)) {
       throw new ArchiveException("archive temporal store is non-empty but missing manifest");
     }
-    try (WriteOptions writeOptions = ArchiveRocksDbWriteOptions.create()) {
+    if (!allowInitialize) {
+      throw new ArchiveException("archive temporal store is empty or missing manifest");
+    }
+    try (WriteOptions writeOptions = ArchiveRocksDbWriteOptions.createForcedSync()) {
       db.put(writeOptions, ArchiveTemporalCodec.manifestKey(),
           ArchiveTemporalCodec.manifestValue());
     }
@@ -160,10 +184,47 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
     }
   }
 
+  private static void closeQuietly(AutoCloseable resource) {
+    if (resource == null) {
+      return;
+    }
+    try {
+      resource.close();
+    } catch (Exception ignored) {
+      // Preserve the original construction failure.
+    }
+  }
+
+  private static Throwable closeAndCollect(Throwable failure, Runnable closeAction) {
+    try {
+      closeAction.run();
+    } catch (Throwable closeFailure) {
+      if (failure == null) {
+        return closeFailure;
+      }
+      if (failure != closeFailure) {
+        failure.addSuppressed(closeFailure);
+      }
+    }
+    return failure;
+  }
+
+  private static void rethrowCloseFailure(Throwable failure) {
+    if (failure instanceof RuntimeException) {
+      throw (RuntimeException) failure;
+    }
+    if (failure instanceof Error) {
+      throw (Error) failure;
+    }
+    if (failure != null) {
+      throw new ArchiveException("archive temporal read view close failed", failure);
+    }
+  }
+
   @Override
   public void putChange(ArchiveChangeRecord record) {
     try (WriteBatch batch = new WriteBatch();
-         WriteOptions writeOptions = ArchiveRocksDbWriteOptions.create()) {
+         WriteOptions writeOptions = ArchiveRocksDbWriteOptions.createForcedSync()) {
       putChange(batch, record);
       db.write(writeOptions, batch);
     } catch (RocksDBException e) {
@@ -175,7 +236,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
   public void putChanges(List<ArchiveChangeRecord> records) {
     List<ArchiveChangeRecord> ordered = orderedRecords(records);
     try (WriteBatch batch = new WriteBatch();
-         WriteOptions writeOptions = ArchiveRocksDbWriteOptions.create()) {
+         WriteOptions writeOptions = ArchiveRocksDbWriteOptions.createForcedSync()) {
       validatePrevValueChain(ordered);
       for (ArchiveChangeRecord record : ordered) {
         putChange(batch, record);
@@ -195,7 +256,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
     BlockCommitRowAccumulator rowAccumulator = new BlockCommitRowAccumulator();
     List<BlockCommitRow> commitRows = new ArrayList<>();
     try (WriteBatch batch = new WriteBatch();
-         WriteOptions writeOptions = ArchiveRocksDbWriteOptions.create()) {
+         WriteOptions writeOptions = ArchiveRocksDbWriteOptions.createForcedSync()) {
       validatePrevValueChain(ordered);
       for (ArchiveChangeRecord record : ordered) {
         validateRecordInRange(range, record);
@@ -248,11 +309,59 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
     }
   }
 
+  @Override
+  public void reconcilePublishedBlock(ArchiveBlockRange range,
+      List<ArchiveChangeRecord> records) {
+    try {
+      validateCommittedBlock(range);
+      return;
+    } catch (RuntimeException missingTemporalCommit) {
+      if (hasCommitMarker(range.getBlockNum()) || hasRowsInRange(range)) {
+        throw missingTemporalCommit;
+      }
+      validateLatestRowsAnchored();
+      putBlockChanges(range, records);
+      validateCommittedBlock(range);
+    }
+  }
+
   public boolean hasCommitMarker(long blockNum) {
     try {
       return db.get(ArchiveTemporalCodec.blockCommitKey(blockNum)) != null;
     } catch (RocksDBException e) {
       throw new ArchiveException("archive temporal commit marker read failed", e);
+    }
+  }
+
+  /**
+   * Bounded normal-startup validation: the highest temporal marker must match the highest index
+   * range, and that block's marker/digest must validate. Full historical row validation remains
+   * available through the explicit scrub methods below.
+   */
+  public void validateStartupTail(Optional<ArchiveBlockRange> lastRange) {
+    try (RocksIterator it = db.newIterator()) {
+      byte[] prefix = ArchiveTemporalCodec.blockCommitPrefix();
+      it.seekForPrev(ArchiveTemporalCodec.blockCommitKey(Long.MAX_VALUE));
+      ArchiveRocksIterators.requireOk(it, "validateStartupTail: last commit marker seek");
+      boolean hasMarker = it.isValid() && ArchiveTemporalCodec.startsWith(it.key(), prefix);
+      if (!lastRange.isPresent()) {
+        if (hasMarker) {
+          throw new ArchiveException(
+              "archive temporal commit marker exists without an index range");
+        }
+        return;
+      }
+      ArchiveBlockRange range = lastRange.get();
+      if (!hasMarker) {
+        throw new ArchiveException("archive index tail has no temporal commit marker for block "
+            + range.getBlockNum());
+      }
+      long markerBlock = ArchiveTemporalCodec.blockNumOfBlockCommitKey(it.key());
+      if (markerBlock != range.getBlockNum()) {
+        throw new ArchiveException("archive temporal/index tail mismatch: marker=" + markerBlock
+            + ", index=" + range.getBlockNum());
+      }
+      validateCommittedBlock(range);
     }
   }
 
@@ -315,7 +424,6 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
 
   /** Fail closed if history/changeset txNums are not covered by the committed txNum index. */
   public void validateTxNumsCovered(LongPredicate hasCommittedTxNum) {
-    Map<WrappedByteArray, byte[]> latestByChangeset = new HashMap<>();
     try (RocksIterator it = db.newIterator()) {
       it.seek(new byte[] {ArchiveTemporalCodec.HISTORY_PREFIX});
       while (it.isValid() && it.key()[0] == ArchiveTemporalCodec.HISTORY_PREFIX) {
@@ -354,9 +462,6 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
         }
         byte[] changesetValue = it.value().clone();
         ArchiveTemporalCodec.decodeValue(changesetValue);
-        latestByChangeset.put(
-            WrappedByteArray.copyOf(ArchiveTemporalCodec.latestKeyOfChangeset(changesetKey)),
-            changesetValue);
         it.next();
       }
       ArchiveRocksIterators.requireOk(it, "validateTxNumsCovered: changeset scan");
@@ -364,7 +469,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
       throw new ArchiveException("archive temporal changeset validation failed", e);
     }
     try {
-      validateLatestRowsAnchored(latestByChangeset);
+      validateLatestRowsAnchoredStreaming();
     } catch (RocksDBException e) {
       throw new ArchiveException("archive temporal latest validation failed", e);
     }
@@ -372,38 +477,35 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
 
   /** Fail closed if any latest row is not anchored by history/changeset or an unwind baseline. */
   public void validateLatestRowsAnchored() {
-    Map<WrappedByteArray, byte[]> latestByChangeset = new HashMap<>();
     try (RocksIterator it = db.newIterator()) {
       it.seek(new byte[] {ArchiveTemporalCodec.CHANGESET_PREFIX});
       while (it.isValid() && it.key()[0] == ArchiveTemporalCodec.CHANGESET_PREFIX) {
-        byte[] changesetKey = it.key();
-        byte[] changesetValue = it.value().clone();
-        ArchiveTemporalCodec.decodeValue(changesetValue);
-        latestByChangeset.put(
-            WrappedByteArray.copyOf(ArchiveTemporalCodec.latestKeyOfChangeset(changesetKey)),
-            changesetValue);
+        ArchiveTemporalCodec.decodeValue(it.value());
         it.next();
       }
       ArchiveRocksIterators.requireOk(it, "validateLatestRowsAnchored: changeset scan");
-      validateLatestRowsAnchored(latestByChangeset);
+      validateLatestRowsAnchoredStreaming();
     } catch (RocksDBException e) {
       throw new ArchiveException("archive temporal latest validation failed", e);
     }
   }
 
-  private void validateLatestRowsAnchored(Map<WrappedByteArray, byte[]> latestByChangeset)
+  private void validateLatestRowsAnchoredStreaming()
       throws RocksDBException {
-    try (RocksIterator it = db.newIterator()) {
+    try (RocksIterator it = db.newIterator(); RocksIterator history = db.newIterator()) {
       it.seek(new byte[] {ArchiveTemporalCodec.LATEST_PREFIX});
       while (it.isValid() && it.key()[0] == ArchiveTemporalCodec.LATEST_PREFIX) {
         byte[] latestKey = it.key();
-        boolean hasHistory = hasHistoryRow(latestKey);
-        byte[] expectedValue = latestByChangeset.get(WrappedByteArray.copyOf(latestKey));
+        ArchiveDomain domain = ArchiveTemporalCodec.domainOfLatestKey(latestKey);
+        byte[] canonicalKey = ArchiveTemporalCodec.canonicalKeyOfLatestKey(latestKey);
+        byte[] historyPrefix = ArchiveTemporalCodec.historyPrefix(domain, canonicalKey);
+        history.seekForPrev(ArchiveTemporalCodec.historyKey(domain, canonicalKey, Long.MAX_VALUE));
+        ArchiveRocksIterators.requireOk(history,
+            "validateLatestRowsAnchored: latest history seek");
+        boolean hasHistory = history.isValid()
+            && ArchiveTemporalCodec.startsWith(history.key(), historyPrefix);
         byte[] baselineValue = db.get(ArchiveTemporalCodec.latestBaselineKeyOfLatest(latestKey));
-        if (expectedValue == null) {
-          if (hasHistory) {
-            throw new ArchiveException("archive temporal latest has no changeset row");
-          }
+        if (!hasHistory) {
           if (baselineValue == null) {
             throw new ArchiveException(
                 "archive temporal latest has no history row or baseline marker");
@@ -414,11 +516,14 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
           it.next();
           continue;
         }
-        if (!hasHistory) {
-          throw new ArchiveException("archive temporal latest has no history row");
-        }
         if (baselineValue != null) {
           throw new ArchiveException("archive temporal latest baseline marker has history row");
+        }
+        long latestTxNum = ArchiveTemporalCodec.txNumOfHistory(history.key());
+        byte[] expectedValue = db.get(
+            ArchiveTemporalCodec.changesetKey(latestTxNum, domain, canonicalKey));
+        if (expectedValue == null) {
+          throw new ArchiveException("archive temporal latest has no changeset row");
         }
         if (!Arrays.equals(it.value(), expectedValue)) {
           throw new ArchiveException("archive temporal latest value mismatch");
@@ -567,12 +672,18 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
 
   @Override
   public Optional<DomainValue> getAsOf(ArchiveDomain domain, byte[] canonicalKey, long txNum) {
-    return getAsOf(domain, canonicalKey, txNum, null);
+    return getAsOf(domain, canonicalKey, txNum, null, null);
+  }
+
+  @Override
+  public long getAsOfBackendReadCost() {
+    // A history seek may miss and fall through to a latest-key point lookup.
+    return 2L;
   }
 
   // readOptions == null -> a live read; a snapshot ReadOptions -> an isolated point-in-time read.
   private Optional<DomainValue> getAsOf(ArchiveDomain domain, byte[] canonicalKey, long txNum,
-      ReadOptions readOptions) {
+      ReadOptions readOptions, RocksIterator reusableHistoryIterator) {
     if (txNum < 0) {
       throw new ArchiveException("archive temporal txNum must be non-negative");
     }
@@ -580,13 +691,22 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
     if (txNum != Long.MAX_VALUE) {
       byte[] prefix = ArchiveTemporalCodec.historyPrefix(domain, canonicalKey);
       byte[] seek = ArchiveTemporalCodec.historyKey(domain, canonicalKey, txNum + 1);
-      try (RocksIterator it = readOptions == null
-          ? db.newIterator() : db.newIterator(readOptions)) {
+      if (reusableHistoryIterator != null) {
+        RocksIterator it = reusableHistoryIterator;
         it.seek(seek);
+        ArchiveRocksIterators.requireOk(it, "getAsOf: history seek");
         if (it.isValid() && ArchiveTemporalCodec.startsWith(it.key(), prefix)) {
           return Optional.of(ArchiveTemporalCodec.decodeValue(it.value()));
         }
-        ArchiveRocksIterators.requireOk(it, "getAsOf: history seek");
+      } else {
+        try (RocksIterator it = readOptions == null
+            ? db.newIterator() : db.newIterator(readOptions)) {
+          it.seek(seek);
+          ArchiveRocksIterators.requireOk(it, "getAsOf: history seek");
+          if (it.isValid() && ArchiveTemporalCodec.startsWith(it.key(), prefix)) {
+            return Optional.of(ArchiveTemporalCodec.decodeValue(it.value()));
+          }
+        }
       }
     }
     // No change after txNum: the key has not changed since, so its value then == latest.
@@ -613,37 +733,80 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
 
   @Override
   public ArchiveTemporalReadView openReadView() {
-    // Pin a consistent point-in-time; getAsOf/latest below read through the snapshot ReadOptions.
     Snapshot snapshot = db.getSnapshot();
-    ReadOptions readOptions = new ReadOptions().setSnapshot(snapshot);
-    return new SnapshotReadView(snapshot, readOptions);
+    ReadOptions readOptions = null;
+    RocksIterator historyIterator = null;
+    try {
+      readOptions = new ReadOptions().setSnapshot(snapshot);
+      historyIterator = db.newIterator(readOptions);
+      return new SnapshotReadView(
+          readOptions, historyIterator, () -> db.releaseSnapshot(snapshot));
+    } catch (RuntimeException e) {
+      closeQuietly(historyIterator);
+      closeQuietly(readOptions);
+      db.releaseSnapshot(snapshot);
+      throw e;
+    }
   }
 
-  private final class SnapshotReadView implements ArchiveTemporalReadView {
+  final class SnapshotReadView implements ArchiveTemporalReadView {
 
-    private final Snapshot snapshot;
     private final ReadOptions readOptions;
+    private final RocksIterator historyIterator;
+    private final Runnable releaseSnapshot;
+    private final Thread ownerThread;
+    private final AtomicBoolean closed = new AtomicBoolean();
 
-    private SnapshotReadView(Snapshot snapshot, ReadOptions readOptions) {
-      this.snapshot = snapshot;
+    SnapshotReadView(ReadOptions readOptions, RocksIterator historyIterator,
+        Runnable releaseSnapshot) {
       this.readOptions = readOptions;
+      this.historyIterator = historyIterator;
+      this.releaseSnapshot = releaseSnapshot;
+      this.ownerThread = Thread.currentThread();
     }
 
     @Override
     public Optional<DomainValue> getAsOf(ArchiveDomain domain, byte[] canonicalKey, long txNum) {
-      return RocksDbArchiveTemporalStore.this.getAsOf(domain, canonicalKey, txNum, readOptions);
+      requireOwnerAndOpen();
+      return RocksDbArchiveTemporalStore.this.getAsOf(
+          domain, canonicalKey, txNum, readOptions, historyIterator);
+    }
+
+    @Override
+    public long getAsOfBackendReadCost() {
+      return RocksDbArchiveTemporalStore.this.getAsOfBackendReadCost();
     }
 
     @Override
     public Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey) {
+      requireOwnerAndOpen();
       return RocksDbArchiveTemporalStore.this.latest(domain, canonicalKey, readOptions);
     }
 
     @Override
     public void close() {
-      // Release order matters: the ReadOptions references the snapshot.
-      readOptions.close();
-      db.releaseSnapshot(snapshot);
+      requireOwner();
+      if (!closed.compareAndSet(false, true)) {
+        return;
+      }
+      Throwable failure = null;
+      failure = closeAndCollect(failure, historyIterator::close);
+      failure = closeAndCollect(failure, readOptions::close);
+      failure = closeAndCollect(failure, releaseSnapshot);
+      rethrowCloseFailure(failure);
+    }
+
+    private void requireOwnerAndOpen() {
+      requireOwner();
+      if (closed.get()) {
+        throw new ArchiveException("archive temporal read view is closed");
+      }
+    }
+
+    private void requireOwner() {
+      if (Thread.currentThread() != ownerThread) {
+        throw new ArchiveException("archive temporal read view used from a non-owner thread");
+      }
     }
   }
 
@@ -685,7 +848,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
     Map<WrappedByteArray, byte[]> affectedPrefix = new LinkedHashMap<>();
     Map<WrappedByteArray, byte[]> restore = new HashMap<>();
     try (WriteBatch batch = new WriteBatch();
-         WriteOptions writeOptions = ArchiveRocksDbWriteOptions.create()) {
+         WriteOptions writeOptions = ArchiveRocksDbWriteOptions.createForcedSync()) {
       try (RocksIterator it = db.newIterator()) {
         it.seek(ArchiveTemporalCodec.changesetSeekFrom(fromTxNum));
         while (it.isValid() && it.key()[0] == ArchiveTemporalCodec.CHANGESET_PREFIX) {
@@ -824,8 +987,7 @@ public final class RocksDbArchiveTemporalStore implements ArchiveTemporalStore, 
   }
 
   private static boolean sameDomainValue(DomainValue left, DomainValue right) {
-    return left.isDeleted() == right.isDeleted()
-        && Arrays.equals(left.getValue(), right.getValue());
+    return left.contentEquals(right);
   }
 
   private static int compareRecords(ArchiveChangeRecord left, ArchiveChangeRecord right) {

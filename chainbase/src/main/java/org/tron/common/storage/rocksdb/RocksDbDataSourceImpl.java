@@ -298,6 +298,12 @@ public class RocksDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
     return new RockStoreIterator(getRocksIterator(readOptions), readOptions);
   }
 
+  @Override
+  public org.tron.core.db.common.iterator.DBIterator rawIterator() {
+    ReadOptions readOptions = new ReadOptions().setFillCache(false);
+    return new RockStoreIterator(getRocksIterator(readOptions), readOptions, true);
+  }
+
   private void updateByBatchInner(Map<byte[], byte[]> rows, WriteOptions options)
       throws Exception {
     try (WriteBatch batch = new WriteBatch()) {

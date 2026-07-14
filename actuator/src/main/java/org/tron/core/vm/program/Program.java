@@ -45,7 +45,6 @@ import org.tron.common.utils.WalletUtil;
 import org.tron.core.ChainBaseManager;
 import org.tron.core.Constant;
 import org.tron.core.capsule.AccountCapsule;
-import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.ContractCapsule;
 import org.tron.core.capsule.ContractStateCapsule;
 import org.tron.core.capsule.DelegatedResourceCapsule;
@@ -1347,10 +1346,10 @@ public class Program {
         && index >= max(256, this.getNumber().longValue(),
         VMConfig.disableJavaLangMath()) - 256) {
 
-      BlockCapsule blockCapsule = contractState.getBlockByNum(index);
+      byte[] blockHash = contractState.getBlockHashByNum(index);
 
-      if (Objects.nonNull(blockCapsule)) {
-        return new DataWord(blockCapsule.getBlockId().getBytes()).clone();
+      if (Objects.nonNull(blockHash)) {
+        return new DataWord(blockHash).clone();
       } else {
         return DataWord.ZERO.clone();
       }
@@ -1389,7 +1388,7 @@ public class Program {
   }
 
   public DataWord getChainId() {
-    byte[] chainId = getContractState().getBlockByNum(0).getBlockId().getBytes();
+    byte[] chainId = getContractState().getBlockHashByNum(0);
     if (VMConfig.allowTvmCompatibleEvm() || VMConfig.allowOptimizedReturnValueOfChainId()) {
       chainId = Arrays.copyOfRange(chainId, chainId.length - 4, chainId.length);
     }

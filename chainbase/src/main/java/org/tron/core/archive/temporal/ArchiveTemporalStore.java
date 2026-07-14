@@ -42,6 +42,15 @@ public interface ArchiveTemporalStore {
   }
 
   /**
+   * Startup-only recovery for a journal whose index range is already published. Implementations
+   * may replay a provably empty temporal half-commit, but must reject any partial/torn rows.
+   */
+  default void reconcilePublishedBlock(ArchiveBlockRange range,
+      List<ArchiveChangeRecord> records) {
+    validateCommittedBlock(range);
+  }
+
+  /**
    * The value of {@code (domain, key)} as of {@code txNum} (inclusive-after): the value set by the
    * most recent change whose {@code change.txNum <= txNum} -- equivalently, the value at the END of
    * txNum {@code txNum}. "Before-tx" reads use {@code getAsOf(domain, key, txNum - 1)}.
@@ -59,19 +68,21 @@ public interface ArchiveTemporalStore {
    */
   Optional<DomainValue> getAsOf(ArchiveDomain domain, byte[] canonicalKey, long txNum);
 
+  /** Conservative number of backend operations used by one {@link #getAsOf} call. */
+  default long getAsOfBackendReadCost() {
+    return 1L;
+  }
+
   /** The most recent value of {@code (domain, key)} across all txNums; empty if never written.
    * May be a tombstone when the most recent change was a delete. */
   Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey);
 
   /**
    * Open an isolated, point-in-time read view for {@code getAsOf} / {@code latest}. Real stores
-   * override this with a true snapshot (RocksDB snapshot or in-memory copy) so a read can run after
-   * the archive lock is released. This default is a non-isolated pass-through, kept
-   * only so lightweight test stubs compile; production stores must override it.
+   * provide a true snapshot (RocksDB snapshot or in-memory copy) so a read can run after the
+   * archive lock is released. Implementations must not return a live pass-through view.
    */
-  default ArchiveTemporalReadView openReadView() {
-    return ArchiveTemporalReadView.passThrough(this);
-  }
+  ArchiveTemporalReadView openReadView();
 
   /**
    * Drop every change with {@code txNum >= fromTxNum}. If an affected key still has older canonical

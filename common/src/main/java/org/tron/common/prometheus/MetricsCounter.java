@@ -19,6 +19,9 @@ class MetricsCounter {
     init(MetricKeys.Counter.P2P_DISCONNECT, "tron p2p disconnect .", "type");
     init(MetricKeys.Counter.INTERNAL_SERVICE_FAIL, "internal Service fail.",
         "class", "method");
+    init(MetricKeys.Counter.ARCHIVE_WORK, "Archive block work totals.", "type");
+    init(MetricKeys.Counter.ARCHIVE_QUERIES, "Archive query totals.", "result");
+    init(MetricKeys.Counter.ARCHIVE_QUERY_RESOURCES, "Archive query resource totals.", "type");
   }
 
   private MetricsCounter() {
@@ -44,4 +47,3 @@ class MetricsCounter {
     }
   }
 }
-

@@ -7,6 +7,8 @@ import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 import org.bouncycastle.util.encoders.Hex;
 import org.springframework.util.StringUtils;
+import org.tron.core.archive.query.QueryContext;
+import org.tron.core.archive.query.QueryContextHolder;
 import org.tron.core.vm.config.VMConfig;
 import org.tron.core.vm.program.Program;
 import org.tron.core.vm.program.Program.JVMStackOverFlowException;
@@ -20,6 +22,7 @@ public class VM {
       Op.DELEGATECALL, Op.CALLCODE, Op.CALLTOKEN);
 
   public static void play(Program program, JumpTable jumpTable) {
+    final QueryContext queryContext = QueryContextHolder.current();
     try {
       long factor = DYNAMIC_ENERGY_FACTOR_DECIMAL;
       long energyUsage = 0L;
@@ -31,6 +34,10 @@ public class VM {
       }
 
       while (!program.isStopped()) {
+        if (queryContext != null) {
+          // Account before trace capture so an oversized historical trace cannot allocate first.
+          queryContext.recordVmStep();
+        }
         org.tron.core.vm.trace.Op traceOp = null;
         if (VMConfig.vmTrace()) {
           traceOp = program.saveOpTrace();
@@ -87,11 +94,19 @@ public class VM {
             traceOp.setEnergyCost(java.math.BigInteger.valueOf(energy));
           }
 
+          if (queryContext != null) {
+            queryContext.checkDeadline();
+          }
+
           /* check if cpu time out */
           program.checkCPUTimeLimit(opName);
 
           /* exec op action */
           op.execute(program);
+          if (queryContext != null) {
+            // A precompile may be non-interruptible internally; enforce immediately on return.
+            queryContext.checkDeadline();
+          }
 
           program.setPreviouslyExecutedOp((byte) op.getOpcode());
         } catch (RuntimeException e) {

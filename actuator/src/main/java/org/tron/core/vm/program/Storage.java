@@ -2,6 +2,7 @@ package org.tron.core.vm.program;
 
 import static java.lang.System.arraycopy;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import lombok.Getter;
@@ -9,10 +10,12 @@ import lombok.Setter;
 import org.tron.common.crypto.Hash;
 import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.utils.ByteUtil;
+import org.tron.core.archive.ArchiveMetrics;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.archive.domain.ArchiveDomain;
 import org.tron.core.archive.reader.ArchiveStorageKeyCodec;
 import org.tron.core.capsule.StorageRowCapsule;
+import org.tron.core.db2.common.WrappedByteArray;
 import org.tron.core.store.StorageRowStore;
 
 public class Storage {
@@ -20,9 +23,9 @@ public class Storage {
   private static final int PREFIX_BYTES = 16;
   @Getter
   private final Map<DataWord, StorageRowCapsule> rowCache = new HashMap<>();
+  private Map<WrappedByteArray, OriginalValue> originalValues;
   @Getter
   private byte[] addrHash;
-  private byte[] trxHash = new byte[ArchiveStorageKeyCodec.DEPLOYMENT_HASH_LEN];
   @Getter
   private StorageRowStore store;
   @Getter
@@ -38,7 +41,6 @@ public class Storage {
 
   public Storage(Storage storage) {
     this.addrHash = storage.addrHash.clone();
-    this.trxHash = storage.trxHash.clone();
     this.address = storage.getAddress().clone();
     this.store = storage.store;
     this.contractVersion = storage.contractVersion;
@@ -46,6 +48,11 @@ public class Storage {
       StorageRowCapsule newRow = new StorageRowCapsule(row);
       this.rowCache.put(rowKey.clone(), newRow);
     });
+    if (storage.originalValues != null) {
+      this.originalValues = new HashMap<>();
+      storage.originalValues.forEach((rowKey, original) -> this.originalValues.put(
+          WrappedByteArray.copyOf(rowKey.getBytes()), original.copy()));
+    }
   }
 
   private byte[] compose(byte[] key, byte[] addrHash) {
@@ -71,27 +78,33 @@ public class Storage {
   }
 
   public void generateAddrHash(byte[] trxId) {
-    // update addreHash for create2
+    // Keep the VM's legacy namespace calculation byte-for-byte unchanged.
     addrHash = addrHash(address, trxId);
-    trxHash = ArchiveStorageKeyCodec.deploymentHash(trxId);
   }
 
   public DataWord getValue(DataWord key) {
     if (rowCache.containsKey(key)) {
       return new DataWord(rowCache.get(key).getValue());
-    } else {
-      StorageRowCapsule row = store.get(compose(key.getData(), addrHash));
-      if (row == null || row.getInstance() == null) {
-        return null;
-      }
-      rowCache.put(key, row);
-      return new DataWord(row.getValue());
     }
+    byte[] rowKey = compose(key.getData(), addrHash);
+    StorageRowCapsule row = store.get(rowKey);
+    if (ArchiveCaptureHolder.isCapturingCurrentTx()) {
+      rememberOriginal(WrappedByteArray.copyOf(rowKey), row);
+    }
+    if (row == null || row.getInstance() == null) {
+      return null;
+    }
+    rowCache.put(key, row);
+    return new DataWord(row.getValue());
   }
 
   public void put(DataWord key, DataWord value) {
     if (rowCache.containsKey(key)) {
-      rowCache.get(key).setValue(value.getData());
+      StorageRowCapsule row = rowCache.get(key);
+      if (ArchiveCaptureHolder.isCapturingCurrentTx() && !row.isDirty()) {
+        rememberOriginal(WrappedByteArray.copyOf(row.getRowKey()), row);
+      }
+      row.setValue(value.getData());
     } else {
       byte[] rowKey = compose(key.getData(), addrHash);
       StorageRowCapsule row = new StorageRowCapsule(rowKey, value.getData());
@@ -100,10 +113,10 @@ public class Storage {
   }
 
   public void commit() {
-    // L4c archive: capture CONTRACT_STORAGE here (root per-tx storage write) where the contract
-    // address + un-hashed slot are known; raw store key (row.getRowKey()) is irreversible.
+    // L4c archive: capture the exact physical row identity at the per-tx storage write boundary.
     boolean archiveActive = ArchiveCaptureHolder.isCapturingCurrentTx();
-    rowCache.forEach((DataWord rowKey, StorageRowCapsule row) -> {
+    Map<WrappedByteArray, byte[]> currentValues = archiveActive ? new HashMap<>() : null;
+    rowCache.forEach((DataWord logicalKey, StorageRowCapsule row) -> {
       if (row.isDirty()) {
         if (!archiveActive) {
           ArchiveCaptureHolder.requireCurrentTx("contractStorageCommit");
@@ -114,11 +127,25 @@ public class Storage {
         boolean capturePrepared = false;
         if (archiveActive) {
           try {
-            archiveKey = ArchiveStorageKeyCodec.contractStorageKey(
-                address, rowKey.getData(), trxHash, contractVersion);
+            if (address.length != ArchiveStorageKeyCodec.ADDRESS_LEN) {
+              throw new IllegalArgumentException(
+                  "address must be " + ArchiveStorageKeyCodec.ADDRESS_LEN + " bytes");
+            }
+            if (row.getRowKey() == null) {
+              throw new IllegalStateException("storage row key is missing");
+            }
+            byte[] archiveRowKey = Arrays.copyOf(row.getRowKey(), row.getRowKey().length);
+            WrappedByteArray cacheKey = WrappedByteArray.copyOf(archiveRowKey);
+            archiveKey = archiveRowKey;
             // Read the Erigon prev-value before mutating the store. Preparation failures must not
             // alter canonical VM execution; the archive commit will fail closed instead.
-            prev = prevSlotValue(row.getRowKey());
+            if (currentValues.containsKey(cacheKey)) {
+              byte[] current = currentValues.get(cacheKey);
+              prev = current == null ? null : Arrays.copyOf(current, current.length);
+            } else {
+              OriginalValue original = originalValues == null ? null : originalValues.get(cacheKey);
+              prev = original == null ? prevSlotValue(archiveRowKey) : original.valueOrNull();
+            }
             capturePrepared = true;
           } catch (Exception e) {
             ArchiveCaptureHolder.recordFailure("contractStoragePrepare", e);
@@ -133,19 +160,73 @@ public class Storage {
           if (zero) {
             ArchiveCaptureHolder.captureSemanticDelete(
                 ArchiveDomain.CONTRACT_STORAGE, archiveKey, prev);
+            currentValues.put(WrappedByteArray.copyOf(archiveKey), null);
           } else {
+            byte[] current = row.getValue();
             ArchiveCaptureHolder.captureSemanticPut(
-                ArchiveDomain.CONTRACT_STORAGE, archiveKey, prev, row.getValue());
+                ArchiveDomain.CONTRACT_STORAGE, archiveKey, prev, current);
+            currentValues.put(WrappedByteArray.copyOf(archiveKey),
+                Arrays.copyOf(current, current.length));
           }
         }
       }
     });
+    if (archiveActive) {
+      if (originalValues != null) {
+        originalValues.clear();
+      }
+    }
   }
 
   /** The committed value of a storage row before this tx overwrites it, or null if the slot was
    * absent/zero (a tombstone prev in the archive). */
   private byte[] prevSlotValue(byte[] rowKey) {
-    StorageRowCapsule old = this.store.get(rowKey);
-    return (old == null || old.getInstance() == null) ? null : old.getValue();
+    long startedNanos = ArchiveMetrics.startTimer();
+    try {
+      StorageRowCapsule old = this.store.get(rowKey);
+      ArchiveCaptureHolder.recordPreviousValueRead(startedNanos, true);
+      return (old == null || old.getInstance() == null) ? null : old.getValue();
+    } catch (RuntimeException e) {
+      ArchiveCaptureHolder.recordPreviousValueRead(startedNanos, false);
+      throw e;
+    }
+  }
+
+  private void rememberOriginal(WrappedByteArray rowKey, StorageRowCapsule row) {
+    if (originalValues == null) {
+      originalValues = new HashMap<>();
+    }
+    if (originalValues.containsKey(rowKey)) {
+      return;
+    }
+    OriginalValue original = row == null || row.getInstance() == null
+        ? OriginalValue.absent()
+        : OriginalValue.present(row.getValue());
+    originalValues.put(WrappedByteArray.copyOf(rowKey.getBytes()), original);
+  }
+
+  private static final class OriginalValue {
+
+    private final byte[] value;
+
+    private OriginalValue(byte[] value) {
+      this.value = value == null ? null : Arrays.copyOf(value, value.length);
+    }
+
+    private static OriginalValue absent() {
+      return new OriginalValue(null);
+    }
+
+    private static OriginalValue present(byte[] value) {
+      return new OriginalValue(value);
+    }
+
+    private byte[] valueOrNull() {
+      return value == null ? null : Arrays.copyOf(value, value.length);
+    }
+
+    private OriginalValue copy() {
+      return new OriginalValue(value);
+    }
   }
 }

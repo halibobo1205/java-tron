@@ -1,29 +1,50 @@
 package org.tron.core.archive.reader;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 
+import java.util.Arrays;
 import org.junit.Test;
 
 public class ArchiveStorageKeyCodecTest {
 
   @Test
-  public void buildsEightySixByteKeyWithDeploymentHashAndVersionTail() {
+  public void buildsExactPhysicalStorageRowKey() {
+    byte[] address = new byte[21];
+    address[0] = 0x41;
+    byte[] slot = new byte[32];
+    slot[31] = 5;
     byte[] deploymentHash = new byte[32];
     deploymentHash[31] = 7;
-    byte[] key = ArchiveStorageKeyCodec.contractStorageKey(new byte[21], new byte[32], 1);
-    assertEquals(86, key.length);
-    assertEquals(1, key[85] & 0xff);
+    byte[] key = ArchiveStorageKeyCodec.contractStorageKey(address, slot, 2);
+
+    assertEquals(32, key.length);
+    assertArrayEquals(Arrays.copyOfRange(slot, 16, 32), Arrays.copyOfRange(key, 16, 32));
+
     byte[] create2Key = ArchiveStorageKeyCodec.contractStorageKey(
-        new byte[21], new byte[32], deploymentHash, 1);
-    assertEquals(7, create2Key[52] & 0xff);
+        address, slot, deploymentHash, 2);
+    assertFalse("CREATE2 deployment hash must select a different storage namespace",
+        Arrays.equals(key, create2Key));
   }
 
   @Test
-  public void versionByteIsOneOnlyForContractVersionOne() {
-    assertEquals(1, ArchiveStorageKeyCodec.storageKeyVersion(1) & 0xff);
-    assertEquals(0, ArchiveStorageKeyCodec.storageKeyVersion(0) & 0xff);
-    assertEquals(0, ArchiveStorageKeyCodec.storageKeyVersion(2) & 0xff);
+  public void nonVersionOneSlotsWithSameLowHalfAliasToSamePhysicalRow() {
+    byte[] address = new byte[21];
+    address[0] = 0x41;
+    byte[] first = new byte[32];
+    byte[] alias = new byte[32];
+    first[0] = 1;
+    alias[0] = 2;
+    first[31] = alias[31] = 9;
+
+    assertArrayEquals(
+        ArchiveStorageKeyCodec.contractStorageKey(address, first, 0),
+        ArchiveStorageKeyCodec.contractStorageKey(address, alias, 2));
+    assertFalse(Arrays.equals(
+        ArchiveStorageKeyCodec.contractStorageKey(address, first, 1),
+        ArchiveStorageKeyCodec.contractStorageKey(address, alias, 1)));
   }
 
   @Test

@@ -1,6 +1,10 @@
 package org.tron.core.config;
 
+import java.io.IOException;
+import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.rocksdb.RocksDB;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -12,6 +16,8 @@ import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.StorageUtils;
 import org.tron.core.ChainBaseManager;
 import org.tron.core.Wallet;
+import org.tron.core.archive.ArchiveException;
+import org.tron.core.archive.ArchivePathResolver;
 import org.tron.core.archive.ArchiveService;
 import org.tron.core.archive.ArchiveServiceFactory;
 import org.tron.core.config.args.Args;
@@ -50,9 +56,33 @@ public class DefaultConfig {
     if (archive == null || !archive.isEnable()) {
       return ArchiveServiceFactory.create(archive); // disabled: no db path to resolve
     }
-    String archiveDbPath = Paths.get(parameter.getOutputDirectory(),
-        parameter.getStorage().getDbDirectory(), archive.getDb().getDirectory()).toString();
-    return ArchiveServiceFactory.create(archive, archiveDbPath, chainBaseManager);
+    Path outputRoot = Paths.get(parameter.getOutputDirectory()).toAbsolutePath().normalize();
+    Path canonicalDbRoot = outputRoot.resolve(parameter.getStorage().getDbDirectory()).normalize();
+    Path configuredArchivePath = Paths.get(archive.getDb().getDirectory());
+    Path identityAnchors = outputRoot.resolve("archive-identities");
+    List<Path> protectedPaths = new ArrayList<>();
+    protectedPaths.add(identityAnchors);
+    // Relative archive paths historically live below the canonical DB root. Only an absolute
+    // override must be checked against the whole canonical root; rejecting descendants here would
+    // make the compatible default (<output>/<db-directory>/archive) impossible.
+    if (configuredArchivePath.isAbsolute()) {
+      protectedPaths.add(canonicalDbRoot);
+    }
+    if (parameter.getStorage().getPropertyMap() != null) {
+      parameter.getStorage().getPropertyMap().values().forEach(property -> {
+        if (property.getPath() != null && !property.getPath().trim().isEmpty()) {
+          protectedPaths.add(Paths.get(property.getPath()));
+        }
+      });
+    }
+    try {
+      Path archiveDbPath = ArchivePathResolver.resolveAndValidate(
+          configuredArchivePath, canonicalDbRoot, protectedPaths);
+      return ArchiveServiceFactory.create(
+          archive, archiveDbPath.toString(), chainBaseManager, identityAnchors);
+    } catch (IOException | IllegalArgumentException e) {
+      throw new ArchiveException("invalid archive database path", e);
+    }
   }
 
   @Bean

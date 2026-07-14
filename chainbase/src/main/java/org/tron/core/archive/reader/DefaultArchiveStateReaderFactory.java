@@ -2,6 +2,8 @@ package org.tron.core.archive.reader;
 
 import java.util.Arrays;
 import org.tron.core.archive.domain.ArchiveDomainCatalog;
+import org.tron.core.archive.query.ArchiveQueryLimits;
+import org.tron.core.archive.query.QueryContext;
 import org.tron.core.archive.temporal.ArchiveTemporalReadView;
 import org.tron.core.archive.temporal.ArchiveTemporalStore;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
@@ -23,27 +25,40 @@ public final class DefaultArchiveStateReaderFactory implements ArchiveStateReade
   private final ArchiveTxNumIndex txNumIndex;
   private final AvailabilityGuard availabilityGuard;
   private final ArchiveReadThrough readThrough;
+  private final int maxMemoEntries;
+  private final long maxMemoBytes;
 
   public DefaultArchiveStateReaderFactory(ArchiveTemporalStore temporalStore,
       ArchiveDomainCatalog catalog, ArchiveTxNumIndex txNumIndex,
       AvailabilityGuard availabilityGuard) {
-    this(temporalStore, catalog, txNumIndex, availabilityGuard, ArchiveReadThrough.NONE);
+    this(temporalStore, catalog, txNumIndex, availabilityGuard, ArchiveReadThrough.NONE,
+        ArchiveQueryLimits.unlimited());
   }
 
   public DefaultArchiveStateReaderFactory(ArchiveTemporalStore temporalStore,
       ArchiveDomainCatalog catalog, ArchiveTxNumIndex txNumIndex,
       AvailabilityGuard availabilityGuard, ArchiveReadThrough readThrough) {
+    this(temporalStore, catalog, txNumIndex, availabilityGuard, readThrough,
+        ArchiveQueryLimits.unlimited());
+  }
+
+  public DefaultArchiveStateReaderFactory(ArchiveTemporalStore temporalStore,
+      ArchiveDomainCatalog catalog, ArchiveTxNumIndex txNumIndex,
+      AvailabilityGuard availabilityGuard, ArchiveReadThrough readThrough,
+      ArchiveQueryLimits queryLimits) {
     this.temporalStore = temporalStore;
     this.catalog = catalog;
     this.txNumIndex = txNumIndex;
     this.availabilityGuard = availabilityGuard;
     this.readThrough = readThrough == null ? ArchiveReadThrough.NONE : readThrough;
+    this.maxMemoEntries = queryLimits.getMaxCachedEntries();
+    this.maxMemoBytes = queryLimits.getMaxCachedBytes();
   }
 
   @Override
   public ArchiveStateReader open(ArchiveStatePoint point) throws ArchiveReaderException {
     validateOpenable(point);
-    return new DefaultArchiveStateReader(temporalStore, catalog, point, readThrough);
+    return openView(point, () -> { });
   }
 
   /**
@@ -52,9 +67,27 @@ public final class DefaultArchiveStateReaderFactory implements ArchiveStateReade
    */
   public ArchiveStateReader open(ArchiveStatePoint point, Runnable onClose)
       throws ArchiveReaderException {
+    return open(point, onClose, new QueryContext(ArchiveQueryLimits.unlimited()));
+  }
+
+  public ArchiveStateReader open(ArchiveStatePoint point, Runnable onClose,
+      QueryContext queryContext) throws ArchiveReaderException {
     validateOpenable(point);
-    return new DefaultArchiveStateReader(ArchiveTemporalReadView.passThrough(temporalStore),
-        catalog, point, readThrough, onClose);
+    return openView(point, onClose, queryContext);
+  }
+
+  /**
+   * Opens a pass-through reader while its caller holds the archive consistency read lock for the
+   * reader's entire lifetime. This path does not allocate a native snapshot.
+   */
+  public ArchiveStateReader openLocked(ArchiveStatePoint point, Runnable onClose,
+      QueryContext queryContext) throws ArchiveReaderException {
+    validateOpenable(point);
+    ArchiveTemporalReadView view = ArchiveTemporalReadView.passThrough(temporalStore);
+    boolean completeHistory = txNumIndex.getFirstArchivedBlock() == 0L;
+    return new DefaultArchiveStateReader(
+        view, catalog, point, readThrough, onClose, completeHistory,
+        maxMemoEntries, maxMemoBytes, queryContext);
   }
 
   /**
@@ -64,8 +97,32 @@ public final class DefaultArchiveStateReaderFactory implements ArchiveStateReade
    */
   public ArchiveStateReader openSnapshot(ArchiveStatePoint point, ArchiveTemporalReadView view)
       throws ArchiveReaderException {
+    return openSnapshot(point, view, new QueryContext(ArchiveQueryLimits.unlimited()));
+  }
+
+  public ArchiveStateReader openSnapshot(ArchiveStatePoint point, ArchiveTemporalReadView view,
+      QueryContext queryContext) throws ArchiveReaderException {
     validateOpenable(point);
-    return new DefaultArchiveStateReader(view, catalog, point, ArchiveReadThrough.NONE);
+    return new DefaultArchiveStateReader(view, catalog, point, ArchiveReadThrough.NONE,
+        () -> { }, true, maxMemoEntries, maxMemoBytes, queryContext);
+  }
+
+  private ArchiveStateReader openView(ArchiveStatePoint point, Runnable onClose) {
+    return openView(point, onClose, new QueryContext(ArchiveQueryLimits.unlimited()));
+  }
+
+  private ArchiveStateReader openView(ArchiveStatePoint point, Runnable onClose,
+      QueryContext queryContext) {
+    ArchiveTemporalReadView view = temporalStore.openReadView();
+    try {
+      boolean completeHistory = txNumIndex.getFirstArchivedBlock() == 0L;
+      return new DefaultArchiveStateReader(
+          view, catalog, point, readThrough, onClose, completeHistory,
+          maxMemoEntries, maxMemoBytes, queryContext);
+    } catch (RuntimeException e) {
+      view.close();
+      throw e;
+    }
   }
 
   private void validateOpenable(ArchiveStatePoint point) throws ArchiveReaderException {

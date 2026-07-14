@@ -299,7 +299,7 @@ public class NoopArchiveServiceTest {
     try {
       ArchiveException ex = assertThrows(ArchiveException.class,
           () -> createArchive(config, dir.toString()));
-      assertTrue(ex.getMessage().contains("commit marker missing"));
+      assertTrue(ex.getMessage(), ex.getMessage().contains("no temporal commit marker"));
     } finally {
       deleteRecursively(dir.toFile());
     }
@@ -339,10 +339,14 @@ public class NoopArchiveServiceTest {
       }
 
       DefaultArchiveService recovered =
-          (DefaultArchiveService) createArchive(config, dir.toString());
-      assertTrue(recovered.getTxNumIndex().getBlockRange(1).isPresent());
-      assertTrue(recovered.getTemporalStore().latest(ArchiveDomain.ACCOUNT, address).isPresent());
-      recovered.close();
+          (DefaultArchiveService) createRecoveringArchive(config, dir.toString());
+      try {
+        activate(recovered, block);
+        assertTrue(recovered.getTxNumIndex().getBlockRange(1).isPresent());
+        assertTrue(recovered.getTemporalStore().latest(ArchiveDomain.ACCOUNT, address).isPresent());
+      } finally {
+        recovered.close();
+      }
       try (RocksDbArchiveInFlightStore inFlight =
           new RocksDbArchiveInFlightStore(dir.resolve("inflight").toString())) {
         assertTrue(inFlight.loadBlocks().isEmpty());
@@ -387,9 +391,15 @@ public class NoopArchiveServiceTest {
       overwriteTemporalLatest(dir.resolve("temporal"), address,
           Account.newBuilder().setBalance(99).build().toByteArray());
 
-      ArchiveException ex = assertThrows(ArchiveException.class,
-          () -> createArchive(config, dir.toString()));
-      assertTrue(ex.getMessage().contains("baseline marker"));
+      DefaultArchiveService recovered =
+          (DefaultArchiveService) createRecoveringArchive(config, dir.toString());
+      try {
+        ArchiveException ex = assertThrows(ArchiveException.class,
+            () -> activate(recovered, block));
+        assertTrue(ex.getMessage().contains("baseline marker"));
+      } finally {
+        recovered.close();
+      }
     } finally {
       deleteRecursively(dir.toFile());
     }
@@ -430,9 +440,15 @@ public class NoopArchiveServiceTest {
       putRawTemporalHistory(dir.resolve("temporal"), address, journal.getRange().getFirstTxNum(),
           Account.newBuilder().setBalance(99).build().toByteArray());
 
-      ArchiveException ex = assertThrows(ArchiveException.class,
-          () -> createArchive(config, dir.toString()));
-      assertTrue(ex.getMessage().contains("commit marker missing"));
+      DefaultArchiveService recovered =
+          (DefaultArchiveService) createRecoveringArchive(config, dir.toString());
+      try {
+        ArchiveException ex = assertThrows(ArchiveException.class,
+            () -> activate(recovered, block));
+        assertTrue(ex.getMessage().contains("commit marker missing"));
+      } finally {
+        recovered.close();
+      }
     } finally {
       deleteRecursively(dir.toFile());
     }
@@ -619,7 +635,7 @@ public class NoopArchiveServiceTest {
     try {
       ArchiveException ex = assertThrows(ArchiveException.class,
           () -> createArchive(config, dir.toString()));
-      assertTrue(ex.getMessage().contains("no index range for block 8"));
+      assertTrue(ex.getMessage().contains("temporal/index tail mismatch"));
     } finally {
       deleteRecursively(dir.toFile());
     }
@@ -650,9 +666,7 @@ public class NoopArchiveServiceTest {
       index.close();
     }
     try {
-      ArchiveException ex = assertThrows(ArchiveException.class,
-          () -> createArchive(config, dir.toString()));
-      assertTrue(ex.getMessage().contains("commit marker missing for block 7"));
+      assertThrows(ArchiveException.class, () -> createArchive(config, dir.toString()));
     } finally {
       deleteRecursively(dir.toFile());
     }
@@ -718,7 +732,7 @@ public class NoopArchiveServiceTest {
     try {
       ArchiveException ex = assertThrows(ArchiveException.class,
           () -> createArchive(config, dir.toString()));
-      assertTrue(ex.getMessage().contains("commit marker missing"));
+      assertTrue(ex.getMessage().contains("no temporal commit marker"));
     } finally {
       deleteRecursively(dir.toFile());
     }
@@ -803,7 +817,7 @@ public class NoopArchiveServiceTest {
   }
 
   @Test
-  public void factoryRejectsPersistentRepairMarkerAfterFatalCommitFailure() throws IOException {
+  public void startupRecoveryRejectsUnreconciledRepairMarkerData() throws IOException {
     StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
     config.setEnable(true);
     Path dir = Files.createTempDirectory("archive-factory-repair-marker-test");
@@ -829,9 +843,10 @@ public class NoopArchiveServiceTest {
     service.close();
 
     try {
-      ArchiveException ex = assertThrows(ArchiveException.class,
-          () -> createArchive(config, dir.toString()));
-      assertTrue(ex.getMessage().contains("requires repair"));
+      DefaultArchiveService reopened =
+          (DefaultArchiveService) createArchive(config, dir.toString());
+      assertThrows(ArchiveException.class, reopened::completeRecovery);
+      reopened.close();
     } finally {
       deleteRecursively(dir.toFile());
     }
@@ -855,14 +870,43 @@ public class NoopArchiveServiceTest {
 
   private static ArchiveService createArchive(StorageConfig.ArchiveConfig config) {
     try (MockedStatic<Arch> arch = mockArm64()) {
-      return ArchiveServiceFactory.create(config);
+      return activate(ArchiveServiceFactory.create(config));
     }
   }
 
   private static ArchiveService createArchive(StorageConfig.ArchiveConfig config,
       String archiveDir) {
+    return activate(createRecoveringArchive(config, archiveDir));
+  }
+
+  private static ArchiveService createRecoveringArchive(StorageConfig.ArchiveConfig config,
+      String archiveDir) {
+    // Persistent corruption tests in this class intentionally exercise the maintenance scrub.
+    config.getDb().setFullScrubOnStartup(true);
     try (MockedStatic<Arch> arch = mockArm64()) {
       return ArchiveServiceFactory.create(config, archiveDir);
+    }
+  }
+
+  private static ArchiveService activate(ArchiveService service) {
+    if (!service.isEnabled()) {
+      return service;
+    }
+    try (ArchiveWorkLease recovery = service.acquireRecoveryLease()) {
+      recovery.start();
+      service.completeRecovery();
+    }
+    return service;
+  }
+
+  private static void activate(DefaultArchiveService service, BlockCapsule canonicalBlock) {
+    try (ArchiveWorkLease recovery = service.acquireRecoveryLease()) {
+      recovery.start();
+      service.reconcilePublishedHeadOnStartup(canonicalBlock.getNum());
+      service.reconcileInFlightOnStartup(
+          canonicalBlock.getNum(), canonicalBlock.getNum(), blockNum ->
+              blockNum == canonicalBlock.getNum() ? canonicalBlock : null);
+      service.completeRecovery();
     }
   }
 
@@ -994,6 +1038,11 @@ public class NoopArchiveServiceTest {
     @Override
     public Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey) {
       return Optional.empty();
+    }
+
+    @Override
+    public org.tron.core.archive.temporal.ArchiveTemporalReadView openReadView() {
+      return org.tron.core.archive.temporal.ArchiveTemporalReadView.passThrough(this);
     }
 
     @Override

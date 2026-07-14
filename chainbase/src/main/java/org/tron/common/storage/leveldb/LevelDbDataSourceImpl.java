@@ -487,6 +487,11 @@ public class LevelDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
     return new StoreIterator(getDBIterator());
   }
 
+  @Override
+  public org.tron.core.db.common.iterator.DBIterator rawIterator() {
+    return new StoreIterator(getDBIterator(), true);
+  }
+
   public Stream<Entry<byte[], byte[]>> stream() {
     return StreamSupport.stream(spliterator(), false);
   }
