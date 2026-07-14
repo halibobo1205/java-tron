@@ -171,4 +171,83 @@ public class ArchiveServiceFactoryTest {
       assertTrue(failure.getMessage().contains("invalid size"));
     }
   }
+
+  @Test
+  public void factoryInitializesUnifiedThenAutoReopensRegisteredLayout() throws Exception {
+    Path base = temporaryFolder.getRoot().toPath();
+    Path root = base.resolve("new-unified");
+    Path anchors = Files.createDirectory(base.resolve("unified-anchors"));
+    StorageConfig.ArchiveConfig config = unifiedConfig();
+    config.getIdentity().setInitialize(true);
+    ChainBaseManager chainBaseManager = mock(ChainBaseManager.class);
+    when(chainBaseManager.hasBlocks()).thenReturn(false);
+    BlockCapsule genesis = mock(BlockCapsule.class);
+    BlockCapsule.BlockId genesisId = mock(BlockCapsule.BlockId.class);
+    when(genesis.getBlockId()).thenReturn(genesisId);
+    when(genesisId.toString()).thenReturn("unified-test-chain");
+
+    try (MockedStatic<Arch> arch = mockStatic(Arch.class);
+         MockedStatic<BlockUtil> blockUtil = mockStatic(BlockUtil.class)) {
+      arch.when(Arch::isArm64).thenReturn(true);
+      blockUtil.when(BlockUtil::newGenesisBlockCapsule).thenReturn(genesis);
+      ArchiveService service = ArchiveServiceFactory.create(
+          config, root.toString(), chainBaseManager, anchors);
+      try {
+        completeRecovery(service);
+      } finally {
+        service.close();
+      }
+
+      assertTrue(Files.isDirectory(root.resolve("unified")));
+      assertTrue(Files.notExists(root.resolve("temporal")));
+      assertTrue(Files.notExists(root.resolve("index")));
+      assertTrue(Files.notExists(root.resolve("inflight")));
+
+      config.getIdentity().setInitialize(false);
+      config.getDb().setLayout(StorageConfig.ArchiveConfig.DbConfig.AUTO);
+      service = ArchiveServiceFactory.create(
+          config, root.toString(), chainBaseManager, anchors);
+      try {
+        completeRecovery(service);
+      } finally {
+        service.close();
+      }
+    }
+  }
+
+  @Test
+  public void autoLayoutRejectsFreshDirectory() throws Exception {
+    Path root = Files.createDirectory(
+        temporaryFolder.getRoot().toPath().resolve("fresh-auto"));
+    StorageConfig.ArchiveConfig config = unifiedConfig();
+    config.getDb().setLayout(StorageConfig.ArchiveConfig.DbConfig.AUTO);
+    config.getIdentity().setInitialize(true);
+    ChainBaseManager chainBaseManager = mock(ChainBaseManager.class);
+    when(chainBaseManager.hasBlocks()).thenReturn(false);
+
+    try (MockedStatic<Arch> arch = mockStatic(Arch.class)) {
+      arch.when(Arch::isArm64).thenReturn(true);
+      ArchiveException failure = assertThrows(ArchiveException.class,
+          () -> ArchiveServiceFactory.create(
+              config, root.toString(), chainBaseManager,
+              temporaryFolder.getRoot().toPath()));
+      assertTrue(failure.getMessage().contains("AUTO requires"));
+    }
+  }
+
+  private static StorageConfig.ArchiveConfig unifiedConfig() {
+    StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
+    config.setEnable(true);
+    config.getDb().setLayout(StorageConfig.ArchiveConfig.DbConfig.UNIFIED_V1);
+    config.getPublisher().setSoftMinFreeBytes(0L);
+    config.getPublisher().setHardMinFreeBytes(0L);
+    return config;
+  }
+
+  private static void completeRecovery(ArchiveService service) {
+    try (ArchiveWorkLease recovery = service.acquireRecoveryLease()) {
+      recovery.start();
+      service.completeRecovery();
+    }
+  }
 }

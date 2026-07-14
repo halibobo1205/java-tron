@@ -84,6 +84,25 @@ public final class UnifiedArchiveDb implements AutoCloseable {
     return open(path, expectedSchemaChecksum, ROCKS_BATCH_WRITER);
   }
 
+  /**
+   * Creates a new empty DB or resumes the narrow initialization window before the manifest was
+   * installed. Existing archive rows are never repaired or overwritten by this method.
+   */
+  public static UnifiedArchiveDb initializeOrResumeEmpty(Path path, byte[] schemaChecksum) {
+    Path target = normalizePath(path);
+    UnifiedArchiveManifest.requireSchemaChecksum(schemaChecksum);
+    byte[] immutableSchemaChecksum = Arrays.copyOf(schemaChecksum, schemaChecksum.length);
+    if (!Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+      return initialize(target, immutableSchemaChecksum);
+    }
+    if (!Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS)) {
+      throw new ArchiveException("UNIFIED_V1 initialization target is not a directory: "
+          + target);
+    }
+    validateColumnFamiliesOnDisk(target);
+    return openDatabase(target, immutableSchemaChecksum, false, ROCKS_BATCH_WRITER, true);
+  }
+
   static UnifiedArchiveDb open(Path path, byte[] expectedSchemaChecksum,
       BatchWriter batchWriter) {
     Path target = normalizePath(path);
@@ -124,6 +143,27 @@ public final class UnifiedArchiveDb implements AutoCloseable {
     }
   }
 
+  /** Forced-sync compare-and-replace used to acknowledge one durable journal row. */
+  public synchronized void replaceJournalDurably(byte[] key, byte[] expectedValue,
+      byte[] newValue) {
+    requireOpen();
+    requireKey(key, "journal");
+    requireValue(expectedValue, "journal expected");
+    requireValue(newValue, "journal replacement");
+    byte[] immutableKey = Arrays.copyOf(key, key.length);
+    byte[] immutableExpected = Arrays.copyOf(expectedValue, expectedValue.length);
+    byte[] immutableReplacement = Arrays.copyOf(newValue, newValue.length);
+    try {
+      requireJournalValue(immutableKey, immutableExpected);
+      try (WriteOptions writeOptions = createWriteOptions(true)) {
+        db.put(handle(UnifiedArchiveColumnFamily.INFLIGHT), writeOptions,
+            immutableKey, immutableReplacement);
+      }
+    } catch (RocksDBException e) {
+      throw new ArchiveException("UNIFIED_V1 journal replace failed", e);
+    }
+  }
+
   /** Forced-sync compare-and-delete used by journal rollback paths outside publication. */
   public synchronized void deleteJournalDurably(byte[] key, byte[] expectedValue) {
     requireOpen();
@@ -160,6 +200,58 @@ public final class UnifiedArchiveDb implements AutoCloseable {
     }
   }
 
+  /** Forced-sync operational metadata delete; manifest and published cursor remain reserved. */
+  public synchronized void deleteMetaDurably(byte[] key) {
+    requireOpen();
+    requireKey(key, "meta");
+    byte[] immutableKey = Arrays.copyOf(key, key.length);
+    if (Arrays.equals(immutableKey, UnifiedArchiveManifest.key())
+        || Arrays.equals(immutableKey, UnifiedArchiveManifest.publishedCursorKey())) {
+      throw new ArchiveException("UNIFIED_V1 reserved meta row is immutable through this API");
+    }
+    try (WriteOptions writeOptions = createWriteOptions(true)) {
+      db.delete(handle(UnifiedArchiveColumnFamily.META), writeOptions, immutableKey);
+    } catch (RocksDBException e) {
+      throw new ArchiveException("UNIFIED_V1 meta delete failed", e);
+    }
+  }
+
+  /** Point read used by typed adapters outside a long-lived snapshot. */
+  public synchronized byte[] get(UnifiedArchiveColumnFamily columnFamily, byte[] key) {
+    requireOpen();
+    if (columnFamily == null) {
+      throw new ArchiveException("UNIFIED_V1 column family is required");
+    }
+    requireKey(key, "read");
+    try {
+      return db.get(handle(columnFamily), key);
+    } catch (RocksDBException e) {
+      throw new ArchiveException("UNIFIED_V1 read failed for " + columnFamily.getName(), e);
+    }
+  }
+
+  /** Forced-sync restricted cross-CF batch for temporal unwind and offline validation repair. */
+  public synchronized void writeMaintenanceAtomically(UnifiedArchiveMaintenanceBatch mutations) {
+    requireOpen();
+    if (mutations == null) {
+      throw new ArchiveException("UNIFIED_V1 maintenance batch is required");
+    }
+    try (WriteBatch batch = new WriteBatch();
+         WriteOptions writeOptions = createWriteOptions(true)) {
+      for (UnifiedArchiveMaintenanceBatch.Mutation mutation : mutations.mutations()) {
+        ColumnFamilyHandle mutationHandle = handle(mutation.columnFamily());
+        if (mutation.isDelete()) {
+          batch.delete(mutationHandle, mutation.key());
+        } else {
+          batch.put(mutationHandle, mutation.key(), mutation.value());
+        }
+      }
+      batchWriter.write(db, writeOptions, batch);
+    } catch (RocksDBException e) {
+      throw new ArchiveException("UNIFIED_V1 maintenance batch failed", e);
+    }
+  }
+
   /**
    * Publishes one block in a single cross-CF WriteBatch. Cursor and marker become visible with all
    * index/temporal rows at the same sequence, while the matched durable journal disappears.
@@ -176,7 +268,11 @@ public final class UnifiedArchiveDb implements AutoCloseable {
            WriteOptions writeOptions = createWriteOptions(publishSync)) {
         for (UnifiedArchivePublish.Mutation mutation : publish.mutations()) {
           ColumnFamilyHandle mutationHandle = handle(mutation.columnFamily());
-          batch.put(mutationHandle, mutation.key(), mutation.value());
+          if (mutation.isDelete()) {
+            batch.delete(mutationHandle, mutation.key());
+          } else {
+            batch.put(mutationHandle, mutation.key(), mutation.value());
+          }
         }
         batch.put(handle(UnifiedArchiveColumnFamily.BLOCK_MARKER),
             publish.blockMarkerKey(), publish.blockMarkerValue());
@@ -218,6 +314,26 @@ public final class UnifiedArchiveDb implements AutoCloseable {
     return Arrays.copyOf(schemaChecksum, schemaChecksum.length);
   }
 
+  /** True when any archive payload row beyond the immutable manifest is present. */
+  public synchronized boolean hasArchiveData() {
+    requireOpen();
+    for (UnifiedArchiveColumnFamily columnFamily : UnifiedArchiveColumnFamily.values()) {
+      try (RocksIterator iterator = db.newIterator(handle(columnFamily))) {
+        iterator.seekToFirst();
+        while (iterator.isValid()) {
+          if (columnFamily != UnifiedArchiveColumnFamily.META
+              || !Arrays.equals(iterator.key(), UnifiedArchiveManifest.key())) {
+            return true;
+          }
+          iterator.next();
+        }
+        ArchiveRocksIterators.requireOk(iterator,
+            "UNIFIED_V1 scan for archive payload in " + columnFamily.getName());
+      }
+    }
+    return false;
+  }
+
   @Override
   public synchronized void close() {
     if (closed) {
@@ -247,6 +363,11 @@ public final class UnifiedArchiveDb implements AutoCloseable {
 
   private static UnifiedArchiveDb openDatabase(Path target, byte[] schemaChecksum,
       boolean initialize, BatchWriter batchWriter) {
+    return openDatabase(target, schemaChecksum, initialize, batchWriter, false);
+  }
+
+  private static UnifiedArchiveDb openDatabase(Path target, byte[] schemaChecksum,
+      boolean initialize, BatchWriter batchWriter, boolean resumeEmptyInitialization) {
     DBOptions dbOptions = new DBOptions()
         .setCreateIfMissing(initialize)
         .setCreateMissingColumnFamilies(initialize)
@@ -262,6 +383,8 @@ public final class UnifiedArchiveDb implements AutoCloseable {
           columnFamilyOptions, openedHandles, openedDb, batchWriter);
       if (initialize) {
         opened.installManifest();
+      } else if (resumeEmptyInitialization) {
+        opened.resumeEmptyManifestIfMissing();
       }
       opened.validateIdentity();
       return opened;
@@ -357,6 +480,20 @@ public final class UnifiedArchiveDb implements AutoCloseable {
       db.put(handle(UnifiedArchiveColumnFamily.META), writeOptions,
           UnifiedArchiveManifest.key(), UnifiedArchiveManifest.value(schemaChecksum));
     }
+  }
+
+  private void resumeEmptyManifestIfMissing() throws RocksDBException {
+    validateDefaultColumnFamilyEmpty();
+    byte[] manifest = db.get(handle(UnifiedArchiveColumnFamily.META),
+        UnifiedArchiveManifest.key());
+    if (manifest != null) {
+      return;
+    }
+    if (hasArchiveData()) {
+      throw new ArchiveException(
+          "UNIFIED_V1 cannot resume initialization with archive rows present");
+    }
+    installManifest();
   }
 
   private void validateIdentity() throws RocksDBException {

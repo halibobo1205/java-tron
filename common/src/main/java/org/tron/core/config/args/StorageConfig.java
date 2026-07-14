@@ -181,6 +181,10 @@ public class StorageConfig {
     private boolean warnUnclassifiedStoreWrites = true;
 
     void postProcess() {
+      if (db == null) {
+        throw new IllegalArgumentException("storage.archive.db must not be null");
+      }
+      db.postProcess();
       if (db.directory == null || db.directory.trim().isEmpty()) {
         throw new IllegalArgumentException("storage.archive.db.directory must not be empty");
       }
@@ -234,8 +238,24 @@ public class StorageConfig {
     @Setter
     public static class DbConfig {
 
+      public static final String LEGACY_V1 = "LEGACY_V1";
+      public static final String UNIFIED_V1 = "UNIFIED_V1";
+      public static final String AUTO = "AUTO";
+
       private String directory = "archive";
       private boolean fullScrubOnStartup;
+      private String layout = LEGACY_V1;
+
+      void postProcess() {
+        if (layout == null || layout.trim().isEmpty()) {
+          throw new IllegalArgumentException("storage.archive.db.layout must not be empty");
+        }
+        layout = layout.trim().toUpperCase(java.util.Locale.ROOT);
+        if (!LEGACY_V1.equals(layout) && !UNIFIED_V1.equals(layout) && !AUTO.equals(layout)) {
+          throw new IllegalArgumentException(
+              "storage.archive.db.layout must be LEGACY_V1, UNIFIED_V1, or AUTO");
+        }
+      }
     }
 
     /** One-time opt-in for creating or resuming the canonical/archive ACTIVE identity pair. */
@@ -457,7 +477,7 @@ public class StorageConfig {
         "warnUnclassifiedStoreWrites");
     if (archive.hasPath("db")) {
       requireOnlyKeys("storage.archive.db", archive.getConfig("db").root(), "directory",
-          "fullScrubOnStartup");
+          "fullScrubOnStartup", "layout");
     }
     if (archive.hasPath("txnum")) {
       requireOnlyKeys("storage.archive.txnum", archive.getConfig("txnum").root(), "enable");

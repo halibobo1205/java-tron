@@ -289,6 +289,19 @@ public final class ArchiveIdentityProtocol {
             () -> validateActiveLocked(anchors, uuid, root)));
   }
 
+  /**
+   * Reads the root identity under its shared lock so layout AUTO can classify an existing archive
+   * without guessing from directory contents. This does not validate the matching anchor; the
+   * normal {@link #validateActive(Path, Path, String, String, String, long)} call still does that
+   * after selecting the layout-specific payload.
+   */
+  public static ArchiveIdentity inspectRootIdentity(Path archiveRoot) throws IOException {
+    ArchiveIdentityProtocol protocol = new ArchiveIdentityProtocol();
+    Path root = requirePhysicalCanonicalPath(archiveRoot, "archiveRoot");
+    return protocol.files.withSharedFileLock(rootLockPath(root),
+        () -> protocol.files.readRequired(rootIdentityPath(root), "root"));
+  }
+
   private ArchiveIdentity validateActiveLocked(Path anchors, UUID uuid, Path root)
       throws IOException {
     ArchiveIdentity anchor = files.readRequired(anchorPath(anchors, uuid), "anchor");

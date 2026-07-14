@@ -150,6 +150,8 @@ public class StorageConfigTest {
     assertFalse(a.isEnable());
     assertEquals("archive", a.getDb().getDirectory());
     assertFalse(a.getDb().isFullScrubOnStartup());
+    assertEquals(StorageConfig.ArchiveConfig.DbConfig.LEGACY_V1,
+        a.getDb().getLayout());
     assertTrue(a.getTxnum().isEnable());
     assertTrue(a.getTemporal().isEnable());
     StorageConfig.ArchiveConfig.PublisherConfig publisher = a.getPublisher();
@@ -190,7 +192,8 @@ public class StorageConfigTest {
   public void testArchiveOverride() {
     StorageConfig.ArchiveConfig a = StorageConfig.fromConfig(withRef(
         "storage.archive { enable = true,"
-            + " db { directory = arc, fullScrubOnStartup = true }, txnum { enable = true },"
+            + " db { directory = arc, fullScrubOnStartup = true, layout = unified_v1 },"
+            + " txnum { enable = true },"
             + " temporal { enable = true },"
             + " identity { adoptLegacy = true },"
             + " commitment { enable = false, persistTxRoots = false },"
@@ -199,6 +202,8 @@ public class StorageConfigTest {
     assertTrue(a.isEnable());
     assertEquals("arc", a.getDb().getDirectory());
     assertTrue(a.getDb().isFullScrubOnStartup());
+    assertEquals(StorageConfig.ArchiveConfig.DbConfig.UNIFIED_V1,
+        a.getDb().getLayout());
     assertTrue(a.getTxnum().isEnable());
     assertTrue(a.getTemporal().isEnable());
     assertTrue(a.getIdentity().isAdoptLegacy());
@@ -343,6 +348,12 @@ public class StorageConfigTest {
   public void testArchiveRejectsEmptyDirectory() {
     assertThrows(IllegalArgumentException.class,
         () -> StorageConfig.fromConfig(withRef("storage.archive.db.directory = \"\"")));
+  }
+
+  @Test
+  public void testArchiveRejectsUnsupportedLayout() {
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef("storage.archive.db.layout = FUTURE_V2")));
   }
 
   @Test

@@ -6,7 +6,7 @@ import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
 
 /** Exact on-disk identity for the first unified archive layout. */
-final class UnifiedArchiveManifest {
+public final class UnifiedArchiveManifest {
 
   private static final char[] HEX = "0123456789abcdef".toCharArray();
   private static final byte[] KEY = "manifest".getBytes(StandardCharsets.US_ASCII);
@@ -21,11 +21,11 @@ final class UnifiedArchiveManifest {
   private UnifiedArchiveManifest() {
   }
 
-  static byte[] key() {
+  public static byte[] key() {
     return Arrays.copyOf(KEY, KEY.length);
   }
 
-  static byte[] publishedCursorKey() {
+  public static byte[] publishedCursorKey() {
     return Arrays.copyOf(PUBLISHED_CURSOR_KEY, PUBLISHED_CURSOR_KEY.length);
   }
 
