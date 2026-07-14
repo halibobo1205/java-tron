@@ -90,3 +90,25 @@ Snapshot-owning reader leak if `ManagedArchiveStateReader` ctor throws (`Default
   naming with temporal manifest `schema=7`.
 - Deliberately unchanged: TOMBSTONE historical-config resolution and slow-network reservation
   lifetime.
+
+---
+
+## Follow-up (claude, 2026-07-14) — new docs + INFO status
+
+- **Snapshot-leak canary: FIXED** (`fix(archive): close snapshot reader if managed-reader ctor fails`,
+  commit `27c41ffc37`). The genesis-complete `openResolvedReader` path now `reader.close()`s in a catch
+  if the `ManagedArchiveStateReader` ctor throws, so a wrapper-ctor failure can no longer leak the
+  RocksDB snapshot. The INFO leak-canary item above is closed — no further action.
+- **UNIFIED_V1 wiring now has a spec:** the `UnifiedArchiveDb ... shipped but unwired` INFO item is
+  addressed by a full requirements doc → **`docs/archiveV3/20260714-unified-v1-wiring-requirements.md`**.
+  It is codex-verifiable (every FR/INV/GATE cites `file:line`): FR-1..12 (layout config, factory branch,
+  3 interface adapters, atomic-publish re-plumb, single-snapshot reader, UNIFIED identity payload,
+  durability invariants, downgrade/mis-point guard, offline migrator, bridge), milestones M1–M6 with a
+  gating order, and 6 open questions (OQ-1..6) codex must resolve. **Landing rule: M1–M2 may land
+  off-by-default; activation is blocked until the downgrade matrix + migrator (digest parity, ≥3 real
+  datasets) + soak/perf gates 8/9/10/3/7 pass** — none of that machinery exists yet.
+- **From-0 production validation runbook:** **`docs/archiveV3/20260714-archive-from0-production-validation-runbook.md`**
+  — the go/no-go gate for archive-ON from-0 sync (Stage A–D, §4 gates as pass/fail, fail-stop playbook).
+- **Remaining INFO items left for codex** (intricate code you own; low priority): `BufferedResponseWrapper`
+  dead ctor/`getBufferedSize()`; dead `inFlightBlocks.isEmpty()` guard in `unwindBlock` (`:1558`);
+  `AssetUpdateHelper`/`MoveAbiHelper` iterator (JNI handle) leaks on early-return.
