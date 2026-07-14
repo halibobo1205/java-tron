@@ -12,6 +12,42 @@ deployed LEGACY dataset exists, so an offline migrator and previous-binary downg
 current delivery requirements. They become mandatory again before any real LEGACY dataset is
 created or an older archive-aware binary is released.
 
+**Review outcome (round-4, claude, 2026-07-14):** adversarial review of the M1-M2 commit
+(`bcd128fb3a`, 35 agents: 7 finders → 3-lens verify → completeness critic). Verdict: **structurally
+sound; GO to keep off-by-default, NO-GO for activation.** One real HIGH correctness bug was found,
+independently source-verified, and **fixed** — `fix(archive): fold UNIFIED block digest in
+changeset-key order` (`301dfd9991`): `UnifiedArchiveTemporalStore.prepare()` folded the block-commit
+digest in `RECORD_ORDER` (canonicalKey lex-then-length) while `readBlockRows()` recomputes in
+physical CHANGESET order (keyLen-then-canonicalKey), so any block with ≥2 changes in one
+(txNum, domain) where the shorter key is lex-greater fail-stopped `validateCommittedBlock` /
+`unwindBlock` / startup validation and broke LEGACY↔UNIFIED marker parity. Now mirrors
+`RocksDbArchiveTemporalStore.putBlockChanges` (`BY_CHANGESET_KEY` sort); regression test
+`commitMarkerMatchesForMultipleVariableLengthKeysInOneTx` added (proven to fail without the fix).
+
+The remaining review findings are all **test-coverage gaps = the M3 activation-gate deliverables
+below**, not code defects. Verified sound (no action): atomic single-batch publish incl.
+cursor/marker/journal-delete; WAL forced-sync on every new write path; `resumeEmptyManifestIfMissing`
+won't clobber existing rows; single-snapshot reader; legacy path + archive-off untouched.
+
+**M3 must-do before activation (mapped to the gates in this doc):**
+- TEST-2 — LEGACY↔UNIFIED **differential parity** (would have caught the digest bug): missing.
+- TEST-1 — run the 3 unified adapters through the **legacy store test suites** (sole coverage today
+  is self-referential round-trip).
+- TEST-3 / gate 8 — real **kill / ENOSPC / WAL-rotation / CF-flush** injection (only a synchronous
+  batch-write exception is injected today); non-negotiable.
+- FR-7 — **corrupt-CF scrub tests** for BLOCK_MARKER / position-coverage / orphan-HISTORY (only INDEX
+  + COMMITMENT are covered).
+- TEST-4 / FR-9 — **cross-layout mis-point fail-closed** assertion. NOTE: under the greenfield scope
+  the migrator + previous-binary downgrade matrix are deferred, but this test is cheap (the guard
+  already exists and fails closed) and worth adding now.
+
+**Completeness probes no finder covered (do before flipping the default):** schema-checksum
+equivalence (OQ-6); concurrent-reader-vs-publish MVCC/sequence isolation under a real snapshot;
+the actual ENOSPC-mid-`publishBlockAtomically` fail path (markFatal, not half-published); txnum
+position-coverage / txId-uniqueness / append-only decode vs an independent oracle; metrics/counter
+parity with the LEGACY backend; a direct unwind-correctness test. INFO-only: `SnapshotView.getAsOf`
+seeks before its owner-thread check (asymmetry with Rocks) — defensive nit, follow-up.
+
 > Scope note / recommendation: this is a **multi-milestone effort**, not a quick switch. The perf-hardening plan
 > (`20260713-archive-performance-hardening-plan.md` §10) deliberately keeps UNIFIED_V1 *outside* the factory
 > until bridge/migrator/downgrade-matrix/soak land. This doc is the spec for that whole body of work, structured
