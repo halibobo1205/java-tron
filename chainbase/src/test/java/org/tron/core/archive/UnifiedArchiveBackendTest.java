@@ -7,6 +7,7 @@ import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import com.google.protobuf.ByteString;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Collections;
@@ -196,6 +197,29 @@ public class UnifiedArchiveBackendTest {
   public void journalScanRejectsUnknownRows() {
     db.putJournalDurably(new byte[] {(byte) 0x7f}, new byte[] {1});
     assertThrows(ArchiveException.class, inFlight::loadBlocks);
+  }
+
+  @Test
+  public void commitMarkerMatchesForMultipleVariableLengthKeysInOneTx() {
+    // Two DYNAMIC_PROPERTIES changes share one (txNum, domain): "AA" (2 bytes, lexicographically
+    // smaller) and "B" (1 byte, lexicographically greater). prepare() must fold the block digest in
+    // stored changeset-key order (keyLen-first -> [B, AA]), NOT RECORD_ORDER (canonicalKey
+    // lex-then-length -> [AA, B]); otherwise validateCommittedBlock fail-stops a valid block.
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        0L, 0L, 1L, 0L, 1L, hash(1L), 0, ArchiveSource.NORMAL, schemaChecksum);
+    ArchiveTxPosition pos = new ArchiveTxPosition(
+        0L, 0L, ArchivePhase.BLOCK_PREPARE, ArchiveSource.NORMAL, -1, null);
+    byte[] longerLexSmaller = "AA".getBytes(StandardCharsets.US_ASCII);
+    byte[] shorterLexGreater = "B".getBytes(StandardCharsets.US_ASCII);
+    ArchiveChangeRecord first = new ArchiveChangeRecord(
+        pos, ArchiveDomain.DYNAMIC_PROPERTIES, longerLexSmaller,
+        DomainValue.tombstone(), DomainValue.present(new byte[] {0x0A}));
+    ArchiveChangeRecord second = new ArchiveChangeRecord(
+        pos, ArchiveDomain.DYNAMIC_PROPERTIES, shorterLexGreater,
+        DomainValue.tombstone(), DomainValue.present(new byte[] {0x0B}));
+    temporal.putBlockChanges(range, Arrays.asList(first, second));
+    // Recompute must equal the stored marker digest; pre-fix this threw "commit marker missing".
+    temporal.validateCommittedBlock(range);
   }
 
   private void wire(boolean fullStartupValidation) {
