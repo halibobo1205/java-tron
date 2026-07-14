@@ -3,6 +3,9 @@ package org.tron.core.archive;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.when;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -10,9 +13,12 @@ import java.util.Collections;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import org.mockito.MockedStatic;
 import org.rocksdb.Options;
 import org.rocksdb.RocksDB;
+import org.tron.common.arch.Arch;
 import org.tron.common.utils.ByteArray;
+import org.tron.core.ChainBaseManager;
 import org.tron.core.archive.domain.ArchiveDomainCatalog;
 import org.tron.core.archive.domain.ArchiveDomainRegistry;
 import org.tron.core.archive.domain.ArchiveSchemaChecksum;
@@ -21,12 +27,16 @@ import org.tron.core.archive.domain.DefaultArchiveDomainRegistry;
 import org.tron.core.archive.identity.ArchiveIdentity;
 import org.tron.core.archive.identity.ArchiveIdentityClaim;
 import org.tron.core.archive.identity.ArchiveIdentityException;
+import org.tron.core.archive.identity.ArchiveIdentityProtocol;
 import org.tron.core.archive.identity.ArchiveIdentityState;
 import org.tron.core.archive.identity.LegacyArchiveIdentityPayload;
 import org.tron.core.archive.temporal.RocksDbArchiveTemporalStore;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.archive.txnum.PersistentArchiveTxNumIndex;
 import org.tron.core.archive.txnum.RocksDbArchiveBlockRangeStore;
+import org.tron.core.capsule.BlockCapsule;
+import org.tron.core.capsule.utils.BlockUtil;
+import org.tron.core.config.args.StorageConfig;
 
 public class ArchiveServiceFactoryTest {
 
@@ -130,6 +140,35 @@ public class ArchiveServiceFactoryTest {
              new RocksDbArchiveBlockRangeStore(path.toString(), false, false, false)) {
       assertTrue(store.hasRepairRequired());
       assertThrows(ArchiveException.class, store::validateFullKeyspace);
+    }
+  }
+
+  @Test
+  public void factoryPreservesIdentityValidationReason() throws Exception {
+    Path base = temporaryFolder.getRoot().toPath();
+    Path root = Files.createDirectory(base.resolve("invalid-identity-root"));
+    Path anchors = Files.createDirectory(base.resolve("identity-anchors"));
+    Files.write(ArchiveIdentityProtocol.rootIdentityPath(root), new byte[0]);
+    StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
+    config.setEnable(true);
+    config.getIdentity().setInitialize(true);
+    ChainBaseManager chainBaseManager = mock(ChainBaseManager.class);
+    when(chainBaseManager.hasBlocks()).thenReturn(false);
+    BlockCapsule genesis = mock(BlockCapsule.class);
+    BlockCapsule.BlockId genesisId = mock(BlockCapsule.BlockId.class);
+    when(genesis.getBlockId()).thenReturn(genesisId);
+    when(genesisId.toString()).thenReturn("test-chain-id");
+
+    try (MockedStatic<Arch> arch = mockStatic(Arch.class);
+         MockedStatic<BlockUtil> blockUtil = mockStatic(BlockUtil.class)) {
+      arch.when(Arch::isArm64).thenReturn(true);
+      blockUtil.when(BlockUtil::newGenesisBlockCapsule).thenReturn(genesis);
+      ArchiveException failure = assertThrows(ArchiveException.class,
+          () -> ArchiveServiceFactory.create(
+              config, root.toString(), chainBaseManager, anchors));
+
+      assertTrue(failure.getMessage().contains("archive identity validation failed"));
+      assertTrue(failure.getMessage().contains("invalid size"));
     }
   }
 }

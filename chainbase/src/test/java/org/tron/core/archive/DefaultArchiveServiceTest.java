@@ -1089,6 +1089,36 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
+  public void readerLifecycleStartFailureIsMappedAndReleasesAdmission() throws Exception {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), new InMemoryArchiveTemporalStore(),
+        new InMemoryArchiveInFlightStore());
+    try {
+      BlockCapsule b5 = blockWithParentSeed(5, (byte) 5);
+      commitEmptyBlock(service, b5);
+      service.publishSolidifiedBlocks(5);
+      ArchiveBlockRange range = index.getBlockRange(5).get();
+      ArchiveStatePoint point = ArchiveStatePoint.blockEnd(
+          5, b5.getBlockId().getBytes(), range.getFinalizeTxNum());
+
+      try (ArchiveWorkLease writer = service.acquireWriterLease()) {
+        writer.start();
+        ArchiveReaderException failure = assertThrows(
+            ArchiveReaderException.class, () -> service.openReader(point));
+        assertEquals(ArchiveReaderException.Reason.INTERNAL_IO, failure.getReason());
+        assertTrue(failure.getMessage().contains("nested archive lifecycle leases"));
+      }
+
+      try (ArchiveStateReader reader = service.openReader(point)) {
+        assertSame(point, reader.getPoint());
+      }
+    } finally {
+      service.close();
+    }
+  }
+
+  @Test
   public void genesisCompleteReadersRespectIndependentSnapshotLimit() throws Exception {
     InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
     DefaultArchiveService service = new DefaultArchiveService(

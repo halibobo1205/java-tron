@@ -85,7 +85,8 @@ public final class PersistentArchiveTxNumIndex implements ArchiveTxNumIndex, Aut
       byte[] commitSchemaChecksum) {
     ArchiveBlockRangeCodec.requireSchemaChecksum(commitSchemaChecksum, "archive txNum commit");
     if (!Arrays.equals(schemaChecksum, commitSchemaChecksum)) {
-      throw new ArchiveException("archive txNum commit schema checksum mismatch");
+      throw new ArchiveException(
+          "archive txNum commit schema checksum mismatch; rebuild or resync archive data");
     }
     ArchiveBlockRange range = inner.commitBlock(blockNum, blockHash, userTxCount);
     ArchiveBlockRange persistedRange = new ArchiveBlockRange(

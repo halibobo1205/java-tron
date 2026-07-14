@@ -202,6 +202,7 @@ public class DefaultArchiveServiceIncrementalDifferentialTest {
   private static void assertDifferential(DifferentialFixture fixture, String context)
       throws Exception {
     RebuildOracle oracle = RebuildOracle.from(fixture.temporal, fixture.store);
+    assertOracleEquals(fixture.expectedOracle(), oracle, context + " independent model");
     assertEquals(context + " journal block count",
         fixture.inFlightSize(), fixture.store.loadBlocks().size());
     assertIncrementalMatchesOracle(fixture.service, fixture.index, oracle, context);
@@ -378,6 +379,8 @@ public class DefaultArchiveServiceIncrementalDifferentialTest {
     private final DefaultArchiveService service = service(index, temporal, store);
     private final Deque<ModelBlock> inFlight = new ArrayDeque<>();
     private final Map<Integer, byte[]> current = new HashMap<>();
+    private final Map<Integer, DomainValue> archiveLatest = new HashMap<>();
+    private Map<Integer, DomainValue> activeEarliestPrev;
     private long nextBlockNum = 6;
     private int nextGeneration = 101;
     private long nextBalance = 1_000;
@@ -413,16 +416,24 @@ public class DefaultArchiveServiceIncrementalDifferentialTest {
 
     private void appendBlock(CapturePlan prepare, CapturePlan finalize) {
       Map<Integer, byte[]> stateBefore = copyState(current);
+      Map<Integer, DomainValue> archiveLatestBefore = copyDomainState(archiveLatest);
+      Map<Integer, DomainValue> earliestPrev = new HashMap<>();
       BlockCapsule block = block(nextBlockNum, nextGeneration++);
-      service.beginBlock(block, ArchiveSource.NORMAL);
-      service.beginSystemTx(block, ArchivePhase.BLOCK_PREPARE);
-      prepare.capture();
-      service.endTx();
-      service.beginSystemTx(block, ArchivePhase.BLOCK_FINALIZE);
-      finalize.capture();
-      service.endTx();
-      service.commitBlock(block, 0);
-      inFlight.addLast(new ModelBlock(block, stateBefore));
+      activeEarliestPrev = earliestPrev;
+      try {
+        service.beginBlock(block, ArchiveSource.NORMAL);
+        service.beginSystemTx(block, ArchivePhase.BLOCK_PREPARE);
+        prepare.capture();
+        service.endTx();
+        service.beginSystemTx(block, ArchivePhase.BLOCK_FINALIZE);
+        finalize.capture();
+        service.endTx();
+        service.commitBlock(block, 0);
+      } finally {
+        activeEarliestPrev = null;
+      }
+      inFlight.addLast(new ModelBlock(
+          block, stateBefore, archiveLatestBefore, earliestPrev));
       nextBlockNum++;
     }
 
@@ -453,6 +464,8 @@ public class DefaultArchiveServiceIncrementalDifferentialTest {
       inFlight.removeLast();
       current.clear();
       current.putAll(copyState(newest.stateBefore));
+      archiveLatest.clear();
+      archiveLatest.putAll(copyDomainState(newest.archiveLatestBefore));
       nextBlockNum = newest.block.getNum();
     }
 
@@ -488,23 +501,56 @@ public class DefaultArchiveServiceIncrementalDifferentialTest {
     private void put(int key, long balance) {
       byte[] previous = current.get(key);
       byte[] value = account(balance);
+      recordCapture(key, previous, value);
       service.getCaptureEngine().capturePut("account", KEYS[key], previous, value);
       current.put(key, value);
     }
 
     private void delete(int key) {
       byte[] previous = current.get(key);
+      recordCapture(key, previous, null);
       service.getCaptureEngine().captureDelete("account", KEYS[key], previous);
       current.remove(key);
     }
 
     private void captureSameValue(int key) {
       byte[] value = current.get(key);
+      recordCapture(key, value, value);
       if (value == null) {
         service.getCaptureEngine().captureDelete("account", KEYS[key], null);
       } else {
         service.getCaptureEngine().capturePut("account", KEYS[key], value, value);
       }
+    }
+
+    private void recordCapture(int key, byte[] previous, byte[] value) {
+      if (activeEarliestPrev == null) {
+        throw new IllegalStateException("capture executed outside an active model block");
+      }
+      activeEarliestPrev.putIfAbsent(key, previous == null
+          ? DomainValue.tombstone()
+          : DomainValue.present(previous));
+      archiveLatest.put(key, value == null
+          ? DomainValue.tombstone()
+          : DomainValue.present(value));
+    }
+
+    private RebuildOracle expectedOracle() {
+      List<Optional<DomainValue>> latest = new ArrayList<>();
+      List<Optional<DomainValue>> earliestPrev = new ArrayList<>();
+      for (int key = 0; key < KEY_COUNT; key++) {
+        latest.add(Optional.ofNullable(archiveLatest.get(key)));
+        earliestPrev.add(Optional.empty());
+      }
+      for (ModelBlock block : inFlight) {
+        for (Map.Entry<Integer, DomainValue> entry : block.earliestPrev.entrySet()) {
+          int key = entry.getKey();
+          if (!earliestPrev.get(key).isPresent()) {
+            earliestPrev.set(key, Optional.of(entry.getValue()));
+          }
+        }
+      }
+      return new RebuildOracle(latest, earliestPrev);
     }
 
     @Override
@@ -521,14 +567,32 @@ public class DefaultArchiveServiceIncrementalDifferentialTest {
     return copy;
   }
 
+  private static Map<Integer, DomainValue> copyDomainState(
+      Map<Integer, DomainValue> state) {
+    Map<Integer, DomainValue> copy = new HashMap<>();
+    for (Map.Entry<Integer, DomainValue> entry : state.entrySet()) {
+      DomainValue value = entry.getValue();
+      copy.put(entry.getKey(), value.isDeleted()
+          ? DomainValue.tombstone()
+          : DomainValue.present(value.getValue()));
+    }
+    return copy;
+  }
+
   private static final class ModelBlock {
 
     private final BlockCapsule block;
     private final Map<Integer, byte[]> stateBefore;
+    private final Map<Integer, DomainValue> archiveLatestBefore;
+    private final Map<Integer, DomainValue> earliestPrev;
 
-    private ModelBlock(BlockCapsule block, Map<Integer, byte[]> stateBefore) {
+    private ModelBlock(BlockCapsule block, Map<Integer, byte[]> stateBefore,
+        Map<Integer, DomainValue> archiveLatestBefore,
+        Map<Integer, DomainValue> earliestPrev) {
       this.block = block;
       this.stateBefore = stateBefore;
+      this.archiveLatestBefore = archiveLatestBefore;
+      this.earliestPrev = earliestPrev;
     }
   }
 

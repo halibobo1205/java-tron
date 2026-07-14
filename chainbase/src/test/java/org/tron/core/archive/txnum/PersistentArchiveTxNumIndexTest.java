@@ -636,6 +636,7 @@ public class PersistentArchiveTxNumIndexTest {
         () -> index.commitBlock(1, blockHash(1), 0, checksum(10)));
 
     assertTrue(ex.getMessage().contains("schema checksum mismatch"));
+    assertTrue(ex.getMessage().contains("rebuild or resync"));
     assertFalse(index.getBlockRange(1).isPresent());
     index.abortBlock(1);
   }

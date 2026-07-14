@@ -1548,8 +1548,7 @@ public class Manager {
             | ZksnarkException
             | BadBlockException
             | EventBloomException
-            | RuntimeException
-            | TronError e) {
+            | RuntimeException e) {
           exception = e;
           if (!canonicalCommitted && archiveJournalToken != null) {
             rollbackArchiveJournalBestEffort(
@@ -1558,6 +1557,19 @@ public class Manager {
             abortArchiveBlockBestEffort(item.getBlk(), "switch fork replay", e);
           }
           logger.warn(e.getMessage(), e);
+          throw e;
+        } catch (TronError e) {
+          if (!canonicalCommitted && archiveJournalToken != null) {
+            rollbackArchiveJournalBestEffort(
+                archiveJournalToken, item.getBlk(), "switch fork replay", e);
+          } else if (archiveJournalToken == null) {
+            abortArchiveBlockBestEffort(item.getBlk(), "switch fork replay", e);
+          }
+          logger.warn(e.getMessage(), e);
+          if (e.getErrCode() != TronError.ErrCode.ARCHIVE_RUNTIME) {
+            throw e;
+          }
+          exception = e;
           throw e;
         } finally {
           if (exception != null) {
@@ -1613,7 +1625,7 @@ public class Manager {
                   abortArchiveBlockBestEffort(
                       khaosBlock.getBlk(), "switch fork recovery", e);
                 }
-                throw archiveRuntimeError("switch fork recovery", khaosBlock.getBlk(), e);
+                throw switchForkRecoveryError(khaosBlock.getBlk(), e, exception);
               }
             }
           }
@@ -1623,6 +1635,22 @@ public class Manager {
       reApplyBlockEvents(first);
     }
 
+  }
+
+  private TronError switchForkRecoveryError(BlockCapsule block, Throwable recoveryFailure,
+      Throwable originalFailure) {
+    if (recoveryFailure instanceof TronError
+        && ((TronError) recoveryFailure).getErrCode() != TronError.ErrCode.ARCHIVE_RUNTIME) {
+      if (originalFailure != null && originalFailure != recoveryFailure) {
+        recoveryFailure.addSuppressed(originalFailure);
+      }
+      return (TronError) recoveryFailure;
+    }
+    TronError error = archiveRuntimeError("switch fork recovery", block, recoveryFailure);
+    if (originalFailure != null && originalFailure != recoveryFailure) {
+      error.addSuppressed(originalFailure);
+    }
+    return error;
   }
 
   private boolean isSameSig(TransactionCapsule tx1, TransactionCapsule tx2) {

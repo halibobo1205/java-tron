@@ -163,6 +163,19 @@ public class NodeConfigTest {
     assertEquals(16384, rpc.getMaxHeaderListSize());
   }
 
+  @Test
+  public void testJsonRpcPendingResponseBudgetIsIndependentFromPerResponseLimit() {
+    NodeConfig defaults = NodeConfig.fromConfig(withRef());
+    assertEquals(25 * 1024 * 1024, defaults.getJsonrpc().getMaxResponseSize());
+    assertEquals(128L * 1024 * 1024,
+        defaults.getJsonrpc().getMaxPendingResponseBytes());
+
+    NodeConfig overridden = NodeConfig.fromConfig(withRef(
+        "node { jsonrpc { maxResponseSize = 1024, maxPendingResponseBytes = 8192 } }"));
+    assertEquals(1024, overridden.getJsonrpc().getMaxResponseSize());
+    assertEquals(8192L, overridden.getJsonrpc().getMaxPendingResponseBytes());
+  }
+
   // ===========================================================================
   // Boundary tests for postProcess() clamps
   // Pin every clamp in NodeConfig.postProcess() so future refactors cannot

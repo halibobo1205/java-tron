@@ -88,7 +88,7 @@ ROUND 1 对抗审查证明，七项优化不能作为一个大改动直接落地
 
 ## 3. Phase 0：实现前正确性前置
 
-### 3.1 Storage key schema v2
+### 3.1 Storage physical-key 协议（temporal manifest schema=7）
 
 当前非 version-1 Storage.compose 只保留 slot 的低 16 字节，而 archive codec 使用完整
 32-byte slot。两个高 16 字节不同、低 16 字节相同的逻辑 slot 会映射到同一 live row，
@@ -102,11 +102,12 @@ ROUND 1 对抗审查证明，七项优化不能作为一个大改动直接落地
   row key，不再独立解释 logical slot。
 - historical reader 从同一历史 state point 读取 contract metadata 后计算同一个物理键。
 - 同步迁移 ArchiveStorageKeyCodec、ContractStorageKeyCodec、DefaultArchiveStateReader、
-  ChainBaseArchiveReadThrough 和 DefaultArchiveDomainCatalog。v2 read-through 接收 32-byte
+  ChainBaseArchiveReadThrough 和 DefaultArchiveDomainCatalog。physical-key read-through 接收 32-byte
   physical key并直接查询指定的 canonical committed StorageRowStore view，不能再解析 86-byte
   semantic key，也不能读取普通 Chainbase.head。
-- codec/schema checksum 升级为 v2。发现 v1 CONTRACT_STORAGE 数据时明确拒绝启动并提示
-  重建；由于 v1 的 alias history 可能已经歧义，本计划不承诺无损原地转换。
+- 当前 temporal manifest 固定为 `schema=7`，domain schema checksum 同时绑定 physical-key codec。
+  任何旧版或不兼容 manifest 均拒绝启动并要求从 canonical block replay 重建；旧 alias history
+  可能已经歧义，本计划不承诺无损原地转换。
 - 更新 archiveV3 权威决策文档，再提交生产代码。
 
 实现处置：本轮没有改变 live `Storage.generateAddrHash` 的 legacy cache/rebind 行为，因为只在
@@ -143,15 +144,16 @@ startup canonical hash mismatch。
 
 ### 3.3 持久化写入策略
 
-archive 与 canonical 是两个 DB，cross-CF batch 不能替代跨库 durability ordering。写入策略
-不再继承单一 storage.db.sync：
+archive 与 canonical 是两个 DB，cross-CF batch 不能替代跨库 durability ordering。生产
+LEGACY_V1 的关键写入不继承单一 `storage.db.sync`：
 
 - activation ledger、in-flight journal、repair marker、migration COMPLETE marker 强制 sync。
-- 唯一可配置的 durability 开关是 storage.archive.db.publishSync，默认 true。
-- LEGACY_V1 强制 publishSync=true；配置 false 直接拒绝启动。index 和 temporal 各自 sync
-  成功后，才允许 sync 删除 journal；任一步失败都保留 journal供 reconcile。
-- UNIFIED_V1 允许显式 publishSync=false，因为 published rows、cursor 和 journal delete 位于
-  同一 RocksDB batch；断电丢失整个未 sync batch 后，先前已 sync 的 journal会重新出现。
+- LEGACY_V1 没有独立的 `storage.archive.db.publishSync` 配置键。journal、index、temporal、
+  repair marker 和 journal delete 均通过 `ArchiveRocksDbWriteOptions.createForcedSync()` 固定
+  `WAL enabled + sync=true`；任一步失败都保留 journal 供 reconcile。
+- UNIFIED_V1 隔离原型的 typed publish API 接受显式 `publishSync` 参数，但尚未接入 factory 或
+  用户配置。其 published rows、cursor 和 journal delete 位于同一 RocksDB batch；生产接入前
+  仍需完成 crash matrix，不能把原型参数描述成已支持的配置键。
 - journal delete 必须和 published cursor 位于同一个原子 batch，或发生在可证明已发布之后。
 - archive 启用采用 EMPTY -> ACTIVATING -> ACTIVE ledger。ACTIVATING 记录 chainId、schema、
   layout、floor、nextExpectedBlock，并在第一个 canonical block 前强制 sync。

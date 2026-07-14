@@ -157,17 +157,19 @@ public class JsonRpcServlet extends RateLimiterServlet {
     }
 
     int maxResponseSize = parameter.getJsonRpcMaxResponseSize();
+    long maxPendingResponseBytes = parameter.getJsonRpcMaxPendingResponseBytes();
     if (isBatch) {
-      handleBatch(resp, rootNode, maxResponseSize);
+      handleBatch(resp, rootNode, maxResponseSize, maxPendingResponseBytes);
     } else {
-      handleSingle(resp, rootNode, body, maxResponseSize);
+      handleSingle(resp, rootNode, body, maxResponseSize, maxPendingResponseBytes);
     }
   }
 
   private void handleSingle(HttpServletResponse resp,
-      JsonNode rootNode, byte[] body, int maxResponseSize) throws IOException {
+      JsonNode rootNode, byte[] body, int maxResponseSize, long maxPendingResponseBytes)
+      throws IOException {
     try (PendingResponseLimiter.Reservation responseBytes =
-             PENDING_RESPONSES.open(maxResponseSize);
+             PENDING_RESPONSES.open(maxPendingResponseBytes);
          BoundedByteArrayOutputStream output =
              new BoundedByteArrayOutputStream(maxResponseSize, responseBytes, true)) {
 
@@ -212,11 +214,11 @@ public class JsonRpcServlet extends RateLimiterServlet {
     }
   }
 
-  private void handleBatch(HttpServletResponse resp, JsonNode rootNode, int maxResponseSize)
-      throws IOException {
+  private void handleBatch(HttpServletResponse resp, JsonNode rootNode, int maxResponseSize,
+      long maxPendingResponseBytes) throws IOException {
 
     try (PendingResponseLimiter.Reservation batchBytes =
-             PENDING_RESPONSES.open(maxResponseSize);
+             PENDING_RESPONSES.open(maxPendingResponseBytes);
          BoundedByteArrayOutputStream batchOutput =
              new BoundedByteArrayOutputStream(maxResponseSize, batchBytes, false)) {
       batchOutput.write('[');
@@ -273,7 +275,7 @@ public class JsonRpcServlet extends RateLimiterServlet {
           boolean appended = true;
           int responseSize;
           try (PendingResponseLimiter.Reservation subBytes =
-                   PENDING_RESPONSES.open(maxResponseSize);
+                   PENDING_RESPONSES.open(maxPendingResponseBytes);
                BoundedByteArrayOutputStream subOutput =
                    new BoundedByteArrayOutputStream(remaining, subBytes, true)) {
             // Retain each query permit through its own serialization, then release it before the
@@ -651,11 +653,11 @@ public class JsonRpcServlet extends RateLimiterServlet {
     private static final long DEFAULT_GLOBAL_CAPACITY_BYTES = 128L * 1024 * 1024;
     private long retainedBytes;
 
-    private Reservation open(int perResponseLimit) {
-      long capacity = perResponseLimit > 0
-          ? Math.multiplyExact((long) perResponseLimit, 2L)
+    private Reservation open(long configuredGlobalCapacityBytes) {
+      long globalCapacity = configuredGlobalCapacityBytes > 0
+          ? configuredGlobalCapacityBytes
           : DEFAULT_GLOBAL_CAPACITY_BYTES;
-      return new Reservation(this, capacity);
+      return new Reservation(this, globalCapacity);
     }
 
     private synchronized boolean tryReserve(Reservation reservation, int bytes) {
@@ -668,7 +670,8 @@ public class JsonRpcServlet extends RateLimiterServlet {
       if (bytes == 0) {
         return true;
       }
-      if (bytes > reservation.capacity || retainedBytes > reservation.capacity - bytes) {
+      if (bytes > reservation.globalCapacity
+          || retainedBytes > reservation.globalCapacity - bytes) {
         return false;
       }
 
@@ -697,13 +700,13 @@ public class JsonRpcServlet extends RateLimiterServlet {
         implements AutoCloseable, BufferedResponseWrapper.ByteReservation {
 
       private final PendingResponseLimiter owner;
-      private final long capacity;
+      private final long globalCapacity;
       private long bytes;
       private boolean closed;
 
-      private Reservation(PendingResponseLimiter owner, long capacity) {
+      private Reservation(PendingResponseLimiter owner, long globalCapacity) {
         this.owner = owner;
-        this.capacity = capacity;
+        this.globalCapacity = globalCapacity;
       }
 
       @Override

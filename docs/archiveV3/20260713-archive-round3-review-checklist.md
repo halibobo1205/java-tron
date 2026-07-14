@@ -71,3 +71,22 @@ Multiple finders flagged `HistoricalArchiveVmDynamicProperties` as reverting rou
 ## INFO (optional polish, no action required)
 
 Snapshot-owning reader leak if `ManagedArchiveStateReader` ctor throws (`DefaultArchiveService.java:1914` — the lifecycle leak-canary from the item-1 design §8); `UnifiedArchiveDb` (UNIFIED_V1) shipped but unwired; genesis `commitToRoot` merges per-store roots non-atomically (first-boot crash window, `SnapshotManager.java:221`); `identity.adoptLegacy=true` forces a full scrub every startup; `BufferedResponseWrapper` new ctor / `getBufferedSize()` dead code; dead `inFlightBlocks.isEmpty()` guard in `unwindBlock` (`:1558`); `AssetUpdateHelper`/`MoveAbiHelper` leak store iterators (JNI handles) on early-return; async-publisher + query-concurrency + RocksDB-store internals are the largest untested surface; the 156-file single commit violates the doc's own commit-boundary principle (acknowledged in-doc).
+
+---
+
+## Codex remediation
+
+- G1: introduced an independent process-wide `node.jsonrpc.maxPendingResponseBytes` budget
+  (default 128 MB). `maxResponseSize` remains a per-response cap and no longer determines global
+  capacity. Reservations intentionally remain held through a blocking network write because the
+  backing response array is still retained until that write completes.
+- G2: fork replay now runs archive journal cleanup for every `TronError`, but only
+  `ARCHIVE_RUNTIME` enters switch-back. Other fatal codes such as `DB_FLUSH` are rethrown unchanged;
+  a switch-back failure preserves the original failure as suppressed evidence.
+- LOW: identity failures preserve their protocol reason; lifecycle start failures map to
+  `ArchiveReaderException`; schema mismatch includes rebuild/resync guidance; recovery assertions,
+  differential oracle, one-block-at-a-time publisher and soft-watermark tests were strengthened.
+- Docs: removed the nonexistent `storage.archive.db.publishSync` key and aligned physical storage
+  naming with temporal manifest `schema=7`.
+- Deliberately unchanged: TOMBSTONE historical-config resolution and slow-network reservation
+  lifetime.

@@ -1890,7 +1890,18 @@ public final class DefaultArchiveService implements ArchiveService {
         ArchiveMetrics.queryRejected(deadline);
         throw deadline;
       }
-      lifecycleLease.start();
+      try {
+        lifecycleLease.start();
+      } catch (RuntimeException e) {
+        try {
+          validateAvailableForRead();
+        } catch (ArchiveReaderException unavailable) {
+          unavailable.addSuppressed(e);
+          throw unavailable;
+        }
+        throw new ArchiveReaderException(ArchiveReaderException.Reason.INTERNAL_IO,
+            e.getMessage() == null ? "archive query start failed" : e.getMessage(), e);
+      }
       validateAvailableForRead();
       queryContext.checkDeadline();
       ArchiveStatePoint point;
