@@ -16,8 +16,8 @@ import org.tron.core.store.VmDynamicProperties;
  * Archive-backed historical {@link VmDynamicProperties}: reconstructs the VM execution parameters
  * from DYNAMIC_PROPERTIES history at the target block, rather than the latest values. This covers
  * opcode/fork gates, CHAINID behaviour, VM enablement, fee/CPU limits, dynamic-energy knobs, and
- * VM arithmetic/resource flags. Energy price keeps {@link HistoricalVmDynamicProperties}'s
- * historical {@code EnergyPriceHistory} behaviour.
+ * VM arithmetic/resource flags. Energy price is reconstructed from the archived {@code ENERGY_FEE}
+ * row at the target state point.
  *
  * <p>Each flag is read once at construction (reader open) via {@code getDynamicProperty}:
  * <ul>
@@ -33,8 +33,9 @@ import org.tron.core.store.VmDynamicProperties;
  * MISSING-means-default exact under genesis coverage. Execution-affecting keys are explicitly
  * rooted in {@code DynamicKeyPolicy}.
  */
-public final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDynamicProperties {
+public final class HistoricalArchiveVmDynamicProperties implements VmDynamicProperties {
 
+  static final long DEFAULT_ENERGY_FEE = 100L;
   static final String[] STRICT_GENESIS_LONG_KEYS = {
       "latest_block_header_timestamp",
       "ENERGY_FEE",
@@ -153,6 +154,7 @@ public final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDyna
 
   private final long latestBlockHeaderNumber;
   private final long latestBlockHeaderTimestamp;
+  private final long energyFee;
   private final long maintenanceTimeInterval;
   private final long currentCycleNumber;
   private final long totalNetLimit;
@@ -195,9 +197,9 @@ public final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDyna
   private final long allowHardenResourceCalculation;
   private final Map<Integer, byte[]> forkStatsByVersion;
 
-  HistoricalArchiveVmDynamicProperties(VmDynamicProperties latest, long energyFee,
+  HistoricalArchiveVmDynamicProperties(long energyFee,
       ArchiveStateReader reader, boolean genesisComplete) throws ArchiveReaderException {
-    super(latest, energyFee);
+    this.energyFee = energyFee;
     ArchiveStatePoint point = reader.getPoint();
     this.latestBlockHeaderNumber = point.getKind() == ArchiveStatePoint.Kind.TX_BEFORE
         ? Math.max(0L, point.getBlockNum() - 1L)
@@ -265,11 +267,11 @@ public final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDyna
   static long resolveEnergyFee(ArchiveStateReader reader, boolean genesisComplete)
       throws ArchiveReaderException {
     return resolve(reader, "ENERGY_FEE", genesisComplete,
-        HistoricalVmDynamicProperties.DEFAULT_ENERGY_FEE);
+        DEFAULT_ENERGY_FEE);
   }
 
-  public static void validateGenesisArchiveRows(VmDynamicProperties latest,
-      ArchiveStateReader reader) throws ArchiveReaderException {
+  public static void validateGenesisArchiveRows(ArchiveStateReader reader)
+      throws ArchiveReaderException {
     long energyFee = 0L;
     for (String key : STRICT_GENESIS_LONG_KEYS) {
       long value = requirePresentLong(reader, key);
@@ -280,7 +282,7 @@ public final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDyna
     for (String key : STRICT_GENESIS_PRESENT_KEYS) {
       requirePresent(reader, key);
     }
-    new HistoricalArchiveVmDynamicProperties(latest, energyFee, reader, true);
+    new HistoricalArchiveVmDynamicProperties(energyFee, reader, true);
   }
 
   private static long requirePresentLong(ArchiveStateReader reader, String key)
@@ -421,6 +423,11 @@ public final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDyna
   @Override
   public long getLatestBlockHeaderTimestamp() {
     return latestBlockHeaderTimestamp;
+  }
+
+  @Override
+  public long getEnergyFee() {
+    return energyFee;
   }
 
   @Override

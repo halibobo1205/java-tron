@@ -361,6 +361,12 @@ public class DefaultArchiveServiceTest {
         100L, 100L, 0L, 0L, 1_000L);
   }
 
+  private static ArchivePublisherConfig startupBudget(
+      int hardBlocks, long hardRecords, long hardBytes) {
+    return new ArchivePublisherConfig(false, false, hardBlocks, hardBlocks,
+        hardBytes, hardBytes, hardRecords, hardRecords, 0L, 0L, 1_000L);
+  }
+
   @Test
   public void healthyJournalAppendsReuseRecentDiskSample() {
     CountingCapacityInFlightStore inFlightStore = new CountingCapacityInFlightStore();
@@ -501,6 +507,60 @@ public class DefaultArchiveServiceTest {
     assertTrue(failure.getMessage().contains("startup journals exceed configured hard byte limit"));
     assertTrue(failure.getMessage().contains("staleBytes="));
     assertTrue(failure.getMessage().contains("loadedBytes="));
+  }
+
+  @Test
+  public void startupBlockLimitAppliesAcrossStaleAndActiveJournals() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    DeleteFailingArchiveInFlightStore inFlightStore = new DeleteFailingArchiveInFlightStore();
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    commitEmptyBlock(service, blockWithParentSeed(5, (byte) 5));
+    service.publishSolidifiedBlocks(5L);
+    commitEmptyBlock(service, blockWithParentSeed(6, (byte) 6));
+    service.close();
+
+    ArchiveException failure = assertThrows(ArchiveException.class, () -> {
+      DefaultArchiveService unexpected = serviceWithPublisherConfig(
+          index, new ArchiveExecutionContext(), temporal, inFlightStore,
+          startupBudget(1, 100L, 1024L * 1024L));
+      unexpected.close();
+    });
+
+    assertTrue(failure.getMessage().contains("startup journals exceed configured hard limit"));
+    assertTrue(failure.getMessage().contains("totalBlocks=2"));
+    assertTrue(failure.getMessage().contains("staleBlocks=1"));
+    assertTrue(failure.getMessage().contains("loadedBlocks=1"));
+  }
+
+  @Test
+  public void startupRecordLimitAppliesAcrossStaleAndActiveJournals() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    DeleteFailingArchiveInFlightStore inFlightStore = new DeleteFailingArchiveInFlightStore();
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    byte[] address = new byte[21];
+    address[0] = 0x41;
+    commitAccountChangeBlock(service, blockWithParentSeed(5, (byte) 5),
+        address, null, account(1L));
+    service.publishSolidifiedBlocks(5L);
+    commitAccountChangeBlock(service, blockWithParentSeed(6, (byte) 6),
+        address, account(1L), account(2L));
+    service.close();
+
+    ArchiveException failure = assertThrows(ArchiveException.class, () -> {
+      DefaultArchiveService unexpected = serviceWithPublisherConfig(
+          index, new ArchiveExecutionContext(), temporal, inFlightStore,
+          startupBudget(8, 1L, 1024L * 1024L));
+      unexpected.close();
+    });
+
+    assertTrue(failure.getMessage().contains("startup journals exceed configured hard limit"));
+    assertTrue(failure.getMessage().contains("totalRecords=2"));
+    assertTrue(failure.getMessage().contains("staleRecords=1"));
+    assertTrue(failure.getMessage().contains("loadedRecords=1"));
   }
 
   @Test

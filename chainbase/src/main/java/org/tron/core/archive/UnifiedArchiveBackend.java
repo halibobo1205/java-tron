@@ -47,11 +47,13 @@ public final class UnifiedArchiveBackend {
       db.publishBlockAtomically(builder.build(), true);
       txNumIndex.publicationSucceeded(range);
       return range;
-    } catch (RuntimeException e) {
+    } catch (RuntimeException | Error e) {
       try {
         txNumIndex.publicationFailed();
-      } catch (RuntimeException cleanupFailure) {
-        e.addSuppressed(cleanupFailure);
+      } catch (Throwable cleanupFailure) {
+        if (e != cleanupFailure) {
+          e.addSuppressed(cleanupFailure);
+        }
       }
       throw e;
     }
@@ -97,7 +99,13 @@ public final class UnifiedArchiveBackend {
       try {
         temporalView = temporalStore.wrapReadView(view);
       } catch (RuntimeException | Error e) {
-        view.close();
+        try {
+          view.close();
+        } catch (Throwable closeFailure) {
+          if (e != closeFailure) {
+            e.addSuppressed(closeFailure);
+          }
+        }
         throw e;
       }
     }

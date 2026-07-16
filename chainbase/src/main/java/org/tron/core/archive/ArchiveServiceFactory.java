@@ -194,7 +194,7 @@ public final class ArchiveServiceFactory {
           ArchiveExecutionContextHolder.get(), temporalStore, inFlightStore, registry,
           catalog, readThrough, ArchiveLifecycle.Phase.RECOVERING, queryLimits, publisherConfig,
           startupValidator, backend);
-    } catch (RuntimeException e) {
+    } catch (RuntimeException | Error e) {
       if (txNumIndex == null) {
         closeOnFailure(db, e);
       } else {
@@ -310,14 +310,16 @@ public final class ArchiveServiceFactory {
     }
   }
 
-  private static void closeOnFailure(AutoCloseable resource, RuntimeException failure) {
+  private static void closeOnFailure(AutoCloseable resource, Throwable failure) {
     if (resource == null) {
       return;
     }
     try {
       resource.close();
-    } catch (Exception closeFailure) {
-      failure.addSuppressed(closeFailure);
+    } catch (Throwable closeFailure) {
+      if (failure != closeFailure) {
+        failure.addSuppressed(closeFailure);
+      }
     }
   }
 }

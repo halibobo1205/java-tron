@@ -76,8 +76,7 @@ public class ManagerGenesisArchiveLifecycleTest extends BaseMethodTest {
     BlockCapsule genesis = chainBaseManager.getGenesisBlock();
     try (ArchiveStateReader reader = archiveService.openBlockEndReader(
         0, genesis.getBlockId().getBytes())) {
-      HistoricalArchiveVmDynamicProperties.validateGenesisArchiveRows(
-          chainBaseManager.getDynamicPropertiesStore(), reader);
+      HistoricalArchiveVmDynamicProperties.validateGenesisArchiveRows(reader);
       assertArchivedLong(reader, "ALLOW_CREATION_OF_CONTRACTS",
           chainBaseManager.getDynamicPropertiesStore().getAllowCreationOfContracts());
       assertArchivedLong(reader, "MAINTENANCE_TIME_INTERVAL",

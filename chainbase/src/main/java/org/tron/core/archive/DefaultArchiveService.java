@@ -55,6 +55,7 @@ import org.tron.core.archive.temporal.ArchiveTemporalReadView;
 import org.tron.core.archive.temporal.ArchiveTemporalStore;
 import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
+import org.tron.core.archive.txnum.ArchiveCoordinates;
 import org.tron.core.archive.txnum.ArchiveTxPosition;
 import org.tron.core.archive.txnum.ArchiveTxNumIndex;
 import org.tron.core.archive.txnum.InMemoryArchiveTxNumIndex;
@@ -300,25 +301,28 @@ public final class DefaultArchiveService implements ArchiveService {
 
   private void loadInFlightBlocks() {
     long[] startupJournalBytes = {0L};
+    long[] totalRecords = {0L};
+    long[] totalBlocks = {0L};
     long[] loadedBytes = {0L};
     long[] loadedRecords = {0L};
     int[] loadedBlocks = {0};
     long[] staleBytes = {0L};
+    long[] staleRecords = {0L};
     int[] staleBlocks = {0};
     inFlightStore.forEachBlock(block -> {
       ArchiveBlockRange range = block.getRange();
       long retainedBytes = block.estimatedRetainedBytes();
       startupJournalBytes[0] = addSaturated(startupJournalBytes[0], retainedBytes);
+      totalBlocks[0] = addSaturated(totalBlocks[0], 1L);
+      totalRecords[0] = addSaturated(totalRecords[0], block.getRecords().size());
       Optional<ArchiveBlockRange> published = txNumIndex.getBlockRange(range.getBlockNum());
       if (published.isPresent()) {
         staleBlocks[0]++;
         staleBytes[0] = addSaturated(staleBytes[0], retainedBytes);
+        staleRecords[0] = addSaturated(staleRecords[0], block.getRecords().size());
         validateStartupJournalBytes(startupJournalBytes[0], staleBytes[0], loadedBytes[0]);
-        if (staleBlocks[0] > maxInFlightBlocks) {
-          throw new ArchiveException(
-              "archive startup stale journals exceed configured hard limit: blocks="
-                  + staleBlocks[0] + ", bytes=" + staleBytes[0]);
-        }
+        validateStartupJournalCounts(totalBlocks[0], totalRecords[0],
+            staleBlocks[0], staleRecords[0], loadedBlocks[0], loadedRecords[0]);
         validatePublishedRange(range, published.get());
         validateJournalPositionsMatchIndex(block);
         pendingPublishedJournals.put(range.getBlockNum(), block);
@@ -328,12 +332,8 @@ public final class DefaultArchiveService implements ArchiveService {
       loadedBytes[0] = addSaturated(loadedBytes[0], retainedBytes);
       loadedRecords[0] = addSaturated(loadedRecords[0], block.getRecords().size());
       validateStartupJournalBytes(startupJournalBytes[0], staleBytes[0], loadedBytes[0]);
-      if (loadedBlocks[0] > maxInFlightBlocks
-          || loadedRecords[0] > publisherConfig.getHardInFlightRecords()) {
-        throw new ArchiveException("archive startup journal exceeds configured hard limit: blocks="
-            + loadedBlocks[0] + ", records=" + loadedRecords[0]
-            + ", bytes=" + loadedBytes[0]);
-      }
+      validateStartupJournalCounts(totalBlocks[0], totalRecords[0],
+          staleBlocks[0], staleRecords[0], loadedBlocks[0], loadedRecords[0]);
       validateInFlightAppend(block);
       validateInFlightPrevValueChain(block);
       replayExecutionInFlightBlock(block);
@@ -346,6 +346,18 @@ public final class DefaultArchiveService implements ArchiveService {
       throw new ArchiveException(
           "archive startup journals exceed configured hard byte limit: bytes=" + totalBytes
               + ", staleBytes=" + staleBytes + ", loadedBytes=" + loadedBytes);
+    }
+  }
+
+  private void validateStartupJournalCounts(long totalBlocks, long totalRecords,
+      int staleBlocks, long staleRecords, int loadedBlocks, long loadedRecords) {
+    if (totalBlocks > maxInFlightBlocks
+        || totalRecords > publisherConfig.getHardInFlightRecords()) {
+      throw new ArchiveException(
+          "archive startup journals exceed configured hard limit: totalBlocks=" + totalBlocks
+              + ", totalRecords=" + totalRecords + ", staleBlocks=" + staleBlocks
+              + ", staleRecords=" + staleRecords + ", loadedBlocks=" + loadedBlocks
+              + ", loadedRecords=" + loadedRecords);
     }
   }
 
@@ -427,7 +439,7 @@ public final class DefaultArchiveService implements ArchiveService {
     readLock.lock();
     try {
       return readerFactory.open(point, readLock::unlock);
-    } catch (RuntimeException | ArchiveReaderException e) {
+    } catch (RuntimeException | Error | ArchiveReaderException e) {
       readLock.unlock();
       throw e;
     }
@@ -1350,6 +1362,7 @@ public final class DefaultArchiveService implements ArchiveService {
 
   private void validateInFlightAppend(ArchiveInFlightBlock block) {
     long blockNum = block.getRange().getBlockNum();
+    ArchiveCoordinates.requireBlockNum(blockNum, "archive in-flight block number");
     if (inFlightBlocks.size() >= maxInFlightBlocks) {
       throw new ArchiveException("archive in-flight buffer reached its cap of " + maxInFlightBlocks
           + " committed-not-solidified blocks; refusing to append block " + blockNum);
@@ -2051,11 +2064,11 @@ public final class DefaultArchiveService implements ArchiveService {
         try {
           managed = new ManagedArchiveStateReader(
               reader, lifecycleLease, queryLease, snapshotPermit);
-        } catch (RuntimeException e) {
+        } catch (RuntimeException | Error e) {
           // The reader owns the temporal snapshot; release it if the wrapper ctor fails, so this
           // path cannot leak a RocksDB snapshot that pins SST files. close() has a no-op onClose
           // here (the lock was already released above), so it only releases the snapshot.
-          reader.close();
+          closeAndSuppress(reader, e);
           throw e;
         }
         leaseTransferred = true;
@@ -2182,18 +2195,16 @@ public final class DefaultArchiveService implements ArchiveService {
           captureEngine.clear();
         }
         ArchiveCaptureHolder.clearIf(captureEngine);
-        RuntimeException failure = null;
+        Throwable failure = null;
         // Unified adapters intentionally close in this order. In-flight and temporal close are
         // no-ops; the txNum index is the final owner that closes the shared UnifiedArchiveDb.
         failure = closeResource(inFlightStore, "in-flight store", failure);
         failure = closeResource(temporalStore, "temporal store", failure);
         failure = closeResource(txNumIndex, "txNum index", failure);
         closed.set(true);
-        lifecycle.markClosed();
-        queryCoordinator.close();
-        if (failure != null) {
-          throw failure;
-        }
+        failure = runAndCollect(failure, lifecycle::markClosed);
+        failure = runAndCollect(failure, queryCoordinator::close);
+        rethrowCloseFailure(failure);
       } finally {
         writeLock.unlock();
       }
@@ -2273,22 +2284,34 @@ public final class DefaultArchiveService implements ArchiveService {
     return failure;
   }
 
-  private static RuntimeException closeResource(Object resource, String name,
-      RuntimeException failure) {
+  private static Throwable closeResource(Object resource, String name, Throwable failure) {
     if (resource instanceof AutoCloseable) {
       try {
         ((AutoCloseable) resource).close();
-      } catch (Exception e) {
-        RuntimeException closeFailure = e instanceof RuntimeException
-            ? (RuntimeException) e
-            : new ArchiveException("failed to close archive " + name, e);
+      } catch (Throwable e) {
+        Throwable closeFailure = e instanceof RuntimeException || e instanceof Error
+            ? e : new ArchiveException("failed to close archive " + name, e);
         if (failure == null) {
           return closeFailure;
         }
-        failure.addSuppressed(closeFailure);
+        if (failure != closeFailure) {
+          failure.addSuppressed(closeFailure);
+        }
       }
     }
     return failure;
+  }
+
+  private static void rethrowCloseFailure(Throwable failure) {
+    if (failure instanceof RuntimeException) {
+      throw (RuntimeException) failure;
+    }
+    if (failure instanceof Error) {
+      throw (Error) failure;
+    }
+    if (failure != null) {
+      throw new ArchiveException("archive close failed", failure);
+    }
   }
 
   private void markFatal(RuntimeException failure) {

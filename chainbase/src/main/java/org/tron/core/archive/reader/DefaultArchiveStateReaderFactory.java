@@ -132,9 +132,15 @@ public final class DefaultArchiveStateReaderFactory implements ArchiveStateReade
       return new DefaultArchiveStateReader(
           view, catalog, point, readThrough, onClose, completeHistory,
           maxMemoEntries, maxMemoBytes, queryContext);
-    } catch (RuntimeException e) {
-      view.close();
-      throw e;
+    } catch (RuntimeException | Error failure) {
+      try {
+        view.close();
+      } catch (Throwable closeFailure) {
+        if (failure != closeFailure) {
+          failure.addSuppressed(closeFailure);
+        }
+      }
+      throw failure;
     }
   }
 

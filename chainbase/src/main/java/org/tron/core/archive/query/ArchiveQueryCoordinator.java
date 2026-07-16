@@ -147,7 +147,7 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
       } catch (InterruptedException e) {
         removeWaiter(waiter);
         throw e;
-      } catch (RuntimeException e) {
+      } catch (RuntimeException | Error e) {
         removeWaiter(waiter);
         throw e;
       }
@@ -183,12 +183,13 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
         throw HistoricalQueryLimitException.openSnapshotsExceeded(
             Long.MAX_VALUE, Long.MAX_VALUE);
       }
+      ArchiveSnapshotPermit permit = new ArchiveSnapshotPermit(this, owner);
       if (!owner.reserveSnapshot()) {
         throw new IllegalArgumentException("snapshot permit requires an active query lease");
       }
       activeSnapshots++;
       ArchiveMetrics.setActiveSnapshots(activeSnapshots);
-      return new ArchiveSnapshotPermit(this, owner);
+      return permit;
     } finally {
       lock.unlock();
     }
@@ -357,7 +358,7 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
           this, new QueryContext(limits, batchDeadline, this::reserveTraceBytes));
       ArchiveMetrics.setQueryAdmission(activeLeases, waiters.size());
       return lease;
-    } catch (RuntimeException e) {
+    } catch (RuntimeException | Error e) {
       activeLeases--;
       if (activeLeases == 0) {
         drained.signalAll();

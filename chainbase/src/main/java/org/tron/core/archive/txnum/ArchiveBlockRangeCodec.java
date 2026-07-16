@@ -47,12 +47,12 @@ public final class ArchiveBlockRangeCodec {
   }
 
   static byte[] rangeKey(long blockNum) {
-    requireNonNegative(blockNum, "archive block range block number");
+    ArchiveCoordinates.requireBlockNum(blockNum, "archive block range block number");
     return Bytes.concat(new byte[] {TXNUM_BLOCK_PREFIX}, Longs.toByteArray(blockNum));
   }
 
   static byte[] positionKey(long txNum) {
-    requireNonNegative(txNum, "archive tx-position txNum");
+    ArchiveCoordinates.requireTxNum(txNum, "archive tx-position txNum");
     return Bytes.concat(new byte[] {TXNUM_META_PREFIX}, Longs.toByteArray(txNum));
   }
 
@@ -67,7 +67,7 @@ public final class ArchiveBlockRangeCodec {
       throw new ArchiveException("archive block range key is invalid");
     }
     long blockNum = longAt(key, 1);
-    requireNonNegative(blockNum, "archive block range key block number");
+    ArchiveCoordinates.requireBlockNum(blockNum, "archive block range key block number");
     return blockNum;
   }
 
@@ -77,7 +77,7 @@ public final class ArchiveBlockRangeCodec {
       throw new ArchiveException("archive tx-position key is invalid");
     }
     long txNum = longAt(key, 1);
-    requireNonNegative(txNum, "archive tx-position key txNum");
+    ArchiveCoordinates.requireTxNum(txNum, "archive tx-position key txNum");
     return txNum;
   }
 
@@ -98,11 +98,16 @@ public final class ArchiveBlockRangeCodec {
   }
 
   static byte[] encodeRange(ArchiveBlockRange range) {
-    requireNonNegative(range.getBlockNum(), "archive block range block number");
-    requireNonNegative(range.getFirstTxNum(), "archive block range first txNum");
-    requireNonNegative(range.getLastTxNum(), "archive block range last txNum");
-    requireNonNegative(range.getPrepareTxNum(), "archive block range prepare txNum");
-    requireNonNegative(range.getFinalizeTxNum(), "archive block range finalize txNum");
+    ArchiveCoordinates.requireBlockNum(
+        range.getBlockNum(), "archive block range block number");
+    ArchiveCoordinates.requireTxNum(
+        range.getFirstTxNum(), "archive block range first txNum");
+    ArchiveCoordinates.requireTxNum(
+        range.getLastTxNum(), "archive block range last txNum");
+    ArchiveCoordinates.requireTxNum(
+        range.getPrepareTxNum(), "archive block range prepare txNum");
+    ArchiveCoordinates.requireTxNum(
+        range.getFinalizeTxNum(), "archive block range finalize txNum");
     if (range.getUserTxCount() < 0) {
       throw new ArchiveException("archive block range user tx count must be non-negative");
     }
@@ -137,11 +142,11 @@ public final class ArchiveBlockRangeCodec {
     long prepareTxNum = longAt(bytes, 25);
     long finalizeTxNum = longAt(bytes, 33);
     int userTxCount = intAt(bytes, 41);
-    requireNonNegative(blockNum, "archive block range block number");
-    requireNonNegative(firstTxNum, "archive block range first txNum");
-    requireNonNegative(lastTxNum, "archive block range last txNum");
-    requireNonNegative(prepareTxNum, "archive block range prepare txNum");
-    requireNonNegative(finalizeTxNum, "archive block range finalize txNum");
+    ArchiveCoordinates.requireBlockNum(blockNum, "archive block range block number");
+    ArchiveCoordinates.requireTxNum(firstTxNum, "archive block range first txNum");
+    ArchiveCoordinates.requireTxNum(lastTxNum, "archive block range last txNum");
+    ArchiveCoordinates.requireTxNum(prepareTxNum, "archive block range prepare txNum");
+    ArchiveCoordinates.requireTxNum(finalizeTxNum, "archive block range finalize txNum");
     if (userTxCount < 0) {
       throw new ArchiveException("archive block range user tx count must be non-negative");
     }
@@ -180,8 +185,9 @@ public final class ArchiveBlockRangeCodec {
   }
 
   static byte[] encodePosition(ArchiveTxPosition position) {
-    requireNonNegative(position.getTxNum(), "archive tx-position txNum");
-    requireNonNegative(position.getBlockNum(), "archive tx-position block number");
+    ArchiveCoordinates.requireTxNum(position.getTxNum(), "archive tx-position txNum");
+    ArchiveCoordinates.requireBlockNum(
+        position.getBlockNum(), "archive tx-position block number");
     byte[] txId = position.getTxId();
     requirePositionTxId(position.getPhase(), txId, "encode archive tx-position");
     requireBlockHash(position.getBlockHash(), "encode archive tx-position");
@@ -205,8 +211,8 @@ public final class ArchiveBlockRangeCodec {
     requireVersion(bytes[0], "archive tx-position");
     long txNum = longAt(bytes, 1);
     long blockNum = longAt(bytes, 9);
-    requireNonNegative(txNum, "archive tx-position txNum");
-    requireNonNegative(blockNum, "archive tx-position block number");
+    ArchiveCoordinates.requireTxNum(txNum, "archive tx-position txNum");
+    ArchiveCoordinates.requireBlockNum(blockNum, "archive tx-position block number");
     ArchivePhase phase = phaseAt(bytes[17], "archive tx-position");
     ArchiveSource source = sourceAt(bytes[18], "archive tx-position");
     int txIndex = intAt(bytes, 19);
@@ -229,9 +235,7 @@ public final class ArchiveBlockRangeCodec {
   }
 
   static byte[] encodeCursor(long committedNextTxNum) {
-    if (committedNextTxNum < 0) {
-      throw new ArchiveException("archive cursor value must be non-negative");
-    }
+    ArchiveCoordinates.requireCursor(committedNextTxNum, "archive cursor value");
     return Longs.toByteArray(committedNextTxNum);
   }
 
@@ -240,16 +244,12 @@ public final class ArchiveBlockRangeCodec {
       throw new ArchiveException("archive cursor value must be 8 bytes");
     }
     long cursor = Longs.fromByteArray(bytes);
-    if (cursor < 0) {
-      throw new ArchiveException("archive cursor value must be non-negative");
-    }
+    ArchiveCoordinates.requireCursor(cursor, "archive cursor value");
     return cursor;
   }
 
   static byte[] encodeFirstBlock(long blockNum) {
-    if (blockNum < 0) {
-      throw new ArchiveException("archive first-block value must be non-negative");
-    }
+    ArchiveCoordinates.requireBlockNum(blockNum, "archive first-block value");
     return Longs.toByteArray(blockNum);
   }
 
@@ -258,9 +258,7 @@ public final class ArchiveBlockRangeCodec {
       throw new ArchiveException("archive first-block value must be 8 bytes");
     }
     long blockNum = Longs.fromByteArray(bytes);
-    if (blockNum < 0) {
-      throw new ArchiveException("archive first-block value must be non-negative");
-    }
+    ArchiveCoordinates.requireBlockNum(blockNum, "archive first-block value");
     return blockNum;
   }
 
@@ -307,12 +305,6 @@ public final class ArchiveBlockRangeCodec {
   private static int intAt(byte[] bytes, int offset) {
     return Ints.fromBytes(bytes[offset], bytes[offset + 1], bytes[offset + 2],
         bytes[offset + 3]);
-  }
-
-  private static void requireNonNegative(long value, String what) {
-    if (value < 0) {
-      throw new ArchiveException(what + " must be non-negative");
-    }
   }
 
   private static void requireVersion(byte version, String what) {

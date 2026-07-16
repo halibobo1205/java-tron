@@ -43,6 +43,20 @@ public class ArchiveInFlightValidatorTest {
   }
 
   @Test
+  public void rejectsReservedMaximumTxCoordinateBeforeAnyClosedRangeLoop() {
+    ArchiveBlockRange range = range(
+        0L, Long.MAX_VALUE - 1L, Long.MAX_VALUE, 0);
+    ArchiveInFlightBlock block = new ArchiveInFlightBlock(range,
+        Arrays.asList(
+            system(Long.MAX_VALUE - 1L, ArchivePhase.BLOCK_PREPARE),
+            system(Long.MAX_VALUE, ArchivePhase.BLOCK_FINALIZE)),
+        Collections.emptyList());
+
+    assertThrows(ArchiveException.class,
+        () -> ArchiveInFlightValidator.validate(block, catalog, dynamicKeyPolicy));
+  }
+
+  @Test
   public void rejectsDuplicateUserTransactionIds() {
     byte[] duplicate = hash(9);
     ArchiveBlockRange range = range(0L, 0L, 3L, 2);

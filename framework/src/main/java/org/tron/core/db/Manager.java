@@ -884,8 +884,7 @@ public class Manager {
     try (ArchiveStateReader reader = defaultArchiveService.openRecoveryReader(
         ArchiveStatePoint.blockEnd(0L, chainBaseManager.getGenesisBlock().getBlockId().getBytes(),
             range.getFinalizeTxNum()))) {
-      HistoricalArchiveVmDynamicProperties.validateGenesisArchiveRows(
-          chainBaseManager.getDynamicPropertiesStore(), reader);
+      HistoricalArchiveVmDynamicProperties.validateGenesisArchiveRows(reader);
     } catch (ArchiveReaderException e) {
       String msg = String.format("Archive enabled but genesis VM dynamic properties are incomplete,"
               + " please delete archive database directory(%s) and restart from an empty "

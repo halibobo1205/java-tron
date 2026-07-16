@@ -2,6 +2,7 @@ package org.tron.core.archive.reader;
 
 import com.google.common.primitives.Bytes;
 import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.Parser;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -140,12 +141,13 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
     requireOwnerAndOpen();
     queryContext.recordLogicalRead();
     requireLength(address, ADDRESS_LEN, "address");
-    ArchiveReadResult<byte[]> raw = getRaw(ArchiveDomain.ACCOUNT, address);
-    if (!raw.isPresent()) {
-      return retype(raw);
+    RawLookup lookup = getLookup(ArchiveDomain.ACCOUNT, address);
+    if (!lookup.isPresent()) {
+      return retype(toReadResult(ArchiveDomain.ACCOUNT, lookup));
     }
     try {
-      return ArchiveReadResult.present(new AccountCapsule(Account.parseFrom(raw.getValue())));
+      return ArchiveReadResult.present(
+          new AccountCapsule(lookup.decode(Account.class, Account.parser())));
     } catch (InvalidProtocolBufferException e) {
       forget(ArchiveDomain.ACCOUNT, address);
       throw new ArchiveReaderException(ArchiveReaderException.Reason.CODEC_ERROR,
@@ -178,13 +180,13 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
     requireOwnerAndOpen();
     queryContext.recordLogicalRead();
     requireLength(address, ADDRESS_LEN, "address");
-    ArchiveReadResult<byte[]> raw = getRaw(ArchiveDomain.CONTRACT, address);
-    if (!raw.isPresent()) {
-      return retype(raw);
+    RawLookup lookup = getLookup(ArchiveDomain.CONTRACT, address);
+    if (!lookup.isPresent()) {
+      return retype(toReadResult(ArchiveDomain.CONTRACT, lookup));
     }
     try {
       return ArchiveReadResult.present(
-          new ContractCapsule(SmartContract.parseFrom(raw.getValue())));
+          new ContractCapsule(lookup.decode(SmartContract.class, SmartContract.parser())));
     } catch (InvalidProtocolBufferException e) {
       forget(ArchiveDomain.CONTRACT, address);
       throw new ArchiveReaderException(ArchiveReaderException.Reason.CODEC_ERROR,
@@ -198,13 +200,14 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
     requireOwnerAndOpen();
     queryContext.recordLogicalRead();
     requireLength(address, ADDRESS_LEN, "address");
-    ArchiveReadResult<byte[]> raw = getRaw(ArchiveDomain.CONTRACT_STATE, address);
-    if (!raw.isPresent()) {
-      return retype(raw);
+    RawLookup lookup = getLookup(ArchiveDomain.CONTRACT_STATE, address);
+    if (!lookup.isPresent()) {
+      return retype(toReadResult(ArchiveDomain.CONTRACT_STATE, lookup));
     }
     try {
       return ArchiveReadResult.present(
-          new ContractStateCapsule(ContractState.parseFrom(raw.getValue())));
+          new ContractStateCapsule(
+              lookup.decode(ContractState.class, ContractState.parser())));
     } catch (InvalidProtocolBufferException e) {
       forget(ArchiveDomain.CONTRACT_STATE, address);
       throw new ArchiveReaderException(ArchiveReaderException.Reason.CODEC_ERROR,
@@ -260,6 +263,11 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
 
   private ArchiveReadResult<byte[]> getRaw(ArchiveDomain domain, byte[] canonicalKey)
       throws ArchiveReaderException {
+    return toReadResult(domain, getLookup(domain, canonicalKey));
+  }
+
+  private RawLookup getLookup(ArchiveDomain domain, byte[] canonicalKey)
+      throws ArchiveReaderException {
     ArchiveDomainDescriptor descriptor = catalog.descriptorFor(domain);
     if (descriptor == null || descriptor.getReaderPolicy() == ReaderPolicy.NOT_READABLE) {
       throw new ArchiveReaderException(ArchiveReaderException.Reason.DOMAIN_UNSUPPORTED,
@@ -269,7 +277,7 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
     RawLookup memoized = rawMemo.get(memoKey);
     if (memoized != null) {
       queryContext.recordCacheHit();
-      return toReadResult(domain, memoized);
+      return memoized;
     }
     RawLookup lookup;
     try {
@@ -293,14 +301,14 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
           "archive temporal read failed for " + domain, e);
     }
     remember(memoKey, lookup);
-    return toReadResult(domain, lookup);
+    return lookup;
   }
 
   private void remember(RawKey key, RawLookup lookup) {
     if (maxMemoEntries == 0 || maxMemoBytes == 0) {
       return;
     }
-    long bytes = key.estimatedBytes() + lookup.estimatedBytes();
+    long bytes = estimatedEntryBytes(key, lookup);
     if (bytes > maxMemoBytes) {
       return;
     }
@@ -308,7 +316,7 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
         && (rawMemo.size() >= maxMemoEntries || memoBytes > maxMemoBytes - bytes)) {
       Iterator<Map.Entry<RawKey, RawLookup>> iterator = rawMemo.entrySet().iterator();
       Map.Entry<RawKey, RawLookup> eldest = iterator.next();
-      memoBytes -= eldest.getKey().estimatedBytes() + eldest.getValue().estimatedBytes();
+      memoBytes -= estimatedEntryBytes(eldest.getKey(), eldest.getValue());
       iterator.remove();
     }
     rawMemo.put(key, lookup);
@@ -319,8 +327,12 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
     RawKey key = new RawKey(domain, canonicalKey);
     RawLookup removed = rawMemo.remove(key);
     if (removed != null) {
-      memoBytes -= key.estimatedBytes() + removed.estimatedBytes();
+      memoBytes -= estimatedEntryBytes(key, removed);
     }
+  }
+
+  private static long estimatedEntryBytes(RawKey key, RawLookup lookup) {
+    return addSaturated(key.estimatedBytes(), lookup.estimatedBytes(key.domain));
   }
 
   private ArchiveReadResult<byte[]> toReadResult(ArchiveDomain domain, RawLookup lookup)
@@ -360,23 +372,35 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
     if (!closed.compareAndSet(false, true)) {
       return;
     }
-    RuntimeException failure = null;
+    rawMemo.clear();
+    memoBytes = 0L;
+    Throwable failure = null;
     try {
       temporalView.close();
-    } catch (RuntimeException e) {
+    } catch (Throwable e) {
       failure = e;
     }
     try {
       onClose.run();
-    } catch (RuntimeException e) {
+    } catch (Throwable e) {
       if (failure == null) {
         failure = e;
-      } else {
+      } else if (failure != e) {
         failure.addSuppressed(e);
       }
     }
+    rethrowCloseFailure(failure);
+  }
+
+  private static void rethrowCloseFailure(Throwable failure) {
+    if (failure instanceof RuntimeException) {
+      throw (RuntimeException) failure;
+    }
+    if (failure instanceof Error) {
+      throw (Error) failure;
+    }
     if (failure != null) {
-      throw failure;
+      throw new ArchiveException("archive state reader close failed", failure);
     }
   }
 
@@ -402,6 +426,7 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
 
   private static final class RawLookup {
 
+    private static final long DECODED_PROTO_OVERHEAD_BYTES = 128L;
     private static final RawLookup TOMBSTONE = new RawLookup(RawStatus.TOMBSTONE, null);
     private static final RawLookup MISSING = new RawLookup(RawStatus.MISSING, null);
     private static final RawLookup UNKNOWN =
@@ -409,6 +434,7 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
 
     private final RawStatus status;
     private final byte[] value;
+    private Object decoded;
 
     private RawLookup(RawStatus status, byte[] value) {
       this.status = status;
@@ -431,8 +457,35 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
       return Arrays.copyOf(value, value.length);
     }
 
-    private long estimatedBytes() {
-      return 24L + (value == null ? 0 : value.length);
+    private boolean isPresent() {
+      return status == RawStatus.PRESENT;
+    }
+
+    private <T> T decode(Class<T> type, Parser<T> parser)
+        throws InvalidProtocolBufferException {
+      if (decoded == null) {
+        decoded = parser.parseFrom(value);
+      }
+      if (!type.isInstance(decoded)) {
+        throw new ArchiveException("archive decoded memo type mismatch");
+      }
+      return type.cast(decoded);
+    }
+
+    private long estimatedBytes(ArchiveDomain domain) {
+      long bytes = 24L + (value == null ? 0L : value.length);
+      if (value != null && isDecodedProtoDomain(domain)) {
+        long decodedAllowance = addSaturated(
+            DECODED_PROTO_OVERHEAD_BYTES, multiplySaturated(value.length, 2L));
+        bytes = addSaturated(bytes, decodedAllowance);
+      }
+      return bytes;
+    }
+
+    private static boolean isDecodedProtoDomain(ArchiveDomain domain) {
+      return domain == ArchiveDomain.ACCOUNT
+          || domain == ArchiveDomain.CONTRACT
+          || domain == ArchiveDomain.CONTRACT_STATE;
     }
   }
 
@@ -470,5 +523,13 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
     public int hashCode() {
       return 31 * domain.hashCode() + Arrays.hashCode(canonicalKey);
     }
+  }
+
+  private static long addSaturated(long left, long right) {
+    return left > Long.MAX_VALUE - right ? Long.MAX_VALUE : left + right;
+  }
+
+  private static long multiplySaturated(long left, long right) {
+    return left != 0L && right > Long.MAX_VALUE / left ? Long.MAX_VALUE : left * right;
   }
 }

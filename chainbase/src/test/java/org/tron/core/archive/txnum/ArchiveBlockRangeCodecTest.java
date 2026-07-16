@@ -18,8 +18,11 @@ public class ArchiveBlockRangeCodecTest {
       1 + Long.BYTES * 5 + Integer.BYTES + 1;
   private static final int RANGE_SCHEMA_CHECKSUM_LENGTH_OFFSET =
       RANGE_BLOCK_HASH_LENGTH_OFFSET + Integer.BYTES + ArchiveBlockRange.BLOCK_HASH_LENGTH;
+  private static final int RANGE_BLOCK_NUM_OFFSET = 1;
   private static final int RANGE_FIRST_TX_NUM_OFFSET = 9;
+  private static final int RANGE_LAST_TX_NUM_OFFSET = 17;
   private static final int RANGE_USER_TX_COUNT_OFFSET = 41;
+  private static final int POSITION_TX_NUM_OFFSET = 1;
   private static final int POSITION_PHASE_OFFSET = 17;
   private static final int POSITION_SOURCE_OFFSET = 18;
   private static final int POSITION_BLOCK_NUM_OFFSET = 9;
@@ -116,6 +119,26 @@ public class ArchiveBlockRangeCodecTest {
   }
 
   @Test
+  public void rangeCodecRejectsReservedMaximumCoordinates() {
+    assertThrows(ArchiveException.class,
+        () -> ArchiveBlockRangeCodec.encodeRange(new ArchiveBlockRange(
+            Long.MAX_VALUE, 0, 1, 0, 1, blockHash(7), 0, ArchiveSource.NORMAL,
+            schemaChecksum(7))));
+    assertThrows(ArchiveException.class,
+        () -> ArchiveBlockRangeCodec.encodeRange(new ArchiveBlockRange(
+            7, Long.MAX_VALUE - 1, Long.MAX_VALUE, Long.MAX_VALUE - 1, Long.MAX_VALUE,
+            blockHash(7), 0, ArchiveSource.NORMAL, schemaChecksum(7))));
+
+    byte[] maxBlock = ArchiveBlockRangeCodec.encodeRange(range(blockHash(7)));
+    putLong(maxBlock, RANGE_BLOCK_NUM_OFFSET, Long.MAX_VALUE);
+    assertThrows(ArchiveException.class, () -> ArchiveBlockRangeCodec.decodeRange(maxBlock));
+
+    byte[] maxTxNum = ArchiveBlockRangeCodec.encodeRange(range(blockHash(7)));
+    putLong(maxTxNum, RANGE_LAST_TX_NUM_OFFSET, Long.MAX_VALUE);
+    assertThrows(ArchiveException.class, () -> ArchiveBlockRangeCodec.decodeRange(maxTxNum));
+  }
+
+  @Test
   public void rangeCodecRejectsNegativeUserTxCount() {
     assertThrows(ArchiveException.class,
         () -> ArchiveBlockRangeCodec.encodeRange(new ArchiveBlockRange(
@@ -193,9 +216,23 @@ public class ArchiveBlockRangeCodecTest {
   }
 
   @Test
+  public void positionCodecRejectsReservedMaximumCoordinates() {
+    assertThrows(ArchiveException.class,
+        () -> ArchiveBlockRangeCodec.encodePosition(new ArchiveTxPosition(
+            Long.MAX_VALUE, 7, ArchivePhase.USER_TX, ArchiveSource.REPLAY, 1, txId(9),
+            blockHash(8))));
+
+    byte[] encoded = ArchiveBlockRangeCodec.encodePosition(position());
+    putLong(encoded, POSITION_TX_NUM_OFFSET, Long.MAX_VALUE);
+    assertThrows(ArchiveException.class, () -> ArchiveBlockRangeCodec.decodePosition(encoded));
+  }
+
+  @Test
   public void cursorRoundTrips() {
     assertEquals(42L,
         ArchiveBlockRangeCodec.decodeCursor(ArchiveBlockRangeCodec.encodeCursor(42L)));
+    assertEquals(Long.MAX_VALUE,
+        ArchiveBlockRangeCodec.decodeCursor(ArchiveBlockRangeCodec.encodeCursor(Long.MAX_VALUE)));
   }
 
   @Test
@@ -232,6 +269,16 @@ public class ArchiveBlockRangeCodecTest {
     putLong(positionKey, 1, -1L);
     assertThrows(ArchiveException.class,
         () -> ArchiveBlockRangeCodec.txNumFromPositionKey(positionKey));
+  }
+
+  @Test
+  public void keyCodecsRejectReservedMaximumCoordinates() {
+    assertThrows(ArchiveException.class,
+        () -> ArchiveBlockRangeCodec.rangeKey(Long.MAX_VALUE));
+    assertThrows(ArchiveException.class,
+        () -> ArchiveBlockRangeCodec.positionKey(Long.MAX_VALUE));
+    assertThrows(ArchiveException.class,
+        () -> ArchiveBlockRangeCodec.encodeFirstBlock(Long.MAX_VALUE));
   }
 
   @Test

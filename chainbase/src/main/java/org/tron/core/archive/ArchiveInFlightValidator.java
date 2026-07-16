@@ -13,6 +13,7 @@ import org.tron.core.archive.domain.ArchiveDomainDescriptor;
 import org.tron.core.archive.domain.DynamicKeyPolicy;
 import org.tron.core.archive.domain.HistoryPolicy;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
+import org.tron.core.archive.txnum.ArchiveCoordinates;
 import org.tron.core.archive.txnum.ArchiveTxPosition;
 
 /** Validates durable in-flight blocks independently of their physical storage layout. */
@@ -33,10 +34,16 @@ final class ArchiveInFlightValidator {
   }
 
   private static void validateRange(ArchiveBlockRange range) {
-    if (range.getBlockNum() < 0 || range.getFirstTxNum() < 0 || range.getLastTxNum() < 0
-        || range.getPrepareTxNum() < 0 || range.getFinalizeTxNum() < 0) {
-      throw new ArchiveException("archive in-flight range coordinates must be non-negative");
-    }
+    ArchiveCoordinates.requireBlockNum(
+        range.getBlockNum(), "archive in-flight range block number");
+    ArchiveCoordinates.requireTxNum(
+        range.getFirstTxNum(), "archive in-flight range first txNum");
+    ArchiveCoordinates.requireTxNum(
+        range.getLastTxNum(), "archive in-flight range last txNum");
+    ArchiveCoordinates.requireTxNum(
+        range.getPrepareTxNum(), "archive in-flight range prepare txNum");
+    ArchiveCoordinates.requireTxNum(
+        range.getFinalizeTxNum(), "archive in-flight range finalize txNum");
     if (range.getFirstTxNum() > range.getLastTxNum()) {
       throw new ArchiveException("archive in-flight range has invalid txNum order");
     }
@@ -128,6 +135,10 @@ final class ArchiveInFlightValidator {
     if (position == null) {
       throw new ArchiveException("archive in-flight position is missing");
     }
+    ArchiveCoordinates.requireTxNum(
+        position.getTxNum(), "archive in-flight position txNum");
+    ArchiveCoordinates.requireBlockNum(
+        position.getBlockNum(), "archive in-flight position block number");
     if (position.getTxNum() < range.getFirstTxNum()
         || position.getTxNum() > range.getLastTxNum()
         || position.getBlockNum() != range.getBlockNum()

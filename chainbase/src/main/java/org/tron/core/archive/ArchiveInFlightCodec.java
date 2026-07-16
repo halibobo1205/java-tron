@@ -12,6 +12,7 @@ import org.tron.core.archive.capture.ArchiveChangeRecord;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
+import org.tron.core.archive.txnum.ArchiveCoordinates;
 import org.tron.core.archive.txnum.ArchiveTxPosition;
 
 final class ArchiveInFlightCodec {
@@ -37,9 +38,7 @@ final class ArchiveInFlightCodec {
   }
 
   static byte[] blockKey(long blockNum) {
-    if (blockNum < 0) {
-      throw new ArchiveException("archive in-flight block number must be non-negative");
-    }
+    ArchiveCoordinates.requireBlockNum(blockNum, "archive in-flight block number");
     ByteArrayOutputStream bytes = new ByteArrayOutputStream(1 + Long.BYTES);
     DataOutputStream out = new DataOutputStream(bytes);
     try {
@@ -53,9 +52,7 @@ final class ArchiveInFlightCodec {
   }
 
   static byte[] acknowledgementKey(long blockNum) {
-    if (blockNum < 0) {
-      throw new ArchiveException("archive acknowledgement block number must be non-negative");
-    }
+    ArchiveCoordinates.requireBlockNum(blockNum, "archive acknowledgement block number");
     ByteArrayOutputStream bytes = new ByteArrayOutputStream(1 + Long.BYTES);
     DataOutputStream out = new DataOutputStream(bytes);
     try {
@@ -73,9 +70,7 @@ final class ArchiveInFlightCodec {
   }
 
   private static byte[] numberedKey(byte prefix, long blockNum, String what) {
-    if (blockNum < 0) {
-      throw new ArchiveException(what + " block number must be non-negative");
-    }
+    ArchiveCoordinates.requireBlockNum(blockNum, what + " block number");
     ByteArrayOutputStream bytes = new ByteArrayOutputStream(1 + Long.BYTES);
     DataOutputStream out = new DataOutputStream(bytes);
     try {
@@ -95,9 +90,7 @@ final class ArchiveInFlightCodec {
     try {
       DataInputStream in = new DataInputStream(new ByteArrayInputStream(key, 1, Long.BYTES));
       long blockNum = in.readLong();
-      if (blockNum < 0) {
-        throw new ArchiveException("archive in-flight block number must be non-negative");
-      }
+      ArchiveCoordinates.requireBlockNum(blockNum, "archive in-flight block number");
       return blockNum;
     } catch (IOException e) {
       throw new ArchiveException("archive in-flight block key decode failed", e);
@@ -111,9 +104,7 @@ final class ArchiveInFlightCodec {
     try {
       DataInputStream in = new DataInputStream(new ByteArrayInputStream(key, 1, Long.BYTES));
       long blockNum = in.readLong();
-      if (blockNum < 0) {
-        throw new ArchiveException("archive acknowledgement block number must be non-negative");
-      }
+      ArchiveCoordinates.requireBlockNum(blockNum, "archive acknowledgement block number");
       return blockNum;
     } catch (IOException e) {
       throw new ArchiveException("archive acknowledgement key decode failed", e);
@@ -127,9 +118,7 @@ final class ArchiveInFlightCodec {
     try {
       DataInputStream in = new DataInputStream(new ByteArrayInputStream(key, 1, Long.BYTES));
       long blockNum = in.readLong();
-      if (blockNum < 0) {
-        throw new ArchiveException("archive journal token block number must be non-negative");
-      }
+      ArchiveCoordinates.requireBlockNum(blockNum, "archive journal token block number");
       return blockNum;
     } catch (IOException e) {
       throw new ArchiveException("archive journal token key decode failed", e);
@@ -149,9 +138,8 @@ final class ArchiveInFlightCodec {
   }
 
   static byte[] encodeBlock(ArchiveInFlightBlock block) {
-    if (block.getRange().getBlockNum() < 0) {
-      throw new ArchiveException("archive in-flight block number must be non-negative");
-    }
+    ArchiveCoordinates.requireBlockNum(
+        block.getRange().getBlockNum(), "archive in-flight block number");
     try {
       ByteArrayOutputStream bytes = new ByteArrayOutputStream();
       DataOutputStream out = new DataOutputStream(bytes);
