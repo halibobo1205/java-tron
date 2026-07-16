@@ -3,11 +3,20 @@ package org.tron.core.archive.reader;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.Test;
 import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveSource;
+import org.tron.core.archive.codec.DomainValue;
+import org.tron.core.archive.domain.ArchiveDomain;
 import org.tron.core.archive.domain.DefaultArchiveDomainCatalog;
+import org.tron.core.archive.temporal.ArchiveTemporalReadView;
+import org.tron.core.archive.temporal.ArchiveTemporalStore;
 import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.archive.txnum.ArchiveTxNumIndex;
@@ -149,6 +158,39 @@ public class ArchiveStateReaderFactoryTest {
         () -> guarded.open(ArchiveStatePoint.blockEnd(1, hash, range.getFinalizeTxNum())));
 
     assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, e.getReason());
+  }
+
+  @Test
+  public void factoryClosesOwnedSnapshotWhenConstructionThrowsError() throws Exception {
+    byte[] hash = blockHash(1);
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        1L, 0L, 1L, 0L, 1L, hash, 0, ArchiveSource.NORMAL, new byte[32]);
+    AssertionError failure = new AssertionError("coverage lookup failed");
+    ArchiveTxNumIndex index = mock(ArchiveTxNumIndex.class);
+    when(index.getBlockRange(1L)).thenReturn(Optional.of(range));
+    when(index.getFirstArchivedBlock()).thenThrow(failure);
+
+    AtomicInteger closes = new AtomicInteger();
+    ArchiveTemporalReadView view = mock(ArchiveTemporalReadView.class);
+    doAnswer(invocation -> {
+      closes.incrementAndGet();
+      return null;
+    }).when(view).close();
+    ArchiveTemporalStore temporalStore = mock(ArchiveTemporalStore.class);
+    when(temporalStore.openReadView()).thenReturn(view);
+    when(temporalStore.getAsOf(
+        org.mockito.ArgumentMatchers.any(ArchiveDomain.class),
+        org.mockito.ArgumentMatchers.any(byte[].class),
+        org.mockito.ArgumentMatchers.anyLong())).thenReturn(Optional.<DomainValue>empty());
+    DefaultArchiveStateReaderFactory factory = new DefaultArchiveStateReaderFactory(
+        temporalStore, new DefaultArchiveDomainCatalog(), index, () -> {
+        });
+
+    AssertionError thrown = assertThrows(AssertionError.class,
+        () -> factory.open(ArchiveStatePoint.blockEnd(1L, hash, 1L)));
+
+    assertSame(failure, thrown);
+    assertEquals(1, closes.get());
   }
 
   private static ArchiveStateReaderFactory factory(ArchiveTxNumIndex index,

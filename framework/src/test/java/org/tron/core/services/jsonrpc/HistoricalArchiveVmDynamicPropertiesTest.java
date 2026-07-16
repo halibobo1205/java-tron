@@ -4,8 +4,6 @@ import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
@@ -24,7 +22,6 @@ import org.tron.core.archive.reader.ArchiveStateReader;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.ContractCapsule;
 import org.tron.core.capsule.ContractStateCapsule;
-import org.tron.core.store.VmDynamicProperties;
 
 /**
  * The archive-backed config view reconstructs the result-affecting hard-fork flags at the target
@@ -37,15 +34,12 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
   private static final long ENERGY_FEE = 140L;
 
   @Test
-  public void archivedFlagValueOverridesLatest() throws Exception {
+  public void archivedFlagValueIsUsed() throws Exception {
     FakeReader reader = new FakeReader();
     reader.putVmDefaults();
     reader.put("ALLOW_TVM_OSAKA", 1L);                 // proposal activated it as of this block
-    VmDynamicProperties latest = mock(VmDynamicProperties.class);
-    when(latest.getAllowTvmOsaka()).thenReturn(0L);    // latest disagrees -> archive must win
-
     HistoricalArchiveVmDynamicProperties view =
-        new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true);
+        new HistoricalArchiveVmDynamicProperties(ENERGY_FEE, reader, true);
 
     assertEquals(1L, view.getAllowTvmOsaka());
   }
@@ -56,11 +50,8 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
     // default -- NOT the latest value -- the whole point: a block before activation reads 0.
     FakeReader reader = new FakeReader();                // ALLOW_TVM_OSAKA absent -> MISSING
     reader.putVmDefaults();
-    VmDynamicProperties latest = mock(VmDynamicProperties.class);
-    when(latest.getAllowTvmOsaka()).thenReturn(1L);      // latest ON; historical block is not
-
     HistoricalArchiveVmDynamicProperties view =
-        new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true);
+        new HistoricalArchiveVmDynamicProperties(ENERGY_FEE, reader, true);
 
     assertEquals(0L, view.getAllowTvmOsaka());
   }
@@ -70,11 +61,8 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
     // A mid-chain archive cannot prove whether a missing key changed before coverage or after the
     // queried block, so it must not use latest as a historical value.
     FakeReader reader = new FakeReader();                // MISSING
-    VmDynamicProperties latest = mock(VmDynamicProperties.class);
-    when(latest.getAllowTvmOsaka()).thenReturn(1L);
-
     assertThrows(ArchiveReaderException.class,
-        () -> new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, false));
+        () -> new HistoricalArchiveVmDynamicProperties(ENERGY_FEE, reader, false));
   }
 
   @Test
@@ -82,10 +70,8 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
     FakeReader reader = new FakeReader();
     reader.putVmDefaults();
     reader.putRaw("ALLOW_TVM_OSAKA", new byte[] {1});
-    VmDynamicProperties latest = mock(VmDynamicProperties.class);
-
     ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
-        () -> new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true));
+        () -> new HistoricalArchiveVmDynamicProperties(ENERGY_FEE, reader, true));
     assertEquals(ArchiveReaderException.Reason.CORRUPT_VALUE, e.getReason());
   }
 
@@ -97,11 +83,8 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
     FakeReader reader = new FakeReader();
     reader.putVmDefaults();
     reader.putTombstone("ALLOW_TVM_OSAKA");
-    VmDynamicProperties latest = mock(VmDynamicProperties.class);
-    when(latest.getAllowTvmOsaka()).thenReturn(1L);        // latest ON; the tombstoned block is not
-
     HistoricalArchiveVmDynamicProperties view =
-        new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true);
+        new HistoricalArchiveVmDynamicProperties(ENERGY_FEE, reader, true);
 
     assertEquals(0L, view.getAllowTvmOsaka());
   }
@@ -113,10 +96,8 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
     FakeReader reader = new FakeReader();
     reader.putVmDefaults();
     reader.putTombstone("ALLOW_TVM_CANCUN");
-    VmDynamicProperties latest = mock(VmDynamicProperties.class);
-
     ArchiveReaderException error = assertThrows(ArchiveReaderException.class,
-        () -> new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true));
+        () -> new HistoricalArchiveVmDynamicProperties(ENERGY_FEE, reader, true));
     assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, error.getReason());
   }
 
@@ -125,10 +106,8 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
     FakeReader reader = new FakeReader();
     reader.putVmDefaults();
     reader.putTombstone("ALLOW_TVM_SHANGHAI");
-    VmDynamicProperties latest = mock(VmDynamicProperties.class);
-
     ArchiveReaderException error = assertThrows(ArchiveReaderException.class,
-        () -> new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true));
+        () -> new HistoricalArchiveVmDynamicProperties(ENERGY_FEE, reader, true));
     assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, error.getReason());
   }
 
@@ -169,31 +148,10 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
     reader.put("CONSENSUS_LOGIC_OPTIMIZATION", 0L);
     reader.put("ALLOW_HARDEN_RESOURCE_CALCULATION", 0L);
     reader.put("ALLOW_NEW_RESOURCE_MODEL", 1L);
-    VmDynamicProperties latest = mock(VmDynamicProperties.class);
-    when(latest.getCurrentCycleNumber()).thenReturn(99L);
-    when(latest.getTotalNetLimit()).thenReturn(201L);
-    when(latest.getTotalNetWeight()).thenReturn(202L);
-    when(latest.getTotalEnergyCurrentLimit()).thenReturn(203L);
-    when(latest.getTotalEnergyWeight()).thenReturn(204L);
-    when(latest.getTotalTronPowerWeight()).thenReturn(205L);
-    when(latest.supportVM()).thenReturn(true);
-    when(latest.getMaxFeeLimit()).thenReturn(1_000L);
-    when(latest.getMaxCpuTimeOfOneTx()).thenReturn(50L);
-    when(latest.getAllowHigherLimitForMaxCpuTimeOfOneTx()).thenReturn(1L);
-    when(latest.getAllowDynamicEnergy()).thenReturn(1L);
-    when(latest.getDynamicEnergyThreshold()).thenReturn(21L);
-    when(latest.getDynamicEnergyIncreaseFactor()).thenReturn(22L);
-    when(latest.getDynamicEnergyMaxFactor()).thenReturn(23L);
-    when(latest.getAllowEnergyAdjustment()).thenReturn(1L);
-    when(latest.getAllowStrictMath()).thenReturn(1L);
-    when(latest.getConsensusLogicOptimization()).thenReturn(1L);
-    when(latest.getAllowHardenResourceCalculation()).thenReturn(1L);
-    when(latest.getAllowNewResourceModel()).thenReturn(0L);
-
     HistoricalArchiveVmDynamicProperties view =
-        new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true);
+        new HistoricalArchiveVmDynamicProperties(ENERGY_FEE, reader, true);
 
-    assertEquals(ENERGY_FEE, view.getEnergyFee());      // inherited historical fee
+    assertEquals(ENERGY_FEE, view.getEnergyFee());
     assertEquals(FakeReader.BLOCK_NUM, view.getLatestBlockHeaderNumber());
     assertEquals(456L, view.getLatestBlockHeaderTimestamp());
     assertEquals(1_000L, view.getMaintenanceTimeInterval());
@@ -259,8 +217,7 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
       reader.remove(key);
 
       ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
-          () -> HistoricalArchiveVmDynamicProperties.validateGenesisArchiveRows(
-              mock(VmDynamicProperties.class), reader));
+          () -> HistoricalArchiveVmDynamicProperties.validateGenesisArchiveRows(reader));
 
       assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, e.getReason());
     }
@@ -295,23 +252,17 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
     reader.putRaw("TOTAL_NET_LIMIT", new byte[] {1});
 
     ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
-        () -> HistoricalArchiveVmDynamicProperties.validateGenesisArchiveRows(
-            mock(VmDynamicProperties.class), reader));
+        () -> HistoricalArchiveVmDynamicProperties.validateGenesisArchiveRows(reader));
 
     assertEquals(ArchiveReaderException.Reason.CORRUPT_VALUE, e.getReason());
   }
 
   @Test
-  public void missingExecutionParamsUseDefaultsOrLatestByCoverage() throws Exception {
+  public void missingExecutionParamsUseDefaultsByCoverage() throws Exception {
     FakeReader reader = new FakeReader();
     reader.putVmDefaults();
-    VmDynamicProperties latest = mock(VmDynamicProperties.class);
-    when(latest.supportVM()).thenReturn(true);
-    when(latest.getMaxFeeLimit()).thenReturn(123L);
-    when(latest.getAllowStrictMath()).thenReturn(1L);
-
     HistoricalArchiveVmDynamicProperties genesisComplete =
-        new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true);
+        new HistoricalArchiveVmDynamicProperties(ENERGY_FEE, reader, true);
     assertEquals(false, genesisComplete.supportVM());
     assertEquals(43_200_000_000L, genesisComplete.getTotalNetLimit());
     assertEquals(0L, genesisComplete.getTotalNetWeight());
@@ -322,7 +273,7 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
     assertEquals(0L, genesisComplete.getAllowStrictMath());
 
     assertThrows(ArchiveReaderException.class,
-        () -> new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, false));
+        () -> new HistoricalArchiveVmDynamicProperties(ENERGY_FEE, reader, false));
   }
 
   @Test
@@ -341,8 +292,7 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
       p.setAllowDynamicEnergy(1L);
 
       ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
-          () -> new HistoricalArchiveVmDynamicProperties(mock(VmDynamicProperties.class),
-              ENERGY_FEE, new FakeReader(), true));
+          () -> new HistoricalArchiveVmDynamicProperties(ENERGY_FEE, new FakeReader(), true));
       assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, e.getReason());
     } finally {
       p.setAllowCreationOfContracts(originalAllowCreation);
@@ -360,22 +310,17 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
     reader.remove("ALLOW_SHIELDED_TRC20_TRANSACTION");
 
     ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
-        () -> new HistoricalArchiveVmDynamicProperties(mock(VmDynamicProperties.class),
-            ENERGY_FEE, reader, true));
+        () -> new HistoricalArchiveVmDynamicProperties(ENERGY_FEE, reader, true));
 
     assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, e.getReason());
   }
 
   @Test
-  public void genesisCompleteMissingValuesDoNotReadLatest() throws Exception {
+  public void genesisCompleteMissingValuesUseArchivedDefaults() throws Exception {
     FakeReader reader = new FakeReader();
     reader.putVmDefaults();
-    VmDynamicProperties latest = mock(VmDynamicProperties.class, invocation -> {
-      throw new AssertionError("latest must not be read for genesis-complete archive defaults");
-    });
-
     HistoricalArchiveVmDynamicProperties view =
-        new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true);
+        new HistoricalArchiveVmDynamicProperties(ENERGY_FEE, reader, true);
 
     assertEquals(FakeReader.BLOCK_NUM, view.getLatestBlockHeaderNumber());
     assertEquals(1_000_000_000L, view.getMaxFeeLimit());
@@ -389,7 +334,7 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
     reader.putVmDefaults();
 
     HistoricalArchiveVmDynamicProperties view = new HistoricalArchiveVmDynamicProperties(
-        mock(VmDynamicProperties.class), ENERGY_FEE, reader, true);
+        ENERGY_FEE, reader, true);
 
     assertEquals(FakeReader.BLOCK_NUM - 1L, view.getLatestBlockHeaderNumber());
   }
@@ -401,18 +346,14 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
     FakeReader present = new FakeReader();
     present.putVmDefaults();
     present.put("UNFREEZE_DELAY_DAYS", 14L);            // activated as of this block
-    VmDynamicProperties latestOff = mock(VmDynamicProperties.class);
-    when(latestOff.supportUnfreezeDelay()).thenReturn(false);
     assertEquals(true,
-        new HistoricalArchiveVmDynamicProperties(latestOff, ENERGY_FEE, present, true)
+        new HistoricalArchiveVmDynamicProperties(ENERGY_FEE, present, true)
             .supportUnfreezeDelay());
 
     // Absent on a mid-chain archive is unsafe: it may be a pre-coverage activation or a future one.
     FakeReader missing = new FakeReader();
-    VmDynamicProperties latestOn = mock(VmDynamicProperties.class);
-    when(latestOn.supportUnfreezeDelay()).thenReturn(true);
     assertThrows(ArchiveReaderException.class,
-        () -> new HistoricalArchiveVmDynamicProperties(latestOn, ENERGY_FEE, missing, false));
+        () -> new HistoricalArchiveVmDynamicProperties(ENERGY_FEE, missing, false));
   }
 
   @Test
@@ -423,10 +364,8 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
     byte[] fork4811 = new byte[] {1, 1, 1};
     reader.putRaw("FORK_VERSION_27", fork471);
     reader.putRaw("FORK_VERSION_35", fork4811);
-    VmDynamicProperties latest = mock(VmDynamicProperties.class);
-
     HistoricalArchiveVmDynamicProperties view =
-        new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true);
+        new HistoricalArchiveVmDynamicProperties(ENERGY_FEE, reader, true);
 
     assertArrayEquals(fork471, view.statsByVersion(27));
     assertArrayEquals(fork4811, view.statsByVersion(35));
@@ -439,10 +378,8 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
     FakeReader reader = new FakeReader();
     reader.putVmDefaults();
     reader.putTombstone("FORK_VERSION_35");
-    VmDynamicProperties latest = mock(VmDynamicProperties.class);
-
     HistoricalArchiveVmDynamicProperties view =
-        new HistoricalArchiveVmDynamicProperties(latest, ENERGY_FEE, reader, true);
+        new HistoricalArchiveVmDynamicProperties(ENERGY_FEE, reader, true);
 
     assertNull(view.statsByVersion(35));
   }
@@ -453,8 +390,7 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
     reader.putStrictGenesisDefaults();
     reader.putTombstone("FORK_VERSION_27");
 
-    HistoricalArchiveVmDynamicProperties.validateGenesisArchiveRows(
-        mock(VmDynamicProperties.class), reader);
+    HistoricalArchiveVmDynamicProperties.validateGenesisArchiveRows(reader);
   }
 
   /** Serves configured DYNAMIC_PROPERTIES values by key; everything else MISSING. */

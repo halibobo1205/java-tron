@@ -54,12 +54,14 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
 
   /** Seeds a cursor plus a discarded block high-water mark for append validation. */
   InMemoryArchiveTxNumIndex(long startTxNum, long lastCommittedBlock) {
-    if (startTxNum < 0) {
-      throw new ArchiveException("archive txNum cursor must be non-negative: " + startTxNum);
-    }
+    ArchiveCoordinates.requireCursor(startTxNum, "archive txNum cursor");
     if (lastCommittedBlock < -1L) {
       throw new ArchiveException("archive last committed block must be at least -1: "
           + lastCommittedBlock);
+    }
+    if (lastCommittedBlock >= 0L) {
+      ArchiveCoordinates.requireBlockNum(
+          lastCommittedBlock, "archive last committed block");
     }
     this.committedNextTxNum = startTxNum;
     this.workingNextTxNum = startTxNum;
@@ -74,9 +76,7 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
 
   @Override
   public synchronized void beginBlock(long blockNum, ArchiveSource source) {
-    if (blockNum < 0) {
-      throw new ArchiveException("archive block number must be non-negative: " + blockNum);
-    }
+    ArchiveCoordinates.requireBlockNum(blockNum, "archive block number");
     if (pendingBlockNum != null) {
       throw new ArchiveException(
           "archive txNum index already has pending block " + pendingBlockNum);
@@ -94,7 +94,7 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
       throw new ArchiveException("system phase must be BLOCK_PREPARE/BLOCK_FINALIZE: " + phase);
     }
     ArchiveTxPosition position = new ArchiveTxPosition(
-        workingNextTxNum++, blockNum, phase, pendingSource, -1, null);
+        allocateNextTxNum(), blockNum, phase, pendingSource, -1, null);
     pendingPositions.add(position);
     return position;
   }
@@ -107,7 +107,7 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
     }
     ArchiveBlockRangeCodec.requireTxId(txId, "archive user transaction");
     ArchiveTxPosition position = new ArchiveTxPosition(
-        workingNextTxNum++, blockNum, ArchivePhase.USER_TX, pendingSource, txIndex, txId);
+        allocateNextTxNum(), blockNum, ArchivePhase.USER_TX, pendingSource, txIndex, txId);
     pendingPositions.add(position);
     return position;
   }
@@ -304,9 +304,7 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
 
   @Override
   public synchronized Optional<ArchiveTxPosition> getPosition(long txNum) {
-    if (txNum < 0) {
-      throw new ArchiveException("archive tx-position txNum must be non-negative");
-    }
+    ArchiveCoordinates.requireTxNum(txNum, "archive tx-position txNum");
     return Optional.ofNullable(positionsByTxNum.get(txNum));
   }
 
@@ -351,6 +349,13 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
       throw new ArchiveException(
           "pending block is " + pendingBlockNum + ", not " + blockNum);
     }
+  }
+
+  private long allocateNextTxNum() {
+    if (workingNextTxNum > ArchiveCoordinates.MAX_COORDINATE) {
+      throw new ArchiveException("archive txNum space is exhausted");
+    }
+    return workingNextTxNum++;
   }
 
   private void clearPending() {
@@ -432,8 +437,6 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
   }
 
   private static void requireNonNegativeBlockNum(long blockNum) {
-    if (blockNum < 0) {
-      throw new ArchiveException("archive block number must be non-negative: " + blockNum);
-    }
+    ArchiveCoordinates.requireBlockNum(blockNum, "archive block number");
   }
 }

@@ -19,8 +19,6 @@ import org.tron.core.exception.ContractValidateException;
 import org.tron.core.exception.jsonrpc.JsonRpcInternalException;
 import org.tron.core.exception.jsonrpc.JsonRpcInvalidParamsException;
 import org.tron.core.exception.jsonrpc.JsonRpcInvalidRequestException;
-import org.tron.core.store.DynamicPropertiesStore;
-import org.tron.core.store.StoreFactory;
 import org.tron.core.store.VmDynamicProperties;
 import org.tron.core.vm.archive.HistoricalConstantCallExecutor;
 import org.tron.core.vm.archive.HistoricalConstantCallResult;
@@ -38,11 +36,9 @@ import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
  * disabled archive fails closed with the archive error surface rather than latest-only param
  * validation.
  *
- * <p>Account / code / storage are read historically, and the energy price is reconstructed from the
- * live {@code EnergyPriceHistory} (see {@link HistoricalVmDynamicProperties}), so {@code BASEFEE} /
- * {@code GASPRICE} replay at the value in force then. VM execution parameters are read from the
- * archive at the target block; mid-chain archives fail closed when an execution-affecting dynamic
- * property is missing because latest cannot be used as a historical value.
+   * <p>Account, code, storage, energy price, and VM execution parameters are read from the archive at
+   * the target block. Mid-chain archives fail closed when an execution-affecting dynamic property is
+   * missing because latest cannot be used as a historical value.
  */
 public final class HistoricalEthCallSupport {
 
@@ -117,8 +113,6 @@ public final class HistoricalEthCallSupport {
           // Coverage and canonical identity are proven before touching the live VM configuration or
           // constructing the call. This keeps unsupported historical points on the archive error
           // surface even when the request payload itself is incomplete.
-          DynamicPropertiesStore latestStore =
-              StoreFactory.getInstance().getChainBaseManager().getDynamicPropertiesStore();
           TriggerSmartContract trigger =
               triggerCallContract(ownerAddress, contractAddress, callValue, data, 0, null);
           boolean genesisComplete = reader.isGenesisComplete();
@@ -127,7 +121,7 @@ public final class HistoricalEthCallSupport {
           long historicalEnergyFee =
               HistoricalArchiveVmDynamicProperties.resolveEnergyFee(reader, genesisComplete);
           VmDynamicProperties vmProperties = new HistoricalArchiveVmDynamicProperties(
-              latestStore, historicalEnergyFee, reader, genesisComplete);
+              historicalEnergyFee, reader, genesisComplete);
           TransactionCapsule trxCap =
               createHistoricalCallTransaction(trigger, historicalBlock);
           HistoricalConstantCallResult result = new HistoricalConstantCallExecutor()

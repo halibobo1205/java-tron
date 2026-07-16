@@ -62,8 +62,9 @@ public final class ArchiveLifecycle {
       if (type == WorkType.RECOVERY && count != 0) {
         throw new ArchiveException("archive recovery participant already exists");
       }
+      Lease lease = new Lease(type, Thread.currentThread());
       active.put(type, count + 1);
-      return new Lease(type, Thread.currentThread());
+      return lease;
     } finally {
       lock.unlock();
     }

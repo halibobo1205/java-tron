@@ -9,6 +9,7 @@ import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
+import org.tron.core.archive.txnum.ArchiveCoordinates;
 
 /**
  * Logical key/value layout for the UNIFIED_V1 temporal column families. A 1-byte logical prefix is
@@ -79,7 +80,7 @@ public final class ArchiveTemporalCodec {
   }
 
   static byte[] changesetKey(long txNum, ArchiveDomain domain, byte[] canonicalKey) {
-    requireNonNegativeTxNum(txNum);
+    ArchiveCoordinates.requireTxNum(txNum, "archive temporal changeset txNum");
     return Bytes.concat(new byte[] {CHANGESET_PREFIX}, Longs.toByteArray(txNum),
         domainId(domain), keyLength(canonicalKey), canonicalKey);
   }
@@ -129,16 +130,20 @@ public final class ArchiveTemporalCodec {
       throw new ArchiveException("archive temporal commit marker has invalid key");
     }
     long blockNum = Longs.fromByteArray(Arrays.copyOfRange(key, prefix.length, key.length));
-    if (blockNum < 0) {
-      throw new ArchiveException("archive temporal commit marker block number is negative");
-    }
+    ArchiveCoordinates.requireBlockNum(
+        blockNum, "archive temporal commit marker block number");
     return blockNum;
   }
 
   static byte[] encodeBlockCommit(ArchiveBlockRange range, int rowCount, byte[] rowDigest) {
-    if (range.getBlockNum() < 0) {
-      throw new ArchiveException("archive block commit requires non-negative block number");
-    }
+    ArchiveCoordinates.requireBlockNum(
+        range.getBlockNum(), "archive block commit block number");
+    ArchiveCoordinates.requireTxNum(
+        range.getFirstTxNum(), "archive block commit first txNum");
+    ArchiveCoordinates.requireTxNum(
+        range.getLastTxNum(), "archive block commit last txNum");
+    ArchiveCoordinates.requireTxNum(
+        range.getFinalizeTxNum(), "archive block commit finalize txNum");
     if (rowCount < 0) {
       throw new ArchiveException("archive block commit row count is negative");
     }
@@ -251,7 +256,7 @@ public final class ArchiveTemporalCodec {
   static long txNumOfChangeset(byte[] changesetKey) {
     validateChangesetKey(changesetKey);
     long txNum = Longs.fromByteArray(Arrays.copyOfRange(changesetKey, 1, 9));
-    requireNonNegativeTxNum(txNum);
+    ArchiveCoordinates.requireTxNum(txNum, "archive temporal changeset txNum");
     return txNum;
   }
 
@@ -259,7 +264,7 @@ public final class ArchiveTemporalCodec {
     validateHistoryKey(historyKey);
     long txNum = Longs.fromByteArray(
         Arrays.copyOfRange(historyKey, historyKey.length - 8, historyKey.length));
-    requireNonNegativeTxNum(txNum);
+    ArchiveCoordinates.requireTxNum(txNum, "archive temporal history txNum");
     return txNum;
   }
 

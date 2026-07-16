@@ -411,10 +411,15 @@ public final class UnifiedArchiveDb implements AutoCloseable {
       activeReadViews++;
       return view;
     } catch (RuntimeException | Error failure) {
+      Throwable cleanupFailure = null;
       if (readOptions != null) {
-        readOptions.close();
+        cleanupFailure = runAndCollect(cleanupFailure, readOptions::close);
       }
-      db.releaseSnapshot(snapshot);
+      cleanupFailure = runAndCollect(
+          cleanupFailure, () -> db.releaseSnapshot(snapshot));
+      if (cleanupFailure != null && failure != cleanupFailure) {
+        failure.addSuppressed(cleanupFailure);
+      }
       throw failure;
     }
   }
@@ -838,6 +843,20 @@ public final class UnifiedArchiveDb implements AutoCloseable {
 
   private static long addSaturated(long left, long right) {
     return left > Long.MAX_VALUE - right ? Long.MAX_VALUE : left + right;
+  }
+
+  private static Throwable runAndCollect(Throwable firstFailure, Runnable action) {
+    try {
+      action.run();
+    } catch (Throwable failure) {
+      if (firstFailure == null) {
+        return failure;
+      }
+      if (firstFailure != failure) {
+        firstFailure.addSuppressed(failure);
+      }
+    }
+    return firstFailure;
   }
 
   private void reportStatisticsFailure(Throwable failure) {

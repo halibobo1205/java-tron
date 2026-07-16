@@ -107,14 +107,22 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
       publish.cursor(UnifiedArchiveManifest.publishedCursorKey(),
           ArchiveBlockRangeCodec.encodeCursor(inner.getCommittedNextTxNum()));
       return persisted;
-    } catch (RuntimeException e) {
-      resetAfterPublication();
-      throw e;
+    } catch (RuntimeException | Error failure) {
+      try {
+        resetAfterPublication();
+      } catch (Throwable cleanupFailure) {
+        if (failure != cleanupFailure) {
+          failure.addSuppressed(cleanupFailure);
+        }
+      }
+      throw failure;
     }
   }
 
   public void publicationSucceeded(ArchiveBlockRange range) {
-    inner = new InMemoryArchiveTxNumIndex(range.getLastTxNum() + 1L, range.getBlockNum());
+    inner = new InMemoryArchiveTxNumIndex(
+        ArchiveCoordinates.nextCursor(range.getLastTxNum(), "archive published txNum"),
+        range.getBlockNum());
   }
 
   public void publicationFailed() {
@@ -165,9 +173,7 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
 
   @Override
   public void validateCanonicalHead(long headNum, byte[] headHash) {
-    if (headNum < 0) {
-      throw new ArchiveException("archive head block number must be non-negative");
-    }
+    ArchiveCoordinates.requireBlockNum(headNum, "archive head block number");
     Optional<ArchiveBlockRange> last = getLastRange();
     if (!last.isPresent()) {
       return;
@@ -185,9 +191,7 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
 
   @Override
   public Optional<ArchiveBlockRange> getBlockRange(long blockNum) {
-    if (blockNum < 0) {
-      throw new ArchiveException("archive block range block number must be non-negative");
-    }
+    ArchiveCoordinates.requireBlockNum(blockNum, "archive block range block number");
     byte[] key = ArchiveBlockRangeCodec.rangeKey(blockNum);
     byte[] value = get(UnifiedArchiveColumnFamily.INDEX, key);
     if (value == null) {
@@ -201,9 +205,7 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
 
   @Override
   public Optional<ArchiveTxPosition> getPosition(long txNum) {
-    if (txNum < 0) {
-      throw new ArchiveException("archive tx-position txNum must be non-negative");
-    }
+    ArchiveCoordinates.requireTxNum(txNum, "archive tx-position txNum");
     byte[] value = get(UnifiedArchiveColumnFamily.INDEX,
         ArchiveBlockRangeCodec.positionKey(txNum));
     if (value == null) {
@@ -516,8 +518,12 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
     ArchiveBlockRangeCodec.requireBlockHash(range.getBlockHash(), "archive block range");
     ArchiveBlockRangeCodec.requireSchemaChecksum(range.getSchemaChecksum(),
         "archive block range");
-    if (range.getBlockNum() < 0 || range.getFirstTxNum() < 0 || range.getLastTxNum() < 0
-        || range.getPrepareTxNum() != range.getFirstTxNum()
+    ArchiveCoordinates.requireBlockNum(range.getBlockNum(), "archive block range block number");
+    ArchiveCoordinates.requireTxNum(range.getFirstTxNum(), "archive block range first txNum");
+    ArchiveCoordinates.requireTxNum(range.getLastTxNum(), "archive block range last txNum");
+    ArchiveCoordinates.requireTxNum(range.getPrepareTxNum(), "archive block range prepare txNum");
+    ArchiveCoordinates.requireTxNum(range.getFinalizeTxNum(), "archive block range finalize txNum");
+    if (range.getPrepareTxNum() != range.getFirstTxNum()
         || range.getFinalizeTxNum() != range.getLastTxNum()
         || range.getUserTxCount() < 0
         || range.getLastTxNum() - range.getFirstTxNum() + 1L

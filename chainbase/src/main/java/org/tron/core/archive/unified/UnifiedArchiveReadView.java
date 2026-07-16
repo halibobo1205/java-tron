@@ -119,7 +119,9 @@ public final class UnifiedArchiveReadView implements AutoCloseable {
       if (firstFailure == null) {
         return failure;
       }
-      firstFailure.addSuppressed(failure);
+      if (firstFailure != failure) {
+        firstFailure.addSuppressed(failure);
+      }
       return firstFailure;
     }
   }
