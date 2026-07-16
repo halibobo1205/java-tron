@@ -8,6 +8,7 @@ import java.util.Arrays;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.Wallet;
 import org.tron.core.archive.ArchiveService;
+import org.tron.core.archive.query.QueryContext;
 import org.tron.core.archive.reader.ArchiveReaderException;
 import org.tron.core.archive.reader.ArchiveStateReader;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
@@ -99,49 +100,56 @@ public final class HistoricalEthCallSupport {
             blockNum -> resolveCanonicalBlock(blockNum, resolvedBlock));
       }
       try (ArchiveStateReader reader = admittedReader) {
-        BlockCapsule historicalBlock = resolvedBlock[0];
-        long blockNum = reader.getPoint().getBlockNum();
-        byte[] canonicalBlockHash = reader.getPoint().getBlockHash();
-        if (requestedBlockHash != null) {
-          requireResolvedBlockHash(blockNum, canonicalBlockHash, requestedBlockHash);
-        }
-        reader.getQueryContext().recordBackendReads(2L);
-        Block currentBlock = wallet.getBlockByNum(blockNum);
-        byte[] currentBlockHash = currentBlock == null
-            ? null
-            : new BlockCapsule(currentBlock).getBlockId().getBytes();
-        requireResolvedBlockHash(blockNum, currentBlockHash, reader.getPoint().getBlockHash());
+        try {
+          BlockCapsule historicalBlock = resolvedBlock[0];
+          long blockNum = reader.getPoint().getBlockNum();
+          byte[] canonicalBlockHash = reader.getPoint().getBlockHash();
+          if (requestedBlockHash != null) {
+            requireResolvedBlockHash(blockNum, canonicalBlockHash, requestedBlockHash);
+          }
+          reader.getQueryContext().recordBackendReads(2L);
+          Block currentBlock = wallet.getBlockByNum(blockNum);
+          byte[] currentBlockHash = currentBlock == null
+              ? null
+              : new BlockCapsule(currentBlock).getBlockId().getBytes();
+          requireResolvedBlockHash(blockNum, currentBlockHash, reader.getPoint().getBlockHash());
 
-        // Coverage and canonical identity are proven before touching the live VM configuration or
-        // constructing the call. This keeps unsupported historical points on the archive error
-        // surface even when the request payload itself is incomplete.
-        DynamicPropertiesStore latestStore =
-            StoreFactory.getInstance().getChainBaseManager().getDynamicPropertiesStore();
-        TriggerSmartContract trigger =
-            triggerCallContract(ownerAddress, contractAddress, callValue, data, 0, null);
-        boolean genesisComplete = reader.isGenesisComplete();
-        // Execution parameters are read from the archive at the target point, so proposal writes
-        // made later in the same block cannot leak into historical replay.
-        long historicalEnergyFee =
-            HistoricalArchiveVmDynamicProperties.resolveEnergyFee(reader, genesisComplete);
-        VmDynamicProperties vmProperties = new HistoricalArchiveVmDynamicProperties(
-            latestStore, historicalEnergyFee, reader, genesisComplete);
-        TransactionCapsule trxCap =
-            createHistoricalCallTransaction(trigger, historicalBlock);
-        HistoricalConstantCallResult result = new HistoricalConstantCallExecutor()
-            .execute(reader, vmProperties, historicalBlock, trxCap, genesisComplete);
-        if (result.isReverted()) {
+          // Coverage and canonical identity are proven before touching the live VM configuration or
+          // constructing the call. This keeps unsupported historical points on the archive error
+          // surface even when the request payload itself is incomplete.
+          DynamicPropertiesStore latestStore =
+              StoreFactory.getInstance().getChainBaseManager().getDynamicPropertiesStore();
+          TriggerSmartContract trigger =
+              triggerCallContract(ownerAddress, contractAddress, callValue, data, 0, null);
+          boolean genesisComplete = reader.isGenesisComplete();
+          // Execution parameters are read from the archive at the target point, so proposal writes
+          // made later in the same block cannot leak into historical replay.
+          long historicalEnergyFee =
+              HistoricalArchiveVmDynamicProperties.resolveEnergyFee(reader, genesisComplete);
+          VmDynamicProperties vmProperties = new HistoricalArchiveVmDynamicProperties(
+              latestStore, historicalEnergyFee, reader, genesisComplete);
+          TransactionCapsule trxCap =
+              createHistoricalCallTransaction(trigger, historicalBlock);
+          HistoricalConstantCallResult result = new HistoricalConstantCallExecutor()
+              .execute(reader, vmProperties, historicalBlock, trxCap, genesisComplete);
+          if (result.isReverted()) {
+            recordJsonHexResponse(reader, result.getResult());
+            // Mirror the latest path: message carries the decoded revert reason, while data carries
+            // the raw bytes.
+            throw new JsonRpcInternalException(
+                "REVERT opcode executed"
+                    + TronJsonRpcImpl.tryDecodeRevertReason(result.getResult()),
+                ByteArray.toJsonHex(result.getResult()));
+          }
+          if (result.getRuntimeError() != null && !result.getRuntimeError().isEmpty()) {
+            throw new JsonRpcInternalException(result.getRuntimeError());
+          }
           recordJsonHexResponse(reader, result.getResult());
-          // Mirror the latest path: message carries the decoded revert reason, data the raw bytes.
-          throw new JsonRpcInternalException(
-              "REVERT opcode executed" + TronJsonRpcImpl.tryDecodeRevertReason(result.getResult()),
-              ByteArray.toJsonHex(result.getResult()));
+          return ByteArray.toJsonHex(result.getResult());
+        } catch (Exception | Error failure) {
+          recordQueryFailure(reader, failure);
+          throw failure;
         }
-        if (result.getRuntimeError() != null && !result.getRuntimeError().isEmpty()) {
-          throw new JsonRpcInternalException(result.getRuntimeError());
-        }
-        recordJsonHexResponse(reader, result.getResult());
-        return ByteArray.toJsonHex(result.getResult());
       }
     } catch (BlockHeaderNotFoundException e) {
       throw new JsonRpcInvalidParamsException("block header not found");
@@ -186,6 +194,19 @@ public final class HistoricalEthCallSupport {
   private static void recordJsonHexResponse(ArchiveStateReader reader, byte[] value) {
     long rawBytes = value == null ? 0L : value.length;
     reader.getQueryContext().recordResponseBytes(2L + rawBytes * 2L);
+  }
+
+  private static void recordQueryFailure(ArchiveStateReader reader, Throwable failure) {
+    try {
+      QueryContext queryContext = reader.getQueryContext();
+      if (queryContext != null) {
+        queryContext.recordFailure(failure);
+      }
+    } catch (Throwable attributionFailure) {
+      if (failure != attributionFailure) {
+        failure.addSuppressed(attributionFailure);
+      }
+    }
   }
 
   private void requireArchiveAvailable() throws JsonRpcInternalException {

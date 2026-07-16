@@ -352,10 +352,10 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
     while (iterator.isValid()) {
       byte[] key = iterator.key();
       if (key.length > 0 && key[0] == ArchiveTemporalCodec.LATEST_PREFIX) {
-        RocksDbArchiveTemporalStore.validateDomainRow(
+        ArchiveTemporalRowValidator.validate(
             catalog, key, iterator.value(), true, dynamicKeyPolicy);
       } else if (ArchiveTemporalCodec.startsWith(key, baselinePrefix)) {
-        RocksDbArchiveTemporalStore.validateDomainRow(catalog,
+        ArchiveTemporalRowValidator.validate(catalog,
             ArchiveTemporalCodec.latestKeyOfBaseline(key), iterator.value(), true,
             dynamicKeyPolicy);
       } else {
@@ -375,7 +375,7 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
         throw new ArchiveException("UNIFIED_V1 " + columnFamily.getName()
             + " column family has an unknown key");
       }
-      RocksDbArchiveTemporalStore.validateDomainRow(
+      ArchiveTemporalRowValidator.validate(
           catalog, iterator.key(), iterator.value(), true, dynamicKeyPolicy);
       iterator.next();
     }

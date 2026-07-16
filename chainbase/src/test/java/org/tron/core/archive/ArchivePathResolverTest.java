@@ -82,22 +82,22 @@ public class ArchivePathResolverTest {
     Path archive = root.resolve("archive");
 
     assertConflict(archive, archive);
-    assertConflict(archive, archive.resolve("legacy"));
+    assertConflict(archive, archive.resolve("secondary"));
     assertConflict(archive, root);
     assertFalse(Files.exists(archive));
   }
 
   @Test
-  public void conflictCheckExaminesCanonicalLegacyAndMigrationPathList() throws Exception {
+  public void conflictCheckExaminesEveryProtectedPath() throws Exception {
     Path root = temporaryFolder.getRoot().toPath();
     Path archive = root.resolve("archive");
     Path canonical = root.resolve("canonical");
-    Path legacy = root.resolve("legacy");
+    Path secondary = root.resolve("secondary");
     Path migrationTarget = archive.resolve("migration-target");
 
     assertThrows(IllegalArgumentException.class,
         () -> ArchivePathResolver.validateNoConflicts(archive,
-            Arrays.asList(canonical, legacy, migrationTarget)));
+            Arrays.asList(canonical, secondary, migrationTarget)));
     assertFalse(Files.exists(archive));
     assertFalse(Files.exists(migrationTarget));
   }
@@ -107,16 +107,16 @@ public class ArchivePathResolverTest {
     Path root = temporaryFolder.getRoot().toPath();
     Path archive = root.resolve("archive");
     Path canonical = root.resolve("canonical");
-    Path legacy = root.resolve("legacy");
+    Path secondary = root.resolve("secondary");
     Path migration = root.resolve("migration");
 
     Path resolved = ArchivePathResolver.resolveAndValidate(archive, null,
-        Arrays.asList(canonical, legacy, migration));
+        Arrays.asList(canonical, secondary, migration));
 
     assertEquals(root.toRealPath().resolve("archive"), resolved);
     assertFalse(Files.exists(archive));
     assertFalse(Files.exists(canonical));
-    assertFalse(Files.exists(legacy));
+    assertFalse(Files.exists(secondary));
     assertFalse(Files.exists(migration));
   }
 

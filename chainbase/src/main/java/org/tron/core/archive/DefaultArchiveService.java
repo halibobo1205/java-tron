@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -74,6 +75,8 @@ public final class DefaultArchiveService implements ArchiveService {
   private static final Logger logger = LoggerFactory.getLogger("archive");
   private static final long DISK_SAMPLE_INTERVAL_NANOS = TimeUnit.SECONDS.toNanos(1L);
   private static final long MIN_JOURNAL_DISK_HEADROOM_BYTES = 16L * 1024 * 1024;
+  private static final long DEFAULT_CLOSE_DRAIN_TIMEOUT_NANOS =
+      TimeUnit.SECONDS.toNanos(30L);
 
   private final boolean enabled;
   /** Published, durable archive index visible to readers. */
@@ -117,6 +120,7 @@ public final class DefaultArchiveService implements ArchiveService {
   private final ArchivePublisherConfig publisherConfig;
   private final Runnable startupValidator;
   private boolean startupStorageValidated;
+  private volatile long closeDrainTimeoutNanos = DEFAULT_CLOSE_DRAIN_TIMEOUT_NANOS;
   private final AtomicBoolean closed = new AtomicBoolean();
   private final Object closeMutex = new Object();
 
@@ -257,7 +261,9 @@ public final class DefaultArchiveService implements ArchiveService {
       this.temporalStore = temporalStore;
       this.inFlightStore = inFlightStore;
       this.executionTxNumIndex = new InMemoryArchiveTxNumIndex(txNumIndex.getNextTxNum());
+      ArchiveMetrics.setRepairRequired(txNumIndex.hasRepairRequired());
       loadInFlightBlocks();
+      updateInFlightMetrics();
       if (initialPhase == ArchiveLifecycle.Phase.RUNNING) {
         // Direct RUNNING construction is retained for unit/in-memory callers without a startup
         // RecoveryLease. Production factory instances start in RECOVERING and defer this work.
@@ -293,6 +299,7 @@ public final class DefaultArchiveService implements ArchiveService {
   }
 
   private void loadInFlightBlocks() {
+    long[] startupJournalBytes = {0L};
     long[] loadedBytes = {0L};
     long[] loadedRecords = {0L};
     int[] loadedBlocks = {0};
@@ -300,12 +307,14 @@ public final class DefaultArchiveService implements ArchiveService {
     int[] staleBlocks = {0};
     inFlightStore.forEachBlock(block -> {
       ArchiveBlockRange range = block.getRange();
+      long retainedBytes = block.estimatedRetainedBytes();
+      startupJournalBytes[0] = addSaturated(startupJournalBytes[0], retainedBytes);
       Optional<ArchiveBlockRange> published = txNumIndex.getBlockRange(range.getBlockNum());
       if (published.isPresent()) {
         staleBlocks[0]++;
-        staleBytes[0] = addSaturated(staleBytes[0], block.estimatedRetainedBytes());
-        if (staleBlocks[0] > maxInFlightBlocks
-            || staleBytes[0] > publisherConfig.getHardInFlightBytes()) {
+        staleBytes[0] = addSaturated(staleBytes[0], retainedBytes);
+        validateStartupJournalBytes(startupJournalBytes[0], staleBytes[0], loadedBytes[0]);
+        if (staleBlocks[0] > maxInFlightBlocks) {
           throw new ArchiveException(
               "archive startup stale journals exceed configured hard limit: blocks="
                   + staleBlocks[0] + ", bytes=" + staleBytes[0]);
@@ -316,10 +325,10 @@ public final class DefaultArchiveService implements ArchiveService {
         return;
       }
       loadedBlocks[0]++;
-      loadedBytes[0] = addSaturated(loadedBytes[0], block.estimatedRetainedBytes());
+      loadedBytes[0] = addSaturated(loadedBytes[0], retainedBytes);
       loadedRecords[0] = addSaturated(loadedRecords[0], block.getRecords().size());
+      validateStartupJournalBytes(startupJournalBytes[0], staleBytes[0], loadedBytes[0]);
       if (loadedBlocks[0] > maxInFlightBlocks
-          || loadedBytes[0] > publisherConfig.getHardInFlightBytes()
           || loadedRecords[0] > publisherConfig.getHardInFlightRecords()) {
         throw new ArchiveException("archive startup journal exceeds configured hard limit: blocks="
             + loadedBlocks[0] + ", records=" + loadedRecords[0]
@@ -330,6 +339,14 @@ public final class DefaultArchiveService implements ArchiveService {
       replayExecutionInFlightBlock(block);
       rememberInFlightInMemory(block);
     });
+  }
+
+  private void validateStartupJournalBytes(long totalBytes, long staleBytes, long loadedBytes) {
+    if (totalBytes > publisherConfig.getHardInFlightBytes()) {
+      throw new ArchiveException(
+          "archive startup journals exceed configured hard byte limit: bytes=" + totalBytes
+              + ", staleBytes=" + staleBytes + ", loadedBytes=" + loadedBytes);
+    }
   }
 
   private void validateInFlightPrevValueChain(ArchiveInFlightBlock block) {
@@ -519,6 +536,7 @@ public final class DefaultArchiveService implements ArchiveService {
         validateAvailable();
         validateStartupStorageLocked();
         txNumIndex.clearRepairRequired();
+        ArchiveMetrics.setRepairRequired(false);
         lifecycle.completeRecovery(() -> {
           if (publisher != null) {
             publisher.activate();
@@ -1281,6 +1299,16 @@ public final class DefaultArchiveService implements ArchiveService {
     this.maxInFlightBlocks = max;
   }
 
+  void setCloseDrainTimeoutForTest(long timeout, TimeUnit unit) {
+    if (timeout < 0L) {
+      throw new IllegalArgumentException("timeout must be non-negative");
+    }
+    if (unit == null) {
+      throw new NullPointerException("unit");
+    }
+    closeDrainTimeoutNanos = unit.toNanos(timeout);
+  }
+
   private void addInFlightUsage(ArchiveInFlightBlock block) {
     synchronized (backlogMonitor) {
       inFlightBlockCount = inFlightBlocks.size();
@@ -1289,8 +1317,7 @@ public final class DefaultArchiveService implements ArchiveService {
           inFlightRetainedBytes, block.estimatedRetainedBytes());
       backlogMonitor.notifyAll();
     }
-    ArchiveMetrics.setInFlight(
-        inFlightBlockCount, inFlightRecordCount, inFlightRetainedBytes);
+    updateInFlightMetrics();
   }
 
   private void removeInFlightUsage(ArchiveInFlightBlock block) {
@@ -1302,8 +1329,14 @@ public final class DefaultArchiveService implements ArchiveService {
           inFlightRetainedBytes, block.estimatedRetainedBytes(), "bytes");
       backlogMonitor.notifyAll();
     }
+    updateInFlightMetrics();
+  }
+
+  private void updateInFlightMetrics() {
     ArchiveMetrics.setInFlight(
         inFlightBlockCount, inFlightRecordCount, inFlightRetainedBytes);
+    ArchiveMetrics.setOldestInFlightBlock(
+        inFlightBlocks.isEmpty() ? -1L : inFlightBlocks.firstKey());
   }
 
   private void updatePublisherLag(long targetBlockNum) {
@@ -1639,6 +1672,7 @@ public final class DefaultArchiveService implements ArchiveService {
     writeLock.lock();
     try {
       txNumIndex.markRepairRequired(reason);
+      ArchiveMetrics.setRepairRequired(true);
     } finally {
       writeLock.unlock();
     }
@@ -1660,13 +1694,35 @@ public final class DefaultArchiveService implements ArchiveService {
     if (!enabled) {
       return ArchiveService.super.acquireReadGuard();
     }
+    ArchiveWorkLease lifecycleLease = lifecycle.acquire(ArchiveLifecycle.WorkType.QUERY);
     Lock readLock = consistencyLock.readLock();
-    readLock.lock();
+    boolean lockAcquired = false;
     try {
+      readLock.lock();
+      lockAcquired = true;
       validateAvailable();
-      return readLock::unlock;
-    } catch (RuntimeException e) {
-      readLock.unlock();
+      AtomicBoolean released = new AtomicBoolean();
+      Thread owner = Thread.currentThread();
+      return () -> {
+        if (Thread.currentThread() != owner) {
+          throw new ArchiveException("archive read guard used by a different thread");
+        }
+        if (!released.compareAndSet(false, true)) {
+          return;
+        }
+        try {
+          readLock.unlock();
+        } catch (RuntimeException | Error e) {
+          closeAndSuppress(lifecycleLease, e);
+          throw e;
+        }
+        lifecycleLease.close();
+      };
+    } catch (RuntimeException | Error e) {
+      if (lockAcquired) {
+        closeAndSuppress(readLock::unlock, e);
+      }
+      closeAndSuppress(lifecycleLease, e);
       throw e;
     }
   }
@@ -1852,17 +1908,23 @@ public final class DefaultArchiveService implements ArchiveService {
       validateAvailableForRead();
       throw e;
     }
-    boolean genesisComplete = unifiedBackend == null
-        && txNumIndex.getFirstArchivedBlock() == 0L;
+    QueryContext queryContext = queryLease.getContext();
+    boolean genesisComplete;
+    try {
+      genesisComplete = unifiedBackend == null
+          && txNumIndex.getFirstArchivedBlock() == 0L;
+    } catch (RuntimeException | Error e) {
+      queryContext.recordFailure(e);
+      closeAndSuppress(queryLease, e);
+      throw e;
+    }
     ArchiveSnapshotPermit snapshotPermit = null;
     if (unifiedBackend != null || genesisComplete) {
       try {
         snapshotPermit = queryCoordinator.acquireSnapshot(queryLease);
       } catch (RuntimeException e) {
-        if (e instanceof HistoricalQueryLimitException) {
-          ArchiveMetrics.queryRejected((HistoricalQueryLimitException) e);
-        }
-        queryLease.close();
+        queryContext.recordFailure(e);
+        closeAndSuppress(queryLease, e);
         validateAvailableForRead();
         throw e;
       }
@@ -1871,20 +1933,22 @@ public final class DefaultArchiveService implements ArchiveService {
     try {
       lifecycleLease = lifecycle.acquire(ArchiveLifecycle.WorkType.QUERY);
     } catch (RuntimeException e) {
+      queryContext.recordFailure(e);
       if (snapshotPermit != null) {
-        snapshotPermit.close();
+        closeAndSuppress(snapshotPermit, e);
       }
-      queryLease.close();
+      closeAndSuppress(queryLease, e);
       validateAvailableForRead();
       throw new ArchiveReaderException(ArchiveReaderException.Reason.INTERNAL_IO,
           e.getMessage() == null ? "archive query admission failed" : e.getMessage(), e);
     }
     Lock readLock = consistencyLock.readLock();
-    QueryContext queryContext = queryLease.getContext();
+    int readHoldCountBefore = consistencyLock.getReadHoldCount();
     boolean lockAcquired = false;
     boolean lockTransferred = false;
     boolean leaseTransferred = false;
     boolean snapshotPermitTransferred = false;
+    Throwable openingFailure = null;
     try {
       try {
         long remaining = queryContext.getRemainingNanos();
@@ -1900,21 +1964,14 @@ public final class DefaultArchiveService implements ArchiveService {
             HistoricalQueryLimitException.Reason.RESOURCE_EXHAUSTED,
             HistoricalQueryLimitException.Limit.INTERRUPTED,
             "interrupted while waiting for archive consistency lock");
-        ArchiveMetrics.queryRejected(interrupted);
         throw interrupted;
       }
       if (!lockAcquired) {
-        try {
-          queryContext.checkDeadline();
-        } catch (HistoricalQueryLimitException e) {
-          ArchiveMetrics.queryRejected(e);
-          throw e;
-        }
+        queryContext.checkDeadline();
         HistoricalQueryLimitException deadline = new HistoricalQueryLimitException(
             HistoricalQueryLimitException.Reason.DEADLINE,
             HistoricalQueryLimitException.Limit.DEADLINE,
             "historical query deadline exceeded while waiting for archive consistency lock");
-        ArchiveMetrics.queryRejected(deadline);
         throw deadline;
       }
       try {
@@ -1934,7 +1991,6 @@ public final class DefaultArchiveService implements ArchiveService {
       if (unifiedBackend != null) {
         UnifiedArchiveBackend.ReadSession readSession = unifiedBackend.openReadSession();
         ArchiveStateReader unifiedReader = null;
-        boolean readerOwnsSession = false;
         try {
           ArchiveStatePoint point;
           try (UnifiedArchiveTxNumIndex.ReadScope ignoredIndex = readSession.bindIndex()) {
@@ -1946,7 +2002,6 @@ public final class DefaultArchiveService implements ArchiveService {
             Runnable onClose = genesisComplete ? () -> { } : readLock::unlock;
             unifiedReader = readerFactory.openSnapshot(point, readSession.getTemporalView(),
                 onClose, genesisComplete, queryContext);
-            readerOwnsSession = true;
           }
           if (genesisComplete) {
             readLock.unlock();
@@ -1958,7 +2013,7 @@ public final class DefaultArchiveService implements ArchiveService {
           snapshotPermitTransferred = true;
           return managed;
         } catch (RuntimeException | Error | ArchiveReaderException e) {
-          if (readerOwnsSession) {
+          if (unifiedReader != null) {
             closeAndSuppress(unifiedReader, e);
           } else {
             closeAndSuppress(readSession, e);
@@ -1980,8 +2035,8 @@ public final class DefaultArchiveService implements ArchiveService {
         ArchiveTemporalReadView view = temporalStore.openReadView();
         try {
           reader = readerFactory.openSnapshot(point, view, queryLease.getContext());
-        } catch (RuntimeException | ArchiveReaderException e) {
-          view.close();
+        } catch (RuntimeException | Error | ArchiveReaderException e) {
+          closeAndSuppress(view, e);
           throw e;
         }
         readLock.unlock();
@@ -2010,16 +2065,36 @@ public final class DefaultArchiveService implements ArchiveService {
       lockTransferred = true;
       leaseTransferred = true;
       return managed;
+    } catch (RuntimeException | Error | ArchiveReaderException e) {
+      openingFailure = e;
+      queryContext.recordFailure(e);
+      throw e;
     } finally {
-      if (lockAcquired && !lockTransferred) {
-        readLock.unlock();
+      Throwable cleanupFailure = null;
+      if (lockAcquired && !lockTransferred
+          && consistencyLock.getReadHoldCount() > readHoldCountBefore) {
+        cleanupFailure = runAndCollect(cleanupFailure, readLock::unlock);
       }
       if (snapshotPermit != null && !snapshotPermitTransferred) {
-        snapshotPermit.close();
+        cleanupFailure = closeAndCollect(cleanupFailure, snapshotPermit);
       }
       if (!leaseTransferred) {
-        lifecycleLease.close();
-        queryLease.close();
+        cleanupFailure = closeAndCollect(cleanupFailure, lifecycleLease);
+        cleanupFailure = closeAndCollect(cleanupFailure, queryLease);
+      }
+      if (cleanupFailure != null) {
+        queryContext.recordFailure(cleanupFailure);
+        if (openingFailure != null) {
+          if (openingFailure != cleanupFailure) {
+            openingFailure.addSuppressed(cleanupFailure);
+          }
+        } else if (cleanupFailure instanceof Error) {
+          throw (Error) cleanupFailure;
+        } else if (cleanupFailure instanceof RuntimeException) {
+          throw (RuntimeException) cleanupFailure;
+        } else {
+          throw new ArchiveException("archive reader-open cleanup failed", cleanupFailure);
+        }
       }
     }
   }
@@ -2064,16 +2139,19 @@ public final class DefaultArchiveService implements ArchiveService {
       if (publisher != null) {
         publisher.beginDrain();
       }
+      queryCoordinator.beginDrain();
+      lifecycle.beginDrain();
       synchronized (backlogMonitor) {
         backlogMonitor.notifyAll();
       }
-      queryCoordinator.beginDrain();
-      lifecycle.beginDrain();
       try {
-        if (!lifecycle.awaitDrained(30, TimeUnit.SECONDS)) {
+        long drainStartedNanos = System.nanoTime();
+        if (!lifecycle.awaitDrained(closeDrainTimeoutNanos, TimeUnit.NANOSECONDS)) {
           throw new ArchiveException("archive drain timed out with active operations");
         }
-        if (!queryCoordinator.awaitDrained(30, TimeUnit.SECONDS)) {
+        long elapsedNanos = System.nanoTime() - drainStartedNanos;
+        long remainingNanos = Math.max(0L, closeDrainTimeoutNanos - elapsedNanos);
+        if (!queryCoordinator.awaitDrained(remainingNanos, TimeUnit.NANOSECONDS)) {
           throw new ArchiveException("archive query drain timed out with active readers");
         }
       } catch (InterruptedException e) {
@@ -2159,6 +2237,34 @@ public final class DefaultArchiveService implements ArchiveService {
     }
   }
 
+  private static Throwable closeAndCollect(Throwable failure, AutoCloseable resource) {
+    try {
+      resource.close();
+    } catch (Throwable closeFailure) {
+      return collectFailure(failure, closeFailure);
+    }
+    return failure;
+  }
+
+  private static Throwable runAndCollect(Throwable failure, Runnable action) {
+    try {
+      action.run();
+    } catch (Throwable actionFailure) {
+      return collectFailure(failure, actionFailure);
+    }
+    return failure;
+  }
+
+  private static Throwable collectFailure(Throwable failure, Throwable candidate) {
+    if (failure == null) {
+      return candidate;
+    }
+    if (failure != candidate) {
+      failure.addSuppressed(candidate);
+    }
+    return failure;
+  }
+
   private static RuntimeException closeResource(Object resource, String name,
       RuntimeException failure) {
     if (resource instanceof AutoCloseable) {
@@ -2178,9 +2284,17 @@ public final class DefaultArchiveService implements ArchiveService {
   }
 
   private void markFatal(RuntimeException failure) {
-    if (!lifecycle.markFatal(failure)) {
+    boolean first = lifecycle.markFatal(failure);
+    RuntimeException primary = lifecycle.getFatalFailure();
+    // Every contender can arm the same primary. This closes the CAS-winner scheduling gap without
+    // opening callback delivery before the repair marker has crossed its durability barrier.
+    fatalController.arm(primary);
+    if (!first) {
+      suppressIfAcyclicAndAbsent(primary, failure);
+      logger.warn("additional archive fatal failure after fail-stop was armed", failure);
       return;
     }
+    ArchiveMetrics.setRepairRequired(true);
     queryCoordinator.beginDrain();
     if (publisher != null) {
       publisher.beginDrain();
@@ -2188,17 +2302,50 @@ public final class DefaultArchiveService implements ArchiveService {
     synchronized (backlogMonitor) {
       backlogMonitor.notifyAll();
     }
-    // Arm the watchdog before durable marker I/O, but do not let the application exit callback
-    // race ahead of the repair marker.
-    fatalController.arm(failure);
     try {
-      txNumIndex.markRepairRequired(failure.getMessage() == null
-          ? failure.getClass().getSimpleName()
-          : failure.getMessage());
+      txNumIndex.markRepairRequired(primary.getMessage() == null
+          ? primary.getClass().getSimpleName()
+          : primary.getMessage());
     } catch (RuntimeException markerFailure) {
-      failure.addSuppressed(markerFailure);
+      suppressIfAcyclicAndAbsent(primary, markerFailure);
     } finally {
       fatalController.deliver();
     }
+  }
+
+  private static void suppressIfAcyclicAndAbsent(Throwable primary, Throwable candidate) {
+    if (primary == null || candidate == null || primary == candidate) {
+      return;
+    }
+    synchronized (primary) {
+      if (throwableGraphContains(candidate, primary)
+          || throwableGraphContains(primary, candidate)) {
+        return;
+      }
+      primary.addSuppressed(candidate);
+    }
+  }
+
+  private static boolean throwableGraphContains(Throwable root, Throwable target) {
+    Deque<Throwable> pending = new ArrayDeque<>();
+    Map<Throwable, Boolean> visited = new IdentityHashMap<>();
+    pending.add(root);
+    while (!pending.isEmpty()) {
+      Throwable current = pending.removeFirst();
+      if (current == target) {
+        return true;
+      }
+      if (visited.put(current, Boolean.TRUE) != null) {
+        continue;
+      }
+      Throwable cause = current.getCause();
+      if (cause != null) {
+        pending.addLast(cause);
+      }
+      for (Throwable suppressed : current.getSuppressed()) {
+        pending.addLast(suppressed);
+      }
+    }
+    return false;
   }
 }

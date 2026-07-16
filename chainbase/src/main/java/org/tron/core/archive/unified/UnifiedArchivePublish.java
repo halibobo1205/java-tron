@@ -12,13 +12,17 @@ import org.tron.core.archive.ArchiveException;
 public final class UnifiedArchivePublish {
 
   private final Entry journal;
+  private final Entry journalToken;
+  private final Entry acknowledgement;
   private final Entry cursor;
   private final Entry blockMarker;
   private final List<Mutation> mutations;
 
-  private UnifiedArchivePublish(Entry journal, Entry cursor, Entry blockMarker,
-      List<Mutation> mutations) {
+  private UnifiedArchivePublish(Entry journal, Entry journalToken, Entry acknowledgement,
+      Entry cursor, Entry blockMarker, List<Mutation> mutations) {
     this.journal = journal;
+    this.journalToken = journalToken;
+    this.acknowledgement = acknowledgement;
     this.cursor = cursor;
     this.blockMarker = blockMarker;
     this.mutations = Collections.unmodifiableList(new ArrayList<>(mutations));
@@ -34,6 +38,22 @@ public final class UnifiedArchivePublish {
 
   byte[] expectedJournalValue() {
     return journal.value;
+  }
+
+  byte[] journalTokenKey() {
+    return journalToken.key;
+  }
+
+  byte[] expectedJournalTokenValue() {
+    return journalToken.value;
+  }
+
+  byte[] acknowledgementKey() {
+    return acknowledgement.key;
+  }
+
+  byte[] expectedAcknowledgementValue() {
+    return acknowledgement.value;
   }
 
   byte[] cursorKey() {
@@ -60,6 +80,8 @@ public final class UnifiedArchivePublish {
   public static final class Builder {
 
     private Entry journal;
+    private Entry journalToken;
+    private Entry acknowledgement;
     private Entry cursor;
     private Entry blockMarker;
     private final List<Mutation> mutations = new ArrayList<>();
@@ -73,6 +95,24 @@ public final class UnifiedArchivePublish {
         throw new ArchiveException("UNIFIED_V1 publish journal is already set");
       }
       journal = requiredEntry(key, expectedValue, "publish journal");
+      return this;
+    }
+
+    /** Compact token header paired atomically with the immutable journal payload. */
+    public Builder journalToken(byte[] key, byte[] expectedValue) {
+      if (journalToken != null) {
+        throw new ArchiveException("UNIFIED_V1 publish journal token is already set");
+      }
+      journalToken = requiredEntry(key, expectedValue, "publish journal token");
+      return this;
+    }
+
+    /** Canonical-commit acknowledgement required before the journal can be published. */
+    public Builder acknowledgement(byte[] key, byte[] expectedValue) {
+      if (acknowledgement != null) {
+        throw new ArchiveException("UNIFIED_V1 publish acknowledgement is already set");
+      }
+      acknowledgement = requiredEntry(key, expectedValue, "publish acknowledgement");
       return this;
     }
 
@@ -114,6 +154,21 @@ public final class UnifiedArchivePublish {
       if (journal == null) {
         throw new ArchiveException("UNIFIED_V1 publish journal is required");
       }
+      if (journalToken == null) {
+        throw new ArchiveException("UNIFIED_V1 publish journal token is required");
+      }
+      if (acknowledgement == null) {
+        throw new ArchiveException("UNIFIED_V1 publish acknowledgement is required");
+      }
+      if (Arrays.equals(journal.key, journalToken.key)
+          || Arrays.equals(journal.key, acknowledgement.key)
+          || Arrays.equals(journalToken.key, acknowledgement.key)) {
+        throw new ArchiveException("UNIFIED_V1 publish journal lifecycle keys must be distinct");
+      }
+      if (!Arrays.equals(journalToken.value, acknowledgement.value)) {
+        throw new ArchiveException(
+            "UNIFIED_V1 publish acknowledgement must match its token header");
+      }
       if (cursor == null) {
         throw new ArchiveException("UNIFIED_V1 publish cursor is required");
       }
@@ -134,7 +189,8 @@ public final class UnifiedArchivePublish {
       if (!hasIndexRow) {
         throw new ArchiveException("UNIFIED_V1 publish requires an index row");
       }
-      return new UnifiedArchivePublish(journal, cursor, blockMarker, mutations);
+      return new UnifiedArchivePublish(
+          journal, journalToken, acknowledgement, cursor, blockMarker, mutations);
     }
 
     private static void requirePublishDataColumnFamily(

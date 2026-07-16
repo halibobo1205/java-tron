@@ -5,7 +5,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -18,28 +17,11 @@ import org.tron.core.archive.txnum.ArchiveTxPosition;
 final class ArchiveInFlightCodec {
 
   private static final byte VALUE_VERSION = 2;
-  private static final byte META_PREFIX = 0x01;
   private static final byte BLOCK_PREFIX = 0x40;
   private static final byte ACK_PREFIX = 0x41;
   private static final byte TOKEN_PREFIX = 0x42;
-  private static final byte[] MANIFEST_KEY = new byte[] {META_PREFIX, 'm', 'a', 'n', 'i'};
-  private static final byte[] MANIFEST_VALUE =
-      "tron-archive-inflight|schema=2|values=token-state-range-position-record-v2"
-          .getBytes(StandardCharsets.US_ASCII);
 
   private ArchiveInFlightCodec() {
-  }
-
-  static byte[] manifestKey() {
-    return Arrays.copyOf(MANIFEST_KEY, MANIFEST_KEY.length);
-  }
-
-  static byte[] manifestValue() {
-    return Arrays.copyOf(MANIFEST_VALUE, MANIFEST_VALUE.length);
-  }
-
-  static boolean manifestMatches(byte[] value) {
-    return Arrays.equals(MANIFEST_VALUE, value);
   }
 
   static byte[] blockPrefix() {

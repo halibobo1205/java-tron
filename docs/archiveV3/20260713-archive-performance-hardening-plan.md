@@ -1,5 +1,9 @@
 # Archive 写入与历史查询性能加固计划
 
+> 历史说明（2026-07-16）：本文中的迁移、bridge、adoption 和 LEGACY_V1 生产路径方案已被
+> greenfield Unified-only 决策取代，仅保留为设计历史。当前发布要求见
+> `20260714-unified-v1-wiring-requirements.md`。
+
 > 状态：CODE COMPLETE / PERF GATED；ROUND 13 生产路径 HIGH/MEDIUM 已完成修复与聚合回归，
 > 50k-block ABBA、真实故障矩阵和 72h soak 尚未执行
 >

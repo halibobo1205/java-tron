@@ -65,28 +65,10 @@ public final class ArchiveIdentityProtocol {
     Path archiveRoot = requirePhysicalCanonicalPath(claim.getFinalPath(), "finalPath");
     return files.withExclusiveFileLock(rootLockPath(archiveRoot),
         () -> files.withExclusiveFileLock(lockPath(anchors),
-            () -> initLocked(anchors, claim, false)));
+            () -> initLocked(anchors, claim)));
   }
 
-  /**
-   * Durably prepares an explicit claim for a complete pre-identity archive root.
-   *
-   * <p>The caller is responsible for supplying a payload that fully validates the existing archive
-   * before activation. Normal empty-root initialization remains isolated in {@link #init}.
-   */
-  public ArchiveIdentity adopt(Path anchorDirectory, ArchiveIdentityClaim claim)
-      throws IOException {
-    Objects.requireNonNull(claim, "claim");
-    Path anchors = requirePhysicalCanonicalPath(anchorDirectory, "anchorDirectory");
-    Path archiveRoot = requirePhysicalCanonicalPath(claim.getFinalPath(), "finalPath");
-    return files.withExclusiveFileLock(rootLockPath(archiveRoot),
-        () -> files.withExclusiveFileLock(lockPath(anchors),
-            () -> initLocked(anchors, claim, true)));
-  }
-
-  private ArchiveIdentity initLocked(Path anchors, ArchiveIdentityClaim claim,
-      boolean adoptExistingRoot)
-      throws IOException {
+  private ArchiveIdentity initLocked(Path anchors, ArchiveIdentityClaim claim) throws IOException {
     Path anchor = anchorPath(anchors, claim.getUuid());
     Path rootIdentity = rootIdentityPath(claim.getFinalPath());
 
@@ -96,12 +78,12 @@ public final class ArchiveIdentityProtocol {
       Pair pair = loadPair(existing.get(), rootIdentity);
       requireReachablePair(pair);
       if (pair.root == null) {
-        requireClaimableRoot(claim, rootIdentity, adoptExistingRoot);
+        requireClaimableRoot(claim, rootIdentity);
       }
       return existing.get();
     }
 
-    requireInitialRootState(claim, rootIdentity, adoptExistingRoot);
+    requireEmptyRootForNewInit(claim.getFinalPath());
     files.ensureDirectory(anchors);
 
     // Recheck after directory creation so an idempotent retry cannot overwrite a winner.
@@ -111,12 +93,12 @@ public final class ArchiveIdentityProtocol {
       Pair pair = loadPair(existing.get(), rootIdentity);
       requireReachablePair(pair);
       if (pair.root == null) {
-        requireClaimableRoot(claim, rootIdentity, adoptExistingRoot);
+        requireClaimableRoot(claim, rootIdentity);
       }
       return existing.get();
     }
     requireNoCompetingAnchor(anchors, anchor, claim);
-    requireInitialRootState(claim, rootIdentity, adoptExistingRoot);
+    requireEmptyRootForNewInit(claim.getFinalPath());
 
     ArchiveIdentity prepared = new ArchiveIdentity(claim, ArchiveIdentityState.PREPARED);
     files.write(anchor, prepared);
@@ -137,18 +119,7 @@ public final class ArchiveIdentityProtocol {
     Path archiveRoot = requirePhysicalCanonicalPath(claim.getFinalPath(), "finalPath");
     return files.withExclusiveFileLock(rootLockPath(archiveRoot),
         () -> files.withExclusiveFileLock(lockPath(anchors),
-            () -> resumeLocked(anchors, claim, false)));
-  }
-
-  /** Resumes an explicitly requested legacy adoption after any durable protocol stage. */
-  public ArchiveIdentity resumeAdoption(Path anchorDirectory, ArchiveIdentityClaim claim)
-      throws IOException {
-    Objects.requireNonNull(claim, "claim");
-    Path anchors = requirePhysicalCanonicalPath(anchorDirectory, "anchorDirectory");
-    Path archiveRoot = requirePhysicalCanonicalPath(claim.getFinalPath(), "finalPath");
-    return files.withExclusiveFileLock(rootLockPath(archiveRoot),
-        () -> files.withExclusiveFileLock(lockPath(anchors),
-            () -> resumeLocked(anchors, claim, true)));
+            () -> resumeLocked(anchors, claim)));
   }
 
   /**
@@ -206,8 +177,7 @@ public final class ArchiveIdentityProtocol {
     return Optional.of(candidate.getClaim());
   }
 
-  private ArchiveIdentity resumeLocked(Path anchors, ArchiveIdentityClaim claim,
-      boolean adoptExistingRoot)
+  private ArchiveIdentity resumeLocked(Path anchors, ArchiveIdentityClaim claim)
       throws IOException {
     Path anchorPath = anchorPath(anchors, claim.getUuid());
     Path archiveRoot = claim.getFinalPath();
@@ -224,11 +194,11 @@ public final class ArchiveIdentityProtocol {
 
     if (pair.root == null) {
       requireState(pair.anchor, ArchiveIdentityState.PREPARED, "anchor without root");
-      requireClaimableRoot(claim, rootPath, adoptExistingRoot);
+      requireClaimableRoot(claim, rootPath);
       if (files.ensureDirectory(archiveRoot)) {
         stageListener.after(DurableStage.ROOT_DIRECTORY_CREATED);
       }
-      requireClaimableRoot(claim, rootPath, adoptExistingRoot);
+      requireClaimableRoot(claim, rootPath);
       files.write(rootPath, new ArchiveIdentity(claim, ArchiveIdentityState.BOUND));
       stageListener.after(DurableStage.ROOT_BOUND);
       pair = reloadPair(anchorPath, rootPath, claim);
@@ -571,45 +541,9 @@ public final class ArchiveIdentityProtocol {
     }
   }
 
-  private void requireInitialRootState(ArchiveIdentityClaim claim, Path rootIdentity,
-      boolean adoptExistingRoot) throws IOException {
-    if (adoptExistingRoot) {
-      requireAdoptableRoot(claim, rootIdentity);
-    } else {
-      requireEmptyRootForNewInit(claim.getFinalPath());
-    }
-  }
-
-  private void requireClaimableRoot(ArchiveIdentityClaim claim, Path rootIdentity,
-      boolean adoptExistingRoot) throws IOException {
-    if (adoptExistingRoot) {
-      requireAdoptableRoot(claim, rootIdentity);
-    } else {
-      requireUnclaimedRoot(claim, rootIdentity, true);
-    }
-  }
-
-  private void requireAdoptableRoot(ArchiveIdentityClaim claim, Path rootIdentity)
+  private void requireClaimableRoot(ArchiveIdentityClaim claim, Path rootIdentity)
       throws IOException {
-    Path archiveRoot = claim.getFinalPath();
-    files.requireDirectory(archiveRoot);
-    boolean hasPayload = false;
-    try (DirectoryStream<Path> stream = Files.newDirectoryStream(archiveRoot)) {
-      for (Path candidate : stream) {
-        if (files.isOwnedTemporaryFile(rootIdentity, claim.getUuid(), candidate)) {
-          continue;
-        }
-        if (candidate.equals(rootIdentity)) {
-          throw new ArchiveIdentityException(
-              "archive root is already claimed by an identity: " + archiveRoot);
-        }
-        hasPayload = true;
-      }
-    }
-    if (!hasPayload) {
-      throw new ArchiveIdentityException(
-          "legacy archive adoption requires a non-empty archive root: " + archiveRoot);
-    }
+    requireUnclaimedRoot(claim, rootIdentity, true);
   }
 
   private void requireUnclaimedRoot(ArchiveIdentityClaim claim, Path rootIdentity,

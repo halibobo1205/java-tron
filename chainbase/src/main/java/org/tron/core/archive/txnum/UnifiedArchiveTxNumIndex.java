@@ -293,6 +293,7 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
     }
   }
 
+  @Override
   public boolean hasRepairRequired() {
     return get(UnifiedArchiveColumnFamily.META,
         ArchiveBlockRangeCodec.REPAIR_REQUIRED_KEY) != null;

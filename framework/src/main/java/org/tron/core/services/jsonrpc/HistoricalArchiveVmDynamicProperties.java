@@ -7,6 +7,7 @@ import org.tron.common.utils.ByteArray;
 import org.tron.core.archive.reader.ArchiveReadResult;
 import org.tron.core.archive.reader.ArchiveReadResult.Status;
 import org.tron.core.archive.reader.ArchiveReaderException;
+import org.tron.core.archive.reader.ArchiveStatePoint;
 import org.tron.core.archive.reader.ArchiveStateReader;
 import org.tron.core.config.Parameter.ForkBlockVersionEnum;
 import org.tron.core.store.VmDynamicProperties;
@@ -197,7 +198,10 @@ public final class HistoricalArchiveVmDynamicProperties extends HistoricalVmDyna
   HistoricalArchiveVmDynamicProperties(VmDynamicProperties latest, long energyFee,
       ArchiveStateReader reader, boolean genesisComplete) throws ArchiveReaderException {
     super(latest, energyFee);
-    this.latestBlockHeaderNumber = reader.getPoint().getBlockNum();
+    ArchiveStatePoint point = reader.getPoint();
+    this.latestBlockHeaderNumber = point.getKind() == ArchiveStatePoint.Kind.TX_BEFORE
+        ? Math.max(0L, point.getBlockNum() - 1L)
+        : point.getBlockNum();
     this.latestBlockHeaderTimestamp = resolve(reader, "latest_block_header_timestamp",
         genesisComplete, 0L);
     this.maintenanceTimeInterval = resolveArchived(reader, "MAINTENANCE_TIME_INTERVAL");

@@ -5,6 +5,7 @@ import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.Wallet;
 import org.tron.core.archive.ArchiveService;
+import org.tron.core.archive.query.QueryContext;
 import org.tron.core.archive.reader.ArchiveReadResult;
 import org.tron.core.archive.reader.ArchiveReadResult.Status;
 import org.tron.core.archive.reader.ArchiveReaderException;
@@ -60,12 +61,17 @@ public final class ArchiveJsonRpcStateAdapter {
       throws JsonRpcInvalidParamsException, JsonRpcInternalException {
     byte[] address21 = JsonRpcApiUtil.addressCompatibleToByteArray(address);
     try (ArchiveStateReader reader = resolveReader(blockNumOrTag, requestedBlockHash)) {
-      ArchiveReadResult<AccountCapsule> account = reader.getAccount(address21);
-      requireKnown(account, "account", reader.isGenesisComplete());
-      reader.getQueryContext().recordResponseBytes(18L);
-      return account.isPresent()
-          ? ByteArray.toJsonHex(account.getValue().getBalance())
-          : ByteArray.toJsonHex(0L); // missing account = zero balance, not an archive gap
+      try {
+        ArchiveReadResult<AccountCapsule> account = reader.getAccount(address21);
+        requireKnown(account, "account", reader.isGenesisComplete());
+        reader.getQueryContext().recordResponseBytes(18L);
+        return account.isPresent()
+            ? ByteArray.toJsonHex(account.getValue().getBalance())
+            : ByteArray.toJsonHex(0L); // missing account = zero balance, not an archive gap
+      } catch (Exception | Error failure) {
+        recordQueryFailure(reader, failure);
+        throw failure;
+      }
     } catch (ArchiveReaderException e) {
       throw toInternal(e);
     }
@@ -80,10 +86,15 @@ public final class ArchiveJsonRpcStateAdapter {
       throws JsonRpcInvalidParamsException, JsonRpcInternalException {
     byte[] address21 = JsonRpcApiUtil.addressCompatibleToByteArray(address);
     try (ArchiveStateReader reader = resolveReader(blockNumOrTag, requestedBlockHash)) {
-      ArchiveReadResult<byte[]> code = reader.getCode(address21);
-      requireKnown(code, "code", reader.isGenesisComplete());
-      recordJsonHexResponse(reader, code.isPresent() ? code.getValue().length : 0L);
-      return code.isPresent() ? ByteArray.toJsonHex(code.getValue()) : EMPTY_CODE;
+      try {
+        ArchiveReadResult<byte[]> code = reader.getCode(address21);
+        requireKnown(code, "code", reader.isGenesisComplete());
+        recordJsonHexResponse(reader, code.isPresent() ? code.getValue().length : 0L);
+        return code.isPresent() ? ByteArray.toJsonHex(code.getValue()) : EMPTY_CODE;
+      } catch (Exception | Error failure) {
+        recordQueryFailure(reader, failure);
+        throw failure;
+      }
     } catch (ArchiveReaderException e) {
       throw toInternal(e);
     }
@@ -99,10 +110,15 @@ public final class ArchiveJsonRpcStateAdapter {
     byte[] address21 = JsonRpcApiUtil.addressCompatibleToByteArray(address);
     byte[] slot32 = normalizeSlot(storageIdx);
     try (ArchiveStateReader reader = resolveReader(blockNumOrTag, requestedBlockHash)) {
-      ArchiveReadResult<byte[]> value = reader.getStorage(address21, slot32);
-      requireKnown(value, "storage", reader.isGenesisComplete());
-      recordJsonHexResponse(reader, 32L);
-      return value.isPresent() ? ByteArray.toJsonHex(leftPad32(value.getValue())) : ZERO_WORD;
+      try {
+        ArchiveReadResult<byte[]> value = reader.getStorage(address21, slot32);
+        requireKnown(value, "storage", reader.isGenesisComplete());
+        recordJsonHexResponse(reader, 32L);
+        return value.isPresent() ? ByteArray.toJsonHex(leftPad32(value.getValue())) : ZERO_WORD;
+      } catch (Exception | Error failure) {
+        recordQueryFailure(reader, failure);
+        throw failure;
+      }
     } catch (ArchiveReaderException e) {
       throw toInternal(e);
     }
@@ -153,8 +169,9 @@ public final class ArchiveJsonRpcStateAdapter {
       closeAfterFailure(reader, e);
       throw new JsonRpcInvalidParamsException("block header not found");
     } catch (ArchiveReaderException e) {
+      closeAfterFailure(reader, e);
       throw toInternal(e);
-    } catch (JsonRpcInternalException | RuntimeException e) {
+    } catch (JsonRpcInternalException | RuntimeException | Error e) {
       closeAfterFailure(reader, e);
       throw e;
     }
@@ -176,10 +193,26 @@ public final class ArchiveJsonRpcStateAdapter {
     if (reader == null) {
       return;
     }
+    recordQueryFailure(reader, failure);
     try {
       reader.close();
-    } catch (RuntimeException closeFailure) {
-      failure.addSuppressed(closeFailure);
+    } catch (Throwable closeFailure) {
+      if (failure != closeFailure) {
+        failure.addSuppressed(closeFailure);
+      }
+    }
+  }
+
+  private static void recordQueryFailure(ArchiveStateReader reader, Throwable failure) {
+    try {
+      QueryContext queryContext = reader.getQueryContext();
+      if (queryContext != null) {
+        queryContext.recordFailure(failure);
+      }
+    } catch (Throwable contextFailure) {
+      if (failure != contextFailure) {
+        failure.addSuppressed(contextFailure);
+      }
     }
   }
 

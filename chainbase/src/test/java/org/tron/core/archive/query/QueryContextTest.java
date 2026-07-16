@@ -12,6 +12,7 @@ import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.Test;
+import org.tron.core.archive.ArchiveException;
 
 public class QueryContextTest {
 
@@ -187,6 +188,83 @@ public class QueryContextTest {
     assertEquals(0, context.getVmSteps());
     assertEquals(0, context.getTraceBytes());
     assertEquals(0, context.getResponseBytes());
+  }
+
+  @Test
+  public void firstPostAdmissionFailureIsRecordedForLeaseSettlement() {
+    QueryContext context = new QueryContext(ArchiveQueryLimits.unlimited());
+    ArchiveException first = new ArchiveException("reader failed");
+
+    context.recordFailure(first);
+    context.recordFailure(new ArchiveException("close failed"));
+
+    assertSame(first, context.getRecordedFailure());
+    assertFalse(context.isTerminated());
+  }
+
+  @Test
+  public void terminalLimitParticipatesInFirstFailureOrdering() {
+    QueryContext limitFirst = new QueryContext(
+        ArchiveQueryLimits.builder().maxLogicalReads(0).build());
+    HistoricalQueryLimitException limit = assertThrows(
+        HistoricalQueryLimitException.class, limitFirst::recordLogicalRead);
+    limitFirst.recordFailure(new ArchiveException("cleanup failed"));
+    assertSame(limit, limitFirst.getRecordedFailure());
+
+    QueryContext ioFirst = new QueryContext(
+        ArchiveQueryLimits.builder().maxLogicalReads(0).build());
+    ArchiveException ioFailure = new ArchiveException("reader failed");
+    ioFirst.recordFailure(ioFailure);
+    assertThrows(HistoricalQueryLimitException.class, ioFirst::recordLogicalRead);
+    assertSame(ioFailure, ioFirst.getRecordedFailure());
+  }
+
+  @Test
+  public void vmTerminalFailureRetainsExactFirstException() {
+    QueryContext context = new QueryContext(ArchiveQueryLimits.unlimited());
+    RuntimeException first = new RuntimeException("nested archive read unsupported");
+
+    context.recordVmTerminalFailure(first);
+    context.recordVmTerminalFailure(new RuntimeException("later nested failure"));
+
+    assertSame(first, context.getRecordedVmTerminalFailure());
+    assertSame(first, context.getRecordedFailure());
+    assertFalse(context.isTerminated());
+  }
+
+  @Test
+  public void vmTerminalFailureDoesNotReplaceEarlierMetricFailure() {
+    QueryContext context = new QueryContext(ArchiveQueryLimits.unlimited());
+    ArchiveException readerFailure = new ArchiveException("reader failed first");
+    RuntimeException vmFailure = new RuntimeException("nested archive read unsupported");
+
+    context.recordFailure(readerFailure);
+    context.recordVmTerminalFailure(vmFailure);
+
+    assertSame(vmFailure, context.getRecordedVmTerminalFailure());
+    assertSame(readerFailure, context.getRecordedFailure());
+  }
+
+  @Test
+  public void firstExecutionTerminalWinsAcrossBudgetAndVmFailures() {
+    QueryContext budgetFirst = new QueryContext(
+        ArchiveQueryLimits.builder().maxVmSteps(0L).build());
+    HistoricalQueryLimitException budget = assertThrows(
+        HistoricalQueryLimitException.class, budgetFirst::recordVmStep);
+    RuntimeException laterVm = new RuntimeException("later unsupported state");
+    budgetFirst.recordVmTerminalFailure(laterVm);
+    assertSame(budget, budgetFirst.getRecordedExecutionTerminalFailure());
+    assertSame(budget, budgetFirst.getRecordedFailure());
+
+    QueryContext vmFirst = new QueryContext(
+        ArchiveQueryLimits.builder().maxVmSteps(0L).build());
+    RuntimeException vm = new RuntimeException("unsupported state first");
+    vmFirst.recordVmTerminalFailure(vm);
+    HistoricalQueryLimitException laterBudget = assertThrows(
+        HistoricalQueryLimitException.class, vmFirst::recordVmStep);
+    assertSame(vm, vmFirst.getRecordedExecutionTerminalFailure());
+    assertSame(vm, vmFirst.getRecordedFailure());
+    assertSame(laterBudget, vmFirst.getRecordedTerminalException());
   }
 
   @Test

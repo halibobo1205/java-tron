@@ -143,41 +143,97 @@ public final class UnifiedArchiveDb implements AutoCloseable {
     }
   }
 
-  /** Forced-sync compare-and-replace used to acknowledge one durable journal row. */
-  public synchronized void replaceJournalDurably(byte[] key, byte[] expectedValue,
-      byte[] newValue) {
+  /** Forced-sync atomic write of an immutable journal payload and its compact token header. */
+  public synchronized void putJournalBlockDurably(byte[] journalKey, byte[] journalValue,
+      byte[] tokenKey, byte[] tokenValue, byte[] acknowledgementKey,
+      byte[] acknowledgementValue) {
     requireOpen();
-    requireKey(key, "journal");
-    requireValue(expectedValue, "journal expected");
-    requireValue(newValue, "journal replacement");
-    byte[] immutableKey = Arrays.copyOf(key, key.length);
-    byte[] immutableExpected = Arrays.copyOf(expectedValue, expectedValue.length);
-    byte[] immutableReplacement = Arrays.copyOf(newValue, newValue.length);
+    requireDistinctKeys(journalKey, tokenKey, acknowledgementKey);
+    requireValue(journalValue, "journal");
+    requireValue(tokenValue, "journal token");
+    if (acknowledgementValue != null) {
+      requireValue(acknowledgementValue, "journal acknowledgement");
+      requireSameToken(tokenValue, acknowledgementValue);
+    }
     try {
-      requireJournalValue(immutableKey, immutableExpected);
-      try (WriteOptions writeOptions = createWriteOptions(true)) {
-        db.put(handle(UnifiedArchiveColumnFamily.INFLIGHT), writeOptions,
-            immutableKey, immutableReplacement);
+      byte[] currentJournal = journalValue(journalKey);
+      byte[] currentToken = journalValue(tokenKey);
+      byte[] currentAcknowledgement = journalValue(acknowledgementKey);
+      if (currentJournal != null || currentToken != null || currentAcknowledgement != null) {
+        if (Arrays.equals(currentJournal, journalValue)
+            && Arrays.equals(currentToken, tokenValue)
+            && Arrays.equals(currentAcknowledgement, acknowledgementValue)) {
+          return;
+        }
+        throw new ArchiveException("UNIFIED_V1 refuses to replace a different journal bundle");
+      }
+      try (WriteBatch batch = new WriteBatch();
+           WriteOptions writeOptions = createWriteOptions(true)) {
+        ColumnFamilyHandle inflight = handle(UnifiedArchiveColumnFamily.INFLIGHT);
+        batch.put(inflight, journalKey, journalValue);
+        batch.put(inflight, tokenKey, tokenValue);
+        if (acknowledgementValue != null) {
+          batch.put(inflight, acknowledgementKey, acknowledgementValue);
+        }
+        batchWriter.write(db, writeOptions, batch);
       }
     } catch (RocksDBException e) {
-      throw new ArchiveException("UNIFIED_V1 journal replace failed", e);
+      throw new ArchiveException("UNIFIED_V1 journal bundle write failed", e);
+    }
+  }
+
+  /** WAL-only compact acknowledgement; the forced-sync immutable payload remains untouched. */
+  public synchronized void acknowledgeJournalWalOnly(byte[] journalKey, byte[] tokenKey,
+      byte[] expectedTokenValue, byte[] acknowledgementKey, byte[] acknowledgementValue) {
+    requireOpen();
+    requireDistinctKeys(journalKey, tokenKey, acknowledgementKey);
+    requireValue(expectedTokenValue, "journal token");
+    requireValue(acknowledgementValue, "journal acknowledgement");
+    requireSameToken(expectedTokenValue, acknowledgementValue);
+    try {
+      requireJournalPresent(journalKey);
+      requireJournalValue(tokenKey, expectedTokenValue);
+      byte[] current = journalValue(acknowledgementKey);
+      if (current != null && !Arrays.equals(current, acknowledgementValue)) {
+        throw new ArchiveException("UNIFIED_V1 journal acknowledgement changed");
+      }
+      if (current != null) {
+        return;
+      }
+      try (WriteOptions writeOptions = createWriteOptions(false)) {
+        db.put(handle(UnifiedArchiveColumnFamily.INFLIGHT), writeOptions,
+            acknowledgementKey, acknowledgementValue);
+      }
+    } catch (RocksDBException e) {
+      throw new ArchiveException("UNIFIED_V1 journal acknowledgement failed", e);
     }
   }
 
   /** Forced-sync compare-and-delete used by journal rollback paths outside publication. */
-  public synchronized void deleteJournalDurably(byte[] key, byte[] expectedValue) {
+  public synchronized void deleteJournalBlockDurably(byte[] journalKey, byte[] journalValue,
+      byte[] tokenKey, byte[] tokenValue, byte[] acknowledgementKey,
+      byte[] acknowledgementValue) {
     requireOpen();
-    requireKey(key, "journal");
-    requireValue(expectedValue, "journal");
-    byte[] immutableKey = Arrays.copyOf(key, key.length);
-    byte[] immutableExpectedValue = Arrays.copyOf(expectedValue, expectedValue.length);
+    requireDistinctKeys(journalKey, tokenKey, acknowledgementKey);
+    requireValue(journalValue, "journal");
+    requireValue(tokenValue, "journal token");
+    if (acknowledgementValue != null) {
+      requireValue(acknowledgementValue, "journal acknowledgement");
+    }
     try {
-      requireJournalValue(immutableKey, immutableExpectedValue);
-      try (WriteOptions writeOptions = createWriteOptions(true)) {
-        db.delete(handle(UnifiedArchiveColumnFamily.INFLIGHT), writeOptions, immutableKey);
+      requireJournalValue(journalKey, journalValue);
+      requireJournalValue(tokenKey, tokenValue);
+      requireOptionalJournalValue(acknowledgementKey, acknowledgementValue);
+      try (WriteBatch batch = new WriteBatch();
+           WriteOptions writeOptions = createWriteOptions(true)) {
+        ColumnFamilyHandle inflight = handle(UnifiedArchiveColumnFamily.INFLIGHT);
+        batch.delete(inflight, journalKey);
+        batch.delete(inflight, tokenKey);
+        batch.delete(inflight, acknowledgementKey);
+        batchWriter.write(db, writeOptions, batch);
       }
     } catch (RocksDBException e) {
-      throw new ArchiveException("UNIFIED_V1 journal delete failed", e);
+      throw new ArchiveException("UNIFIED_V1 journal bundle delete failed", e);
     }
   }
 
@@ -264,6 +320,10 @@ public final class UnifiedArchiveDb implements AutoCloseable {
     }
     try {
       requireJournalValue(publish.journalKey(), publish.expectedJournalValue());
+      requireJournalValue(
+          publish.journalTokenKey(), publish.expectedJournalTokenValue());
+      requireJournalValue(
+          publish.acknowledgementKey(), publish.expectedAcknowledgementValue());
       try (WriteBatch batch = new WriteBatch();
            WriteOptions writeOptions = createWriteOptions(publishSync)) {
         for (UnifiedArchivePublish.Mutation mutation : publish.mutations()) {
@@ -279,6 +339,8 @@ public final class UnifiedArchiveDb implements AutoCloseable {
         batch.put(handle(UnifiedArchiveColumnFamily.META),
             publish.cursorKey(), publish.cursorValue());
         batch.delete(handle(UnifiedArchiveColumnFamily.INFLIGHT), publish.journalKey());
+        batch.delete(handle(UnifiedArchiveColumnFamily.INFLIGHT), publish.journalTokenKey());
+        batch.delete(handle(UnifiedArchiveColumnFamily.INFLIGHT), publish.acknowledgementKey());
         batchWriter.write(db, writeOptions, batch);
       }
     } catch (RocksDBException e) {
@@ -515,13 +577,31 @@ public final class UnifiedArchiveDb implements AutoCloseable {
   }
 
   private void requireJournalValue(byte[] key, byte[] expectedValue) throws RocksDBException {
-    byte[] current = db.get(handle(UnifiedArchiveColumnFamily.INFLIGHT), key);
+    byte[] current = journalValue(key);
     if (current == null) {
       throw new ArchiveException("UNIFIED_V1 publish journal is missing");
     }
     if (!Arrays.equals(current, expectedValue)) {
       throw new ArchiveException("UNIFIED_V1 publish journal changed before publication");
     }
+  }
+
+  private void requireJournalPresent(byte[] key) throws RocksDBException {
+    if (journalValue(key) == null) {
+      throw new ArchiveException("UNIFIED_V1 journal payload is missing");
+    }
+  }
+
+  private void requireOptionalJournalValue(byte[] key, byte[] expectedValue)
+      throws RocksDBException {
+    byte[] current = journalValue(key);
+    if (!Arrays.equals(current, expectedValue)) {
+      throw new ArchiveException("UNIFIED_V1 journal lifecycle row changed");
+    }
+  }
+
+  private byte[] journalValue(byte[] key) throws RocksDBException {
+    return db.get(handle(UnifiedArchiveColumnFamily.INFLIGHT), key);
   }
 
   private ColumnFamilyHandle handle(UnifiedArchiveColumnFamily columnFamily) {
@@ -557,6 +637,23 @@ public final class UnifiedArchiveDb implements AutoCloseable {
   private static void requireValue(byte[] value, String what) {
     if (value == null || value.length == 0) {
       throw new ArchiveException("UNIFIED_V1 " + what + " value is required");
+    }
+  }
+
+  private static void requireDistinctKeys(byte[] first, byte[] second, byte[] third) {
+    requireKey(first, "journal");
+    requireKey(second, "journal token");
+    requireKey(third, "journal acknowledgement");
+    if (Arrays.equals(first, second) || Arrays.equals(first, third)
+        || Arrays.equals(second, third)) {
+      throw new ArchiveException("UNIFIED_V1 journal lifecycle keys must be distinct");
+    }
+  }
+
+  private static void requireSameToken(byte[] token, byte[] acknowledgement) {
+    if (!Arrays.equals(token, acknowledgement)) {
+      throw new ArchiveException(
+          "UNIFIED_V1 journal acknowledgement must match its token header");
     }
   }
 

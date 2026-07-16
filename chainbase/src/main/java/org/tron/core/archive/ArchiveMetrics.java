@@ -112,6 +112,14 @@ public final class ArchiveMetrics {
     setState("publisher_lag_blocks", blocks);
   }
 
+  public static void setOldestInFlightBlock(long blockNum) {
+    setState("oldest_inflight_block", blockNum);
+  }
+
+  public static void setRepairRequired(boolean required) {
+    setState("repair_required", required ? 1L : 0L);
+  }
+
   public static void setDiskFree(long bytes) {
     if (bytes != Long.MAX_VALUE) {
       setState("disk_free_bytes", bytes);
@@ -145,8 +153,16 @@ public final class ArchiveMetrics {
       return;
     }
     safely(() -> {
+      Throwable failure = context.getRecordedFailure();
       HistoricalQueryLimitException terminal = context.getRecordedTerminalException();
-      String result = terminal == null ? "completed" : lower(terminal.getReason().name());
+      String result;
+      if (failure instanceof HistoricalQueryLimitException) {
+        result = lower(((HistoricalQueryLimitException) failure).getReason().name());
+      } else if (failure != null) {
+        result = "failed";
+      } else {
+        result = terminal == null ? "completed" : lower(terminal.getReason().name());
+      }
       Metrics.counterInc(MetricKeys.Counter.ARCHIVE_QUERIES, 1D, result);
       incrementQueryResource("logical_reads", context.getLogicalReads());
       incrementQueryResource("backend_reads", context.getBackendReads());

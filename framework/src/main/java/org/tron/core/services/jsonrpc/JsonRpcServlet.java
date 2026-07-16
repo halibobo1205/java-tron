@@ -174,13 +174,21 @@ public class JsonRpcServlet extends RateLimiterServlet {
              new BoundedByteArrayOutputStream(maxResponseSize, responseBytes, true)) {
 
       RuntimeException executionFailure = null;
-      try (ArchiveQueryTransportScope ignored = ArchiveQueryTransportScope.open()) {
-        try {
-          rpcServer.handleRequest(new ByteArrayInputStream(body), output);
-        } catch (ResponseSerializationAbortedException aborted) {
-          // The bounded stream records whether this was a per-response or global-budget overflow.
-        } catch (RuntimeException e) {
+      try {
+        try (ArchiveQueryTransportScope ignored = ArchiveQueryTransportScope.open()) {
+          try {
+            rpcServer.handleRequest(new ByteArrayInputStream(body), output);
+          } catch (ResponseSerializationAbortedException aborted) {
+            // The bounded stream records whether this was a per-response or global-budget overflow.
+          } catch (RuntimeException e) {
+            executionFailure = e;
+          }
+        }
+      } catch (RuntimeException e) {
+        if (executionFailure == null) {
           executionFailure = e;
+        } else if (executionFailure != e) {
+          executionFailure.addSuppressed(e);
         }
       }
       if (isNotification(rootNode)) {
@@ -190,6 +198,11 @@ public class JsonRpcServlet extends RateLimiterServlet {
       }
       if (executionFailure != null) {
         output.discard();
+        if (executionFailure instanceof HistoricalQueryLimitException) {
+          writeJsonRpcError(resp, JsonRpcError.EXCEED_LIMIT,
+              executionFailure.getMessage(), rootNode.get("id"), false);
+          return;
+        }
         logger.error("RPC execution failed", executionFailure);
         writeJsonRpcError(resp, JsonRpcError.INTERNAL_ERROR, "Internal error",
             rootNode.get("id"), false);

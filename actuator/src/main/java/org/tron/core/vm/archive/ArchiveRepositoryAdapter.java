@@ -216,6 +216,11 @@ public class ArchiveRepositoryAdapter implements Repository {
     return parent != null ? parent.getVmDynamicProperties() : vmProperties;
   }
 
+  @Override
+  public boolean isHistoricalArchive() {
+    return true;
+  }
+
   // ---------------------------------------------------------------------------------------------
   // Writes: into this level's overlay.
   // ---------------------------------------------------------------------------------------------
@@ -476,15 +481,16 @@ public class ArchiveRepositoryAdapter implements Repository {
    */
   @Override
   public BlockCapsule getBlockByNum(long num) {
+    QueryContext queryContext = QueryContextHolder.current();
+    if (queryContext != null) {
+      // ChainBaseManager resolves the height index and then the block row.
+      queryContext.recordBackendReads(2L);
+    }
     try {
-      QueryContext queryContext = QueryContextHolder.current();
-      if (queryContext != null) {
-        // ChainBaseManager resolves the height index and then the block row.
-        queryContext.recordBackendReads(2L);
-      }
       return StoreFactory.getInstance().getChainBaseManager().getBlockByNum(num);
     } catch (Exception e) {
-      throw new UnsupportedHistoricalStateException("historical block " + num + " unavailable", e);
+      throw recordUnsupported(new UnsupportedHistoricalStateException(
+          "historical block " + num + " unavailable", e));
     }
   }
 
@@ -728,8 +734,8 @@ public class ArchiveRepositoryAdapter implements Repository {
 
   private void requireKnown(ArchiveReadResult<?> result, String what) {
     if (!genesisComplete && result.getStatus() == ArchiveReadResult.Status.MISSING) {
-      throw new UnsupportedHistoricalStateException(
-          "archive " + what + " is unknown before mid-chain coverage");
+      throw recordUnsupported(new UnsupportedHistoricalStateException(
+          "archive " + what + " is unknown before mid-chain coverage"));
     }
   }
 
@@ -737,12 +743,27 @@ public class ArchiveRepositoryAdapter implements Repository {
     try {
       return call.call();
     } catch (ArchiveReaderException e) {
-      throw new UnsupportedHistoricalStateException("archive read failed for " + what, e);
+      throw recordUnsupported(new UnsupportedHistoricalStateException(
+          "archive read failed for " + what, e));
     }
   }
 
   private static UnsupportedHistoricalStateException unsupported(String what) {
-    return new UnsupportedHistoricalStateException(
-        "historical archive call does not support " + what);
+    return unsupportedHistoricalOperation(what);
+  }
+
+  /** Creates and records an archive-only VM operation that cannot be replayed faithfully. */
+  public static UnsupportedHistoricalStateException unsupportedHistoricalOperation(String what) {
+    return recordUnsupported(new UnsupportedHistoricalStateException(
+        "historical archive call does not support " + what));
+  }
+
+  private static UnsupportedHistoricalStateException recordUnsupported(
+      UnsupportedHistoricalStateException failure) {
+    QueryContext queryContext = QueryContextHolder.current();
+    if (queryContext != null) {
+      queryContext.recordVmTerminalFailure(failure);
+    }
+    return failure;
   }
 }

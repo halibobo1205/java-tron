@@ -54,11 +54,17 @@ public class DposTask {
         try {
           if (dposService.isNeedSyncCheck()) {
             Thread.sleep(1000);
+            if (!isRunning) {
+              break;
+            }
             dposService.setNeedSyncCheck(dposSlot.getTime(1) < System.currentTimeMillis());
           } else {
             long time =
                 BLOCK_PRODUCED_INTERVAL - System.currentTimeMillis() % BLOCK_PRODUCED_INTERVAL;
             Thread.sleep(time);
+            if (!isRunning) {
+              break;
+            }
             State state = produceBlock();
             if (!State.OK.equals(state)) {
               logger.info("Produce block failed: {}", state);

@@ -56,6 +56,9 @@ public class DefaultConfig {
     if (archive == null || !archive.isEnable()) {
       return ArchiveServiceFactory.create(archive); // disabled: no db path to resolve
     }
+    if (Args.getInstance().isSolidityNode()) {
+      throw new ArchiveException("storage.archive.enable is not supported on SolidityNode");
+    }
     Path outputRoot = Paths.get(parameter.getOutputDirectory()).toAbsolutePath().normalize();
     Path canonicalDbRoot = outputRoot.resolve(parameter.getStorage().getDbDirectory()).normalize();
     Path configuredArchivePath = Paths.get(archive.getDb().getDirectory());

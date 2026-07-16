@@ -11,11 +11,11 @@ import org.tron.core.archive.domain.ArchiveDomain;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
 
 /**
- * On-disk byte layout for a single-column-family temporal store: a 1-byte family prefix
- * distinguishes the latest record from the txNum-versioned history. Under the Erigon-v3 prev-value
- * model the history value is the change's PRE-value, so {@code getAsOf} forward-seeks the first
- * history entry after the queried txNum within a (domain, key) prefix. Pure functions, unit-tested
- * without a native RocksDB.
+ * Logical key/value layout for the UNIFIED_V1 temporal column families. A 1-byte logical prefix is
+ * retained in each key for strict validation and deterministic ordering. Under the Erigon-v3
+ * prev-value model the history value is the change's PRE-value, so {@code getAsOf} forward-seeks
+ * the first history entry after the queried txNum within a (domain, key) prefix. Pure functions,
+ * unit-tested without a native RocksDB.
  *
  * <ul>
  *   <li>latest:  {@code 0x20 || domainId(2) || keyLen(4) || canonicalKey} -&gt; value(after)</li>
@@ -42,13 +42,6 @@ public final class ArchiveTemporalCodec {
       "block-commit".getBytes(StandardCharsets.US_ASCII);
   private static final byte[] LATEST_BASELINE_NAME =
       "latest-baseline".getBytes(StandardCharsets.US_ASCII);
-  private static final byte[] MANIFEST_KEY = new byte[] {META_PREFIX, 'm', 'a', 'n', 'i'};
-  private static final byte[] MANIFEST_VALUE =
-      ("tron-archive-temporal|schema=7|model=prev-value-v1"
-          + "|prefix=archive-table-v1|key-len=u32|block-hash=range-marker"
-          + "|block-schema=sha256|block-rows=sha256|changeset-value=after"
-          + "|latest-baseline=value")
-          .getBytes(StandardCharsets.US_ASCII);
   private static final int BLOCK_COMMIT_DIGEST_LENGTH = 32;
   private static final int BLOCK_COMMIT_VALUE_LENGTH =
       36 + ArchiveBlockRange.BLOCK_HASH_LENGTH + ArchiveBlockRange.SCHEMA_CHECKSUM_LENGTH
@@ -140,18 +133,6 @@ public final class ArchiveTemporalCodec {
       throw new ArchiveException("archive temporal commit marker block number is negative");
     }
     return blockNum;
-  }
-
-  static byte[] manifestKey() {
-    return Arrays.copyOf(MANIFEST_KEY, MANIFEST_KEY.length);
-  }
-
-  static byte[] manifestValue() {
-    return Arrays.copyOf(MANIFEST_VALUE, MANIFEST_VALUE.length);
-  }
-
-  static boolean manifestMatches(byte[] value) {
-    return Arrays.equals(MANIFEST_VALUE, value);
   }
 
   static byte[] encodeBlockCommit(ArchiveBlockRange range, int rowCount, byte[] rowDigest) {

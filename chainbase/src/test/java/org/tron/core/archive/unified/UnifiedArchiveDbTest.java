@@ -34,6 +34,10 @@ public class UnifiedArchiveDbTest {
   private static final byte[] SCHEMA_CHECKSUM = repeated(0x5a);
   private static final byte[] JOURNAL_KEY = ascii("block-7");
   private static final byte[] JOURNAL_VALUE = ascii("journal-value");
+  private static final byte[] TOKEN_KEY = ascii("token-7");
+  private static final byte[] TOKEN_VALUE = ascii("token-value");
+  private static final byte[] ACKNOWLEDGEMENT_KEY = ascii("ack-7");
+  private static final byte[] ACKNOWLEDGEMENT_VALUE = TOKEN_VALUE;
   private static final byte[] CURSOR_KEY = ascii("published-cursor");
   private static final byte[] CURSOR_VALUE = ascii("cursor-8");
   private static final byte[] INDEX_KEY = ascii("index-7");
@@ -70,7 +74,7 @@ public class UnifiedArchiveDbTest {
 
   @Test
   public void publishedRowsAndColumnFamiliesSurviveReopen() throws Exception {
-    db.putJournalDurably(JOURNAL_KEY, JOURNAL_VALUE);
+    putJournalBundle();
     db.publishBlockAtomically(publish(), true);
 
     db.close();
@@ -84,13 +88,13 @@ public class UnifiedArchiveDbTest {
 
   @Test
   public void failedBatchLeavesJournalAndNoPublishedRowsThenRetrySucceeds() {
-    db.putJournalDurably(JOURNAL_KEY, JOURNAL_VALUE);
+    putJournalBundle();
     db.close();
 
     AtomicInteger attempts = new AtomicInteger();
     db = UnifiedArchiveDb.open(dbPath, SCHEMA_CHECKSUM, (rocksDb, writeOptions, batch) -> {
       assertFalse(writeOptions.disableWAL());
-      assertEquals(8, batch.count());
+      assertEquals(10, batch.count());
       if (attempts.getAndIncrement() == 0) {
         assertFalse(writeOptions.sync());
         throw new RocksDBException("injected publish failure");
@@ -115,8 +119,143 @@ public class UnifiedArchiveDbTest {
   }
 
   @Test
+  public void exceptionAfterDurablePublishReopensAsOneCompleteCommit() {
+    putJournalBundle();
+    db.close();
+
+    db = UnifiedArchiveDb.open(dbPath, SCHEMA_CHECKSUM, (rocksDb, writeOptions, batch) -> {
+      assertFalse(writeOptions.disableWAL());
+      assertTrue(writeOptions.sync());
+      rocksDb.write(writeOptions, batch);
+      throw new RocksDBException("injected failure after durable publish");
+    });
+
+    ArchiveException failure = assertThrows(ArchiveException.class,
+        () -> db.publishBlockAtomically(publish(), true));
+    assertTrue(failure.getMessage().contains("atomic block publish failed"));
+
+    db.close();
+    db = UnifiedArchiveDb.open(dbPath, SCHEMA_CHECKSUM);
+    try (UnifiedArchiveReadView view = db.openReadView()) {
+      assertPublished(view);
+    }
+  }
+
+  @Test
+  public void failedInitialJournalBundleBatchLeavesNoPartialRowsAndRetrySucceeds() {
+    db.close();
+
+    AtomicInteger attempts = new AtomicInteger();
+    db = UnifiedArchiveDb.open(dbPath, SCHEMA_CHECKSUM, (rocksDb, writeOptions, batch) -> {
+      assertFalse(writeOptions.disableWAL());
+      assertTrue(writeOptions.sync());
+      assertEquals(2, batch.count());
+      if (attempts.getAndIncrement() == 0) {
+        throw new RocksDBException("injected initial journal bundle failure");
+      }
+      rocksDb.write(writeOptions, batch);
+    });
+
+    ArchiveException failure = assertThrows(ArchiveException.class,
+        () -> db.putJournalBlockDurably(
+            JOURNAL_KEY, JOURNAL_VALUE, TOKEN_KEY, TOKEN_VALUE,
+            ACKNOWLEDGEMENT_KEY, null));
+    assertTrue(failure.getMessage().contains("journal bundle write failed"));
+    assertEquals(1, attempts.get());
+    assertNull(db.get(UnifiedArchiveColumnFamily.INFLIGHT, JOURNAL_KEY));
+    assertNull(db.get(UnifiedArchiveColumnFamily.INFLIGHT, TOKEN_KEY));
+    assertNull(db.get(UnifiedArchiveColumnFamily.INFLIGHT, ACKNOWLEDGEMENT_KEY));
+
+    db.putJournalBlockDurably(
+        JOURNAL_KEY, JOURNAL_VALUE, TOKEN_KEY, TOKEN_VALUE,
+        ACKNOWLEDGEMENT_KEY, null);
+    assertEquals(2, attempts.get());
+    assertArrayEquals(JOURNAL_VALUE,
+        db.get(UnifiedArchiveColumnFamily.INFLIGHT, JOURNAL_KEY));
+    assertArrayEquals(TOKEN_VALUE,
+        db.get(UnifiedArchiveColumnFamily.INFLIGHT, TOKEN_KEY));
+    assertNull(db.get(UnifiedArchiveColumnFamily.INFLIGHT, ACKNOWLEDGEMENT_KEY));
+
+    db.putJournalBlockDurably(
+        JOURNAL_KEY, JOURNAL_VALUE, TOKEN_KEY, TOKEN_VALUE,
+        ACKNOWLEDGEMENT_KEY, null);
+    assertEquals(2, attempts.get());
+  }
+
+  @Test
+  public void publishRequiresAcknowledgementAndLeavesJournalBundleUntouched() {
+    db.putJournalBlockDurably(
+        JOURNAL_KEY, JOURNAL_VALUE, TOKEN_KEY, TOKEN_VALUE, ACKNOWLEDGEMENT_KEY, null);
+
+    assertThrows(ArchiveException.class, () -> db.publishBlockAtomically(publish(), false));
+
+    assertArrayEquals(JOURNAL_VALUE,
+        db.get(UnifiedArchiveColumnFamily.INFLIGHT, JOURNAL_KEY));
+    assertArrayEquals(TOKEN_VALUE,
+        db.get(UnifiedArchiveColumnFamily.INFLIGHT, TOKEN_KEY));
+    assertNull(db.get(UnifiedArchiveColumnFamily.INFLIGHT, ACKNOWLEDGEMENT_KEY));
+    assertNull(db.get(UnifiedArchiveColumnFamily.META, CURSOR_KEY));
+    assertNull(db.get(UnifiedArchiveColumnFamily.INDEX, INDEX_KEY));
+  }
+
+  @Test
+  public void failedRollbackBatchLeavesWholeJournalBundleThenRetryDeletesIt() {
+    putJournalBundle();
+    db.close();
+
+    AtomicInteger attempts = new AtomicInteger();
+    db = UnifiedArchiveDb.open(dbPath, SCHEMA_CHECKSUM, (rocksDb, writeOptions, batch) -> {
+      assertFalse(writeOptions.disableWAL());
+      assertTrue(writeOptions.sync());
+      assertEquals(3, batch.count());
+      if (attempts.getAndIncrement() == 0) {
+        throw new RocksDBException("injected rollback failure");
+      }
+      rocksDb.write(writeOptions, batch);
+    });
+
+    assertThrows(ArchiveException.class, () -> db.deleteJournalBlockDurably(
+        JOURNAL_KEY, JOURNAL_VALUE, TOKEN_KEY, TOKEN_VALUE,
+        ACKNOWLEDGEMENT_KEY, ACKNOWLEDGEMENT_VALUE));
+    try (UnifiedArchiveReadView view = db.openReadView()) {
+      assertUnpublished(view);
+    }
+
+    db.deleteJournalBlockDurably(
+        JOURNAL_KEY, JOURNAL_VALUE, TOKEN_KEY, TOKEN_VALUE,
+        ACKNOWLEDGEMENT_KEY, ACKNOWLEDGEMENT_VALUE);
+    assertEquals(2, attempts.get());
+    assertNull(db.get(UnifiedArchiveColumnFamily.INFLIGHT, JOURNAL_KEY));
+    assertNull(db.get(UnifiedArchiveColumnFamily.INFLIGHT, TOKEN_KEY));
+    assertNull(db.get(UnifiedArchiveColumnFamily.INFLIGHT, ACKNOWLEDGEMENT_KEY));
+  }
+
+  @Test
+  public void acknowledgementMustMatchTokenHeaderAtEveryWriteBoundary() {
+    assertThrows(ArchiveException.class, () -> db.putJournalBlockDurably(
+        JOURNAL_KEY, JOURNAL_VALUE, TOKEN_KEY, TOKEN_VALUE,
+        ACKNOWLEDGEMENT_KEY, ascii("different-token")));
+
+    db.putJournalBlockDurably(
+        JOURNAL_KEY, JOURNAL_VALUE, TOKEN_KEY, TOKEN_VALUE, ACKNOWLEDGEMENT_KEY, null);
+    assertThrows(ArchiveException.class, () -> db.acknowledgeJournalWalOnly(
+        JOURNAL_KEY, TOKEN_KEY, TOKEN_VALUE,
+        ACKNOWLEDGEMENT_KEY, ascii("different-token")));
+    assertNull(db.get(UnifiedArchiveColumnFamily.INFLIGHT, ACKNOWLEDGEMENT_KEY));
+
+    assertThrows(ArchiveException.class, () -> UnifiedArchivePublish.builder()
+        .journal(JOURNAL_KEY, JOURNAL_VALUE)
+        .journalToken(TOKEN_KEY, TOKEN_VALUE)
+        .acknowledgement(ACKNOWLEDGEMENT_KEY, ascii("different-token"))
+        .cursor(CURSOR_KEY, CURSOR_VALUE)
+        .blockMarker(MARKER_KEY, MARKER_VALUE)
+        .put(UnifiedArchiveColumnFamily.INDEX, INDEX_KEY, INDEX_VALUE)
+        .build());
+  }
+
+  @Test
   public void snapshotKeepsMetaIndexTemporalMarkerAndJournalAtOneSequence() {
-    db.putJournalDurably(JOURNAL_KEY, JOURNAL_VALUE);
+    putJournalBundle();
 
     try (UnifiedArchiveReadView beforePublish = db.openReadView()) {
       long beforeSequence = beforePublish.getSequenceNumber();
@@ -131,7 +270,7 @@ public class UnifiedArchiveDbTest {
   }
 
   @Test
-  public void openDoesNotCreateMissingPathOrAdoptEmptyDirectory() throws IOException {
+  public void openDoesNotCreateMissingPathOrInitializeEmptyDirectory() throws IOException {
     Path missing = root.resolve("missing");
     assertThrows(ArchiveException.class,
         () -> UnifiedArchiveDb.open(missing, SCHEMA_CHECKSUM));
@@ -152,6 +291,25 @@ public class UnifiedArchiveDbTest {
     ArchiveException failure = assertThrows(ArchiveException.class,
         () -> UnifiedArchiveDb.open(dbPath, repeated(0x6b)));
     assertTrue(failure.getMessage().contains("schema checksum mismatch"));
+  }
+
+  @Test
+  public void openRejectsPreCompactAcknowledgementLayoutSchema() throws Exception {
+    closeForRawEdit();
+    byte[] current = UnifiedArchiveManifest.value(SCHEMA_CHECKSUM);
+    byte[] previous = new String(current, StandardCharsets.US_ASCII)
+        .replace("layout-schema=2", "layout-schema=1")
+        .getBytes(StandardCharsets.US_ASCII);
+    editRaw((rocksDb, handles) -> {
+      try (WriteOptions writeOptions = new WriteOptions().setDisableWAL(false).setSync(true)) {
+        rocksDb.put(handles.get(UnifiedArchiveColumnFamily.META.ordinal() + 1),
+            writeOptions, UnifiedArchiveManifest.key(), previous);
+      }
+    });
+
+    ArchiveException failure = assertThrows(ArchiveException.class,
+        () -> UnifiedArchiveDb.open(dbPath, SCHEMA_CHECKSUM));
+    assertTrue(failure.getMessage().contains("layout schema mismatch"));
   }
 
   @Test
@@ -238,6 +396,8 @@ public class UnifiedArchiveDbTest {
 
     assertThrows(ArchiveException.class, () -> UnifiedArchivePublish.builder()
         .journal(JOURNAL_KEY, JOURNAL_VALUE)
+        .journalToken(TOKEN_KEY, TOKEN_VALUE)
+        .acknowledgement(ACKNOWLEDGEMENT_KEY, ACKNOWLEDGEMENT_VALUE)
         .cursor(CURSOR_KEY, CURSOR_VALUE)
         .blockMarker(MARKER_KEY, MARKER_VALUE)
         .put(UnifiedArchiveColumnFamily.INDEX, INDEX_KEY, INDEX_VALUE)
@@ -257,6 +417,8 @@ public class UnifiedArchiveDbTest {
   private static UnifiedArchivePublish publish() {
     return UnifiedArchivePublish.builder()
         .journal(JOURNAL_KEY, JOURNAL_VALUE)
+        .journalToken(TOKEN_KEY, TOKEN_VALUE)
+        .acknowledgement(ACKNOWLEDGEMENT_KEY, ACKNOWLEDGEMENT_VALUE)
         .cursor(CURSOR_KEY, CURSOR_VALUE)
         .blockMarker(MARKER_KEY, MARKER_VALUE)
         .put(UnifiedArchiveColumnFamily.INDEX, INDEX_KEY, INDEX_VALUE)
@@ -270,6 +432,10 @@ public class UnifiedArchiveDbTest {
   private static void assertUnpublished(UnifiedArchiveReadView view) {
     assertArrayEquals(JOURNAL_VALUE,
         view.get(UnifiedArchiveColumnFamily.INFLIGHT, JOURNAL_KEY));
+    assertArrayEquals(TOKEN_VALUE,
+        view.get(UnifiedArchiveColumnFamily.INFLIGHT, TOKEN_KEY));
+    assertArrayEquals(ACKNOWLEDGEMENT_VALUE,
+        view.get(UnifiedArchiveColumnFamily.INFLIGHT, ACKNOWLEDGEMENT_KEY));
     assertNull(view.get(UnifiedArchiveColumnFamily.META, CURSOR_KEY));
     assertNull(view.get(UnifiedArchiveColumnFamily.INDEX, INDEX_KEY));
     assertNull(view.get(UnifiedArchiveColumnFamily.LATEST, LATEST_KEY));
@@ -281,6 +447,8 @@ public class UnifiedArchiveDbTest {
 
   private static void assertPublished(UnifiedArchiveReadView view) {
     assertNull(view.get(UnifiedArchiveColumnFamily.INFLIGHT, JOURNAL_KEY));
+    assertNull(view.get(UnifiedArchiveColumnFamily.INFLIGHT, TOKEN_KEY));
+    assertNull(view.get(UnifiedArchiveColumnFamily.INFLIGHT, ACKNOWLEDGEMENT_KEY));
     assertArrayEquals(CURSOR_VALUE,
         view.get(UnifiedArchiveColumnFamily.META, CURSOR_KEY));
     assertArrayEquals(INDEX_VALUE,
@@ -295,6 +463,12 @@ public class UnifiedArchiveDbTest {
         view.get(UnifiedArchiveColumnFamily.BLOCK_MARKER, MARKER_KEY));
     assertArrayEquals(COMMITMENT_VALUE,
         view.get(UnifiedArchiveColumnFamily.COMMITMENT, COMMITMENT_KEY));
+  }
+
+  private void putJournalBundle() {
+    db.putJournalBlockDurably(
+        JOURNAL_KEY, JOURNAL_VALUE, TOKEN_KEY, TOKEN_VALUE,
+        ACKNOWLEDGEMENT_KEY, ACKNOWLEDGEMENT_VALUE);
   }
 
   private void assertExactColumnFamilies() throws RocksDBException {

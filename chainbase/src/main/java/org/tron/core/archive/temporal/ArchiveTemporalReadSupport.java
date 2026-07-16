@@ -7,7 +7,7 @@ import org.tron.core.archive.ArchiveRocksIterators;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
 
-/** Shared inclusive-after lookup semantics for legacy and unified temporal stores. */
+/** Shared inclusive-after lookup semantics for temporal stores and snapshots. */
 final class ArchiveTemporalReadSupport {
 
   private ArchiveTemporalReadSupport() {

@@ -58,13 +58,13 @@ public final class ArchiveQueryRequestScope implements AutoCloseable {
       return null;
     }
     scope.requireOwner();
-    scope.registerAndCheckDeadline(limits.getBatchDeadlineMs());
-    if (scope.configuredDeadlineNanos == Long.MAX_VALUE) {
+    long sampledNanos = scope.nanoTime.getAsLong();
+    long remainingNanos = scope.registerAndRemainingNanos(
+        limits.getBatchDeadlineMs(), sampledNanos);
+    if (remainingNanos == Long.MAX_VALUE) {
       return null;
     }
-    long elapsedNanos = scope.elapsedNanos();
-    return new DeadlineConstraint(
-        scope.nanoTime, scope.configuredDeadlineNanos - elapsedNanos);
+    return new DeadlineConstraint(scope.nanoTime, sampledNanos, remainingNanos);
   }
 
   public static void checkCurrentDeadline() {
@@ -77,24 +77,38 @@ public final class ArchiveQueryRequestScope implements AutoCloseable {
   }
 
   private void registerAndCheckDeadline(long deadlineMs) {
+    registerAndRemainingNanos(deadlineMs);
+  }
+
+  private long registerAndRemainingNanos(long deadlineMs) {
+    return registerAndRemainingNanos(deadlineMs, nanoTime.getAsLong());
+  }
+
+  private long registerAndRemainingNanos(long deadlineMs, long sampledNanos) {
     if (ArchiveQueryLimits.isUnlimited(deadlineMs)) {
-      checkDeadline();
-      return;
+      return remainingNanos(sampledNanos - startedNanos);
     }
     long deadlineNanos = TimeUnit.MILLISECONDS.toNanos(deadlineMs);
     configuredDeadlineNanos = Math.min(configuredDeadlineNanos, deadlineNanos);
-    checkDeadline();
+    return remainingNanos(sampledNanos - startedNanos);
   }
 
   private void checkDeadline() {
     if (configuredDeadlineNanos == Long.MAX_VALUE) {
       return;
     }
-    long elapsedNanos = elapsedNanos();
+    remainingNanos(elapsedNanos());
+  }
+
+  private long remainingNanos(long elapsedNanos) {
+    if (configuredDeadlineNanos == Long.MAX_VALUE) {
+      return Long.MAX_VALUE;
+    }
     if (elapsedNanos >= configuredDeadlineNanos) {
       throw HistoricalQueryLimitException.batchDeadlineExceeded(
           configuredDeadlineNanos, elapsedNanos);
     }
+    return configuredDeadlineNanos - elapsedNanos;
   }
 
   private long elapsedNanos() {
@@ -120,10 +134,12 @@ public final class ArchiveQueryRequestScope implements AutoCloseable {
   static final class DeadlineConstraint {
 
     final LongSupplier nanoTime;
+    final long sampledNanos;
     final long remainingNanos;
 
-    private DeadlineConstraint(LongSupplier nanoTime, long remainingNanos) {
+    private DeadlineConstraint(LongSupplier nanoTime, long sampledNanos, long remainingNanos) {
       this.nanoTime = nanoTime;
+      this.sampledNanos = sampledNanos;
       this.remainingNanos = remainingNanos;
     }
   }

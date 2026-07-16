@@ -77,6 +77,49 @@ public class ArchiveQueryRequestScopeTest {
   }
 
   @Test
+  public void deadlineConstraintUsesOneClockSampleForCheckAndRemainingTime() {
+    long deadlineNanos = TimeUnit.MILLISECONDS.toNanos(1L);
+    long[] samples = {0L, deadlineNanos - 1L, deadlineNanos + 1L};
+    AtomicLong calls = new AtomicLong();
+    ArchiveQueryLimits limits = ArchiveQueryLimits.builder()
+        .batchDeadlineMs(1L)
+        .build();
+
+    try (ArchiveQueryRequestScope ignored = ArchiveQueryRequestScope.open(
+        () -> samples[(int) Math.min(calls.getAndIncrement(), samples.length - 1L)])) {
+      ArchiveQueryRequestScope.DeadlineConstraint constraint =
+          ArchiveQueryRequestScope.deadlineConstraint(limits);
+
+      assertEquals(1L, constraint.remainingNanos);
+      assertEquals(2L, calls.get());
+    }
+  }
+
+  @Test
+  public void deadlineConstraintDoesNotRestartAfterGrantDelay() {
+    AtomicLong now = new AtomicLong();
+    ArchiveQueryLimits limits = ArchiveQueryLimits.builder()
+        .deadlineMs(1_000L)
+        .batchDeadlineMs(10L)
+        .build();
+
+    try (ArchiveQueryRequestScope ignored = ArchiveQueryRequestScope.open(now::get)) {
+      now.set(TimeUnit.MILLISECONDS.toNanos(8L));
+      ArchiveQueryRequestScope.DeadlineConstraint constraint =
+          ArchiveQueryRequestScope.deadlineConstraint(limits);
+      now.set(TimeUnit.MILLISECONDS.toNanos(10L));
+
+      QueryContext context = new QueryContext(limits, constraint);
+      HistoricalQueryLimitException failure = assertThrows(
+          HistoricalQueryLimitException.class, context::checkDeadline);
+
+      assertEquals(HistoricalQueryLimitException.Limit.BATCH_DEADLINE,
+          failure.getLimit());
+      assertEquals(0L, context.getRemainingNanos());
+    }
+  }
+
+  @Test
   public void queuedAcquireStopsAtTheBatchDeadline() {
     ArchiveQueryCoordinator coordinator = new ArchiveQueryCoordinator(
         ArchiveQueryLimits.builder()

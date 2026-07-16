@@ -29,7 +29,7 @@ public class ArchiveIdentityProtocolTest {
 
   private static final String CHAIN_ID = "mainnet-genesis";
   private static final String SCHEMA = "schema-checksum-v2";
-  private static final String LAYOUT = "LEGACY_V1";
+  private static final String LAYOUT = "UNIFIED_V1";
   private static final ArchiveIdentityPayload IDENTITY_ONLY = new ArchiveIdentityPayload() {
     @Override
     public void bindAndSync(Path archiveRoot, ArchiveIdentity identity) {
@@ -217,91 +217,36 @@ public class ArchiveIdentityProtocolTest {
   }
 
   @Test
-  public void newInitRefusesNonEmptyLegacyRootWithoutCreatingAnchor() throws Exception {
-    Scenario scenario = scenario("legacy-root");
+  public void newInitRefusesNonEmptyUnclaimedRootWithoutCreatingAnchor() throws Exception {
+    Scenario scenario = scenario("non-empty-root");
     Files.createDirectory(scenario.root);
-    Path legacy = Files.write(scenario.root.resolve("legacy.sst"), new byte[]{7});
+    Path payload = Files.write(scenario.root.resolve("unexpected.sst"), new byte[]{7});
 
     ArchiveIdentityException initError = assertThrows(ArchiveIdentityException.class,
         () -> new ArchiveIdentityProtocol().init(scenario.anchors, scenario.claim));
 
     assertTrue(initError.getMessage().contains("non-empty unclaimed"));
-    assertTrue(Files.exists(legacy));
+    assertTrue(Files.exists(payload));
     assertFalse(Files.exists(scenario.anchors));
 
     assertThrows(ArchiveIdentityException.class, scenario::validate);
-    assertTrue(Files.exists(legacy));
-    assertFalse(Files.exists(scenario.anchors));
-  }
-
-  @Test
-  public void explicitLegacyAdoptionPreservesPayloadAndActivatesMatchingPair() throws Exception {
-    Scenario scenario = scenario("legacy-adoption");
-    Files.createDirectory(scenario.root);
-    Path payload = Files.write(scenario.root.resolve("legacy.data"), new byte[]{7});
-    ArchiveIdentityProtocol protocol = new ArchiveIdentityProtocol(IDENTITY_ONLY);
-
-    ArchiveIdentity prepared = protocol.adopt(scenario.anchors, scenario.claim);
-    assertEquals(ArchiveIdentityState.PREPARED, prepared.getState());
-    assertThrows(ArchiveIdentityException.class,
-        () -> protocol.resume(scenario.anchors, scenario.claim));
-    ArchiveIdentity active = protocol.resumeAdoption(scenario.anchors, scenario.claim);
-
-    assertEquals(ArchiveIdentityState.ACTIVE, active.getState());
-    assertEquals(active, scenario.validate());
     assertTrue(Files.exists(payload));
-  }
-
-  @Test
-  public void legacyAdoptionRecoversAfterEveryDurableIdentityStage() throws Exception {
-    for (DurableStage stage : Arrays.asList(
-        DurableStage.ANCHOR_PREPARED,
-        DurableStage.ROOT_BOUND,
-        DurableStage.ANCHOR_BOUND,
-        DurableStage.ROOT_ACTIVE,
-        DurableStage.ANCHOR_ACTIVE)) {
-      Scenario scenario = scenario(
-          "adoption-crash-" + stage.name().toLowerCase(Locale.ROOT));
-      Files.createDirectory(scenario.root);
-      Path payload = Files.write(scenario.root.resolve("legacy.data"), new byte[]{8});
-      ArchiveIdentityProtocol crashing = crashingProtocol(IDENTITY_ONLY, stage);
-
-      if (stage == DurableStage.ANCHOR_PREPARED) {
-        assertThrows(SimulatedCrash.class,
-            () -> crashing.adopt(scenario.anchors, scenario.claim));
-      } else {
-        new ArchiveIdentityProtocol(IDENTITY_ONLY).adopt(
-            scenario.anchors, scenario.claim);
-        assertThrows(SimulatedCrash.class,
-            () -> crashing.resumeAdoption(scenario.anchors, scenario.claim));
-      }
-
-      assertStagePersisted(scenario, stage);
-      ArchiveIdentityProtocol restarted = new ArchiveIdentityProtocol(IDENTITY_ONLY);
-      ArchiveIdentityClaim persistedClaim = restarted.findResumableClaim(
-          scenario.anchors, scenario.root, CHAIN_ID, SCHEMA, LAYOUT, 12L)
-          .orElseThrow(() -> new AssertionError("persisted adoption claim is missing"));
-      ArchiveIdentity recovered = restarted.resumeAdoption(
-          scenario.anchors, persistedClaim);
-      assertEquals(ArchiveIdentityState.ACTIVE, recovered.getState());
-      assertEquals(recovered, scenario.validate());
-      assertTrue(Files.exists(payload));
-    }
+    assertFalse(Files.exists(scenario.anchors));
   }
 
   @Test
   public void preparedAnchorCannotClaimRootThatLaterBecomesNonEmpty() throws Exception {
-    Scenario scenario = scenario("prepared-then-legacy");
+    Scenario scenario = scenario("prepared-then-non-empty");
     ArchiveIdentityProtocol protocol = new ArchiveIdentityProtocol();
     protocol.init(scenario.anchors, scenario.claim);
     Files.createDirectory(scenario.root);
-    Path legacy = Files.write(scenario.root.resolve("legacy.data"), new byte[]{8});
+    Path payload = Files.write(scenario.root.resolve("unexpected.data"), new byte[]{8});
 
     ArchiveIdentityException error = assertThrows(ArchiveIdentityException.class,
         () -> protocol.resume(scenario.anchors, scenario.claim));
 
     assertTrue(error.getMessage().contains("without a matching identity"));
-    assertTrue(Files.exists(legacy));
+    assertTrue(Files.exists(payload));
     assertFalse(Files.exists(scenario.rootIdentityPath()));
     assertEquals(ArchiveIdentityState.PREPARED, scenario.readAnchor().getState());
   }
@@ -508,7 +453,7 @@ public class ArchiveIdentityProtocolTest {
     byte[] nonce = field.equals("resume nonce") ? nonce(101) : claim.getResumeNonce();
     String chainId = field.equals("chainId") ? CHAIN_ID + "-other" : claim.getChainId();
     String schema = field.equals("schema") ? SCHEMA + "-other" : claim.getSchema();
-    String layout = field.equals("layout") ? "UNIFIED_V1" : claim.getLayout();
+    String layout = field.equals("layout") ? "FUTURE_V2" : claim.getLayout();
     Path finalPath = field.equals("finalPath")
         ? scenario.root.getParent().resolve("other-root") : claim.getFinalPath();
     long floor = field.equals("floor") ? claim.getFloor() + 1 : claim.getFloor();

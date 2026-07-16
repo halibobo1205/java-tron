@@ -27,6 +27,11 @@ public interface Repository {
     return getDynamicPropertiesStore();
   }
 
+  /** Returns whether this repository is replaying immutable historical archive state. */
+  default boolean isHistoricalArchive() {
+    return false;
+  }
+
   DelegationStore getDelegationStore();
 
   AccountCapsule createAccount(byte[] address, Protocol.AccountType type);

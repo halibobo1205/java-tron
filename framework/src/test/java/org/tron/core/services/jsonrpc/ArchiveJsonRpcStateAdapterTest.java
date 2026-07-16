@@ -2,15 +2,19 @@ package org.tron.core.services.jsonrpc;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
+import java.util.function.LongFunction;
 import org.junit.After;
 import org.junit.Test;
 import org.tron.common.utils.ByteArray;
@@ -18,10 +22,15 @@ import org.tron.common.utils.Sha256Hash;
 import org.tron.core.Wallet;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchivePhase;
+import org.tron.core.archive.ArchiveService;
 import org.tron.core.archive.ArchiveSource;
 import org.tron.core.archive.DefaultArchiveService;
 import org.tron.core.archive.NoopArchiveService;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
+import org.tron.core.archive.query.ArchiveQueryLimits;
+import org.tron.core.archive.query.QueryContext;
+import org.tron.core.archive.reader.ArchiveStatePoint;
+import org.tron.core.archive.reader.ArchiveStateReader;
 import org.tron.core.archive.reader.JsonRpcArchiveStatePointResolver;
 import org.tron.core.archive.reader.ResolvedArchiveStatePoint;
 import org.tron.core.capsule.BlockCapsule;
@@ -178,6 +187,56 @@ public class ArchiveJsonRpcStateAdapterTest {
         () -> adapter.getBalance("0xabd4b9367799eaa3197fecb144eb71de1e049abc", "0x5"));
 
     assertEquals("archive history hash mismatch for block 5", ex.getMessage());
+  }
+
+  @Test
+  public void postOpenHashMismatchIsRecordedBeforeReaderClose() throws Exception {
+    ArchiveService archiveService = mock(ArchiveService.class);
+    ArchiveStateReader reader = mock(ArchiveStateReader.class);
+    QueryContext context = new QueryContext(ArchiveQueryLimits.unlimited());
+    when(archiveService.isEnabled()).thenReturn(true);
+    when(archiveService.openBlockEndReader(eq(5L),
+        org.mockito.ArgumentMatchers.<LongFunction<byte[]>>any())).thenReturn(reader);
+    when(reader.getPoint()).thenReturn(
+        ArchiveStatePoint.blockEnd(5L, blockHash(5L, 1L), 0L));
+    when(reader.getQueryContext()).thenReturn(context);
+    Wallet wallet = mock(Wallet.class);
+    when(wallet.getBlockByNum(5L)).thenReturn(block(5L, 2L));
+    ArchiveJsonRpcStateAdapter adapter = new ArchiveJsonRpcStateAdapter(wallet, archiveService);
+
+    JsonRpcInternalException failure = assertThrows(JsonRpcInternalException.class,
+        () -> adapter.getBalance(
+            "0xabd4b9367799eaa3197fecb144eb71de1e049abc", "0x5"));
+
+    assertSame(failure, context.getRecordedFailure());
+    verify(reader).close();
+  }
+
+  @Test
+  public void resolveReaderPreservesErrorAndSuppressesCleanupFailures() throws Exception {
+    ArchiveService archiveService = mock(ArchiveService.class);
+    ArchiveStateReader reader = mock(ArchiveStateReader.class);
+    AssertionError originalFailure = new AssertionError("point failed");
+    AssertionError contextFailure = new AssertionError("context failed");
+    AssertionError closeFailure = new AssertionError("close failed");
+    when(archiveService.isEnabled()).thenReturn(true);
+    when(archiveService.openBlockEndReader(eq(5L),
+        org.mockito.ArgumentMatchers.<LongFunction<byte[]>>any())).thenReturn(reader);
+    when(reader.getPoint()).thenThrow(originalFailure);
+    when(reader.getQueryContext()).thenThrow(contextFailure);
+    doThrow(closeFailure).when(reader).close();
+    ArchiveJsonRpcStateAdapter adapter =
+        new ArchiveJsonRpcStateAdapter(mock(Wallet.class), archiveService);
+
+    AssertionError thrown = assertThrows(AssertionError.class,
+        () -> adapter.getBalance(
+            "0xabd4b9367799eaa3197fecb144eb71de1e049abc", "0x5"));
+
+    assertSame(originalFailure, thrown);
+    assertEquals(2, thrown.getSuppressed().length);
+    assertSame(contextFailure, thrown.getSuppressed()[0]);
+    assertSame(closeFailure, thrown.getSuppressed()[1]);
+    verify(reader).close();
   }
 
   @Test

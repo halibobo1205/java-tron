@@ -383,6 +383,18 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
   }
 
   @Test
+  public void latestHeaderNumberUsesParentForTxBeforePoint() throws Exception {
+    FakeReader reader = new FakeReader(ArchiveStatePoint.txBefore(
+        FakeReader.BLOCK_NUM, new byte[32], 1L));
+    reader.putVmDefaults();
+
+    HistoricalArchiveVmDynamicProperties view = new HistoricalArchiveVmDynamicProperties(
+        mock(VmDynamicProperties.class), ENERGY_FEE, reader, true);
+
+    assertEquals(FakeReader.BLOCK_NUM - 1L, view.getLatestBlockHeaderNumber());
+  }
+
+  @Test
   public void freezeV2OpcodeGateReconstructsFromUnfreezeDelayDays() throws Exception {
     // allowTvmFreezeV2 = (UNFREEZE_DELAY_DAYS > 0) gates FREEZEBALANCEV2 / DELEGATERESOURCE, so it
     // must reconstruct from the archive at block N, not silently use the latest activation.
@@ -479,7 +491,15 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
     };
 
     private final Map<String, ArchiveReadResult<byte[]>> props = new HashMap<>();
-    private final ArchiveStatePoint point = ArchiveStatePoint.blockEnd(BLOCK_NUM, new byte[32], 0);
+    private final ArchiveStatePoint point;
+
+    private FakeReader() {
+      this(ArchiveStatePoint.blockEnd(BLOCK_NUM, new byte[32], 0));
+    }
+
+    private FakeReader(ArchiveStatePoint point) {
+      this.point = point;
+    }
 
     void putVmDefaults() {
       for (String key : REQUIRED_VM_DEFAULT_KEYS) {

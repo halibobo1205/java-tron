@@ -253,7 +253,7 @@ public final class InMemoryArchiveTemporalStore implements ArchiveTemporalStore 
 
   @Override
   public void unwindBlock(ArchiveBlockRange range) {
-    // Parity with RocksDbArchiveTemporalStore.unwindBlock: only the temporal head block may be
+    // Parity with UnifiedArchiveTemporalStore.unwindBlock: only the temporal head block may be
     // unwound. The head is the maximum COMMITTED block (committedBlockNums), NOT the max history
     // txNum -- an empty head block leaves no history row, so a txNum-only guard would miss it and
     // wrongly accept unwinding a lower block. The unbounded interface default would then silently

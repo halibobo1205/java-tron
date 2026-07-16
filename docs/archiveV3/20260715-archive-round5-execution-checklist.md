@@ -1,11 +1,22 @@
 # Archive round-5 execution checklist (for codex)
 
+> Historical note (2026-07-16): references in this review to an alternate production layout are
+> superseded. Archive persistence is Unified-only; reusable correctness findings were moved to
+> Unified tests or layout-independent validators.
+
 **Base:** `feat/archive-node` @ `6667ab8c5f` (post round-4 digest fix `301dfd9991`).
 **Provenance:** round-5 full-stack adversarial review — 9 finders (4 functional, 3 performance, 1 code-quality, 1 config/operability) → per-finding 2-3-lens adversarial verification → completeness critic; 132 agents. 58 raw findings → 51 survived verification → critic: **50 REAL, 1 false-alarm**. Four duplicate pairs collapsed into single work items below.
 
 **Bottom line:** no data-corruption or wrong-answer bug anywhere on the LEGACY block-ingest/publish path. Every correctness survivor is an edge/latent defect or a metrics/diagnostics defect. The stack is ready to sync from 0 on LEGACY_V1 — **but do NOT start the multi-day Stage-B run until Tier-1 lands** (~1 day of S-sized fixes): the runbook's own instrumentation is currently broken (3 of 5 prescribed alerts reference nonexistent metrics, the query counter mislabels failures as completed, the latency histogram is blind between 10s and the 30s deadline), so a sync started today produces ungateable data.
 
-**Execution order:** Tier-1 (all, ~1 day) → start Stage B sync → Tier-2 items 2.1/2.2 ideally BEFORE the sync (they move gate-3/gate-5 numbers; re-measuring later costs days) → 2.3/2.4 before the soak's query-load phase → 2.5-2.8 as scheduled work → UNIFIED bundle (2.9) gates UNIFIED_V1 activation, not Stage B → Tier-3 opportunistic.
+**Execution update (codex, 2026-07-16):** Tier-1 is implemented. Under the confirmed greenfield
+scope, Stage B targets `UNIFIED_V1`, which is now the layout default while `archive.enable` remains
+false. Item 2.9 is promoted ahead of Stage B and implemented with an immutable JOURNALED payload,
+compact token/ACK rows, WAL-only ACK, three-row atomic publish/delete, and layout schema 2.
+
+**Execution order:** Tier-1 + UNIFIED bundle 2.9 → start Stage B sync → Tier-2 items 2.1/2.2
+ideally BEFORE the sync (they move gate-3/gate-5 numbers; re-measuring later costs days) → 2.3/2.4
+before the soak's query-load phase → 2.5-2.8 as scheduled work → Tier-3 opportunistic.
 
 ---
 
@@ -25,7 +36,8 @@ Fail-stop is binding; TOMBSTONE config-default resolution is deliberate; mid-cha
 - `DefaultArchiveService.java:1903` — `releaseLease` unconditionally emits `queryFinished`, so post-admission failures are labeled `result=completed` AND double-counted. Route failure results to a distinct label; count each query exactly once.
 - Implement the 3 missing operational gauges the runbook alerts on, or provide equivalents: **repair-required** (the #1 blocker signal), **oldest in-flight journal age**, **publisher catch-up rate**. Then update `docs/archiveV3/20260714-archive-from0-production-validation-runbook.md` §Watch metrics to match the real names.
 - `MetricsHistogram.java:53` — default Prometheus buckets top out at 10s vs the 30s query deadline; add explicit buckets covering 10-30s for `ARCHIVE_QUERY_LATENCY` so the near-deadline population is visible.
-- `UnifiedArchiveInFlightStore.java:105` — `journal_ack_bytes`/ack stage latency measure different things on UNIFIED vs LEGACY under the same label; document the semantic difference (or split the label) so cross-layout comparison isn't silently misleading.
+- RESOLVED by 2.9 — both layouts now report compact token ACK bytes and WAL-only ACK latency under
+  `journal_ack_bytes` / `journal_ack`; cross-layout semantics match.
 **Verify:** unit-assert the counter labels; scrape test for new gauges. **Risk:** metrics/doc only.
 
 ### 1.3 Batch-deadline −1 sentinel misread as UNLIMITED
@@ -83,7 +95,7 @@ Fail-stop is binding; TOMBSTONE config-default resolution is deliberate; mid-cha
 Sub-1% items individually, a few MB/block of transient garbage together: presize `ArchiveInFlightCodec.encodeBlock` BAOS from estimatedRetainedBytes (`ArchiveInFlightCodec.java:174`); `WrappedByteArray.of` (no copy) for fresh concat results + reuse the latestKey across validate/remove (`DefaultArchiveService.java:1460` — two duplicate findings, one fix); single history-prefix build per getAsOf (`ArchiveTemporalReadSupport.java:22`); trusted package-private no-copy accessors where the defensive copy is provably redundant (`DomainValue.java:34` — only within the encode pipeline, keep public API copying). Also: cache the `Files.getFileStore()` FileStore per store instead of per block commit (`RocksDbArchiveInFlightStore.java:598`).
 **Verify:** allocation profile before/after; full suites. **Risk:** low; skip any item whose test churn exceeds its win. `inFlightVersions` HashMap never-shrink: **accept and document** (realistic ceiling ~4-8MB once; the rebuild would add 100-300ms under the write lock).
 
-### 2.9 [M — gates UNIFIED_V1 activation, NOT Stage B] UNIFIED ack/publish rework
+### 2.9 [M — completed before Stage B] UNIFIED ack/publish rework
 Merges 5 survivor findings (ack rewrite ×2 duplicate, publish 3× re-encode, 8-10× transient garbage, journal round-trips). `UnifiedArchiveInFlightStore.java:86` — acknowledgeBlock does get/decode/validateBlock/re-encode/`replaceJournalDurably` (full payload + **second forced fsync**) to flip one state byte, vs legacy's ~100-byte WAL-only ack marker the interface javadoc explicitly blesses. `UnifiedArchiveBackend.java:31` — publish re-encodes the full block ~3× for the journal compare-and-delete. Fix shape: compact CANONICAL_COMMITTED marker row folded at load (mirroring legacy ACK_PREFIX), and let the publish batch expect the JOURNALED encoding + marker delete inside the same atomic batch (crash consistency preserved — the legacy store proves the pattern).
 **Add this item to `20260714-unified-v1-wiring-requirements.md` M3 list.**
 

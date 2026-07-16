@@ -1,5 +1,8 @@
 # Archive review — round-3 checklist (for codex)
 
+> Historical note (2026-07-16): alternate-layout observations are superseded by the Unified-only
+> implementation. Non-layout findings remain useful review history.
+
 **Base:** `feat/archive-node` @ `0958102b8d` (`feat(archive): harden lifecycle, recovery and queries`, 156 files, +19187/−1350).
 **Provenance:** adversarial review (7-dimension finders → 3-lens verification → completeness critic, 50 agents). Test suites re-run green: chainbase `archive.*` **600/0**, framework historical eth_call/trace/StateRead + `JsonRpcServletTest` + genesis/shutdown lifecycle + framework checkstyle.
 

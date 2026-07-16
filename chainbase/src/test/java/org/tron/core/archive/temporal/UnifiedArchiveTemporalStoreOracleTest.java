@@ -21,16 +21,20 @@ import org.tron.core.archive.ArchiveSource;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
+import org.tron.core.archive.domain.ArchiveDomainCatalog;
+import org.tron.core.archive.domain.ArchiveSchemaChecksum;
+import org.tron.core.archive.domain.DefaultArchiveDomainCatalog;
+import org.tron.core.archive.domain.DefaultArchiveDomainRegistry;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.archive.txnum.ArchiveTxPosition;
+import org.tron.core.archive.unified.UnifiedArchiveDb;
 
 /**
- * The Erigon prev-value contract requires the in-memory reference store and the RocksDB store to be
- * observationally identical. This drives the SAME change sequence into both and asserts getAsOf at
- * every txNum, latest, and the post-unwind state match -- covering creation, overwrite, delete,
- * mid-chain (pre-coverage) pre-values, prefix-colliding keys and fork unwind.
+ * Independent model oracle for the UNIFIED_V1 temporal adapter. The in-memory store has no RocksDB
+ * codecs or column-family wiring, so driving the same changes through both catches Unified key
+ * routing, prev-value, tombstone, snapshot and unwind errors without an alternate disk layout.
  */
-public class ArchiveTemporalStoreConsistencyTest {
+public class UnifiedArchiveTemporalStoreOracleTest {
 
   private static final ArchiveDomain DOMAIN = ArchiveDomain.DYNAMIC_PROPERTIES;
   // K1 is a strict byte-prefix of K2 (the variable-length-key trap).
@@ -39,19 +43,24 @@ public class ArchiveTemporalStoreConsistencyTest {
   private static final byte[] K3 = "BANDWIDTH".getBytes(StandardCharsets.US_ASCII);
 
   private InMemoryArchiveTemporalStore mem;
-  private RocksDbArchiveTemporalStore rocks;
+  private UnifiedArchiveDb db;
+  private UnifiedArchiveTemporalStore unified;
   private Path dir;
 
   @Before
   public void setUp() throws IOException {
     mem = new InMemoryArchiveTemporalStore();
-    dir = Files.createTempDirectory("archive-temporal-consistency");
-    rocks = new RocksDbArchiveTemporalStore(dir.toString());
+    dir = Files.createTempDirectory("unified-archive-temporal-oracle");
+    ArchiveDomainCatalog catalog = new DefaultArchiveDomainCatalog();
+    byte[] checksum = ArchiveSchemaChecksum.of(
+        new DefaultArchiveDomainRegistry(), catalog);
+    db = UnifiedArchiveDb.initialize(dir.resolve("unified"), checksum);
+    unified = new UnifiedArchiveTemporalStore(db, catalog);
   }
 
   @After
   public void tearDown() {
-    rocks.close();
+    db.close();
     deleteRecursively(dir.toFile());
   }
 
@@ -60,12 +69,12 @@ public class ArchiveTemporalStoreConsistencyTest {
         new ArchiveTxPosition(txNum, 1, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, null),
         DOMAIN, key, prev, value);
     mem.putChange(r);
-    rocks.putChange(r);
+    unified.putChange(r);
   }
 
   private void putBlock(ArchiveBlockRange range, List<ArchiveChangeRecord> records) {
     mem.putBlockChanges(range, records);
-    rocks.putBlockChanges(range, records);
+    unified.putBlockChanges(range, records);
   }
 
   private static ArchiveChangeRecord rec(long txNum, long blockNum, byte[] key, DomainValue prev,
@@ -83,10 +92,10 @@ public class ArchiveTemporalStoreConsistencyTest {
   private void assertParity(byte[] key, long maxTxNum) {
     for (long t = 0; t <= maxTxNum; t++) {
       assertSame("getAsOf(" + new String(key, StandardCharsets.US_ASCII) + ", " + t + ")",
-          mem.getAsOf(DOMAIN, key, t), rocks.getAsOf(DOMAIN, key, t));
+          mem.getAsOf(DOMAIN, key, t), unified.getAsOf(DOMAIN, key, t));
     }
     assertSame("latest(" + new String(key, StandardCharsets.US_ASCII) + ")",
-        mem.latest(DOMAIN, key), rocks.latest(DOMAIN, key));
+        mem.latest(DOMAIN, key), unified.latest(DOMAIN, key));
   }
 
   private static void assertSame(String what, Optional<DomainValue> a, Optional<DomainValue> b) {
@@ -98,7 +107,7 @@ public class ArchiveTemporalStoreConsistencyTest {
   }
 
   @Test
-  public void inMemoryAndRocksAgreeAcrossCreateOverwriteDeleteMidChainAndUnwind() {
+  public void inMemoryAndUnifiedAgreeAcrossCreateOverwriteDeleteMidChainAndUnwind() {
     // K1: created at tx2 (0x0A), 0x0A -> 0x0B at tx5, deleted at tx9.
     put(2, K1, DomainValue.tombstone(), val(0x0A));
     put(5, K1, val(0x0A), val(0x0B));
@@ -116,7 +125,7 @@ public class ArchiveTemporalStoreConsistencyTest {
     // Fork unwind at tx6: drops K1@9, K2@7, K3@6. K1 reverts to 0x0B (pre-value of tx9), K2 to
     // 0x21 (pre-value of tx7), and K3 to its mid-chain baseline 0x30. Both stores must agree.
     mem.unwind(6);
-    rocks.unwind(6);
+    unified.unwind(6);
     for (byte[] k : List.of(K1, K2, K3)) {
       assertParity(k, 12);
     }
@@ -127,7 +136,7 @@ public class ArchiveTemporalStoreConsistencyTest {
   }
 
   @Test
-  public void inMemoryAndRocksAgreeOnDeleteThenRecreate() {
+  public void inMemoryAndUnifiedAgreeOnDeleteThenRecreate() {
     // Created, deleted, then re-created. A read inside the deleted window [9,11] must return a
     // TOMBSTONE sourced from the NEXT change's (tx12) pre-value via a HISTORY seek -- NOT fall-to-
     // latest (latest is the recreated 0x0B) and NOT empty. No existing test has a change after a
@@ -137,21 +146,23 @@ public class ArchiveTemporalStoreConsistencyTest {
     put(12, K1, DomainValue.tombstone(), val(0x0B));
 
     for (long t : new long[] {9, 10, 11}) {
-      Optional<DomainValue> v = rocks.getAsOf(DOMAIN, K1, t);
+      Optional<DomainValue> v = unified.getAsOf(DOMAIN, K1, t);
       assertTrue("as-of " + t + " present-but-deleted", v.isPresent() && v.get().isDeleted());
     }
     // value at end of tx8 is 0x0A; at/after tx12 it is the recreated 0x0B.
-    assertTrue(Arrays.equals(new byte[] {0x0A}, rocks.getAsOf(DOMAIN, K1, 8).get().getValue()));
-    assertTrue(Arrays.equals(new byte[] {0x0B}, rocks.getAsOf(DOMAIN, K1, 12).get().getValue()));
+    assertTrue(Arrays.equals(
+        new byte[] {0x0A}, unified.getAsOf(DOMAIN, K1, 8).get().getValue()));
+    assertTrue(Arrays.equals(
+        new byte[] {0x0B}, unified.getAsOf(DOMAIN, K1, 12).get().getValue()));
     // both stores agree at every txNum across the whole create/delete/recreate lifecycle.
     assertParity(K1, 15);
   }
 
   @Test
-  public void inMemoryAndRocksAgreeOnUnwindBlockHeadGuardAndHeadUnwind() {
+  public void inMemoryAndUnifiedAgreeOnUnwindBlockHeadGuardAndHeadUnwind() {
     // The block-scoped unwind path must also be observationally identical: both stores reject a
     // NON-head unwindBlock (fail-stop, state intact) and unwind the head block the same way. The
-    // InMemory store head-guards unwindBlock to match RocksDb rather than silently dropping the
+    // InMemory store head-guards unwindBlock to match Unified rather than silently dropping the
     // higher head block that the unbounded interface default would discard.
     ArchiveBlockRange b3 = new ArchiveBlockRange(
         3, 10, 11, 10, 11, new byte[32], 0, ArchiveSource.NORMAL);
@@ -163,21 +174,21 @@ public class ArchiveTemporalStoreConsistencyTest {
     // non-head (b3) rejected by BOTH with the same message; neither store mutates any state.
     assertTrue(assertThrows(ArchiveException.class, () -> mem.unwindBlock(b3))
         .getMessage().contains("not temporal head"));
-    assertTrue(assertThrows(ArchiveException.class, () -> rocks.unwindBlock(b3))
+    assertTrue(assertThrows(ArchiveException.class, () -> unified.unwindBlock(b3))
         .getMessage().contains("not temporal head"));
     assertParity(K1, 15);
 
     // head (b4) unwound by BOTH: latest reverts to 0x0A (pre-value of tx12) identically.
     mem.unwindBlock(b4);
-    rocks.unwindBlock(b4);
+    unified.unwindBlock(b4);
     assertParity(K1, 15);
     assertTrue(Arrays.equals(new byte[] {0x0A}, mem.latest(DOMAIN, K1).get().getValue()));
   }
 
   @Test
-  public void inMemoryAndRocksAgreeRejectingNonHeadUnwindWhenHeadBlockIsEmpty() {
+  public void inMemoryAndUnifiedAgreeRejectingNonHeadUnwindWhenHeadBlockIsEmpty() {
     // An empty head block (no state change, no history row) must still make a lower block non-head
-    // in BOTH stores -- RocksDb via its block-commit marker, InMemory via its committed-block set.
+    // in BOTH stores -- Unified via its block-marker CF, InMemory via its committed-block set.
     ArchiveBlockRange b3 = new ArchiveBlockRange(
         3, 10, 11, 10, 11, new byte[32], 0, ArchiveSource.NORMAL);
     ArchiveBlockRange b4empty = new ArchiveBlockRange(
@@ -187,7 +198,7 @@ public class ArchiveTemporalStoreConsistencyTest {
 
     assertTrue(assertThrows(ArchiveException.class, () -> mem.unwindBlock(b3))
         .getMessage().contains("not temporal head"));
-    assertTrue(assertThrows(ArchiveException.class, () -> rocks.unwindBlock(b3))
+    assertTrue(assertThrows(ArchiveException.class, () -> unified.unwindBlock(b3))
         .getMessage().contains("not temporal head"));
     assertParity(K1, 15);
   }
@@ -195,22 +206,23 @@ public class ArchiveTemporalStoreConsistencyTest {
   @Test
   public void readViewIsIsolatedFromWritesAfterItOpensInBothStores() {
     // K1 created at tx2 (0x0A). Open a read view on each store, THEN move K1 to 0x0B at tx5. Live
-    // reads must see 0x0B; the views must keep returning the snapshot-time 0x0A -- RocksDb via a
+    // reads must see 0x0B; the views must keep returning the snapshot-time 0x0A -- Unified via a
     // real snapshot, InMemory via a deep copy. This is what lets a VM run after the lock releases.
     put(2, K1, DomainValue.tombstone(), val(0x0A));
 
     try (ArchiveTemporalReadView memView = mem.openReadView();
-        ArchiveTemporalReadView rocksView = rocks.openReadView()) {
+        ArchiveTemporalReadView unifiedView = unified.openReadView()) {
       put(5, K1, val(0x0A), val(0x0B));
 
       assertTrue(Arrays.equals(new byte[] {0x0B}, mem.latest(DOMAIN, K1).get().getValue()));
-      assertTrue(Arrays.equals(new byte[] {0x0B}, rocks.latest(DOMAIN, K1).get().getValue()));
+      assertTrue(Arrays.equals(new byte[] {0x0B}, unified.latest(DOMAIN, K1).get().getValue()));
       assertTrue(Arrays.equals(new byte[] {0x0A}, memView.latest(DOMAIN, K1).get().getValue()));
-      assertTrue(Arrays.equals(new byte[] {0x0A}, rocksView.latest(DOMAIN, K1).get().getValue()));
+      assertTrue(Arrays.equals(
+          new byte[] {0x0A}, unifiedView.latest(DOMAIN, K1).get().getValue()));
       assertTrue(Arrays.equals(new byte[] {0x0A},
           memView.getAsOf(DOMAIN, K1, 100).get().getValue()));
       assertTrue(Arrays.equals(new byte[] {0x0A},
-          rocksView.getAsOf(DOMAIN, K1, 100).get().getValue()));
+          unifiedView.getAsOf(DOMAIN, K1, 100).get().getValue()));
     }
   }
 

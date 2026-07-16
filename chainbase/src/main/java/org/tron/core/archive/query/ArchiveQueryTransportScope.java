@@ -42,21 +42,35 @@ public final class ArchiveQueryTransportScope implements AutoCloseable {
     }
     closed = true;
     CURRENT.remove();
-    RuntimeException failure = null;
+    Throwable failure = null;
     for (int i = deferred.size() - 1; i >= 0; i--) {
       try {
+        deferred.get(i).getContext().checkDeadline();
+      } catch (RuntimeException | Error e) {
+        failure = collectFailure(failure, e);
+      }
+      try {
         deferred.get(i).close();
-      } catch (RuntimeException e) {
-        if (failure == null) {
-          failure = e;
-        } else {
-          failure.addSuppressed(e);
-        }
+      } catch (RuntimeException | Error e) {
+        failure = collectFailure(failure, e);
       }
     }
-    if (failure != null) {
-      throw failure;
+    if (failure instanceof RuntimeException) {
+      throw (RuntimeException) failure;
     }
+    if (failure instanceof Error) {
+      throw (Error) failure;
+    }
+  }
+
+  private static Throwable collectFailure(Throwable primary, Throwable candidate) {
+    if (primary == null) {
+      return candidate;
+    }
+    if (primary != candidate) {
+      primary.addSuppressed(candidate);
+    }
+    return primary;
   }
 
   private void requireOwner() {

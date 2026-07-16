@@ -210,7 +210,7 @@ public class InMemoryArchiveTemporalStoreTest {
 
   @Test
   public void unwindBlockRejectsNonHeadBlockAndKeepsState() {
-    // Parity with RocksDbArchiveTemporalStore.unwindBlock: only the temporal head block may be
+    // Parity with UnifiedArchiveTemporalStore.unwindBlock: only the temporal head block may be
     // unwound. The unbounded interface default would unwind(firstTxNum) and silently discard the
     // higher head block too; the override must instead reject the non-head range, state intact.
     ArchiveBlockRange first = new ArchiveBlockRange(
@@ -249,7 +249,7 @@ public class InMemoryArchiveTemporalStoreTest {
   @Test
   public void unwindBlockRejectsNonHeadWhenHeadBlockIsEmpty() {
     // An empty head block leaves no history row; the head guard must still recognise it via the
-    // committed-block set and reject unwinding the lower block, matching RocksDb's block markers.
+    // committed-block set and reject unwinding the lower block, matching Unified block markers.
     ArchiveBlockRange b3 = new ArchiveBlockRange(
         3, 10, 11, 10, 11, new byte[32], 0, ArchiveSource.NORMAL);
     ArchiveBlockRange b4empty = new ArchiveBlockRange(

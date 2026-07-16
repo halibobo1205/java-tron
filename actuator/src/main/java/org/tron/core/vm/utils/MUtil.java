@@ -3,6 +3,7 @@ package org.tron.core.vm.utils;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.exception.ContractValidateException;
 import org.tron.core.vm.VMUtils;
+import org.tron.core.vm.archive.ArchiveRepositoryAdapter;
 import org.tron.core.vm.config.VMConfig;
 import org.tron.core.vm.program.Program.OutOfTimeException;
 import org.tron.core.vm.repository.Repository;
@@ -25,6 +26,10 @@ public class MUtil {
   }
 
   public static void transferAllToken(Repository deposit, byte[] fromAddress, byte[] toAddress) {
+    if (deposit.isHistoricalArchive()) {
+      throw ArchiveRepositoryAdapter.unsupportedHistoricalOperation(
+          "SELFDESTRUCT TRC10 sweep");
+    }
     AccountCapsule fromAccountCap = deposit.getAccount(fromAddress);
     Protocol.Account.Builder fromBuilder = fromAccountCap.getInstance().toBuilder();
     AccountCapsule toAccountCap = deposit.getAccount(toAddress);

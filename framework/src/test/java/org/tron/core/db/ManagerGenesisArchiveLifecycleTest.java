@@ -34,6 +34,7 @@ public class ManagerGenesisArchiveLifecycleTest extends BaseMethodTest {
   private DefaultArchiveService archiveService;
   private boolean archiveEnabledBefore;
   private boolean identityInitializeBefore;
+  private boolean needToUpdateAssetBefore;
   private long allowTvmConstantinopleBefore;
 
   @Override
@@ -43,9 +44,11 @@ public class ManagerGenesisArchiveLifecycleTest extends BaseMethodTest {
     archiveEnabledBefore = CommonParameter.getInstance().getStorage().getArchive().isEnable();
     identityInitializeBefore = CommonParameter.getInstance().getStorage().getArchive()
         .getIdentity().isInitialize();
+    needToUpdateAssetBefore = CommonParameter.getInstance().isNeedToUpdateAsset();
     allowTvmConstantinopleBefore = CommonParameter.getInstance().getAllowTvmConstantinople();
     CommonParameter.getInstance().getStorage().getArchive().setEnable(true);
     CommonParameter.getInstance().getStorage().getArchive().getIdentity().setInitialize(true);
+    CommonParameter.getInstance().setNeedToUpdateAsset(true);
     CommonParameter.getInstance().setAllowTvmConstantinople(1);
   }
 
@@ -54,6 +57,7 @@ public class ManagerGenesisArchiveLifecycleTest extends BaseMethodTest {
     CommonParameter.getInstance().getStorage().getArchive().setEnable(archiveEnabledBefore);
     CommonParameter.getInstance().getStorage().getArchive().getIdentity()
         .setInitialize(identityInitializeBefore);
+    CommonParameter.getInstance().setNeedToUpdateAsset(needToUpdateAssetBefore);
     CommonParameter.getInstance().setAllowTvmConstantinople(allowTvmConstantinopleBefore);
     if (arch != null) {
       arch.close();

@@ -150,8 +150,6 @@ public class StorageConfigTest {
     assertFalse(a.isEnable());
     assertEquals("archive", a.getDb().getDirectory());
     assertFalse(a.getDb().isFullScrubOnStartup());
-    assertEquals(StorageConfig.ArchiveConfig.DbConfig.LEGACY_V1,
-        a.getDb().getLayout());
     assertTrue(a.getTxnum().isEnable());
     assertTrue(a.getTemporal().isEnable());
     StorageConfig.ArchiveConfig.PublisherConfig publisher = a.getPublisher();
@@ -180,7 +178,6 @@ public class StorageConfigTest {
     assertEquals(64L * 1024 * 1024, query.getMaxTraceBytes());
     assertEquals(24L * 1024 * 1024, query.getMaxTraceResponseBytes());
     assertFalse(a.getIdentity().isInitialize());
-    assertFalse(a.getIdentity().isAdoptLegacy());
     assertFalse(a.getCommitment().isEnable());
     assertFalse(a.getCommitment().isPersistTxRoots());
     assertFalse(a.getDebug().isEnable());
@@ -192,21 +189,17 @@ public class StorageConfigTest {
   public void testArchiveOverride() {
     StorageConfig.ArchiveConfig a = StorageConfig.fromConfig(withRef(
         "storage.archive { enable = true,"
-            + " db { directory = arc, fullScrubOnStartup = true, layout = unified_v1 },"
+            + " db { directory = arc, fullScrubOnStartup = true },"
             + " txnum { enable = true },"
             + " temporal { enable = true },"
-            + " identity { adoptLegacy = true },"
             + " commitment { enable = false, persistTxRoots = false },"
             + " debug { enable = false }, coverage = TVM_STATE_ONLY }"))
         .getArchive();
     assertTrue(a.isEnable());
     assertEquals("arc", a.getDb().getDirectory());
     assertTrue(a.getDb().isFullScrubOnStartup());
-    assertEquals(StorageConfig.ArchiveConfig.DbConfig.UNIFIED_V1,
-        a.getDb().getLayout());
     assertTrue(a.getTxnum().isEnable());
     assertTrue(a.getTemporal().isEnable());
-    assertTrue(a.getIdentity().isAdoptLegacy());
     assertFalse(a.getCommitment().isEnable());
     assertFalse(a.getCommitment().isPersistTxRoots());
     assertFalse(a.getDebug().isEnable());
@@ -297,19 +290,18 @@ public class StorageConfigTest {
   }
 
   @Test
-  public void testArchiveQueryAcceptsZeroForNonConcurrencyLimits() {
+  public void testArchiveQueryAcceptsZeroForIntentionalDisableOrFailFastLimits() {
     StorageConfig.ArchiveConfig.QueryConfig query = StorageConfig.fromConfig(withRef(
         "storage.archive.query { maxConcurrentQueries = 1, maxPendingQueries = 0,"
-            + " maxOpenSnapshots = 0,"
-            + " acquireTimeoutMs = 0, deadlineMs = 0, maxLogicalReadsPerRequest = 0,"
-            + " maxBackendReadsPerRequest = 0, maxCachedEntries = 0, maxCachedBytes = 0,"
+            + " maxOpenSnapshots = 1,"
+            + " acquireTimeoutMs = 0, deadlineMs = 1, maxLogicalReadsPerRequest = 1,"
+            + " maxBackendReadsPerRequest = 1, maxCachedEntries = 0, maxCachedBytes = 0,"
             + " maxTraceSteps = 0, maxTraceBytes = 0, maxTraceResponseBytes = 0 }"))
         .getArchive().getQuery();
 
     assertEquals(1, query.getMaxConcurrentQueries());
     assertEquals(0, query.getMaxPendingQueries());
-    assertEquals(0, query.getMaxOpenSnapshots());
-    assertEquals(0, query.getDeadlineMs());
+    assertEquals(0, query.getAcquireTimeoutMs());
     assertEquals(0, query.getMaxCachedEntries());
     assertEquals(0, query.getMaxCachedBytes());
     assertEquals(0, query.getMaxTraceResponseBytes());
@@ -319,6 +311,18 @@ public class StorageConfigTest {
   public void testArchiveQueryRejectsInvalidConcurrencyLimit() {
     assertArchiveQueryRejected("maxConcurrentQueries", 0);
     assertArchiveQueryRejected("maxConcurrentQueries", -2);
+  }
+
+  @Test
+  public void testArchiveQueryRejectsZeroForRequiredOperationalLimits() {
+    for (String key : new String[] {
+        "maxOpenSnapshots",
+        "deadlineMs",
+        "batchDeadlineMs",
+        "maxLogicalReadsPerRequest",
+        "maxBackendReadsPerRequest"}) {
+      assertArchiveQueryRejected(key, 0);
+    }
   }
 
   @Test
@@ -351,7 +355,7 @@ public class StorageConfigTest {
   }
 
   @Test
-  public void testArchiveRejectsUnsupportedLayout() {
+  public void testArchiveRejectsRemovedLayoutKey() {
     assertThrows(IllegalArgumentException.class,
         () -> StorageConfig.fromConfig(withRef("storage.archive.db.layout = FUTURE_V2")));
   }
@@ -411,13 +415,6 @@ public class StorageConfigTest {
   }
 
   @Test
-  public void testArchiveRejectsConflictingIdentityModes() {
-    assertThrows(IllegalArgumentException.class,
-        () -> StorageConfig.fromConfig(withRef(
-            "storage.archive.identity { initialize = true, adoptLegacy = true }")));
-  }
-
-  @Test
   public void testArchiveRejectsUnknownKeys() {
     assertThrows(IllegalArgumentException.class,
         () -> StorageConfig.fromConfig(withRef("storage.archive.enabled = true")));
@@ -427,6 +424,10 @@ public class StorageConfigTest {
         () -> StorageConfig.fromConfig(withRef("storage.archive.query.maxReads = 1")));
     assertThrows(IllegalArgumentException.class,
         () -> StorageConfig.fromConfig(withRef("storage.archive.publisher.queueSize = 1")));
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef("storage.archive.db.layout = LEGACY_V1")));
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef("storage.archive.identity.adoptLegacy = true")));
   }
 
   private static void assertArchiveQueryRejected(String key, long value) {

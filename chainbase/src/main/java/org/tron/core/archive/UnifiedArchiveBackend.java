@@ -27,9 +27,15 @@ public final class UnifiedArchiveBackend {
 
   /** Publishes index, temporal rows, marker, cursor and journal delete in one RocksDB batch. */
   public ArchiveBlockRange publishBlock(ArchiveInFlightBlock block) {
+    long blockNum = block.getRange().getBlockNum();
+    ArchiveInFlightBlock journaled = block.withJournalState(
+        ArchiveInFlightBlock.JournalState.JOURNALED);
+    byte[] token = ArchiveInFlightCodec.encodeAcknowledgement(block.getJournalToken());
     UnifiedArchivePublish.Builder builder = UnifiedArchivePublish.builder()
-        .journal(ArchiveInFlightCodec.blockKey(block.getRange().getBlockNum()),
-            ArchiveInFlightCodec.encodeBlock(block));
+        .journal(ArchiveInFlightCodec.blockKey(blockNum),
+            ArchiveInFlightCodec.encodeBlock(journaled))
+        .journalToken(ArchiveInFlightCodec.tokenKey(blockNum), token)
+        .acknowledgement(ArchiveInFlightCodec.acknowledgementKey(blockNum), token);
     ArchiveBlockRange range = null;
     try {
       range = txNumIndex.stagePublication(builder, block);

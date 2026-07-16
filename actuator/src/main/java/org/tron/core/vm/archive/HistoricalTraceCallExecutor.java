@@ -116,9 +116,9 @@ public final class HistoricalTraceCallExecutor {
         // validate() installs a thread-local config snapshot; drop it like the constant-call path.
         VMConfig.clearLocalSnapshot();
         if (queryContext != null) {
-          if (queryContext.getRecordedTerminalException() != null) {
-            // VMActuator intentionally catches Throwable; restore an already-recorded budget error.
-            throw queryContext.getRecordedTerminalException();
+          if (queryContext.getRecordedExecutionTerminalFailure() != null) {
+            // Restore the first budget or nested archive failure swallowed by VM execution.
+            throw queryContext.getRecordedExecutionTerminalFailure();
           }
           if (completedWithoutVmFailure) {
             // Sample a newly-expired deadline only when no independent VM/validation failure won.
