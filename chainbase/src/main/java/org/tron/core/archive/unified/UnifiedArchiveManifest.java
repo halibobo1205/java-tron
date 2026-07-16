@@ -12,8 +12,14 @@ public final class UnifiedArchiveManifest {
   private static final byte[] KEY = "manifest".getBytes(StandardCharsets.US_ASCII);
   private static final byte[] PUBLISHED_CURSOR_KEY =
       "published-cursor".getBytes(StandardCharsets.US_ASCII);
+  private static final byte[] LAYOUT_SCHEMA_PREFIX =
+      "tron-archive-unified|layout=UNIFIED_V1|layout-schema="
+          .getBytes(StandardCharsets.US_ASCII);
+  private static final byte[] CURRENT_LAYOUT_SCHEMA_PREFIX =
+      "tron-archive-unified|layout=UNIFIED_V1|layout-schema=2|"
+          .getBytes(StandardCharsets.US_ASCII);
   private static final byte[] VALUE_PREFIX =
-      ("tron-archive-unified|layout=UNIFIED_V1|layout-schema=1"
+      ("tron-archive-unified|layout=UNIFIED_V1|layout-schema=2"
           + "|column-families=meta,inflight,index,latest,history,changeset,block-marker,commitment"
           + "|archive-schema=").getBytes(StandardCharsets.US_ASCII);
   private static final int HEX_CHECKSUM_LENGTH = ArchiveBlockRange.SCHEMA_CHECKSUM_LENGTH * 2;
@@ -49,6 +55,11 @@ public final class UnifiedArchiveManifest {
     if (Arrays.equals(persisted, value(expectedSchemaChecksum))) {
       return;
     }
+    if (startsWith(persisted, LAYOUT_SCHEMA_PREFIX)
+        && !startsWith(persisted, CURRENT_LAYOUT_SCHEMA_PREFIX)) {
+      throw new ArchiveException(
+          "UNIFIED_V1 archive layout schema mismatch; expected layout-schema=2");
+    }
     if (hasValidShape(persisted)) {
       throw new ArchiveException("UNIFIED_V1 archive schema checksum mismatch");
     }
@@ -77,6 +88,9 @@ public final class UnifiedArchiveManifest {
   }
 
   private static boolean startsWith(byte[] value, byte[] prefix) {
+    if (value.length < prefix.length) {
+      return false;
+    }
     for (int i = 0; i < prefix.length; i++) {
       if (value[i] != prefix[i]) {
         return false;

@@ -11,6 +11,7 @@ import static org.mockito.Mockito.spy;
 import com.google.protobuf.ByteString;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
@@ -42,6 +43,7 @@ public class DefaultArchiveServiceAsyncPublisherTest {
     CountDownLatch releaseFirst = new CountDownLatch(1);
     CountDownLatch secondEntered = new CountDownLatch(1);
     CountDownLatch releaseSecond = new CountDownLatch(1);
+    CountDownLatch thirdCompleted = new CountDownLatch(1);
     AtomicInteger calls = new AtomicInteger();
     AtomicInteger active = new AtomicInteger();
     AtomicInteger maxActive = new AtomicInteger();
@@ -57,7 +59,11 @@ public class DefaultArchiveServiceAsyncPublisherTest {
           secondEntered.countDown();
           assertTrue(releaseSecond.await(5, TimeUnit.SECONDS));
         }
-        return invocation.callRealMethod();
+        Object result = invocation.callRealMethod();
+        if (call == 3) {
+          thirdCompleted.countDown();
+        }
+        return result;
       } finally {
         active.decrementAndGet();
       }
@@ -82,10 +88,7 @@ public class DefaultArchiveServiceAsyncPublisherTest {
       assertEquals(2, calls.get());
       releaseSecond.countDown();
 
-      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
-      while (!service.hasCommittedBlock(3) && System.nanoTime() < deadline) {
-        Thread.sleep(5);
-      }
+      assertTrue(thirdCompleted.await(2, TimeUnit.SECONDS));
       assertTrue(service.hasCommittedBlock(3));
       assertEquals(3, calls.get());
       assertEquals(1, maxActive.get());
@@ -118,6 +121,33 @@ public class DefaultArchiveServiceAsyncPublisherTest {
 
       capacity.get(2, TimeUnit.SECONDS);
       assertTrue(service.hasCommittedBlock(1));
+    } finally {
+      executor.shutdownNow();
+      service.close();
+    }
+  }
+
+  @Test
+  public void closeWakesWriterWaitingAtSoftWatermark() throws Exception {
+    DefaultArchiveService service = service(1, 4, 10_000);
+    journalEmptyBlock(service, block(1));
+    CountDownLatch waiterStarted = new CountDownLatch(1);
+    ExecutorService executor = Executors.newSingleThreadExecutor();
+    Future<?> capacity = executor.submit(() -> {
+      waiterStarted.countDown();
+      service.awaitWriterCapacity();
+    });
+    try {
+      assertTrue(waiterStarted.await(1, TimeUnit.SECONDS));
+      Thread.sleep(100L);
+      assertFalse(capacity.isDone());
+
+      service.close();
+
+      ExecutionException failure = assertThrows(ExecutionException.class,
+          () -> capacity.get(1, TimeUnit.SECONDS));
+      assertTrue(failure.getCause() instanceof ArchiveException);
+      assertTrue(failure.getCause().getMessage().contains("DRAINING"));
     } finally {
       executor.shutdownNow();
       service.close();

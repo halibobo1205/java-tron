@@ -53,6 +53,23 @@ public class ArchiveQueryCoordinatorTest {
   }
 
   @Test
+  public void transportScopeChecksDeadlineBeforeSettlingLease() {
+    ArchiveQueryCoordinator coordinator = new ArchiveQueryCoordinator(
+        ArchiveQueryLimits.builder().deadlineMs(0L).build());
+
+    HistoricalQueryLimitException failure = assertThrows(
+        HistoricalQueryLimitException.class, () -> {
+          try (ArchiveQueryTransportScope ignored = ArchiveQueryTransportScope.open()) {
+            QueryLease acquired = coordinator.acquire();
+            ArchiveQueryTransportScope.closeAfterResponse(acquired);
+          }
+        });
+
+    assertEquals(HistoricalQueryLimitException.Limit.DEADLINE, failure.getLimit());
+    assertEquals(0, coordinator.getActiveLeaseCount());
+  }
+
+  @Test
   public void closeAfterResponseWithoutTransportScopeClosesImmediately() {
     ArchiveQueryCoordinator coordinator = new ArchiveQueryCoordinator();
     QueryLease lease = coordinator.acquire();

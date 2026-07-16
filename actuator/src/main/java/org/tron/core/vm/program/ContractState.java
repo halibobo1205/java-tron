@@ -68,6 +68,11 @@ public class ContractState implements Repository, ProgramListenerAware {
   }
 
   @Override
+  public boolean isHistoricalArchive() {
+    return repository.isHistoricalArchive();
+  }
+
+  @Override
   public AccountCapsule createAccount(byte[] addr, AccountType type) {
     return repository.createAccount(addr, type);
   }

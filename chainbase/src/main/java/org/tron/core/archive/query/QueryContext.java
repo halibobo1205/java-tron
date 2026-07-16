@@ -24,6 +24,11 @@ public final class QueryContext {
   private final AtomicLong responseBytes = new AtomicLong();
   private final AtomicReference<HistoricalQueryLimitException> terminal =
       new AtomicReference<>();
+  private final AtomicReference<RuntimeException> vmTerminalFailure =
+      new AtomicReference<>();
+  private final AtomicReference<RuntimeException> executionTerminalFailure =
+      new AtomicReference<>();
+  private final AtomicReference<Throwable> failure = new AtomicReference<>();
 
   /** Creates a context whose deadline is measured only with {@link System#nanoTime()}. */
   public QueryContext(ArchiveQueryLimits limits) {
@@ -53,8 +58,12 @@ public final class QueryContext {
     startedNanos = nanoTime.getAsLong();
     long requestTimeout = ArchiveQueryLimits.isUnlimited(limits.getDeadlineMs())
         ? Long.MAX_VALUE : millisecondsToNanosSaturated(limits.getDeadlineMs());
-    long batchTimeout = batchDeadline == null
-        ? Long.MAX_VALUE : batchDeadline.remainingNanos;
+    long batchTimeout = Long.MAX_VALUE;
+    if (batchDeadline != null) {
+      long elapsedSinceConstraint = elapsedNanos(startedNanos, batchDeadline.sampledNanos);
+      batchTimeout = elapsedSinceConstraint >= batchDeadline.remainingNanos
+          ? 0L : batchDeadline.remainingNanos - elapsedSinceConstraint;
+    }
     timeoutNanos = Math.min(requestTimeout, batchTimeout);
     deadlineEnabled = timeoutNanos != Long.MAX_VALUE;
     deadlineLimit = batchTimeout <= requestTimeout
@@ -267,6 +276,45 @@ public final class QueryContext {
     return terminal.get();
   }
 
+  /**
+   * Records an archive VM failure that must escape even when a nested VM converts it into a
+   * failed CALL/CREATE result. The first such failure is retained verbatim for the outer executor.
+   */
+  public void recordVmTerminalFailure(RuntimeException candidate) {
+    if (candidate == null) {
+      throw new NullPointerException("candidate");
+    }
+    vmTerminalFailure.compareAndSet(null, candidate);
+    recordExecutionTerminalFailure(candidate);
+  }
+
+  /** Returns the first archive VM failure that must be restored by the outer executor. */
+  public RuntimeException getRecordedVmTerminalFailure() {
+    return vmTerminalFailure.get();
+  }
+
+  /** Returns the first budget or archive-VM terminal failure in execution order. */
+  public RuntimeException getRecordedExecutionTerminalFailure() {
+    return executionTerminalFailure.get();
+  }
+
+  /** Records the first post-admission failure so metrics settle this query exactly once. */
+  public void recordFailure(Throwable candidate) {
+    if (candidate == null) {
+      throw new NullPointerException("candidate");
+    }
+    if (candidate instanceof HistoricalQueryLimitException) {
+      terminateWithoutThrowing((HistoricalQueryLimitException) candidate);
+    } else {
+      failure.compareAndSet(null, candidate);
+    }
+  }
+
+  /** Returns the first explicitly recorded post-admission failure, if any. */
+  public Throwable getRecordedFailure() {
+    return failure.get();
+  }
+
   private long consume(
       AtomicLong counter,
       long amount,
@@ -298,7 +346,11 @@ public final class QueryContext {
   }
 
   private long elapsedNanos(long now) {
-    long elapsed = now - startedNanos;
+    return elapsedNanos(now, startedNanos);
+  }
+
+  private static long elapsedNanos(long now, long started) {
+    long elapsed = now - started;
     return elapsed < 0 ? 0 : elapsed;
   }
 
@@ -308,7 +360,19 @@ public final class QueryContext {
   }
 
   private void terminateWithoutThrowing(HistoricalQueryLimitException candidate) {
-    terminal.compareAndSet(null, candidate);
+    HistoricalQueryLimitException budgetFailure;
+    if (terminal.compareAndSet(null, candidate)) {
+      budgetFailure = candidate;
+    } else {
+      budgetFailure = terminal.get();
+    }
+    recordExecutionTerminalFailure(budgetFailure);
+  }
+
+  private void recordExecutionTerminalFailure(RuntimeException candidate) {
+    if (executionTerminalFailure.compareAndSet(null, candidate)) {
+      failure.compareAndSet(null, candidate);
+    }
   }
 
   private static long addSaturated(AtomicLong counter, long amount) {

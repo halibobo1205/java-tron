@@ -6,6 +6,8 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.spy;
 
 import com.google.protobuf.ByteString;
 import java.util.Arrays;
@@ -33,6 +35,7 @@ import org.tron.core.archive.reader.ArchiveReaderException;
 import org.tron.core.archive.reader.ArchiveReadThrough;
 import org.tron.core.archive.reader.ArchiveStatePoint;
 import org.tron.core.archive.reader.ArchiveStateReader;
+import org.tron.core.archive.query.ArchiveQueryCoordinator;
 import org.tron.core.archive.query.ArchiveQueryLimits;
 import org.tron.core.archive.query.HistoricalQueryLimitException;
 import org.tron.core.archive.temporal.ArchiveTemporalStore;
@@ -343,6 +346,26 @@ public class DefaultArchiveServiceTest {
         new DefaultArchiveDomainRegistry(), new DefaultArchiveDomainCatalog());
   }
 
+  private static DefaultArchiveService serviceWithPublisherConfig(ArchiveTxNumIndex index,
+      ArchiveExecutionContext context, ArchiveTemporalStore temporal,
+      ArchiveInFlightStore inFlightStore, ArchivePublisherConfig publisherConfig) {
+    return new DefaultArchiveService(true, index, context, temporal, inFlightStore,
+        new DefaultArchiveDomainRegistry(), new DefaultArchiveDomainCatalog(),
+        ArchiveReadThrough.NONE, ArchiveLifecycle.Phase.RUNNING, ArchiveQueryLimits.unlimited(),
+        publisherConfig, () -> {
+        });
+  }
+
+  private static ArchivePublisherConfig startupByteBudget(long hardBytes) {
+    return new ArchivePublisherConfig(false, false, 8, 8, hardBytes, hardBytes,
+        100L, 100L, 0L, 0L, 1_000L);
+  }
+
+  private static void invokeMarkFatal(DefaultArchiveService service, RuntimeException failure) {
+    ReflectUtils.invokeMethod(service, "markFatal",
+        new Class<?>[]{RuntimeException.class}, failure);
+  }
+
   private static DefaultArchiveService serviceWithReadThrough(ArchiveTxNumIndex index,
       ArchiveExecutionContext context, ArchiveTemporalStore temporal,
       ArchiveInFlightStore inFlightStore, ArchiveReadThrough readThrough) {
@@ -373,6 +396,49 @@ public class DefaultArchiveServiceTest {
     service.publishSolidifiedBlocks(5);
     assertTrue(index.getBlockRange(5).isPresent());
     assertTrue(inFlightStore.loadBlocks().isEmpty());
+  }
+
+  @Test
+  public void startupSharesByteBudgetWithoutChargingStaleJournalToRuntimeBacklog() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    DeleteFailingArchiveInFlightStore inFlightStore = new DeleteFailingArchiveInFlightStore();
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    commitEmptyBlock(service, blockWithParentSeed(5, (byte) 5));
+    service.publishSolidifiedBlocks(5L);
+    commitEmptyBlock(service, blockWithParentSeed(6, (byte) 6));
+    service.close();
+
+    List<ArchiveInFlightBlock> journals = inFlightStore.loadBlocks();
+    assertEquals(2, journals.size());
+    ArchiveInFlightBlock stale = journals.get(0);
+    ArchiveInFlightBlock loaded = journals.get(1);
+    assertTrue(index.getBlockRange(stale.getRange().getBlockNum()).isPresent());
+    assertFalse(index.getBlockRange(loaded.getRange().getBlockNum()).isPresent());
+    long combinedBytes = stale.estimatedRetainedBytes() + loaded.estimatedRetainedBytes();
+
+    DefaultArchiveService exactBudget = serviceWithPublisherConfig(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore,
+        startupByteBudget(combinedBytes));
+    try {
+      int runtimeBlocks = ReflectUtils.getFieldValue(exactBudget, "inFlightBlockCount");
+      long runtimeBytes = ReflectUtils.getFieldValue(exactBudget, "inFlightRetainedBytes");
+      assertEquals(1, runtimeBlocks);
+      assertEquals(loaded.estimatedRetainedBytes(), runtimeBytes);
+    } finally {
+      exactBudget.close();
+    }
+
+    ArchiveException failure = assertThrows(ArchiveException.class, () -> {
+      DefaultArchiveService unexpected = serviceWithPublisherConfig(
+          index, new ArchiveExecutionContext(), temporal, inFlightStore,
+          startupByteBudget(combinedBytes - 1L));
+      unexpected.close();
+    });
+    assertTrue(failure.getMessage().contains("startup journals exceed configured hard byte limit"));
+    assertTrue(failure.getMessage().contains("staleBytes="));
+    assertTrue(failure.getMessage().contains("loadedBytes="));
   }
 
   @Test
@@ -1113,6 +1179,28 @@ public class DefaultArchiveServiceTest {
       try (ArchiveStateReader reader = service.openReader(point)) {
         assertSame(point, reader.getPoint());
       }
+    } finally {
+      service.close();
+    }
+  }
+
+  @Test
+  public void coverageReadFailureAfterAdmissionReleasesQueryLease() {
+    InMemoryArchiveTxNumIndex index = spy(new InMemoryArchiveTxNumIndex());
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), new InMemoryArchiveTemporalStore(),
+        new InMemoryArchiveInFlightStore());
+    try {
+      doThrow(new ArchiveException("injected coverage read failure"))
+          .when(index).getFirstArchivedBlock();
+
+      ArchiveException failure = assertThrows(ArchiveException.class,
+          () -> service.openReader(ArchiveStatePoint.blockEnd(0L, new byte[32], 0L)));
+
+      assertTrue(failure.getMessage().contains("injected coverage read failure"));
+      ArchiveQueryCoordinator coordinator =
+          ReflectUtils.getFieldValue(service, "queryCoordinator");
+      assertEquals(0L, coordinator.getActiveLeaseCount());
     } finally {
       service.close();
     }
@@ -1875,35 +1963,108 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
-  public void readGuardBlocksSolidifiedPublication() throws Exception {
+  public void nestedReadGuardDoubleCloseDoesNotReleaseSiblingHold() throws Exception {
     InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
     ArchiveExecutionContext context = new ArchiveExecutionContext();
     DefaultArchiveService service = new DefaultArchiveService(true, index, context);
+    ArchiveService.ReadGuard first = null;
+    ArchiveService.ReadGuard second = null;
+    try {
+      BlockCapsule b = block(5);
+      commitEmptyBlock(service, b);
+      first = service.acquireReadGuard();
+      second = service.acquireReadGuard();
+      ArchiveLifecycle lifecycle = ReflectUtils.getFieldValue(service, "lifecycle");
+      assertEquals(2L, lifecycle.getActiveCount(ArchiveLifecycle.WorkType.QUERY));
 
-    BlockCapsule b = block(5);
-    service.beginBlock(b, ArchiveSource.NORMAL);
-    service.beginSystemTx(b, ArchivePhase.BLOCK_PREPARE);
-    service.endTx();
-    service.beginSystemTx(b, ArchivePhase.BLOCK_FINALIZE);
-    service.endTx();
+      first.close();
+      first.close();
+      assertEquals(1L, lifecycle.getActiveCount(ArchiveLifecycle.WorkType.QUERY));
 
-    service.commitBlock(b);
+      CountDownLatch started = new CountDownLatch(1);
+      FutureTask<Void> publish = new FutureTask<>(() -> {
+        started.countDown();
+        service.publishSolidifiedBlocks(5);
+        return null;
+      });
+      Thread thread = new Thread(publish);
+      thread.start();
+
+      assertTrue(started.await(1, TimeUnit.SECONDS));
+      Thread.sleep(100L);
+      assertFalse(index.getBlockRange(5).isPresent());
+      second.close();
+      publish.get(1, TimeUnit.SECONDS);
+      assertTrue(index.getBlockRange(5).isPresent());
+      assertEquals(0L, lifecycle.getActiveCount(ArchiveLifecycle.WorkType.QUERY));
+    } finally {
+      if (second != null) {
+        second.close();
+      }
+      if (first != null) {
+        first.close();
+      }
+      service.close();
+    }
+  }
+
+  @Test
+  public void closeTimesOutForActiveReadGuardThenCompletesAfterRelease() {
+    DefaultArchiveService service = new DefaultArchiveService(
+        true, new InMemoryArchiveTxNumIndex(), new ArchiveExecutionContext());
+    service.setCloseDrainTimeoutForTest(25L, TimeUnit.MILLISECONDS);
     ArchiveService.ReadGuard guard = service.acquireReadGuard();
-    CountDownLatch started = new CountDownLatch(1);
-    FutureTask<Void> publish = new FutureTask<>(() -> {
-      started.countDown();
-      service.publishSolidifiedBlocks(5);
-      return null;
-    });
-    Thread t = new Thread(publish);
-    t.start();
+    boolean guardReleased = false;
+    try {
+      long startedNanos = System.nanoTime();
+      ArchiveException failure = assertThrows(ArchiveException.class, service::close);
+      long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
 
-    assertTrue(started.await(1, TimeUnit.SECONDS));
-    Thread.sleep(100);
-    assertFalse(index.getBlockRange(5).isPresent());
-    guard.close();
-    publish.get(1, TimeUnit.SECONDS);
-    assertTrue(index.getBlockRange(5).isPresent());
+      assertTrue(failure.getMessage().contains("drain timed out with active operations"));
+      assertTrue("close exceeded its bounded drain timeout", elapsedMillis < 1_000L);
+      ArchiveLifecycle lifecycle = ReflectUtils.getFieldValue(service, "lifecycle");
+      assertEquals(ArchiveLifecycle.Phase.DRAINING, lifecycle.getPhase());
+      ArchiveException admissionFailure = assertThrows(
+          ArchiveException.class, service::acquireReadGuard);
+      assertTrue(admissionFailure.getMessage().contains("DRAINING"));
+
+      guard.close();
+      guardReleased = true;
+      service.close();
+      assertEquals(ArchiveLifecycle.Phase.CLOSED, lifecycle.getPhase());
+    } finally {
+      if (!guardReleased) {
+        guard.close();
+      }
+      service.close();
+    }
+  }
+
+  @Test
+  public void fatalCasLoserArmsPrimaryWithoutCreatingSuppressionCycle() {
+    DefaultArchiveService service = new DefaultArchiveService(
+        true, new InMemoryArchiveTxNumIndex(), new ArchiveExecutionContext());
+    try {
+      ArchiveLifecycle lifecycle = ReflectUtils.getFieldValue(service, "lifecycle");
+      ArchiveFatalController fatalController =
+          ReflectUtils.getFieldValue(service, "fatalController");
+      ArchiveException primary = new ArchiveException("primary");
+      assertTrue(lifecycle.markFatal(primary));
+
+      ArchiveException wrapsPrimary = new ArchiveException("secondary", primary);
+      invokeMarkFatal(service, wrapsPrimary);
+      assertSame(primary, fatalController.getFailure());
+      assertEquals(0, primary.getSuppressed().length);
+
+      ArchiveException independent = new ArchiveException("independent");
+      invokeMarkFatal(service, independent);
+      invokeMarkFatal(service, independent);
+      assertSame(primary, fatalController.getFailure());
+      assertEquals(1, primary.getSuppressed().length);
+      assertSame(independent, primary.getSuppressed()[0]);
+    } finally {
+      service.close();
+    }
   }
 
   @Test

@@ -55,13 +55,13 @@ public class ApplicationImpl implements Application {
   public void shutdown() {
     Throwable failure = null;
     try {
-      failure = runShutdownStage(failure, "services", this::shutdownServices);
+      failure = runShutdownStage(failure, "consensus", consensusService::stop);
       failure = runShutdownStage(failure, "network", () -> {
         if (!Args.getInstance().isSolidityNode() && !Args.getInstance().p2pDisable) {
           tronNetService.close();
         }
       });
-      failure = runShutdownStage(failure, "consensus", consensusService::stop);
+      failure = runShutdownStage(failure, "services", this::shutdownServices);
       failure = runShutdownStage(failure, "events", eventService::close);
       failure = runShutdownStage(failure, "solidity node", () -> {
         if (solidityNode != null) {

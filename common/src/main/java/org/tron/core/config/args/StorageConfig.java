@@ -184,7 +184,6 @@ public class StorageConfig {
       if (db == null) {
         throw new IllegalArgumentException("storage.archive.db must not be null");
       }
-      db.postProcess();
       if (db.directory == null || db.directory.trim().isEmpty()) {
         throw new IllegalArgumentException("storage.archive.db.directory must not be empty");
       }
@@ -217,10 +216,6 @@ public class StorageConfig {
       if (identity == null) {
         throw new IllegalArgumentException("storage.archive.identity must not be null");
       }
-      if (identity.isInitialize() && identity.isAdoptLegacy()) {
-        throw new IllegalArgumentException(
-            "storage.archive.identity initialize and adoptLegacy cannot both be true");
-      }
       if (enable && commitment != null && commitment.isEnable()) {
         throw new IllegalArgumentException(
             "storage.archive.commitment.enable is not supported in P0");
@@ -238,24 +233,8 @@ public class StorageConfig {
     @Setter
     public static class DbConfig {
 
-      public static final String LEGACY_V1 = "LEGACY_V1";
-      public static final String UNIFIED_V1 = "UNIFIED_V1";
-      public static final String AUTO = "AUTO";
-
       private String directory = "archive";
       private boolean fullScrubOnStartup;
-      private String layout = LEGACY_V1;
-
-      void postProcess() {
-        if (layout == null || layout.trim().isEmpty()) {
-          throw new IllegalArgumentException("storage.archive.db.layout must not be empty");
-        }
-        layout = layout.trim().toUpperCase(java.util.Locale.ROOT);
-        if (!LEGACY_V1.equals(layout) && !UNIFIED_V1.equals(layout) && !AUTO.equals(layout)) {
-          throw new IllegalArgumentException(
-              "storage.archive.db.layout must be LEGACY_V1, UNIFIED_V1, or AUTO");
-        }
-      }
     }
 
     /** One-time opt-in for creating or resuming the canonical/archive ACTIVE identity pair. */
@@ -264,7 +243,6 @@ public class StorageConfig {
     public static class IdentityConfig {
 
       private boolean initialize;
-      private boolean adoptLegacy;
     }
 
     @Getter
@@ -379,14 +357,14 @@ public class StorageConfig {
       void postProcess() {
         requirePositiveOrUnlimited("maxConcurrentQueries", maxConcurrentQueries);
         requireNonNegativeOrUnlimited("maxPendingQueries", maxPendingQueries);
-        requireNonNegativeOrUnlimited("maxOpenSnapshots", maxOpenSnapshots);
+        requirePositiveOrUnlimited("maxOpenSnapshots", maxOpenSnapshots);
         requireNonNegativeOrUnlimited("acquireTimeoutMs", acquireTimeoutMs);
-        requireNonNegativeOrUnlimited("deadlineMs", deadlineMs);
+        requirePositiveOrUnlimited("deadlineMs", deadlineMs);
         requirePositiveOrUnlimited("maxQueriesPerBatch", maxQueriesPerBatch);
-        requireNonNegativeOrUnlimited("batchDeadlineMs", batchDeadlineMs);
-        requireNonNegativeOrUnlimited(
+        requirePositiveOrUnlimited("batchDeadlineMs", batchDeadlineMs);
+        requirePositiveOrUnlimited(
             "maxLogicalReadsPerRequest", maxLogicalReadsPerRequest);
-        requireNonNegativeOrUnlimited(
+        requirePositiveOrUnlimited(
             "maxBackendReadsPerRequest", maxBackendReadsPerRequest);
         requireNonNegative("maxCachedEntries", maxCachedEntries);
         requireNonNegative("maxCachedBytes", maxCachedBytes);
@@ -477,7 +455,7 @@ public class StorageConfig {
         "warnUnclassifiedStoreWrites");
     if (archive.hasPath("db")) {
       requireOnlyKeys("storage.archive.db", archive.getConfig("db").root(), "directory",
-          "fullScrubOnStartup", "layout");
+          "fullScrubOnStartup");
     }
     if (archive.hasPath("txnum")) {
       requireOnlyKeys("storage.archive.txnum", archive.getConfig("txnum").root(), "enable");
@@ -502,7 +480,7 @@ public class StorageConfig {
     }
     if (archive.hasPath("identity")) {
       requireOnlyKeys("storage.archive.identity", archive.getConfig("identity").root(),
-          "initialize", "adoptLegacy");
+          "initialize");
     }
     if (archive.hasPath("commitment")) {
       requireOnlyKeys("storage.archive.commitment", archive.getConfig("commitment").root(),

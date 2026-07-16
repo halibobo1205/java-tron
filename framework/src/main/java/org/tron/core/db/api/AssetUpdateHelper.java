@@ -78,12 +78,12 @@ public class AssetUpdateHelper {
   public void init() {
     if (chainBaseManager.getAssetIssueV2Store().isNotEmpty()) {
       logger.warn("AssetIssueV2Store is not empty");
+      chainBaseManager.getAssetIssueV2Store().reset();
     }
-    chainBaseManager.getAssetIssueV2Store().reset();
     if (chainBaseManager.getExchangeV2Store().isNotEmpty()) {
       logger.warn("ExchangeV2Store is not empty");
+      chainBaseManager.getExchangeV2Store().reset();
     }
-    chainBaseManager.getExchangeV2Store().reset();
     chainBaseManager.getDynamicPropertiesStore().saveTokenIdNum(INITIAL_TOKEN_ID);
   }
 

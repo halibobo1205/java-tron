@@ -3,6 +3,7 @@ package org.tron.core.store;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.AdditionalMatchers.aryEq;
 import static org.mockito.ArgumentMatchers.any;
@@ -100,6 +101,43 @@ public class AccountStoreArchiveCaptureTest {
     assertAsset(records.get(2), address, "b", 6L, 8L);
     assertAsset(records.get(3), address, "both", 1L, 2L);
     assertAsset(records.get(4), address, "zero", 9L, 0L);
+    assertFalse(engine.failure().isPresent());
+  }
+
+  @Test
+  public void nullItemIsNoOpForArchiveCaptureWhenHistoryLookupIsDisabled() throws Exception {
+    byte[] address = address();
+    AccountAssetStore assetStore = mock(AccountAssetStore.class);
+    IRevokingDB revokingDb = mock(IRevokingDB.class);
+    AccountStore store = accountStore(assetStore, revokingDb);
+    ArchiveCaptureEngine engine = startCapture();
+
+    store.put(address, null);
+
+    verify(revokingDb, never()).getUnchecked(any(byte[].class));
+    verify(revokingDb, never()).put(any(byte[].class), any(byte[].class));
+    verify(assetStore, never()).scanPhysicalAssets(
+        any(byte[].class), any(AccountAssetStore.PhysicalAssetConsumer.class));
+    assertTrue(engine.records().isEmpty());
+    assertFalse(engine.failure().isPresent());
+  }
+
+  @Test
+  public void nullItemPreservesHistoryLookupNullPointerOrdering() throws Exception {
+    CommonParameter.getInstance().setHistoryBalanceLookup(true);
+    byte[] address = address();
+    AccountCapsule oldAccount = account(address, false);
+    AccountAssetStore assetStore = mock(AccountAssetStore.class);
+    IRevokingDB revokingDb = mock(IRevokingDB.class);
+    when(revokingDb.getUnchecked(same(address))).thenReturn(oldAccount.getData());
+    AccountStore store = accountStore(assetStore, revokingDb);
+    ArchiveCaptureEngine engine = startCapture();
+
+    assertThrows(NullPointerException.class, () -> store.put(address, null));
+
+    verify(revokingDb, times(1)).getUnchecked(same(address));
+    verify(revokingDb, never()).put(any(byte[].class), any(byte[].class));
+    assertTrue(engine.records().isEmpty());
     assertFalse(engine.failure().isPresent());
   }
 

@@ -54,9 +54,7 @@ public final class ArchivePathResolver {
     return canonicalResolved;
   }
 
-  /**
-   * Resolves an archive path and validates it against canonical, legacy, and migration paths.
-   */
+  /** Resolves an archive path and validates it against every protected storage path. */
   public static Path resolveAndValidate(Path configuredPath, Path relativeBase,
       Iterable<? extends Path> protectedPaths) throws IOException {
     Path archivePath = resolve(configuredPath, relativeBase);
@@ -69,7 +67,7 @@ public final class ArchivePathResolver {
    * path. All paths are canonicalized before comparison, including paths that do not yet exist.
    *
    * @param archivePath resolved or unresolved archive path
-   * @param protectedPaths canonical database, legacy database, and migration source/target paths
+   * @param protectedPaths canonical database and any other protected storage paths
    * @throws IOException if an existing path component cannot be inspected or canonicalized
    * @throws IllegalArgumentException if any path overlaps the archive path
    */

@@ -366,6 +366,8 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
   }
 
   private static long minimumTimeout(long first, long second) {
+    first = normalizeTimeout(first);
+    second = normalizeTimeout(second);
     if (first == ArchiveQueryLimits.UNLIMITED) {
       return second;
     }
@@ -373,6 +375,10 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
       return first;
     }
     return Math.min(first, second);
+  }
+
+  private static long normalizeTimeout(long timeout) {
+    return timeout < 0L && timeout != ArchiveQueryLimits.UNLIMITED ? 0L : timeout;
   }
 
   private static long elapsedWaitNanos(long requestedNanos, long remainingNanos) {

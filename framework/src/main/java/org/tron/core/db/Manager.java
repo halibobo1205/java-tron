@@ -1353,14 +1353,22 @@ public class Manager {
   private void publishArchiveSolidifiedOrFailStop(BlockCapsule block, String action,
       long solidifiedBlockNum) {
     try {
+      // Recent canonical blocks still live only in revoking snapshots and can disappear on
+      // restart. Pending batched flushes are not recoverable until their checkpoint is durable.
+      long recoverableBlockNum = getDynamicPropertiesStore().getLatestBlockHeaderNumber()
+          - revokingStore.size() - revokingStore.getPendingFlushCount();
+      long publishableBlockNum = Math.min(solidifiedBlockNum, recoverableBlockNum);
+      if (publishableBlockNum < 0) {
+        return;
+      }
       byte[] solidifiedBlockHash = null;
       if (archiveService.requiresPublishTargetHash()) {
-        solidifiedBlockHash = block.getNum() == solidifiedBlockNum
+        solidifiedBlockHash = block.getNum() == publishableBlockNum
             ? block.getBlockId().getBytes()
-            : chainBaseManager.getBlockIdByNum(solidifiedBlockNum).getBytes();
+            : chainBaseManager.getBlockIdByNum(publishableBlockNum).getBytes();
       }
       archiveService.requestPublishSolidifiedBlocks(
-          solidifiedBlockNum, solidifiedBlockHash);
+          publishableBlockNum, solidifiedBlockHash);
     } catch (ItemNotFoundException | RuntimeException e) {
       throw archiveRuntimeError(action, block, e);
     }
