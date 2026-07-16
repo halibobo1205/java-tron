@@ -330,7 +330,7 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
   }
 
   private void validateFullKeyspace() {
-    withReadView(view -> {
+    withScanView(view -> {
       RocksIterator meta = view.newIterator(UnifiedArchiveColumnFamily.META);
       meta.seekToFirst();
       while (meta.isValid()) {
@@ -418,7 +418,7 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
   }
 
   private void validateFullCoverage() {
-    withReadView(view -> {
+    withScanView(view -> {
       RocksIterator iterator = view.newIterator(UnifiedArchiveColumnFamily.INDEX);
       iterator.seek(new byte[] {ArchiveBlockRangeCodec.TXNUM_BLOCK_PREFIX});
       ArchiveBlockRange previous = null;
@@ -632,6 +632,21 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
     }
   }
 
+  private <T> T withScanView(Function<UnifiedArchiveReadView, T> action) {
+    UnifiedArchiveReadView current = activeReadView.get();
+    if (current != null) {
+      return action.apply(current);
+    }
+    try (UnifiedArchiveReadView view = db.openScanView()) {
+      activeReadView.set(view);
+      try {
+        return action.apply(view);
+      } finally {
+        activeReadView.remove();
+      }
+    }
+  }
+
   private InMemoryArchiveTxNumIndex delegateFromStore() {
     return new InMemoryArchiveTxNumIndex(getNextTxNum(), getLastArchivedBlock());
   }
@@ -644,6 +659,8 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
   public void close() {
     if (!closed) {
       closed = true;
+      // Final owner of the shared DB. DefaultArchiveService closes the no-op in-flight and
+      // temporal adapters before reaching this index.
       db.close();
     }
   }

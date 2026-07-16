@@ -64,6 +64,11 @@ public final class UnifiedArchiveReadView implements AutoCloseable {
     return snapshot.getSequenceNumber();
   }
 
+  boolean fillsCache() {
+    requireOwnerAndOpen();
+    return readOptions.fillCache();
+  }
+
   @Override
   public void close() {
     requireOwner();

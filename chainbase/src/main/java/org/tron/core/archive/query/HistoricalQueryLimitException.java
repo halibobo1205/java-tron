@@ -26,6 +26,7 @@ public class HistoricalQueryLimitException extends RuntimeException {
     BACKEND_READS,
     VM_STEPS,
     TRACE_BYTES,
+    RETAINED_TRACE_BYTES,
     RESPONSE_BYTES
   }
 

@@ -217,7 +217,7 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
 
   @Override
   public void validateCommittedBlock(ArchiveBlockRange range) {
-    try (UnifiedArchiveReadView view = db.openReadView()) {
+    try (UnifiedArchiveReadView view = db.openScanView()) {
       validateCommittedBlock(view, range);
     }
   }
@@ -241,7 +241,7 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
   }
 
   public void validateStartupTail(Optional<ArchiveBlockRange> lastRange) {
-    try (UnifiedArchiveReadView view = db.openReadView()) {
+    try (UnifiedArchiveReadView view = db.openScanView()) {
       RocksIterator iterator = view.newIterator(UnifiedArchiveColumnFamily.BLOCK_MARKER);
       iterator.seekForPrev(ArchiveTemporalCodec.blockCommitKey(Long.MAX_VALUE));
       ArchiveRocksIterators.requireOk(iterator, "UNIFIED_V1 locate last temporal marker");
@@ -269,7 +269,7 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
   }
 
   public void validateCommitMarkersCovered(LongPredicate hasIndexRange) {
-    try (UnifiedArchiveReadView view = db.openReadView()) {
+    try (UnifiedArchiveReadView view = db.openScanView()) {
       RocksIterator iterator = view.newIterator(UnifiedArchiveColumnFamily.BLOCK_MARKER);
       byte[] prefix = ArchiveTemporalCodec.blockCommitPrefix();
       iterator.seekToFirst();
@@ -290,7 +290,7 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
   }
 
   public void validateTxNumsCovered(LongPredicate hasCommittedTxNum) {
-    try (UnifiedArchiveReadView view = db.openReadView()) {
+    try (UnifiedArchiveReadView view = db.openScanView()) {
       RocksIterator history = view.newIterator(UnifiedArchiveColumnFamily.HISTORY);
       history.seek(new byte[] {ArchiveTemporalCodec.HISTORY_PREFIX});
       while (history.isValid()
@@ -335,7 +335,7 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
   }
 
   public void validateDomainRows() {
-    try (UnifiedArchiveReadView view = db.openReadView()) {
+    try (UnifiedArchiveReadView view = db.openScanView()) {
       validateLatestDomainRows(view);
       validateDomainRows(view, UnifiedArchiveColumnFamily.HISTORY,
           ArchiveTemporalCodec.HISTORY_PREFIX);
@@ -415,7 +415,7 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
     if (fromTxNum < 0 || toTxNum < 0) {
       throw new ArchiveException("archive temporal txNum must be non-negative");
     }
-    try (UnifiedArchiveReadView view = db.openReadView()) {
+    try (UnifiedArchiveReadView view = db.openScanView()) {
       UnifiedArchiveMaintenanceBatch batch = new UnifiedArchiveMaintenanceBatch();
       Map<WrappedByteArray, RestoreRows> restore = new LinkedHashMap<>();
       RocksIterator changeset = view.newIterator(UnifiedArchiveColumnFamily.CHANGESET);
@@ -470,7 +470,7 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
   }
 
   private void validateHeadBlock(long blockNum) {
-    try (UnifiedArchiveReadView view = db.openReadView()) {
+    try (UnifiedArchiveReadView view = db.openScanView()) {
       RocksIterator iterator = view.newIterator(UnifiedArchiveColumnFamily.BLOCK_MARKER);
       iterator.seekForPrev(ArchiveTemporalCodec.blockCommitKey(Long.MAX_VALUE));
       ArchiveRocksIterators.requireOk(iterator, "UNIFIED_V1 validate temporal head");

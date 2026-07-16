@@ -176,6 +176,7 @@ public class StorageConfigTest {
     assertEquals(4L * 1024 * 1024, query.getMaxCachedBytes());
     assertEquals(1_000_000, query.getMaxTraceSteps());
     assertEquals(64L * 1024 * 1024, query.getMaxTraceBytes());
+    assertEquals(256L * 1024 * 1024, query.getMaxRetainedTraceBytes());
     assertEquals(24L * 1024 * 1024, query.getMaxTraceResponseBytes());
     assertFalse(a.getIdentity().isInitialize());
     assertFalse(a.getCommitment().isEnable());
@@ -215,7 +216,8 @@ public class StorageConfigTest {
             + " acquireTimeoutMs = 3, deadlineMs = 4, maxQueriesPerBatch = 13,"
             + " batchDeadlineMs = 14, maxLogicalReadsPerRequest = 5,"
             + " maxBackendReadsPerRequest = 6, maxCachedEntries = 7, maxCachedBytes = 8,"
-            + " maxTraceSteps = 9, maxTraceBytes = 10, maxTraceResponseBytes = 11 }"))
+            + " maxTraceSteps = 9, maxTraceBytes = 10, maxRetainedTraceBytes = 11,"
+            + " maxTraceResponseBytes = 12 }"))
         .getArchive().getQuery();
 
     assertEquals(1, query.getMaxConcurrentQueries());
@@ -231,7 +233,8 @@ public class StorageConfigTest {
     assertEquals(8, query.getMaxCachedBytes());
     assertEquals(9, query.getMaxTraceSteps());
     assertEquals(10, query.getMaxTraceBytes());
-    assertEquals(11, query.getMaxTraceResponseBytes());
+    assertEquals(11, query.getMaxRetainedTraceBytes());
+    assertEquals(12, query.getMaxTraceResponseBytes());
   }
 
   @Test
@@ -296,7 +299,8 @@ public class StorageConfigTest {
             + " maxOpenSnapshots = 1,"
             + " acquireTimeoutMs = 0, deadlineMs = 1, maxLogicalReadsPerRequest = 1,"
             + " maxBackendReadsPerRequest = 1, maxCachedEntries = 0, maxCachedBytes = 0,"
-            + " maxTraceSteps = 0, maxTraceBytes = 0, maxTraceResponseBytes = 0 }"))
+            + " maxTraceSteps = 0, maxTraceBytes = 0, maxRetainedTraceBytes = 0,"
+            + " maxTraceResponseBytes = 0 }"))
         .getArchive().getQuery();
 
     assertEquals(1, query.getMaxConcurrentQueries());
@@ -304,6 +308,7 @@ public class StorageConfigTest {
     assertEquals(0, query.getAcquireTimeoutMs());
     assertEquals(0, query.getMaxCachedEntries());
     assertEquals(0, query.getMaxCachedBytes());
+    assertEquals(0, query.getMaxRetainedTraceBytes());
     assertEquals(0, query.getMaxTraceResponseBytes());
   }
 
@@ -337,6 +342,7 @@ public class StorageConfigTest {
         "maxBackendReadsPerRequest",
         "maxTraceSteps",
         "maxTraceBytes",
+        "maxRetainedTraceBytes",
         "maxTraceResponseBytes"
     };
     for (String key : keys) {
