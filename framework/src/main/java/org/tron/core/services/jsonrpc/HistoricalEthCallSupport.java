@@ -36,9 +36,9 @@ import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
  * disabled archive fails closed with the archive error surface rather than latest-only param
  * validation.
  *
-   * <p>Account, code, storage, energy price, and VM execution parameters are read from the archive at
-   * the target block. Mid-chain archives fail closed when an execution-affecting dynamic property is
-   * missing because latest cannot be used as a historical value.
+ * <p>Account, code, storage, energy price, and VM execution parameters are read from the archive
+ * at the target block. Mid-chain archives fail closed when an execution-affecting dynamic property
+ * is missing because latest cannot be used as a historical value.
  */
 public final class HistoricalEthCallSupport {
 

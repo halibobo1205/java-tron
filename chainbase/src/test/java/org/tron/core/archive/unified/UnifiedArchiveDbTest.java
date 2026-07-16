@@ -4,6 +4,7 @@ import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
@@ -86,6 +87,33 @@ public class UnifiedArchiveDbTest {
       assertPublished(view);
     }
     assertExactColumnFamilies();
+  }
+
+  @Test
+  public void resourceCleanupAttemptsEveryOwnerAndPreservesPrimaryFailure() {
+    List<String> closed = new ArrayList<>();
+    AssertionError primary = new AssertionError("first close failed");
+    IllegalStateException secondary = new IllegalStateException("second close failed");
+
+    Throwable failure = null;
+    failure = UnifiedArchiveDb.closeAndCollect(failure, () -> {
+      closed.add("first");
+      throw primary;
+    });
+    failure = UnifiedArchiveDb.closeAndCollect(failure, () -> {
+      closed.add("second");
+      throw secondary;
+    });
+    failure = UnifiedArchiveDb.closeAndCollect(failure, () -> closed.add("third"));
+
+    assertEquals(Arrays.asList("first", "second", "third"), closed);
+    assertSame(primary, failure);
+    assertEquals(1, failure.getSuppressed().length);
+    assertSame(secondary, failure.getSuppressed()[0]);
+    Throwable collectedFailure = failure;
+    assertSame(primary, assertThrows(
+        AssertionError.class,
+        () -> UnifiedArchiveDb.rethrowCloseFailure(collectedFailure)));
   }
 
   @Test

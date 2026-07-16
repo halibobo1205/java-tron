@@ -12,6 +12,7 @@ import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.NoopArchiveService;
 import org.tron.core.config.args.Storage;
 import org.tron.core.config.args.StorageConfig;
+import org.tron.core.exception.TronError;
 
 public class DefaultConfigArchiveServiceTest {
 
@@ -41,11 +42,14 @@ public class DefaultConfigArchiveServiceTest {
     parameter.setSolidityNode(true);
     parameter.outputDirectory = null;
 
-    ArchiveException failure = assertThrows(ArchiveException.class,
+    TronError failure = assertThrows(TronError.class,
         () -> new DefaultConfig().archiveService(null));
 
+    assertEquals(TronError.ErrCode.ARCHIVE_RUNTIME, failure.getErrCode());
+    assertEquals("fatal archive sidecar initialization failure", failure.getMessage());
+    assertEquals(ArchiveException.class, failure.getCause().getClass());
     assertEquals("storage.archive.enable is not supported on SolidityNode",
-        failure.getMessage());
+        failure.getCause().getMessage());
   }
 
   @Test

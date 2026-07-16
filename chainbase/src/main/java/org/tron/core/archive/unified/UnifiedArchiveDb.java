@@ -465,7 +465,9 @@ public final class UnifiedArchiveDb implements AutoCloseable {
     }
     maybeReportStatistics();
     closed = true;
-    closeResources(allHandles, db, columnFamilyOptions, bloomFilters, dbOptions, statistics);
+    Throwable failure = closeResources(
+        allHandles, db, columnFamilyOptions, bloomFilters, dbOptions, statistics, null);
+    rethrowCloseFailure(failure);
   }
 
   int ownedBloomFilterCount() {
@@ -549,13 +551,14 @@ public final class UnifiedArchiveDb implements AutoCloseable {
       return opened;
     } catch (RocksDBException e) {
       closeResources(
-          openedHandles, openedDb, columnFamilyOptions, bloomFilters, dbOptions, statistics);
+          openedHandles, openedDb, columnFamilyOptions, bloomFilters, dbOptions, statistics, e);
       String operation = initialize ? "initialize" : "open";
       throw new ArchiveException("failed to " + operation + " UNIFIED_V1 archive at "
           + target, e);
     } catch (RuntimeException | Error failure) {
       closeResources(
-          openedHandles, openedDb, columnFamilyOptions, bloomFilters, dbOptions, statistics);
+          openedHandles, openedDb, columnFamilyOptions, bloomFilters, dbOptions, statistics,
+          failure);
       throw failure;
     }
   }
@@ -764,27 +767,56 @@ public final class UnifiedArchiveDb implements AutoCloseable {
     }
   }
 
-  private static void closeResources(List<ColumnFamilyHandle> handles, RocksDB db,
+  private static Throwable closeResources(List<ColumnFamilyHandle> handles, RocksDB db,
       List<ColumnFamilyOptions> columnFamilyOptions, List<BloomFilter> bloomFilters,
-      DBOptions dbOptions, Statistics statistics) {
+      DBOptions dbOptions, Statistics statistics, Throwable failure) {
     for (int i = handles.size() - 1; i >= 0; i--) {
-      handles.get(i).close();
+      failure = closeAndCollect(failure, handles.get(i));
     }
     if (db != null) {
-      db.close();
+      failure = closeAndCollect(failure, db);
     }
     for (int i = columnFamilyOptions.size() - 1; i >= 0; i--) {
-      columnFamilyOptions.get(i).close();
+      failure = closeAndCollect(failure, columnFamilyOptions.get(i));
     }
     if (dbOptions != null) {
-      dbOptions.close();
+      failure = closeAndCollect(failure, dbOptions);
     }
     for (int i = bloomFilters.size() - 1; i >= 0; i--) {
-      bloomFilters.get(i).close();
+      failure = closeAndCollect(failure, bloomFilters.get(i));
     }
     if (statistics != null) {
-      statistics.close();
+      failure = closeAndCollect(failure, statistics);
     }
+    return failure;
+  }
+
+  static Throwable closeAndCollect(Throwable firstFailure, AutoCloseable resource) {
+    try {
+      resource.close();
+      return firstFailure;
+    } catch (Throwable failure) {
+      if (firstFailure == null) {
+        return failure;
+      }
+      if (firstFailure != failure) {
+        firstFailure.addSuppressed(failure);
+      }
+      return firstFailure;
+    }
+  }
+
+  static void rethrowCloseFailure(Throwable failure) {
+    if (failure == null) {
+      return;
+    }
+    if (failure instanceof RuntimeException) {
+      throw (RuntimeException) failure;
+    }
+    if (failure instanceof Error) {
+      throw (Error) failure;
+    }
+    throw new ArchiveException("UNIFIED_V1 resource close failed", failure);
   }
 
   private void maybeReportStatistics() {
