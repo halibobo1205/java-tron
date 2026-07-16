@@ -55,7 +55,7 @@ public final class UnifiedArchiveIdentityPayload implements ArchiveIdentityPaylo
       byte[] schemaChecksum) {
     UnifiedArchiveDb db = UnifiedArchiveDb.open(databasePath(archiveRoot), schemaChecksum);
     UnifiedArchiveTxNumIndex index = null;
-    RuntimeException bodyFailure = null;
+    Throwable bodyFailure = null;
     try {
       index = new UnifiedArchiveTxNumIndex(db, schemaChecksum, false, true);
       long persistedFloor = index.getFirstArchivedBlock();
@@ -67,13 +67,13 @@ public final class UnifiedArchiveIdentityPayload implements ArchiveIdentityPaylo
       inFlight.forEachBlock(block -> firstJournal[0] = Math.min(
           firstJournal[0], block.getRange().getBlockNum()));
       return firstJournal[0] == Long.MAX_VALUE ? 0L : firstJournal[0];
-    } catch (RuntimeException e) {
+    } catch (RuntimeException | Error e) {
       bodyFailure = e;
       throw e;
     } finally {
-      RuntimeException closeFailure = close(index == null ? db : index, bodyFailure);
+      Throwable closeFailure = close(index == null ? db : index, bodyFailure);
       if (bodyFailure == null && closeFailure != null) {
-        throw closeFailure;
+        rethrowCloseFailure(closeFailure);
       }
     }
   }
@@ -93,18 +93,31 @@ public final class UnifiedArchiveIdentityPayload implements ArchiveIdentityPaylo
     }
   }
 
-  private static RuntimeException close(AutoCloseable resource, RuntimeException failure) {
+  private static Throwable close(AutoCloseable resource, Throwable failure) {
     try {
       resource.close();
-    } catch (Exception e) {
-      RuntimeException closeFailure = e instanceof RuntimeException
-          ? (RuntimeException) e
-          : new ArchiveException("UNIFIED_V1 identity payload close failed", e);
+    } catch (Throwable closeFailure) {
+      if (!(closeFailure instanceof RuntimeException) && !(closeFailure instanceof Error)) {
+        closeFailure =
+            new ArchiveException("UNIFIED_V1 identity payload close failed", closeFailure);
+      }
       if (failure == null) {
         return closeFailure;
       }
-      failure.addSuppressed(closeFailure);
+      if (failure != closeFailure) {
+        failure.addSuppressed(closeFailure);
+      }
     }
     return failure;
+  }
+
+  private static void rethrowCloseFailure(Throwable failure) {
+    if (failure instanceof RuntimeException) {
+      throw (RuntimeException) failure;
+    }
+    if (failure instanceof Error) {
+      throw (Error) failure;
+    }
+    throw new ArchiveException("UNIFIED_V1 identity payload close failed", failure);
   }
 }
