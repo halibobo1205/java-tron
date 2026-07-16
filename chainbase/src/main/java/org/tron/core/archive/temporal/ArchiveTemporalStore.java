@@ -13,8 +13,8 @@ import org.tron.core.archive.txnum.ArchiveBlockRange;
  * {@code prevValue} (the value BEFORE the change, Erigon {@code AddPrevValue}) goes to the
  * txNum-versioned history and its {@code value} (the value AFTER) goes to latest.
  *
- * <p>L5 ships the in-memory reference implementation; the RocksDB-backed implementation (latest /
- * history / changeset in one column family) is the persistent one. This interface is the read/write
+ * <p>The in-memory implementation is the semantic reference. Enabled nodes use the UNIFIED_V1
+ * adapter over latest/history/changeset/marker column families. This interface is the read/write
  * contract both share, and the two MUST stay observationally identical.
  */
 public interface ArchiveTemporalStore {

@@ -26,7 +26,9 @@ import org.rocksdb.DBOptions;
 import org.rocksdb.Options;
 import org.rocksdb.RocksDB;
 import org.rocksdb.RocksDBException;
+import org.rocksdb.StatsLevel;
 import org.rocksdb.WriteOptions;
+import org.tron.common.parameter.CommonParameter;
 import org.tron.core.archive.ArchiveException;
 
 public class UnifiedArchiveDbTest {
@@ -266,6 +268,60 @@ public class UnifiedArchiveDbTest {
         assertTrue(afterPublish.getSequenceNumber() > beforeSequence);
         assertPublished(afterPublish);
       }
+    }
+  }
+
+  @Test
+  public void pointAndScanViewsUseDifferentCacheAdmissionPolicies() {
+    try (UnifiedArchiveReadView point = db.openReadView();
+         UnifiedArchiveReadView scan = db.openScanView()) {
+      assertTrue(point.fillsCache());
+      assertFalse(scan.fillsCache());
+      assertEquals(point.getSequenceNumber(), scan.getSequenceNumber());
+    }
+  }
+
+  @Test
+  public void activeSnapshotPreventsSharedDatabaseClose() {
+    UnifiedArchiveReadView view = db.openReadView();
+    ArchiveException failure = assertThrows(ArchiveException.class, db::close);
+    assertTrue(failure.getMessage().contains("active snapshot read views"));
+
+    view.close();
+    db.close();
+    db.close();
+    db = null;
+  }
+
+  @Test
+  public void ownsOneBloomFilterPerColumnFamily() {
+    assertEquals(UnifiedArchiveDb.expectedColumnFamilyNames().size(),
+        db.ownedBloomFilterCount());
+    assertTrue(db.usesEvictableIndexAndFilterCache());
+  }
+
+  @Test
+  public void statisticsAreOptionalAndUseLowOverheadLevel() {
+    boolean previouslyEnabled =
+        CommonParameter.getInstance().isMetricsPrometheusEnable();
+    db.close();
+    db = null;
+    try {
+      CommonParameter.getInstance().setMetricsPrometheusEnable(false);
+      try (UnifiedArchiveDb withoutStatistics =
+               UnifiedArchiveDb.open(dbPath, SCHEMA_CHECKSUM)) {
+        assertFalse(withoutStatistics.hasStatistics());
+      }
+      CommonParameter.getInstance().setMetricsPrometheusEnable(true);
+      try (UnifiedArchiveDb withStatistics =
+               UnifiedArchiveDb.open(dbPath, SCHEMA_CHECKSUM)) {
+        assertTrue(withStatistics.hasStatistics());
+        assertEquals(StatsLevel.EXCEPT_DETAILED_TIMERS,
+            withStatistics.statisticsLevel());
+      }
+    } finally {
+      CommonParameter.getInstance().setMetricsPrometheusEnable(previouslyEnabled);
+      db = UnifiedArchiveDb.open(dbPath, SCHEMA_CHECKSUM);
     }
   }
 

@@ -3,9 +3,7 @@ package org.tron.core.archive;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.function.Consumer;
 import org.rocksdb.RocksIterator;
 import org.tron.core.archive.domain.ArchiveDomainCatalog;
@@ -44,74 +42,139 @@ public final class UnifiedArchiveInFlightStore implements ArchiveInFlightStore {
     if (consumer == null) {
       throw new NullPointerException("consumer");
     }
-    List<ArchiveInFlightBlock> blocks = new ArrayList<>();
-    Map<Long, ArchiveJournalToken> tokens = new HashMap<>();
-    Map<Long, ArchiveJournalToken> acknowledgements = new HashMap<>();
+    try (UnifiedArchiveReadView view = db.openScanView()) {
+      validateKnownKeys(view);
+      scanAlignedBlocks(view, null, true);
+      scanAlignedBlocks(view, consumer, false);
+    }
+  }
+
+  private void validateKnownKeys(UnifiedArchiveReadView view) {
     byte[] blockPrefix = ArchiveInFlightCodec.blockPrefix();
     byte[] tokenPrefix = ArchiveInFlightCodec.tokenPrefix();
     byte[] acknowledgementPrefix = ArchiveInFlightCodec.acknowledgementPrefix();
-    try (UnifiedArchiveReadView view = db.openReadView()) {
-      RocksIterator iterator = view.newIterator(UnifiedArchiveColumnFamily.INFLIGHT);
-      iterator.seekToFirst();
-      while (iterator.isValid()) {
-        byte[] key = iterator.key();
-        if (ArchiveInFlightCodec.startsWith(key, blockPrefix)) {
-          long blockNum = ArchiveInFlightCodec.blockNumOfKey(key);
-          ArchiveInFlightBlock block = ArchiveInFlightCodec.decodeBlock(iterator.value());
-          ArchiveInFlightValidator.validate(block, catalog, dynamicKeyPolicy);
-          if (block.getRange().getBlockNum() != blockNum) {
-            throw new ArchiveException("archive in-flight block key/value mismatch for block "
-                + blockNum);
-          }
-          if (block.getJournalState() != ArchiveInFlightBlock.JournalState.JOURNALED) {
-            throw new ArchiveException("UNIFIED_V1 journal payload is not immutable JOURNALED "
-                + "state for block " + blockNum);
-          }
-          blocks.add(block);
-        } else if (ArchiveInFlightCodec.startsWith(key, tokenPrefix)) {
-          putToken(tokens, ArchiveInFlightCodec.blockNumOfTokenKey(key),
-              ArchiveInFlightCodec.decodeAcknowledgement(iterator.value()), "token");
-        } else if (ArchiveInFlightCodec.startsWith(key, acknowledgementPrefix)) {
-          putToken(acknowledgements,
-              ArchiveInFlightCodec.blockNumOfAcknowledgementKey(key),
-              ArchiveInFlightCodec.decodeAcknowledgement(iterator.value()), "acknowledgement");
-        } else {
-          throw new ArchiveException("UNIFIED_V1 in-flight store has an unknown key");
-        }
-        iterator.next();
+    RocksIterator iterator = view.newIterator(UnifiedArchiveColumnFamily.INFLIGHT);
+    iterator.seekToFirst();
+    while (iterator.isValid()) {
+      byte[] key = iterator.key();
+      if (ArchiveInFlightCodec.startsWith(key, blockPrefix)) {
+        ArchiveInFlightCodec.blockNumOfKey(key);
+      } else if (ArchiveInFlightCodec.startsWith(key, tokenPrefix)) {
+        ArchiveInFlightCodec.blockNumOfTokenKey(key);
+      } else if (ArchiveInFlightCodec.startsWith(key, acknowledgementPrefix)) {
+        ArchiveInFlightCodec.blockNumOfAcknowledgementKey(key);
+      } else {
+        throw new ArchiveException("UNIFIED_V1 in-flight store has an unknown key");
       }
-      ArchiveRocksIterators.requireOk(iterator, "loadBlocks: scan UNIFIED_V1 journal");
+      iterator.next();
     }
-    List<ArchiveInFlightBlock> validatedBlocks = new ArrayList<>(blocks.size());
-    for (ArchiveInFlightBlock block : blocks) {
-      long blockNum = block.getRange().getBlockNum();
-      ArchiveJournalToken token = tokens.remove(blockNum);
-      if (token == null || !token.equals(block.getJournalToken())) {
-        throw new ArchiveException("UNIFIED_V1 journal token mismatch for block " + blockNum);
-      }
-      ArchiveJournalToken acknowledgement = acknowledgements.remove(blockNum);
-      if (acknowledgement != null) {
-        if (!acknowledgement.equals(token)) {
-          throw new ArchiveException(
-              "UNIFIED_V1 acknowledgement token mismatch for block " + blockNum);
-        }
-        block = block.withJournalState(
-            ArchiveInFlightBlock.JournalState.CANONICAL_COMMITTED);
-      }
-      validatedBlocks.add(block);
-    }
-    if (!tokens.isEmpty() || !acknowledgements.isEmpty()) {
-      throw new ArchiveException("UNIFIED_V1 in-flight store has an orphan lifecycle row");
-    }
-    validatedBlocks.forEach(consumer);
+    ArchiveRocksIterators.requireOk(iterator, "loadBlocks: classify UNIFIED_V1 journal keys");
   }
 
-  private static void putToken(Map<Long, ArchiveJournalToken> destination, long blockNum,
-      ArchiveJournalToken token, String kind) {
-    if (token.getBlockNum() != blockNum || destination.put(blockNum, token) != null) {
+  private void scanAlignedBlocks(UnifiedArchiveReadView view,
+      Consumer<ArchiveInFlightBlock> consumer, boolean validatePayload) {
+    byte[] blockPrefix = ArchiveInFlightCodec.blockPrefix();
+    byte[] tokenPrefix = ArchiveInFlightCodec.tokenPrefix();
+    byte[] acknowledgementPrefix = ArchiveInFlightCodec.acknowledgementPrefix();
+    RocksIterator blocks = view.newIterator(UnifiedArchiveColumnFamily.INFLIGHT);
+    RocksIterator tokens = view.newIterator(UnifiedArchiveColumnFamily.INFLIGHT);
+    RocksIterator acknowledgements = view.newIterator(UnifiedArchiveColumnFamily.INFLIGHT);
+    blocks.seek(blockPrefix);
+    tokens.seek(tokenPrefix);
+    acknowledgements.seek(acknowledgementPrefix);
+    while (hasPrefix(blocks, blockPrefix)) {
+      long blockNum = ArchiveInFlightCodec.blockNumOfKey(blocks.key());
+      ArchiveInFlightBlock block = ArchiveInFlightCodec.decodeBlock(blocks.value());
+      if (validatePayload) {
+        validateJournalPayload(blockNum, block);
+      }
+      ArchiveJournalToken token = requireLifecycleToken(tokens, tokenPrefix, blockNum, "token");
+      if (!token.equals(block.getJournalToken())) {
+        throw new ArchiveException("UNIFIED_V1 journal token mismatch for block " + blockNum);
+      }
+      ArchiveJournalToken acknowledgement = optionalAcknowledgement(
+          acknowledgements, acknowledgementPrefix, blockNum);
+      if (acknowledgement != null && !acknowledgement.equals(token)) {
+        throw new ArchiveException(
+            "UNIFIED_V1 acknowledgement token mismatch for block " + blockNum);
+      }
+      if (consumer != null) {
+        if (acknowledgement != null) {
+          block = block.withJournalState(
+              ArchiveInFlightBlock.JournalState.CANONICAL_COMMITTED);
+        }
+        consumer.accept(block);
+      }
+      blocks.next();
+      tokens.next();
+      if (acknowledgement != null) {
+        acknowledgements.next();
+      }
+    }
+    ArchiveRocksIterators.requireOk(blocks, "loadBlocks: scan UNIFIED_V1 payloads");
+    ArchiveRocksIterators.requireOk(tokens, "loadBlocks: scan UNIFIED_V1 tokens");
+    ArchiveRocksIterators.requireOk(
+        acknowledgements, "loadBlocks: scan UNIFIED_V1 acknowledgements");
+    if (hasPrefix(tokens, tokenPrefix) || hasPrefix(acknowledgements, acknowledgementPrefix)) {
+      throw new ArchiveException("UNIFIED_V1 in-flight store has an orphan lifecycle row");
+    }
+  }
+
+  private void validateJournalPayload(long blockNum, ArchiveInFlightBlock block) {
+    ArchiveInFlightValidator.validate(block, catalog, dynamicKeyPolicy);
+    if (block.getRange().getBlockNum() != blockNum) {
+      throw new ArchiveException("archive in-flight block key/value mismatch for block "
+          + blockNum);
+    }
+    if (block.getJournalState() != ArchiveInFlightBlock.JournalState.JOURNALED) {
+      throw new ArchiveException("UNIFIED_V1 journal payload is not immutable JOURNALED "
+          + "state for block " + blockNum);
+    }
+  }
+
+  private static ArchiveJournalToken requireLifecycleToken(RocksIterator iterator,
+      byte[] prefix, long blockNum, String kind) {
+    if (!hasPrefix(iterator, prefix)) {
+      throw new ArchiveException("UNIFIED_V1 journal " + kind
+          + " is missing for block " + blockNum);
+    }
+    long lifecycleBlockNum = ArchiveInFlightCodec.blockNumOfTokenKey(iterator.key());
+    if (lifecycleBlockNum != blockNum) {
       throw new ArchiveException("UNIFIED_V1 journal " + kind
           + " key/value mismatch for block " + blockNum);
     }
+    ArchiveJournalToken token = ArchiveInFlightCodec.decodeAcknowledgement(iterator.value());
+    if (token.getBlockNum() != blockNum) {
+      throw new ArchiveException("UNIFIED_V1 journal " + kind
+          + " key/value mismatch for block " + blockNum);
+    }
+    return token;
+  }
+
+  private static ArchiveJournalToken optionalAcknowledgement(RocksIterator iterator,
+      byte[] prefix, long blockNum) {
+    if (!hasPrefix(iterator, prefix)) {
+      return null;
+    }
+    long acknowledgementBlockNum =
+        ArchiveInFlightCodec.blockNumOfAcknowledgementKey(iterator.key());
+    if (acknowledgementBlockNum < blockNum) {
+      throw new ArchiveException("UNIFIED_V1 in-flight store has an orphan lifecycle row");
+    }
+    if (acknowledgementBlockNum > blockNum) {
+      return null;
+    }
+    ArchiveJournalToken acknowledgement =
+        ArchiveInFlightCodec.decodeAcknowledgement(iterator.value());
+    if (acknowledgement.getBlockNum() != blockNum) {
+      throw new ArchiveException(
+          "UNIFIED_V1 journal acknowledgement key/value mismatch for block " + blockNum);
+    }
+    return acknowledgement;
+  }
+
+  private static boolean hasPrefix(RocksIterator iterator, byte[] prefix) {
+    return iterator.isValid() && ArchiveInFlightCodec.startsWith(iterator.key(), prefix);
   }
 
   @Override

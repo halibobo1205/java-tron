@@ -337,6 +337,7 @@ public class StorageConfig {
       private static final long DEFAULT_MAX_BACKEND_READS = 100_000L;
       private static final long DEFAULT_MAX_TRACE_STEPS = 1_000_000L;
       private static final long DEFAULT_MAX_TRACE_BYTES = 64L * 1024 * 1024;
+      private static final long DEFAULT_MAX_RETAINED_TRACE_BYTES = 256L * 1024 * 1024;
       private static final long DEFAULT_MAX_TRACE_RESPONSE_BYTES = 24L * 1024 * 1024;
 
       private long maxConcurrentQueries = DEFAULT_MAX_CONCURRENT_QUERIES;
@@ -352,6 +353,7 @@ public class StorageConfig {
       private long maxCachedBytes = 4L * 1024 * 1024;
       private long maxTraceSteps = DEFAULT_MAX_TRACE_STEPS;
       private long maxTraceBytes = DEFAULT_MAX_TRACE_BYTES;
+      private long maxRetainedTraceBytes = DEFAULT_MAX_RETAINED_TRACE_BYTES;
       private long maxTraceResponseBytes = DEFAULT_MAX_TRACE_RESPONSE_BYTES;
 
       void postProcess() {
@@ -370,6 +372,7 @@ public class StorageConfig {
         requireNonNegative("maxCachedBytes", maxCachedBytes);
         requireNonNegativeOrUnlimited("maxTraceSteps", maxTraceSteps);
         requireNonNegativeOrUnlimited("maxTraceBytes", maxTraceBytes);
+        requireNonNegativeOrUnlimited("maxRetainedTraceBytes", maxRetainedTraceBytes);
         requireNonNegativeOrUnlimited("maxTraceResponseBytes", maxTraceResponseBytes);
       }
 
@@ -476,7 +479,7 @@ public class StorageConfig {
           "maxQueriesPerBatch", "batchDeadlineMs",
           "maxOpenSnapshots", "maxLogicalReadsPerRequest", "maxBackendReadsPerRequest",
           "maxCachedEntries", "maxCachedBytes", "maxTraceSteps", "maxTraceBytes",
-          "maxTraceResponseBytes");
+          "maxRetainedTraceBytes", "maxTraceResponseBytes");
     }
     if (archive.hasPath("identity")) {
       requireOnlyKeys("storage.archive.identity", archive.getConfig("identity").root(),

@@ -27,6 +27,7 @@ public final class ArchiveQueryLimits {
   private final long maxCachedBytes;
   private final long maxVmSteps;
   private final long maxTraceBytes;
+  private final long maxRetainedTraceBytes;
   private final long maxResponseBytes;
 
   /** Creates the compatibility default: unlimited resources with fail-fast permit acquisition. */
@@ -56,6 +57,7 @@ public final class ArchiveQueryLimits {
         .maxBackendReadsPerRequest(maxBackendReadsPerRequest)
         .maxVmSteps(maxVmSteps)
         .maxTraceBytes(maxTraceBytes)
+        .maxRetainedTraceBytes(UNLIMITED)
         .maxResponseBytes(maxResponseBytes));
   }
 
@@ -81,6 +83,8 @@ public final class ArchiveQueryLimits {
     maxCachedBytes = requireNonNegative("maxCachedBytes", builder.maxCachedBytes);
     maxVmSteps = requireNonNegativeOrUnlimited("maxVmSteps", builder.maxVmSteps);
     maxTraceBytes = requireNonNegativeOrUnlimited("maxTraceBytes", builder.maxTraceBytes);
+    maxRetainedTraceBytes = requireNonNegativeOrUnlimited(
+        "maxRetainedTraceBytes", builder.maxRetainedTraceBytes);
     maxResponseBytes = requireNonNegativeOrUnlimited(
         "maxResponseBytes", builder.maxResponseBytes);
   }
@@ -169,6 +173,10 @@ public final class ArchiveQueryLimits {
     return maxTraceBytes;
   }
 
+  public long getMaxRetainedTraceBytes() {
+    return maxRetainedTraceBytes;
+  }
+
   public long getMaxResponseBytes() {
     return maxResponseBytes;
   }
@@ -203,6 +211,7 @@ public final class ArchiveQueryLimits {
         && maxCachedBytes == that.maxCachedBytes
         && maxVmSteps == that.maxVmSteps
         && maxTraceBytes == that.maxTraceBytes
+        && maxRetainedTraceBytes == that.maxRetainedTraceBytes
         && maxResponseBytes == that.maxResponseBytes;
   }
 
@@ -222,6 +231,7 @@ public final class ArchiveQueryLimits {
         maxCachedBytes,
         maxVmSteps,
         maxTraceBytes,
+        maxRetainedTraceBytes,
         maxResponseBytes);
   }
 
@@ -241,6 +251,7 @@ public final class ArchiveQueryLimits {
         + ", maxCachedBytes=" + maxCachedBytes
         + ", maxVmSteps=" + maxVmSteps
         + ", maxTraceBytes=" + maxTraceBytes
+        + ", maxRetainedTraceBytes=" + maxRetainedTraceBytes
         + ", maxResponseBytes=" + maxResponseBytes
         + '}';
   }
@@ -289,6 +300,7 @@ public final class ArchiveQueryLimits {
     private long maxCachedBytes = DEFAULT_MAX_CACHED_BYTES;
     private long maxVmSteps = UNLIMITED;
     private long maxTraceBytes = UNLIMITED;
+    private long maxRetainedTraceBytes = UNLIMITED;
     private long maxResponseBytes = UNLIMITED;
 
     public Builder() {
@@ -308,6 +320,7 @@ public final class ArchiveQueryLimits {
       maxCachedBytes = limits.maxCachedBytes;
       maxVmSteps = limits.maxVmSteps;
       maxTraceBytes = limits.maxTraceBytes;
+      maxRetainedTraceBytes = limits.maxRetainedTraceBytes;
       maxResponseBytes = limits.maxResponseBytes;
     }
 
@@ -393,6 +406,11 @@ public final class ArchiveQueryLimits {
 
     public Builder maxTraceBytes(long value) {
       maxTraceBytes = value;
+      return this;
+    }
+
+    public Builder maxRetainedTraceBytes(long value) {
+      maxRetainedTraceBytes = value;
       return this;
     }
 

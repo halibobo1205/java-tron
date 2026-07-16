@@ -8,7 +8,11 @@ import org.tron.core.archive.unified.UnifiedArchiveDb;
 import org.tron.core.archive.unified.UnifiedArchivePublish;
 import org.tron.core.archive.unified.UnifiedArchiveReadView;
 
-/** Coordinates UNIFIED_V1 atomic publication and shared-snapshot reads across typed adapters. */
+/**
+ * Coordinates UNIFIED_V1 atomic publication and shared-snapshot reads across typed adapters.
+ * Resource closure remains owned by {@link UnifiedArchiveTxNumIndex}, which closes the shared DB
+ * after the in-flight and temporal adapters have completed their no-op closes.
+ */
 public final class UnifiedArchiveBackend {
 
   private final UnifiedArchiveDb db;

@@ -230,9 +230,18 @@ public class DynamicKeyPolicyTest {
 
   @Test
   public void migrationMarkersAndStatisticsAreExcluded() {
-    DynamicKeyDecision done = decide("ABI_MOVE_DONE");
-    assertEquals(RootPolicy.EXCLUDED, done.getRootPolicy());
-    assertEquals(DynamicKeyClass.MIGRATION_MARKER, done.getKeyClass());
+    for (String key : new String[] {
+        "ABI_MOVE_DONE",
+        "TOKEN_UPDATE_DONE",
+        "ENERGY_PRICE_HISTORY_DONE",
+        "BANDWIDTH_PRICE_HISTORY_DONE",
+        "TURKISH_KEY_MIGRATION_DONE"}) {
+      DynamicKeyDecision done = decide(key);
+      assertEquals(RootPolicy.EXCLUDED, done.getRootPolicy());
+      assertEquals(HistoryPolicy.NO_ARCHIVE, done.getHistoryPolicy());
+      assertEquals(ReaderPolicy.INTERNAL_ONLY, done.getReaderPolicy());
+      assertEquals(DynamicKeyClass.MIGRATION_MARKER, done.getKeyClass());
+    }
     DynamicKeyDecision stateFlag = decide("state_flag");
     assertEquals(RootPolicy.EXCLUDED, stateFlag.getRootPolicy());
     assertEquals(HistoryPolicy.NO_ARCHIVE, stateFlag.getHistoryPolicy());

@@ -98,7 +98,15 @@ Alert on:
   `tron:archive_state{type="oldest_inflight_block"}` remains fixed.
 - `tron:archive_state{type="disk_free_bytes"} < hardMinFreeBytes` or
   `tron:archive_state{type="active_snapshots"}` pinned at `maxOpenSnapshots`.
+- `tron:archive_state{type="retained_trace_bytes"}` approaching
+  `storage.archive.query.maxRetainedTraceBytes`.
+- `tron:archive_state{type="rocksdb_pending_compaction_bytes"}` rising without recovery, or a
+  sustained increase in `tron:archive_work_total{type="rocksdb_stall_micros"}`.
 - `tron:archive_queries_total` failure/rejection labels spiking.
+
+Track `rocksdb_bloom_filter_useful`, `rocksdb_block_cache_hit`, and
+`rocksdb_block_cache_miss` as rates over the same interval. They are measurement inputs for cache
+and compaction sizing, not pass criteria by themselves.
 
 Derive catch-up from counters over the same window; do not compare cumulative totals:
 ```

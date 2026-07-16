@@ -29,7 +29,7 @@ import org.tron.core.db2.common.WrappedByteArray;
  * (domain, key) it keeps a txNum-ordered map of pre-change values (history) plus the latest value.
  * {@code getAsOf} is a forward {@code higherEntry} (first change after txNum) with fall-to-latest,
  * and {@code latest} a direct lookup. Not persistent and not pruned -- it defines the temporal
- * contract; the RocksDB implementation supersedes it for real nodes and must stay identical.
+ * contract; the UNIFIED_V1 temporal adapter is used by enabled nodes and must stay identical.
  *
  * <p>Single-writer: fed from the block-apply thread (the capture buffer drained at commit). Reads
  * may run concurrently; callers needing that should wrap or use the persistent implementation.

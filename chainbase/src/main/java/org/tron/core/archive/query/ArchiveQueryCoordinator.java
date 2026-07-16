@@ -3,6 +3,7 @@ package org.tron.core.archive.query;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 import org.tron.core.archive.ArchiveMetrics;
@@ -12,6 +13,9 @@ import org.tron.core.archive.ArchiveMetrics;
  * Admission is acquired before any archive consistency lock.
  */
 public final class ArchiveQueryCoordinator implements AutoCloseable {
+
+  private static final long RETAINED_TRACE_METRIC_BUCKETS = 256L;
+  private static final long MAX_RETAINED_TRACE_METRIC_STEP_BYTES = 1024L * 1024L;
 
   public enum State {
     RUNNING,
@@ -23,6 +27,9 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
   private final ReentrantLock lock = new ReentrantLock(true);
   private final Condition drained = lock.newCondition();
   private final Deque<Waiter> waiters = new ArrayDeque<>();
+  private final AtomicLong retainedTraceBytes = new AtomicLong();
+  private final long retainedTraceMetricStepBytes;
+  private final Object retainedTraceMetricMonitor = new Object();
 
   private State state = State.RUNNING;
   private long activeLeases;
@@ -38,7 +45,10 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
       throw new NullPointerException("limits");
     }
     this.limits = limits;
+    retainedTraceMetricStepBytes =
+        retainedTraceMetricStep(limits.getMaxRetainedTraceBytes());
     ArchiveMetrics.setQueryAdmission(0L, 0L);
+    ArchiveMetrics.setRetainedTraceBytes(0L);
   }
 
   public ArchiveQueryLimits getLimits() {
@@ -267,6 +277,10 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
     return getPendingQueryCount();
   }
 
+  public long getRetainedTraceBytes() {
+    return retainedTraceBytes.get();
+  }
+
   public boolean isFair() {
     return lock.isFair();
   }
@@ -291,6 +305,7 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
   }
 
   void releaseLease(QueryContext context) {
+    long releasedTraceBytes = context.drainRetainedTraceBytes();
     lock.lock();
     try {
       if (activeLeases <= 0) {
@@ -308,6 +323,7 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
     } finally {
       lock.unlock();
     }
+    releaseTraceBytes(releasedTraceBytes);
     ArchiveMetrics.queryFinished(context);
   }
 
@@ -337,7 +353,8 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
         ArchiveQueryRequestScope.deadlineConstraint(limits);
     activeLeases++;
     try {
-      QueryLease lease = new QueryLease(this, new QueryContext(limits, batchDeadline));
+      QueryLease lease = new QueryLease(
+          this, new QueryContext(limits, batchDeadline, this::reserveTraceBytes));
       ArchiveMetrics.setQueryAdmission(activeLeases, waiters.size());
       return lease;
     } catch (RuntimeException e) {
@@ -386,6 +403,60 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
       return requestedNanos;
     }
     return remainingNanos >= requestedNanos ? 0L : requestedNanos - remainingNanos;
+  }
+
+  private void reserveTraceBytes(long bytes) {
+    if (bytes == 0L) {
+      return;
+    }
+    while (true) {
+      long current = retainedTraceBytes.get();
+      long updated = current > Long.MAX_VALUE - bytes ? Long.MAX_VALUE : current + bytes;
+      long maximum = limits.getMaxRetainedTraceBytes();
+      if (!ArchiveQueryLimits.isUnlimited(maximum) && updated > maximum) {
+        publishRetainedTraceMetric();
+        throw HistoricalQueryLimitException.budgetExceeded(
+            HistoricalQueryLimitException.Limit.RETAINED_TRACE_BYTES, maximum, updated);
+      }
+      if (retainedTraceBytes.compareAndSet(current, updated)) {
+        if (current / retainedTraceMetricStepBytes
+            != updated / retainedTraceMetricStepBytes) {
+          publishRetainedTraceMetric();
+        }
+        return;
+      }
+    }
+  }
+
+  private void releaseTraceBytes(long bytes) {
+    if (bytes == 0L) {
+      return;
+    }
+    while (true) {
+      long current = retainedTraceBytes.get();
+      if (bytes > current) {
+        throw new IllegalStateException("retained trace byte accounting underflow");
+      }
+      long updated = current - bytes;
+      if (retainedTraceBytes.compareAndSet(current, updated)) {
+        publishRetainedTraceMetric();
+        return;
+      }
+    }
+  }
+
+  static long retainedTraceMetricStep(long maximum) {
+    if (ArchiveQueryLimits.isUnlimited(maximum)) {
+      return MAX_RETAINED_TRACE_METRIC_STEP_BYTES;
+    }
+    long proportional = Math.max(1L, maximum / RETAINED_TRACE_METRIC_BUCKETS);
+    return Math.min(MAX_RETAINED_TRACE_METRIC_STEP_BYTES, proportional);
+  }
+
+  private void publishRetainedTraceMetric() {
+    synchronized (retainedTraceMetricMonitor) {
+      ArchiveMetrics.setRetainedTraceBytes(retainedTraceBytes.get());
+    }
   }
 
   private void removeWaiter(Waiter waiter) {
