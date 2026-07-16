@@ -323,6 +323,36 @@ public class ArchiveTxNumIndexTest {
   }
 
   @Test
+  public void allocatorAllowsTerminalCursorButNeverWraps() {
+    InMemoryArchiveTxNumIndex idx = new InMemoryArchiveTxNumIndex(Long.MAX_VALUE - 2L);
+    idx.beginBlock(1L, ArchiveSource.NORMAL);
+    assertEquals(Long.MAX_VALUE - 2L,
+        idx.allocateSystemTx(1L, ArchivePhase.BLOCK_PREPARE).getTxNum());
+    assertEquals(Long.MAX_VALUE - 1L,
+        idx.allocateSystemTx(1L, ArchivePhase.BLOCK_FINALIZE).getTxNum());
+
+    ArchiveBlockRange terminal = idx.commitBlock(1L, 0);
+
+    assertEquals(Long.MAX_VALUE - 1L, terminal.getLastTxNum());
+    assertEquals(Long.MAX_VALUE, idx.getNextTxNum());
+    idx.beginBlock(2L, ArchiveSource.NORMAL);
+    ArchiveException exhausted = assertThrows(ArchiveException.class,
+        () -> idx.allocateSystemTx(2L, ArchivePhase.BLOCK_PREPARE));
+    assertTrue(exhausted.getMessage().contains("exhausted"));
+    assertEquals(Long.MAX_VALUE, idx.getNextTxNum());
+  }
+
+  @Test
+  public void reservedMaximumBlockNumberIsRejected() {
+    ArchiveTxNumIndex idx = new InMemoryArchiveTxNumIndex();
+
+    ArchiveException failure = assertThrows(ArchiveException.class,
+        () -> idx.beginBlock(Long.MAX_VALUE, ArchiveSource.NORMAL));
+
+    assertTrue(failure.getMessage().contains("maximum"));
+  }
+
+  @Test
   public void negativeReadCoordinatesRejected() {
     ArchiveTxNumIndex idx = new InMemoryArchiveTxNumIndex();
 

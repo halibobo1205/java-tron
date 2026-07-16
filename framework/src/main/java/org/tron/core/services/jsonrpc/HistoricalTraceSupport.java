@@ -25,8 +25,6 @@ import org.tron.core.exception.jsonrpc.JsonRpcInvalidParamsException;
 import org.tron.core.exception.jsonrpc.JsonRpcInvalidRequestException;
 import org.tron.core.services.jsonrpc.types.StructLog;
 import org.tron.core.services.jsonrpc.types.TraceResult;
-import org.tron.core.store.DynamicPropertiesStore;
-import org.tron.core.store.StoreFactory;
 import org.tron.core.store.VmDynamicProperties;
 import org.tron.core.vm.archive.HistoricalTraceCallExecutor;
 import org.tron.core.vm.archive.HistoricalTraceCallResult;
@@ -391,15 +389,12 @@ public final class HistoricalTraceSupport {
   private TraceResult runTrace(BlockCapsule historicalBlock, ArchiveStateReader reader,
       TransactionCapsule trxCap, boolean useConstantEnergyCap, String label, long gasOverride)
       throws JsonRpcInvalidRequestException, JsonRpcInternalException {
-    DynamicPropertiesStore latestStore =
-        StoreFactory.getInstance().getChainBaseManager().getDynamicPropertiesStore();
-
     try {
       boolean genesisComplete = reader.isGenesisComplete();
       long historicalEnergyFee =
           HistoricalArchiveVmDynamicProperties.resolveEnergyFee(reader, genesisComplete);
       VmDynamicProperties vmProperties = new HistoricalArchiveVmDynamicProperties(
-          latestStore, historicalEnergyFee, reader, genesisComplete);
+          historicalEnergyFee, reader, genesisComplete);
       HistoricalTraceCallResult result = new HistoricalTraceCallExecutor()
           .execute(reader, vmProperties, historicalBlock, trxCap, genesisComplete,
               useConstantEnergyCap);

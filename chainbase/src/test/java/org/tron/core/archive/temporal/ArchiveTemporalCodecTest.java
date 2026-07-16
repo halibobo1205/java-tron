@@ -135,6 +135,22 @@ public class ArchiveTemporalCodecTest {
   }
 
   @Test
+  public void reservedMaximumCoordinatesAreSeekOnlyAndNeverDecodeAsRows() {
+    byte[] key = {7};
+
+    assertThrows(ArchiveException.class,
+        () -> ArchiveTemporalCodec.changesetKey(
+            Long.MAX_VALUE, ArchiveDomain.ACCOUNT, key));
+    assertThrows(ArchiveException.class,
+        () -> ArchiveTemporalCodec.txNumOfHistory(rawHistoryKey(Long.MAX_VALUE)));
+    assertThrows(ArchiveException.class,
+        () -> ArchiveTemporalCodec.txNumOfChangeset(rawChangesetKey(Long.MAX_VALUE)));
+    assertThrows(ArchiveException.class,
+        () -> ArchiveTemporalCodec.blockNumOfBlockCommitKey(
+            ArchiveTemporalCodec.blockCommitKey(Long.MAX_VALUE)));
+  }
+
+  @Test
   public void unknownDomainIdsAreRejected() {
     assertThrows(ArchiveException.class,
         () -> ArchiveTemporalCodec.historyPrefixOfLatest(rawLatestKey(0x7fff)));

@@ -3,6 +3,8 @@ package org.tron.core.archive.reader;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNotSame;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -275,6 +277,77 @@ public class DefaultArchiveStateReaderTest {
     reader.close();
     reader.close();
     assertEquals(1, closes.get());
+  }
+
+  @Test
+  public void decodedProtoMemoReusesImmutableMessagesAndIsolatesMutableCapsules()
+      throws Exception {
+    byte[] address = addr(1);
+    put(ArchiveDomain.ACCOUNT, address, DomainValue.present(account(100L)), 5L);
+    put(ArchiveDomain.CONTRACT, address, DomainValue.present(contract(2)), 5L);
+    byte[] contractState = ContractState.newBuilder()
+        .setEnergyUsage(7L)
+        .build()
+        .toByteArray();
+    put(ArchiveDomain.CONTRACT_STATE, address, DomainValue.present(contractState), 5L);
+    ArchiveStateReader reader = readerAt(5L);
+
+    AccountCapsule firstAccount = reader.getAccount(address).getValue();
+    Account originalAccount = firstAccount.getInstance();
+    firstAccount.setBalance(999L);
+    AccountCapsule secondAccount = reader.getAccount(address).getValue();
+    assertNotSame(firstAccount, secondAccount);
+    assertSame(originalAccount, secondAccount.getInstance());
+    assertEquals(100L, secondAccount.getBalance());
+
+    org.tron.core.capsule.ContractCapsule firstContract =
+        reader.getContract(address).getValue();
+    org.tron.core.capsule.ContractCapsule secondContract =
+        reader.getContract(address).getValue();
+    assertNotSame(firstContract, secondContract);
+    assertSame(firstContract.getInstance(), secondContract.getInstance());
+
+    ContractStateCapsule firstState = reader.getContractState(address).getValue();
+    ContractStateCapsule secondState = reader.getContractState(address).getValue();
+    assertNotSame(firstState, secondState);
+    assertSame(firstState.getInstance(), secondState.getInstance());
+    reader.close();
+  }
+
+  @Test
+  public void closeRunsReleaseCallbackAfterViewErrorAndPreservesPrimaryFailure() {
+    AssertionError viewFailure = new AssertionError("view close failed");
+    AssertionError releaseFailure = new AssertionError("release failed");
+    AtomicInteger releases = new AtomicInteger();
+    ArchiveTemporalReadView view = new ArchiveTemporalReadView() {
+      @Override
+      public Optional<DomainValue> getAsOf(ArchiveDomain domain, byte[] canonicalKey, long txNum) {
+        return Optional.empty();
+      }
+
+      @Override
+      public Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey) {
+        return Optional.empty();
+      }
+
+      @Override
+      public void close() {
+        throw viewFailure;
+      }
+    };
+    DefaultArchiveStateReader reader = new DefaultArchiveStateReader(
+        view, catalog, ArchiveStatePoint.blockEnd(1, new byte[] {1}, 5),
+        ArchiveReadThrough.NONE, () -> {
+          releases.incrementAndGet();
+          throw releaseFailure;
+        });
+
+    AssertionError thrown = assertThrows(AssertionError.class, reader::close);
+
+    assertSame(viewFailure, thrown);
+    assertEquals(1, releases.get());
+    assertEquals(1, thrown.getSuppressed().length);
+    assertSame(releaseFailure, thrown.getSuppressed()[0]);
   }
 
   @Test

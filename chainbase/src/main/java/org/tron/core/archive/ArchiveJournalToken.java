@@ -4,6 +4,7 @@ import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.UUID;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
+import org.tron.core.archive.txnum.ArchiveCoordinates;
 
 /** Identity of one durable in-flight journal generation. */
 public final class ArchiveJournalToken {
@@ -17,9 +18,7 @@ public final class ArchiveJournalToken {
 
   public ArchiveJournalToken(long blockNum, byte[] blockHash, byte[] generationNonce,
       byte[] schemaChecksum) {
-    if (blockNum < 0) {
-      throw new ArchiveException("archive journal block number must be non-negative");
-    }
+    ArchiveCoordinates.requireBlockNum(blockNum, "archive journal block number");
     requireLength(blockHash, ArchiveBlockRange.BLOCK_HASH_LENGTH, "block hash");
     requireLength(generationNonce, GENERATION_NONCE_LENGTH, "generation nonce");
     requireLength(schemaChecksum, ArchiveBlockRange.SCHEMA_CHECKSUM_LENGTH, "schema checksum");
