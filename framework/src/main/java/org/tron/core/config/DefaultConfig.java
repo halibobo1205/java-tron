@@ -24,6 +24,7 @@ import org.tron.core.config.args.Args;
 import org.tron.core.config.args.StorageConfig;
 import org.tron.core.db.RevokingDatabase;
 import org.tron.core.db2.core.SnapshotManager;
+import org.tron.core.exception.TronError;
 import org.tron.core.services.interfaceOnPBFT.RpcApiServiceOnPBFT;
 import org.tron.core.services.interfaceOnPBFT.http.PBFT.HttpApiOnPBFTService;
 import org.tron.core.services.interfaceOnSolidity.RpcApiServiceOnSolidity;
@@ -56,6 +57,17 @@ public class DefaultConfig {
     if (archive == null || !archive.isEnable()) {
       return ArchiveServiceFactory.create(archive); // disabled: no db path to resolve
     }
+    try {
+      return createEnabledArchiveService(chainBaseManager, parameter, archive);
+    } catch (RuntimeException failure) {
+      throw new TronError(
+          "fatal archive sidecar initialization failure",
+          failure, TronError.ErrCode.ARCHIVE_RUNTIME);
+    }
+  }
+
+  private ArchiveService createEnabledArchiveService(ChainBaseManager chainBaseManager,
+      CommonParameter parameter, StorageConfig.ArchiveConfig archive) {
     if (Args.getInstance().isSolidityNode()) {
       throw new ArchiveException("storage.archive.enable is not supported on SolidityNode");
     }

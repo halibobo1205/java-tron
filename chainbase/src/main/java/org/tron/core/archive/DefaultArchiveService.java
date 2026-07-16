@@ -1941,9 +1941,12 @@ public final class DefaultArchiveService implements ArchiveService {
     if (unifiedBackend != null || genesisComplete) {
       try {
         snapshotPermit = queryCoordinator.acquireSnapshot(queryLease);
-      } catch (RuntimeException e) {
+      } catch (RuntimeException | Error e) {
         queryContext.recordFailure(e);
         closeAndSuppress(queryLease, e);
+        if (e instanceof Error) {
+          throw (Error) e;
+        }
         validateAvailableForRead();
         throw e;
       }
@@ -1951,12 +1954,15 @@ public final class DefaultArchiveService implements ArchiveService {
     ArchiveWorkLease lifecycleLease;
     try {
       lifecycleLease = lifecycle.acquire(ArchiveLifecycle.WorkType.QUERY);
-    } catch (RuntimeException e) {
+    } catch (RuntimeException | Error e) {
       queryContext.recordFailure(e);
       if (snapshotPermit != null) {
         closeAndSuppress(snapshotPermit, e);
       }
       closeAndSuppress(queryLease, e);
+      if (e instanceof Error) {
+        throw (Error) e;
+      }
       validateAvailableForRead();
       throw new ArchiveReaderException(ArchiveReaderException.Reason.INTERNAL_IO,
           e.getMessage() == null ? "archive query admission failed" : e.getMessage(), e);
