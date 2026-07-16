@@ -18,6 +18,16 @@ import org.junit.Test;
 public class ArchiveQueryCoordinatorTest {
 
   @Test
+  public void retainedTraceMetricUsesBoundedProportionalSteps() {
+    assertEquals(1, ArchiveQueryCoordinator.retainedTraceMetricStep(0));
+    assertEquals(1, ArchiveQueryCoordinator.retainedTraceMetricStep(10));
+    assertEquals(1024L * 1024L,
+        ArchiveQueryCoordinator.retainedTraceMetricStep(256L * 1024L * 1024L));
+    assertEquals(1024L * 1024L,
+        ArchiveQueryCoordinator.retainedTraceMetricStep(ArchiveQueryLimits.UNLIMITED));
+  }
+
+  @Test
   public void unlimitedCoordinatorStillTracksEveryActiveLease() {
     ArchiveQueryCoordinator coordinator = new ArchiveQueryCoordinator();
 
@@ -125,6 +135,59 @@ public class ArchiveQueryCoordinatorTest {
     assertEquals(0, coordinator.getActiveSnapshotCount());
     assertEquals(0, coordinator.getActiveLeaseCount());
     assertTrue(coordinator.awaitDrained(1, TimeUnit.SECONDS));
+  }
+
+  @Test
+  public void retainedTraceBudgetIsSharedAndReleasedExactlyOnce() {
+    ArchiveQueryCoordinator coordinator = new ArchiveQueryCoordinator(
+        ArchiveQueryLimits.builder()
+            .maxConcurrentQueries(3)
+            .maxTraceBytes(10)
+            .maxRetainedTraceBytes(10)
+            .build());
+    QueryLease first = coordinator.acquire();
+    QueryLease second = coordinator.acquire();
+
+    first.getContext().recordTraceBytes(7);
+    second.getContext().recordTraceBytes(3);
+    assertEquals(10, coordinator.getRetainedTraceBytes());
+
+    HistoricalQueryLimitException failure = assertThrows(
+        HistoricalQueryLimitException.class,
+        () -> second.getContext().recordTraceBytes(1));
+    assertEquals(HistoricalQueryLimitException.Limit.RETAINED_TRACE_BYTES,
+        failure.getLimit());
+    assertEquals(10, failure.getConfiguredLimit());
+    assertEquals(11, failure.getObserved());
+    assertEquals(10, coordinator.getRetainedTraceBytes());
+
+    second.close();
+    second.close();
+    assertEquals(7, coordinator.getRetainedTraceBytes());
+    try (QueryLease replacement = coordinator.acquire()) {
+      replacement.getContext().recordTraceBytes(3);
+      assertEquals(10, coordinator.getRetainedTraceBytes());
+    }
+    assertEquals(7, coordinator.getRetainedTraceBytes());
+    first.close();
+    assertEquals(0, coordinator.getRetainedTraceBytes());
+  }
+
+  @Test
+  public void retainedTraceReservationLivesUntilLastSnapshotReleasesLease() {
+    ArchiveQueryCoordinator coordinator = new ArchiveQueryCoordinator(
+        ArchiveQueryLimits.builder().maxRetainedTraceBytes(10).build());
+    QueryLease query = coordinator.acquire();
+    ArchiveSnapshotPermit snapshot = coordinator.acquireSnapshot(query);
+    query.getContext().recordTraceBytes(6);
+
+    query.close();
+
+    assertEquals(6, coordinator.getRetainedTraceBytes());
+    assertEquals(1, coordinator.getActiveLeaseCount());
+    snapshot.close();
+    assertEquals(0, coordinator.getRetainedTraceBytes());
+    assertEquals(0, coordinator.getActiveLeaseCount());
   }
 
   @Test

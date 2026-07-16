@@ -7,7 +7,13 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import org.rocksdb.BlockBasedTableConfig;
+import org.rocksdb.BloomFilter;
 import org.rocksdb.ColumnFamilyDescriptor;
 import org.rocksdb.ColumnFamilyHandle;
 import org.rocksdb.ColumnFamilyOptions;
@@ -18,9 +24,16 @@ import org.rocksdb.RocksDB;
 import org.rocksdb.RocksDBException;
 import org.rocksdb.RocksIterator;
 import org.rocksdb.Snapshot;
+import org.rocksdb.Statistics;
+import org.rocksdb.StatsLevel;
+import org.rocksdb.TableFormatConfig;
+import org.rocksdb.TickerType;
 import org.rocksdb.WriteBatch;
 import org.rocksdb.WriteOptions;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.tron.core.archive.ArchiveException;
+import org.tron.core.archive.ArchiveMetrics;
 import org.tron.core.archive.ArchiveRocksIterators;
 
 /**
@@ -34,32 +47,56 @@ public final class UnifiedArchiveDb implements AutoCloseable {
   }
 
   private static final BatchWriter ROCKS_BATCH_WRITER = RocksDB::write;
+  private static final Logger logger = LoggerFactory.getLogger("archive");
+  private static final long STATISTICS_SAMPLE_INTERVAL_NANOS = TimeUnit.SECONDS.toNanos(10L);
+  private static final String PENDING_COMPACTION_BYTES =
+      "rocksdb.estimate-pending-compaction-bytes";
+  private static final String RUNNING_COMPACTIONS = "rocksdb.num-running-compactions";
+  private static final String RUNNING_FLUSHES = "rocksdb.num-running-flushes";
+  private static final TickerMetric[] TICKER_METRICS = {
+      new TickerMetric(TickerType.STALL_MICROS, "rocksdb_stall_micros"),
+      new TickerMetric(TickerType.BLOOM_FILTER_USEFUL, "rocksdb_bloom_filter_useful"),
+      new TickerMetric(TickerType.BLOCK_CACHE_HIT, "rocksdb_block_cache_hit"),
+      new TickerMetric(TickerType.BLOCK_CACHE_MISS, "rocksdb_block_cache_miss"),
+      new TickerMetric(TickerType.COMPACT_READ_BYTES, "rocksdb_compact_read_bytes"),
+      new TickerMetric(TickerType.COMPACT_WRITE_BYTES, "rocksdb_compact_write_bytes"),
+      new TickerMetric(TickerType.FLUSH_WRITE_BYTES, "rocksdb_flush_write_bytes")
+  };
 
   private final Path path;
   private final byte[] schemaChecksum;
   private final DBOptions dbOptions;
   private final List<ColumnFamilyOptions> columnFamilyOptions;
+  private final List<BloomFilter> bloomFilters;
   private final List<ColumnFamilyHandle> allHandles;
   private final ColumnFamilyHandle defaultHandle;
   private final EnumMap<UnifiedArchiveColumnFamily, ColumnFamilyHandle> handles;
   private final RocksDB db;
   private final BatchWriter batchWriter;
+  private final Statistics statistics;
+  private final EnumMap<TickerType, Long> lastTickerCounts = new EnumMap<>(TickerType.class);
+  private final Set<String> disabledStatisticsProperties = new HashSet<>();
+  private final AtomicBoolean statisticsFailureReported = new AtomicBoolean();
 
   private boolean closed;
   private int activeReadViews;
+  private long lastStatisticsSampleNanos = Long.MIN_VALUE;
 
   private UnifiedArchiveDb(Path path, byte[] schemaChecksum, DBOptions dbOptions,
-      List<ColumnFamilyOptions> columnFamilyOptions, List<ColumnFamilyHandle> allHandles,
-      RocksDB db, BatchWriter batchWriter) throws RocksDBException {
+      List<ColumnFamilyOptions> columnFamilyOptions, List<BloomFilter> bloomFilters,
+      List<ColumnFamilyHandle> allHandles, RocksDB db, BatchWriter batchWriter,
+      Statistics statistics) throws RocksDBException {
     this.path = path;
     this.schemaChecksum = Arrays.copyOf(schemaChecksum, schemaChecksum.length);
     this.dbOptions = dbOptions;
     this.columnFamilyOptions = columnFamilyOptions;
+    this.bloomFilters = bloomFilters;
     this.allHandles = allHandles;
     this.defaultHandle = allHandles.get(0);
     this.handles = mapHandles(allHandles);
     this.db = db;
     this.batchWriter = batchWriter;
+    this.statistics = statistics;
   }
 
   /** Explicitly creates a new unified DB. The target itself must not already exist. */
@@ -303,6 +340,7 @@ public final class UnifiedArchiveDb implements AutoCloseable {
         }
       }
       batchWriter.write(db, writeOptions, batch);
+      maybeReportStatistics();
     } catch (RocksDBException e) {
       throw new ArchiveException("UNIFIED_V1 maintenance batch failed", e);
     }
@@ -343,6 +381,7 @@ public final class UnifiedArchiveDb implements AutoCloseable {
         batch.delete(handle(UnifiedArchiveColumnFamily.INFLIGHT), publish.acknowledgementKey());
         batchWriter.write(db, writeOptions, batch);
       }
+      maybeReportStatistics();
     } catch (RocksDBException e) {
       throw new ArchiveException("UNIFIED_V1 atomic block publish failed", e);
     }
@@ -350,11 +389,23 @@ public final class UnifiedArchiveDb implements AutoCloseable {
 
   /** Captures meta, inflight, index, temporal, marker, and commitment at one sequence number. */
   public synchronized UnifiedArchiveReadView openReadView() {
+    return openReadView(true);
+  }
+
+  /**
+   * Captures one sequence for validation and maintenance scans without admitting scanned blocks
+   * into the point-read cache.
+   */
+  public synchronized UnifiedArchiveReadView openScanView() {
+    return openReadView(false);
+  }
+
+  private UnifiedArchiveReadView openReadView(boolean fillCache) {
     requireOpen();
     Snapshot snapshot = db.getSnapshot();
     ReadOptions readOptions = null;
     try {
-      readOptions = new ReadOptions().setSnapshot(snapshot);
+      readOptions = new ReadOptions().setSnapshot(snapshot).setFillCache(fillCache);
       UnifiedArchiveReadView view = new UnifiedArchiveReadView(
           db, handles, snapshot, readOptions, this::releaseReadView);
       activeReadViews++;
@@ -379,21 +430,23 @@ public final class UnifiedArchiveDb implements AutoCloseable {
   /** True when any archive payload row beyond the immutable manifest is present. */
   public synchronized boolean hasArchiveData() {
     requireOpen();
-    for (UnifiedArchiveColumnFamily columnFamily : UnifiedArchiveColumnFamily.values()) {
-      try (RocksIterator iterator = db.newIterator(handle(columnFamily))) {
-        iterator.seekToFirst();
-        while (iterator.isValid()) {
-          if (columnFamily != UnifiedArchiveColumnFamily.META
-              || !Arrays.equals(iterator.key(), UnifiedArchiveManifest.key())) {
-            return true;
+    try (ReadOptions readOptions = new ReadOptions().setFillCache(false)) {
+      for (UnifiedArchiveColumnFamily columnFamily : UnifiedArchiveColumnFamily.values()) {
+        try (RocksIterator iterator = db.newIterator(handle(columnFamily), readOptions)) {
+          iterator.seekToFirst();
+          while (iterator.isValid()) {
+            if (columnFamily != UnifiedArchiveColumnFamily.META
+                || !Arrays.equals(iterator.key(), UnifiedArchiveManifest.key())) {
+              return true;
+            }
+            iterator.next();
           }
-          iterator.next();
+          ArchiveRocksIterators.requireOk(iterator,
+              "UNIFIED_V1 scan for archive payload in " + columnFamily.getName());
         }
-        ArchiveRocksIterators.requireOk(iterator,
-            "UNIFIED_V1 scan for archive payload in " + columnFamily.getName());
       }
+      return false;
     }
-    return false;
   }
 
   @Override
@@ -405,8 +458,36 @@ public final class UnifiedArchiveDb implements AutoCloseable {
       throw new ArchiveException("UNIFIED_V1 DB has active snapshot read views: "
           + activeReadViews);
     }
+    maybeReportStatistics();
     closed = true;
-    closeResources(allHandles, db, columnFamilyOptions, dbOptions);
+    closeResources(allHandles, db, columnFamilyOptions, bloomFilters, dbOptions, statistics);
+  }
+
+  int ownedBloomFilterCount() {
+    return bloomFilters.size();
+  }
+
+  boolean usesEvictableIndexAndFilterCache() {
+    for (ColumnFamilyOptions options : columnFamilyOptions) {
+      TableFormatConfig tableFormatConfig = options.tableFormatConfig();
+      if (!(tableFormatConfig instanceof BlockBasedTableConfig)) {
+        return false;
+      }
+      BlockBasedTableConfig tableConfig = (BlockBasedTableConfig) tableFormatConfig;
+      if (!tableConfig.cacheIndexAndFilterBlocks()
+          || tableConfig.pinL0FilterAndIndexBlocksInCache()) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  boolean hasStatistics() {
+    return statistics != null;
+  }
+
+  StatsLevel statisticsLevel() {
+    return statistics == null ? null : statistics.statsLevel();
   }
 
   static WriteOptions createWriteOptions(boolean sync) {
@@ -430,19 +511,30 @@ public final class UnifiedArchiveDb implements AutoCloseable {
 
   private static UnifiedArchiveDb openDatabase(Path target, byte[] schemaChecksum,
       boolean initialize, BatchWriter batchWriter, boolean resumeEmptyInitialization) {
-    DBOptions dbOptions = new DBOptions()
-        .setCreateIfMissing(initialize)
-        .setCreateMissingColumnFamilies(initialize)
-        .setErrorIfExists(initialize)
-        .setParanoidChecks(true);
+    Statistics statistics = null;
+    DBOptions dbOptions = null;
     List<ColumnFamilyOptions> columnFamilyOptions = new ArrayList<>();
-    List<ColumnFamilyDescriptor> descriptors = descriptors(columnFamilyOptions);
+    List<BloomFilter> bloomFilters = new ArrayList<>();
     List<ColumnFamilyHandle> openedHandles = new ArrayList<>();
     RocksDB openedDb = null;
     try {
+      statistics = ArchiveMetrics.enabled() ? new Statistics() : null;
+      if (statistics != null) {
+        statistics.setStatsLevel(StatsLevel.EXCEPT_DETAILED_TIMERS);
+      }
+      dbOptions = new DBOptions()
+          .setCreateIfMissing(initialize)
+          .setCreateMissingColumnFamilies(initialize)
+          .setErrorIfExists(initialize)
+          .setParanoidChecks(true);
+      if (statistics != null) {
+        dbOptions.setStatistics(statistics);
+      }
+      List<ColumnFamilyDescriptor> descriptors =
+          descriptors(columnFamilyOptions, bloomFilters);
       openedDb = RocksDB.open(dbOptions, target.toString(), descriptors, openedHandles);
       UnifiedArchiveDb opened = new UnifiedArchiveDb(target, schemaChecksum, dbOptions,
-          columnFamilyOptions, openedHandles, openedDb, batchWriter);
+          columnFamilyOptions, bloomFilters, openedHandles, openedDb, batchWriter, statistics);
       if (initialize) {
         opened.installManifest();
       } else if (resumeEmptyInitialization) {
@@ -451,22 +543,31 @@ public final class UnifiedArchiveDb implements AutoCloseable {
       opened.validateIdentity();
       return opened;
     } catch (RocksDBException e) {
-      closeResources(openedHandles, openedDb, columnFamilyOptions, dbOptions);
+      closeResources(
+          openedHandles, openedDb, columnFamilyOptions, bloomFilters, dbOptions, statistics);
       String operation = initialize ? "initialize" : "open";
       throw new ArchiveException("failed to " + operation + " UNIFIED_V1 archive at "
           + target, e);
     } catch (RuntimeException | Error failure) {
-      closeResources(openedHandles, openedDb, columnFamilyOptions, dbOptions);
+      closeResources(
+          openedHandles, openedDb, columnFamilyOptions, bloomFilters, dbOptions, statistics);
       throw failure;
     }
   }
 
   private static List<ColumnFamilyDescriptor> descriptors(
-      List<ColumnFamilyOptions> optionsOwner) {
+      List<ColumnFamilyOptions> optionsOwner, List<BloomFilter> bloomFilterOwner) {
     List<ColumnFamilyDescriptor> descriptors = new ArrayList<>();
     for (byte[] name : expectedColumnFamilyNames()) {
+      BloomFilter bloomFilter = new BloomFilter(10, false);
+      bloomFilterOwner.add(bloomFilter);
+      BlockBasedTableConfig tableConfig = new BlockBasedTableConfig()
+          .setFilter(bloomFilter)
+          .setCacheIndexAndFilterBlocks(true)
+          .setPinL0FilterAndIndexBlocksInCache(false);
       ColumnFamilyOptions options = new ColumnFamilyOptions();
       optionsOwner.add(options);
+      options.setTableFormatConfig(tableConfig);
       descriptors.add(new ColumnFamilyDescriptor(name, options));
     }
     return descriptors;
@@ -566,7 +667,8 @@ public final class UnifiedArchiveDb implements AutoCloseable {
   }
 
   private void validateDefaultColumnFamilyEmpty() {
-    try (RocksIterator iterator = db.newIterator(defaultHandle)) {
+    try (ReadOptions readOptions = new ReadOptions().setFillCache(false);
+         RocksIterator iterator = db.newIterator(defaultHandle, readOptions)) {
       iterator.seekToFirst();
       ArchiveRocksIterators.requireOk(iterator,
           "UNIFIED_V1 validate empty default column family");
@@ -658,7 +760,8 @@ public final class UnifiedArchiveDb implements AutoCloseable {
   }
 
   private static void closeResources(List<ColumnFamilyHandle> handles, RocksDB db,
-      List<ColumnFamilyOptions> columnFamilyOptions, DBOptions dbOptions) {
+      List<ColumnFamilyOptions> columnFamilyOptions, List<BloomFilter> bloomFilters,
+      DBOptions dbOptions, Statistics statistics) {
     for (int i = handles.size() - 1; i >= 0; i--) {
       handles.get(i).close();
     }
@@ -668,7 +771,90 @@ public final class UnifiedArchiveDb implements AutoCloseable {
     for (int i = columnFamilyOptions.size() - 1; i >= 0; i--) {
       columnFamilyOptions.get(i).close();
     }
-    dbOptions.close();
+    if (dbOptions != null) {
+      dbOptions.close();
+    }
+    for (int i = bloomFilters.size() - 1; i >= 0; i--) {
+      bloomFilters.get(i).close();
+    }
+    if (statistics != null) {
+      statistics.close();
+    }
+  }
+
+  private void maybeReportStatistics() {
+    if (statistics == null) {
+      return;
+    }
+    long now = System.nanoTime();
+    if (lastStatisticsSampleNanos != Long.MIN_VALUE
+        && now - lastStatisticsSampleNanos < STATISTICS_SAMPLE_INTERVAL_NANOS) {
+      return;
+    }
+    lastStatisticsSampleNanos = now;
+    for (TickerMetric metric : TICKER_METRICS) {
+      try {
+        long current = statistics.getTickerCount(metric.ticker);
+        Long previous = lastTickerCounts.put(metric.ticker, current);
+        long delta = previous == null || current < previous ? current : current - previous;
+        ArchiveMetrics.addRocksDbCounter(metric.metricName, delta);
+      } catch (RuntimeException | LinkageError failure) {
+        reportStatisticsFailure(failure);
+      }
+    }
+    reportColumnFamilySum(PENDING_COMPACTION_BYTES, "rocksdb_pending_compaction_bytes");
+    reportDbProperty(RUNNING_COMPACTIONS, "rocksdb_running_compactions");
+    reportDbProperty(RUNNING_FLUSHES, "rocksdb_running_flushes");
+  }
+
+  private void reportColumnFamilySum(String property, String metricName) {
+    if (disabledStatisticsProperties.contains(property)) {
+      return;
+    }
+    try {
+      long total = 0L;
+      for (ColumnFamilyHandle handle : allHandles) {
+        total = addSaturated(total, db.getLongProperty(handle, property));
+      }
+      ArchiveMetrics.setRocksDbState(metricName, total);
+    } catch (RocksDBException | RuntimeException | LinkageError failure) {
+      disabledStatisticsProperties.add(property);
+      reportStatisticsFailure(failure);
+    }
+  }
+
+  private void reportDbProperty(String property, String metricName) {
+    if (disabledStatisticsProperties.contains(property)) {
+      return;
+    }
+    try {
+      ArchiveMetrics.setRocksDbState(
+          metricName, db.getLongProperty(defaultHandle, property));
+    } catch (RocksDBException | RuntimeException | LinkageError failure) {
+      disabledStatisticsProperties.add(property);
+      reportStatisticsFailure(failure);
+    }
+  }
+
+  private static long addSaturated(long left, long right) {
+    return left > Long.MAX_VALUE - right ? Long.MAX_VALUE : left + right;
+  }
+
+  private void reportStatisticsFailure(Throwable failure) {
+    if (statisticsFailureReported.compareAndSet(false, true)) {
+      logger.warn("archive RocksDB statistics probe failed: {}", failure.getMessage());
+    }
+  }
+
+  private static final class TickerMetric {
+
+    private final TickerType ticker;
+    private final String metricName;
+
+    private TickerMetric(TickerType ticker, String metricName) {
+      this.ticker = ticker;
+      this.metricName = metricName;
+    }
   }
 
   interface BatchWriter {

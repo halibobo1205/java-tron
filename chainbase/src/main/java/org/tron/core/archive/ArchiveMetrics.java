@@ -140,6 +140,21 @@ public final class ArchiveMetrics {
     setState("active_snapshots", active);
   }
 
+  public static void setRetainedTraceBytes(long bytes) {
+    setState("retained_trace_bytes", bytes);
+  }
+
+  public static void addRocksDbCounter(String type, long amount) {
+    if (!enabled()) {
+      return;
+    }
+    safely(() -> incrementWork(type, amount));
+  }
+
+  public static void setRocksDbState(String type, long value) {
+    setState(type, value);
+  }
+
   public static void queryRejected(HistoricalQueryLimitException failure) {
     if (!enabled()) {
       return;

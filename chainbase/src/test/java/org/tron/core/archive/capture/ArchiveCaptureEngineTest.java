@@ -134,6 +134,8 @@ public class ArchiveCaptureEngineTest {
     enterTx(5);
     engine.capturePut("properties", ascii("ENERGY_FEE"), null, new byte[] {1}); // root -> capture
     engine.capturePut("properties", ascii("ABI_MOVE_DONE"), null, new byte[] {1}); // NO_ARCHIVE
+    engine.capturePut(
+        "properties", ascii("TOKEN_UPDATE_DONE"), null, new byte[] {1}); // NO_ARCHIVE
     // Unknown keys are not root-eligible, but keep diagnostic history.
     engine.capturePut("properties", ascii("SOME_FUTURE_KEY"), null, new byte[] {1});
 
@@ -152,6 +154,7 @@ public class ArchiveCaptureEngineTest {
     assertTrue(engine.capturesStore("properties", ascii("ENERGY_FEE")));
     assertTrue(engine.capturesStore("properties", ascii("SOME_FUTURE_KEY")));
     assertFalse(engine.capturesStore("properties", ascii("ABI_MOVE_DONE")));
+    assertFalse(engine.capturesStore("properties", ascii("TOKEN_UPDATE_DONE")));
     assertFalse(engine.capturesStore("storage-row")); // SEMANTIC_ONLY (captured by semantic hook)
     assertFalse(engine.capturesStore("block"));       // excluded
     assertFalse(engine.capturesStore("accountTrie")); // derived excluded

@@ -67,8 +67,8 @@ import org.tron.core.db2.common.WrappedByteArray;
  * Default {@link ArchiveService}: allocates the canonical txNum coordinate, tracks the current
  * execution position (L2), and owns the {@link ArchiveCaptureEngine} that Store hooks route writes
  * to (L4), and an {@link ArchiveTemporalStore} that committed blocks drain into for getAsOf reads
- * (L5). When disabled every callback is a no-op and neither is installed. The temporal store is the
- * in-memory reference; the RocksDB-backed store (arm64 module) supersedes it for real nodes.
+ * (L5). When disabled every callback is a no-op and neither is installed. Tests may use the
+ * in-memory reference; enabled production nodes use the unified cross-column-family backend.
  */
 public final class DefaultArchiveService implements ArchiveService {
 
@@ -1367,10 +1367,10 @@ public final class DefaultArchiveService implements ArchiveService {
           + publisherConfig.getHardInFlightRecords() + " while appending block " + blockNum
           + ": projectedRecords=" + projectedRecords);
     }
-    long usableSpace = sampleUsableSpaceBytes(true);
     long journalHeadroom = Math.max(
         MIN_JOURNAL_DISK_HEADROOM_BYTES, multiplySaturated(block.estimatedRetainedBytes(), 2L));
     long requiredFree = addSaturated(publisherConfig.getHardMinFreeBytes(), journalHeadroom);
+    long usableSpace = sampleUsableSpaceForJournal(requiredFree, journalHeadroom);
     if (usableSpace < requiredFree) {
       throw new ArchiveException("archive journal filesystem cannot reserve the next durable write"
           + " while appending block " + blockNum + ": requiredFree=" + requiredFree
@@ -1398,6 +1398,12 @@ public final class DefaultArchiveService implements ArchiveService {
 
   private long sampleUsableSpaceBytes() {
     return sampleUsableSpaceBytes(false);
+  }
+
+  private long sampleUsableSpaceForJournal(long requiredFree, long journalHeadroom) {
+    long usableSpace = sampleUsableSpaceBytes();
+    long refreshThreshold = addSaturated(requiredFree, journalHeadroom);
+    return usableSpace <= refreshThreshold ? sampleUsableSpaceBytes(true) : usableSpace;
   }
 
   private long sampleUsableSpaceBytes(boolean force) {
@@ -2177,6 +2183,8 @@ public final class DefaultArchiveService implements ArchiveService {
         }
         ArchiveCaptureHolder.clearIf(captureEngine);
         RuntimeException failure = null;
+        // Unified adapters intentionally close in this order. In-flight and temporal close are
+        // no-ops; the txNum index is the final owner that closes the shared UnifiedArchiveDb.
         failure = closeResource(inFlightStore, "in-flight store", failure);
         failure = closeResource(temporalStore, "temporal store", failure);
         failure = closeResource(txNumIndex, "txNum index", failure);

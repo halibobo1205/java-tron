@@ -361,6 +361,68 @@ public class DefaultArchiveServiceTest {
         100L, 100L, 0L, 0L, 1_000L);
   }
 
+  @Test
+  public void healthyJournalAppendsReuseRecentDiskSample() {
+    CountingCapacityInFlightStore inFlightStore = new CountingCapacityInFlightStore();
+    DefaultArchiveService service = serviceWithPublisherConfig(
+        new InMemoryArchiveTxNumIndex(), new ArchiveExecutionContext(),
+        new InMemoryArchiveTemporalStore(), inFlightStore, startupByteBudget(1024L * 1024L));
+    try {
+      assertEquals(1, inFlightStore.capacityReads);
+
+      journalEmptyBlock(service, blockWithParentSeed(5L, (byte) 5));
+      journalEmptyBlock(service, blockWithParentSeed(6L, (byte) 6));
+
+      assertEquals(1, inFlightStore.capacityReads);
+    } finally {
+      service.close();
+    }
+  }
+
+  @Test
+  public void nearThresholdDiskSampleIsRefreshedBeforeJournalWrite() {
+    TrackingArchiveTxNumIndex index = new TrackingArchiveTxNumIndex();
+    CountingCapacityInFlightStore inFlightStore = new CountingCapacityInFlightStore();
+    DefaultArchiveService service = serviceWithPublisherConfig(
+        index, new ArchiveExecutionContext(), new InMemoryArchiveTemporalStore(),
+        inFlightStore, startupByteBudget(1024L * 1024L));
+    try {
+      ReflectUtils.setFieldValue(service, "lastUsableSpaceBytes", 1L);
+      ReflectUtils.setFieldValue(service, "lastDiskSampleNanos", System.nanoTime());
+      inFlightStore.usableSpace = 0L;
+
+      ArchiveException failure = assertThrows(ArchiveException.class,
+          () -> journalEmptyBlock(service, blockWithParentSeed(5L, (byte) 5)));
+
+      assertTrue(failure.getMessage().contains("cannot reserve the next durable write"));
+      assertEquals(2, inFlightStore.capacityReads);
+      assertTrue(index.repairReason.contains("cannot reserve the next durable write"));
+    } finally {
+      service.close();
+    }
+  }
+
+  @Test
+  public void staleHighDiskSampleCannotHideDurableJournalFailure() {
+    TrackingArchiveTxNumIndex index = new TrackingArchiveTxNumIndex();
+    CountingCapacityInFlightStore inFlightStore = new CountingCapacityInFlightStore();
+    DefaultArchiveService service = serviceWithPublisherConfig(
+        index, new ArchiveExecutionContext(), new InMemoryArchiveTemporalStore(),
+        inFlightStore, startupByteBudget(1024L * 1024L));
+    try {
+      inFlightStore.failWrites = true;
+
+      ArchiveException failure = assertThrows(ArchiveException.class,
+          () -> journalEmptyBlock(service, blockWithParentSeed(5L, (byte) 5)));
+
+      assertTrue(failure.getMessage().contains("injected journal disk failure"));
+      assertEquals(1, inFlightStore.capacityReads);
+      assertTrue(index.repairReason.contains("injected journal disk failure"));
+    } finally {
+      service.close();
+    }
+  }
+
   private static void invokeMarkFatal(DefaultArchiveService service, RuntimeException failure) {
     ReflectUtils.invokeMethod(service, "markFatal",
         new Class<?>[]{RuntimeException.class}, failure);
@@ -2401,6 +2463,48 @@ public class DefaultArchiveServiceTest {
         throw new ArchiveException("delete failed");
       }
       delegate.deleteBlock(blockNum);
+    }
+  }
+
+  private static final class CountingCapacityInFlightStore implements ArchiveInFlightStore {
+
+    private final InMemoryArchiveInFlightStore delegate = new InMemoryArchiveInFlightStore();
+    private long usableSpace = Long.MAX_VALUE;
+    private int capacityReads;
+    private boolean failWrites;
+
+    @Override
+    public List<ArchiveInFlightBlock> loadBlocks() {
+      return delegate.loadBlocks();
+    }
+
+    @Override
+    public void forEachBlock(java.util.function.Consumer<ArchiveInFlightBlock> consumer) {
+      delegate.forEachBlock(consumer);
+    }
+
+    @Override
+    public void putBlock(ArchiveInFlightBlock block) {
+      if (failWrites) {
+        throw new ArchiveException("injected journal disk failure");
+      }
+      delegate.putBlock(block);
+    }
+
+    @Override
+    public void acknowledgeBlock(ArchiveJournalToken token) {
+      delegate.acknowledgeBlock(token);
+    }
+
+    @Override
+    public void deleteBlock(long blockNum) {
+      delegate.deleteBlock(blockNum);
+    }
+
+    @Override
+    public long usableSpaceBytes() {
+      capacityReads++;
+      return usableSpace;
     }
   }
 

@@ -156,6 +156,7 @@ public final class DynamicKeyPolicy {
 
     // --- EXCLUDED: one-time migration markers + aggregate statistics ---
     excluded("ABI_MOVE_DONE", DynamicKeyClass.MIGRATION_MARKER);
+    excluded("TOKEN_UPDATE_DONE", DynamicKeyClass.MIGRATION_MARKER);
     excluded("ENERGY_PRICE_HISTORY_DONE", DynamicKeyClass.MIGRATION_MARKER);
     excluded("BANDWIDTH_PRICE_HISTORY_DONE", DynamicKeyClass.MIGRATION_MARKER);
     excluded("TURKISH_KEY_MIGRATION_DONE", DynamicKeyClass.MIGRATION_MARKER);

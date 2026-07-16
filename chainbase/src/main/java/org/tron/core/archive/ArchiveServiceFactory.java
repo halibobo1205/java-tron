@@ -287,6 +287,7 @@ public final class ArchiveServiceFactory {
         .maxCachedBytes(config.getMaxCachedBytes())
         .maxVmSteps(config.getMaxTraceSteps())
         .maxTraceBytes(config.getMaxTraceBytes())
+        .maxRetainedTraceBytes(config.getMaxRetainedTraceBytes())
         .maxResponseBytes(config.getMaxTraceResponseBytes())
         .build();
   }

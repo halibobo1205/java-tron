@@ -16,11 +16,13 @@ public final class QueryContext {
   private final long timeoutNanos;
   private final boolean deadlineEnabled;
   private final HistoricalQueryLimitException.Limit deadlineLimit;
+  private final TraceReservation traceReservation;
   private final AtomicLong logicalReads = new AtomicLong();
   private final AtomicLong backendReads = new AtomicLong();
   private final AtomicLong cacheHits = new AtomicLong();
   private final AtomicLong vmSteps = new AtomicLong();
   private final AtomicLong traceBytes = new AtomicLong();
+  private final AtomicLong retainedTraceBytes = new AtomicLong();
   private final AtomicLong responseBytes = new AtomicLong();
   private final AtomicReference<HistoricalQueryLimitException> terminal =
       new AtomicReference<>();
@@ -36,25 +38,37 @@ public final class QueryContext {
   }
 
   QueryContext(ArchiveQueryLimits limits, LongSupplier nanoTime) {
-    this(limits, nanoTime, null);
+    this(limits, nanoTime, null, TraceReservation.NONE);
   }
 
   QueryContext(ArchiveQueryLimits limits,
       ArchiveQueryRequestScope.DeadlineConstraint batchDeadline) {
     this(limits, batchDeadline == null ? System::nanoTime : batchDeadline.nanoTime,
-        batchDeadline);
+        batchDeadline, TraceReservation.NONE);
+  }
+
+  QueryContext(ArchiveQueryLimits limits,
+      ArchiveQueryRequestScope.DeadlineConstraint batchDeadline,
+      TraceReservation traceReservation) {
+    this(limits, batchDeadline == null ? System::nanoTime : batchDeadline.nanoTime,
+        batchDeadline, traceReservation);
   }
 
   private QueryContext(ArchiveQueryLimits limits, LongSupplier nanoTime,
-      ArchiveQueryRequestScope.DeadlineConstraint batchDeadline) {
+      ArchiveQueryRequestScope.DeadlineConstraint batchDeadline,
+      TraceReservation traceReservation) {
     if (limits == null) {
       throw new NullPointerException("limits");
     }
     if (nanoTime == null) {
       throw new NullPointerException("nanoTime");
     }
+    if (traceReservation == null) {
+      throw new NullPointerException("traceReservation");
+    }
     this.limits = limits;
     this.nanoTime = nanoTime;
+    this.traceReservation = traceReservation;
     startedNanos = nanoTime.getAsLong();
     long requestTimeout = ArchiveQueryLimits.isUnlimited(limits.getDeadlineMs())
         ? Long.MAX_VALUE : millisecondsToNanosSaturated(limits.getDeadlineMs());
@@ -172,11 +186,22 @@ public final class QueryContext {
   }
 
   public long recordTraceBytes(long bytes) {
-    return consume(
+    long observed = consume(
         traceBytes,
         bytes,
         limits.getMaxTraceBytes(),
         HistoricalQueryLimitException.Limit.TRACE_BYTES);
+    try {
+      traceReservation.reserve(bytes);
+      addSaturated(retainedTraceBytes, bytes);
+    } catch (HistoricalQueryLimitException e) {
+      throw terminate(e);
+    }
+    HistoricalQueryLimitException existing = terminal.get();
+    if (existing != null) {
+      throw existing;
+    }
+    return observed;
   }
 
   public long consumeTraceBytes(long bytes) {
@@ -217,6 +242,10 @@ public final class QueryContext {
 
   public long getTraceBytes() {
     return traceBytes.get();
+  }
+
+  long drainRetainedTraceBytes() {
+    return retainedTraceBytes.getAndSet(0L);
   }
 
   public long getResponseBytes() {
@@ -391,5 +420,13 @@ public final class QueryContext {
     return milliseconds > Long.MAX_VALUE / NANOS_PER_MILLISECOND
         ? Long.MAX_VALUE
         : milliseconds * NANOS_PER_MILLISECOND;
+  }
+
+  @FunctionalInterface
+  interface TraceReservation {
+
+    TraceReservation NONE = bytes -> { };
+
+    void reserve(long bytes);
   }
 }
