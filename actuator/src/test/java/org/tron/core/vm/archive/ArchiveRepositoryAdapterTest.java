@@ -12,6 +12,9 @@ import static org.mockito.Mockito.when;
 import org.junit.Test;
 import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.utils.ByteArray;
+import org.tron.core.archive.query.ArchiveQueryLimits;
+import org.tron.core.archive.query.QueryContext;
+import org.tron.core.archive.query.QueryContextHolder;
 import org.tron.core.archive.reader.ArchiveReadResult;
 import org.tron.core.archive.reader.ArchiveReaderException;
 import org.tron.core.archive.reader.ArchiveStatePoint;
@@ -219,6 +222,20 @@ public class ArchiveRepositoryAdapterTest {
   @Test
   public void dynamicPropertiesStoreIsUnsupported() {
     assertThrows(UnsupportedHistoricalStateException.class, adapter::getDynamicPropertiesStore);
+  }
+
+  @Test
+  public void unsupportedReadRecordsExactVmTerminalFailure() {
+    QueryContext context = new QueryContext(ArchiveQueryLimits.unlimited());
+
+    try (QueryContextHolder.Scope ignored = QueryContextHolder.attach(context)) {
+      UnsupportedHistoricalStateException failure = assertThrows(
+          UnsupportedHistoricalStateException.class, adapter::getDynamicPropertiesStore);
+
+      assertSame(failure, context.getRecordedVmTerminalFailure());
+      assertSame(failure, context.getRecordedFailure());
+    }
+    assertNull(QueryContextHolder.current());
   }
 
   @Test

@@ -128,7 +128,7 @@ public class ArchiveIdentityCodecTest {
   private static ArchiveIdentity identity(Path root, ArchiveIdentityState state) {
     ArchiveIdentityClaim claim = new ArchiveIdentityClaim(
         UUID.fromString("6e63aa9d-37a7-4f9d-844e-b2cb947f64f0"), nonce(),
-        "chain", "schema", "LEGACY_V1", root, 42);
+        "chain", "schema", "UNIFIED_V1", root, 42);
     return new ArchiveIdentity(claim, state);
   }
 

@@ -251,13 +251,6 @@ public class ArchiveBlockRangeCodecTest {
     assertThrows(ArchiveException.class, () -> ArchiveBlockRangeCodec.txIdKey(new byte[] {1}));
   }
 
-  @Test
-  public void manifestUsesMetaPrefixNotTxNumMetaPrefix() {
-    assertEquals(ArchiveBlockRangeCodec.META_PREFIX, ArchiveBlockRangeCodec.manifestKey()[0]);
-    assertNotEquals(ArchiveBlockRangeCodec.TXNUM_META_PREFIX,
-        ArchiveBlockRangeCodec.manifestKey()[0]);
-  }
-
   private static ArchiveBlockRange range(byte[] blockHash) {
     return new ArchiveBlockRange(7, 10, 15, 10, 15, blockHash, 3, ArchiveSource.REPLAY,
         schemaChecksum(7));

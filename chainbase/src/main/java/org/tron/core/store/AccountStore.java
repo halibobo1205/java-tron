@@ -89,6 +89,9 @@ public class AccountStore extends TronStoreWithRevoking<AccountCapsule> {
         }
       }
     }
+    if (item == null) {
+      return;
+    }
     // L4c: read the pre-put account so ACCOUNT_ASSET can value-diff assetV2 (gated to avoid the
     // extra read + serialize when archive is off).
     boolean archiveActive = ArchiveCaptureHolder.isCapturingCurrentTx();

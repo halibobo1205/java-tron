@@ -58,6 +58,19 @@ public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
       0x46, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, (byte) 0xf3
   };
 
+  // CALL child(0x33), discard its status, then return 1. A child failure is therefore hidden from
+  // the root ProgramResult unless the archive adapter records it in the QueryContext.
+  private static final byte[] PARENT_CALLS_CHILD_CODE =
+      org.bouncycastle.util.encoders.Hex.decode(
+          "60006000600060006000730000000000000000000000000000000000000033"
+              + "620f4240f150600160005260206000f3");
+
+  // CALL RewardBalance (0x01000005), discard its status, then STOP. RewardBalance reads the
+  // delegation domain, which the historical archive deliberately rejects.
+  private static final byte[] CHILD_CALLS_REWARD_BALANCE_CODE =
+      org.bouncycastle.util.encoders.Hex.decode(
+          "600060006000600060006301000005620f4240f15000");
+
   @Override
   protected void afterInit() {
   }
@@ -133,6 +146,22 @@ public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
     assertNull(QueryContextHolder.current());
   }
 
+  @Test
+  public void nestedRewardBalanceFailureCannotBeHiddenByParentSuccess() {
+    QueryContext queryContext = new QueryContext(ArchiveQueryLimits.builder().build());
+
+    UnsupportedHistoricalStateException failure = assertThrows(
+        UnsupportedHistoricalStateException.class,
+        () -> runViewCall(PARENT_CALLS_CHILD_CODE, ArchiveReadResult.missing(), 0L,
+            queryContext, CHILD_CALLS_REWARD_BALANCE_CODE));
+
+    assertEquals(UnsupportedHistoricalStateException.class, failure.getClass());
+    assertEquals("historical archive call does not support begin-cycle reads",
+        failure.getMessage());
+    assertSame(failure, queryContext.getRecordedVmTerminalFailure());
+    assertNull(QueryContextHolder.current());
+  }
+
   private byte[] runViewCall(byte[] code, ArchiveReadResult<byte[]> archivedSlot) throws Exception {
     return runViewCall(code, archivedSlot, 0L);
   }
@@ -144,9 +173,17 @@ public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
 
   private byte[] runViewCall(byte[] code, ArchiveReadResult<byte[]> slot, long allowShangHai,
       QueryContext queryContext) throws Exception {
+    return runViewCall(code, slot, allowShangHai, queryContext, null);
+  }
+
+  private byte[] runViewCall(byte[] code, ArchiveReadResult<byte[]> slot, long allowShangHai,
+      QueryContext queryContext, byte[] childCode) throws Exception {
     byte[] contractAddr = new byte[21];
     contractAddr[0] = 0x41;
     contractAddr[20] = 0x11;
+    byte[] childAddr = new byte[21];
+    childAddr[0] = 0x41;
+    childAddr[20] = 0x33;
     byte[] caller = new byte[21];
     caller[0] = 0x41;
     caller[20] = 0x22;
@@ -159,6 +196,14 @@ public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
         .setContractAddress(ByteString.copyFrom(contractAddr)).build()));
     reader.code = ArchiveReadResult.present(code);
     reader.storage = slot;
+    if (childCode != null) {
+      reader.childAddress = childAddr;
+      reader.childAccount = ArchiveReadResult.present(new AccountCapsule(
+          Account.newBuilder().setAddress(ByteString.copyFrom(childAddr)).build()));
+      reader.childContract = ArchiveReadResult.present(new ContractCapsule(
+          SmartContract.newBuilder().setContractAddress(ByteString.copyFrom(childAddr)).build()));
+      reader.childCode = ArchiveReadResult.present(childCode);
+    }
 
     VmDynamicProperties vmProps = mock(VmDynamicProperties.class);
     when(vmProps.supportVM()).thenReturn(true);
@@ -170,6 +215,7 @@ public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
     when(vmProps.getAllowDynamicEnergy()).thenReturn(1L);
     when(vmProps.getAllowTvmLondon()).thenReturn(1L);
     when(vmProps.getAllowTvmIstanbul()).thenReturn(1L);
+    when(vmProps.getAllowTvmVote()).thenReturn(1L);
     when(vmProps.getAllowTvmShangHai()).thenReturn(allowShangHai);
     when(vmProps.getMaintenanceTimeInterval()).thenReturn(21_600_000L);
 
@@ -190,6 +236,10 @@ public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
     ArchiveReadResult<ContractStateCapsule> contractState = ArchiveReadResult.missing();
     ArchiveReadResult<byte[]> code = ArchiveReadResult.missing();
     ArchiveReadResult<byte[]> storage = ArchiveReadResult.missing();
+    byte[] childAddress;
+    ArchiveReadResult<AccountCapsule> childAccount = ArchiveReadResult.missing();
+    ArchiveReadResult<ContractCapsule> childContract = ArchiveReadResult.missing();
+    ArchiveReadResult<byte[]> childCode = ArchiveReadResult.missing();
 
     public ArchiveStatePoint getPoint() {
       return null;
@@ -200,6 +250,9 @@ public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
     }
 
     public ArchiveReadResult<AccountCapsule> getAccount(byte[] address) {
+      if (childAddress != null && Arrays.equals(childAddress, address)) {
+        return childAccount;
+      }
       return account;
     }
 
@@ -208,6 +261,9 @@ public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
     }
 
     public ArchiveReadResult<ContractCapsule> getContract(byte[] address) {
+      if (childAddress != null && Arrays.equals(childAddress, address)) {
+        return childContract;
+      }
       return contract;
     }
 
@@ -216,6 +272,9 @@ public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
     }
 
     public ArchiveReadResult<byte[]> getCode(byte[] address) {
+      if (childAddress != null && Arrays.equals(childAddress, address)) {
+        return childCode;
+      }
       return code;
     }
 

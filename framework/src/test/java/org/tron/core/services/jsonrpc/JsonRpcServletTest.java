@@ -479,6 +479,31 @@ public class JsonRpcServletTest {
   }
 
   @Test
+  public void singleQueryDeadlineIsRecheckedAfterResponseSerialization() throws Exception {
+    ArchiveQueryCoordinator coordinator = new ArchiveQueryCoordinator(
+        ArchiveQueryLimits.builder()
+            .maxConcurrentQueries(1)
+            .deadlineMs(20L)
+            .build());
+    doAnswer(inv -> {
+      QueryLease lease = coordinator.acquire();
+      ArchiveQueryTransportScope.closeAfterResponse(lease);
+      OutputStream output = inv.getArgument(1);
+      output.write("{\"jsonrpc\":\"2.0\",\"result\":\"late\",\"id\":1}"
+          .getBytes(StandardCharsets.UTF_8));
+      Thread.sleep(80L);
+      return 0;
+    }).when(mockRpcServer).handleRequest(any(InputStream.class), any(OutputStream.class));
+
+    MockHttpServletResponse response = doPost("{\"id\":1}");
+
+    JsonNode body = MAPPER.readTree(response.getContentAsByteArray());
+    assertEquals(-32005, body.get("error").get("code").asInt());
+    assertEquals(1, body.get("id").asInt());
+    assertEquals(0, coordinator.getActiveLeaseCount());
+  }
+
+  @Test
   public void batchOverflowDoesNotEchoAnOversizedId() throws Exception {
     int limit = 256;
     CommonParameter.getInstance().jsonRpcMaxResponseSize = limit;

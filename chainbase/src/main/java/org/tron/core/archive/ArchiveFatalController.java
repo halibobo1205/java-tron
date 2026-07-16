@@ -218,6 +218,11 @@ public final class ArchiveFatalController implements AutoCloseable {
         return;
       }
     }
+    RuntimeException fatalFailure = failure.get();
+    System.err.println("archive fatal watchdog timeout; halting with exit status "
+        + FATAL_EXIT_STATUS + (fatalFailure == null || fatalFailure.getMessage() == null
+        ? "" : ": " + fatalFailure.getMessage()));
+    System.err.flush();
     processTerminator.halt(FATAL_EXIT_STATUS);
   }
 }

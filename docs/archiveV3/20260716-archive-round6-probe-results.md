@@ -1,9 +1,16 @@
 # Archive round-6 probe results (for codex)
 
+> **Unified-only resolution (2026-07-16):** the product has no released alternate archive layout.
+> References below to LEGACY differential, migration or fallback are historical probe context and
+> are superseded by the independent in-memory oracle plus Unified corruption/fault matrix. The
+> alternate persistent implementations and their configuration entry points have been removed.
+
 **Base:** `feat/archive-node` (round-5 Tier-1 + item 2.9 already implemented by codex; UNIFIED_V1 now the default layout when archive is enabled — greenfield decision).
 **Provenance:** 4 targeted probe areas rounds 1-5 never covered — capture-domain semantic completeness (read-side + write-side matrices), fork/unwind behavior (4 hard scenarios), RocksDB tuning fitness, `estimatedRetainedBytes` calibration. 5 probes → 2-3-lens adversarial verification → critic; 58 agents. 21 raw → 16 survived → critic: 15 REAL, 1 REJECTED-as-unsafe. The HIGH finding was independently source-verified by claude (all four links of the chain).
 
-**⚠ Scope-change ripple (act on this):** with UNIFIED_V1 now the **Stage-B layout**, the M3 gate tests (LEGACY↔UNIFIED differential, crash/ENOSPC injection, corrupt-CF scrubs, mis-point) move from "activation gate" to **before-Stage-B** priority — round-5's "UNIFIED items gate activation, not Stage B" ordering is superseded.
+**⚠ Scope-change ripple (act on this):** with UNIFIED_V1 as the only Stage-B layout, the M3 gate
+tests are the independent oracle, crash/ENOSPC injection, corrupt-CF scrubs and wrong-root
+rejection. They move from "activation gate" to **before-Stage-B** priority.
 
 ---
 

@@ -31,6 +31,8 @@ public interface RevokingDatabase {
 
   int size();
 
+  int getPendingFlushCount();
+
   void check();
 
   void setMaxSize(int maxSize);

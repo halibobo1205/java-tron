@@ -30,8 +30,7 @@ public final class ManagedArchiveStateReader implements ArchiveStateReader {
 
   @Override
   public ArchiveStatePoint getPoint() {
-    requireOwnerOpen();
-    return delegate.getPoint();
+    return readUnchecked(delegate::getPoint);
   }
 
   @Override
@@ -42,55 +41,47 @@ public final class ManagedArchiveStateReader implements ArchiveStateReader {
 
   @Override
   public boolean isGenesisComplete() {
-    requireOwnerOpen();
-    return delegate.isGenesisComplete();
+    return readUnchecked(delegate::isGenesisComplete);
   }
 
   @Override
   public ArchiveReadResult<AccountCapsule> getAccount(byte[] address)
       throws ArchiveReaderException {
-    requireOwnerOpen();
-    return delegate.getAccount(address);
+    return read(() -> delegate.getAccount(address));
   }
 
   @Override
   public ArchiveReadResult<byte[]> getAccountAsset(byte[] address, byte[] assetId)
       throws ArchiveReaderException {
-    requireOwnerOpen();
-    return delegate.getAccountAsset(address, assetId);
+    return read(() -> delegate.getAccountAsset(address, assetId));
   }
 
   @Override
   public ArchiveReadResult<ContractCapsule> getContract(byte[] address)
       throws ArchiveReaderException {
-    requireOwnerOpen();
-    return delegate.getContract(address);
+    return read(() -> delegate.getContract(address));
   }
 
   @Override
   public ArchiveReadResult<ContractStateCapsule> getContractState(byte[] address)
       throws ArchiveReaderException {
-    requireOwnerOpen();
-    return delegate.getContractState(address);
+    return read(() -> delegate.getContractState(address));
   }
 
   @Override
   public ArchiveReadResult<byte[]> getCode(byte[] address) throws ArchiveReaderException {
-    requireOwnerOpen();
-    return delegate.getCode(address);
+    return read(() -> delegate.getCode(address));
   }
 
   @Override
   public ArchiveReadResult<byte[]> getStorage(byte[] address, byte[] slot)
       throws ArchiveReaderException {
-    requireOwnerOpen();
-    return delegate.getStorage(address, slot);
+    return read(() -> delegate.getStorage(address, slot));
   }
 
   @Override
   public ArchiveReadResult<byte[]> getDynamicProperty(byte[] key) throws ArchiveReaderException {
-    requireOwnerOpen();
-    return delegate.getDynamicProperty(key);
+    return read(() -> delegate.getDynamicProperty(key));
   }
 
   @Override
@@ -108,6 +99,9 @@ public final class ManagedArchiveStateReader implements ArchiveStateReader {
       failure = closeAndCollect(failure, snapshotPermit::close);
     }
     failure = closeAndCollect(failure, lifecycleLease::close);
+    if (failure != null) {
+      queryLease.getContext().recordFailure(failure);
+    }
     failure = closeAndCollect(failure,
         () -> ArchiveQueryTransportScope.closeAfterResponse(queryLease));
     if (failure instanceof RuntimeException) {
@@ -133,6 +127,38 @@ public final class ManagedArchiveStateReader implements ArchiveStateReader {
       }
     }
     return failure;
+  }
+
+  private <T> T read(ReaderOperation<T> operation) throws ArchiveReaderException {
+    try {
+      requireOwnerOpen();
+      return operation.run();
+    } catch (ArchiveReaderException | RuntimeException | Error e) {
+      queryLease.getContext().recordFailure(e);
+      throw e;
+    }
+  }
+
+  private <T> T readUnchecked(UncheckedReaderOperation<T> operation) {
+    try {
+      requireOwnerOpen();
+      return operation.run();
+    } catch (RuntimeException | Error e) {
+      queryLease.getContext().recordFailure(e);
+      throw e;
+    }
+  }
+
+  @FunctionalInterface
+  private interface ReaderOperation<T> {
+
+    T run() throws ArchiveReaderException;
+  }
+
+  @FunctionalInterface
+  private interface UncheckedReaderOperation<T> {
+
+    T run();
   }
 
   private void requireOwnerOpen() {

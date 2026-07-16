@@ -114,17 +114,22 @@ public final class HistoricalTraceSupport {
             requestedBlockNum, blockNum -> resolveCanonicalBlock(blockNum, resolvedBlock));
       }
       try (ArchiveStateReader reader = admittedReader) {
-        BlockCapsule historicalBlock = resolvedBlock[0];
-        if (requestedBlockHash != null) {
-          requireBlockHashesMatch(
-              reader.getPoint().getBlockHash(), requestedBlockHash, historicalBlock.getNum());
+        try {
+          BlockCapsule historicalBlock = resolvedBlock[0];
+          if (requestedBlockHash != null) {
+            requireBlockHashesMatch(
+                reader.getPoint().getBlockHash(), requestedBlockHash, historicalBlock.getNum());
+          }
+          requireCanonicalBlockUnchanged(reader, historicalBlock.getNum());
+          TriggerSmartContract trigger =
+              triggerCallContract(ownerAddress, contractAddress, callValue, data, 0, null);
+          TransactionCapsule trxCap = createHistoricalCallTransaction(trigger, historicalBlock);
+          return runTrace(historicalBlock, reader, trxCap, true,
+              "historical debug_traceCall");
+        } catch (Exception | Error failure) {
+          recordQueryFailure(reader, failure);
+          throw failure;
         }
-        requireCanonicalBlockUnchanged(reader, historicalBlock.getNum());
-        TriggerSmartContract trigger =
-            triggerCallContract(ownerAddress, contractAddress, callValue, data, 0, null);
-        TransactionCapsule trxCap = createHistoricalCallTransaction(trigger, historicalBlock);
-        return runTrace(historicalBlock, reader, trxCap, true,
-            "historical debug_traceCall");
       }
     } catch (BlockHeaderNotFoundException e) {
       throw new JsonRpcInvalidParamsException("block header not found");
@@ -163,21 +168,26 @@ public final class HistoricalTraceSupport {
     requireTxId(txId);
     TraceTransactionLookup lookup = new TraceTransactionLookup(txId);
     try (ArchiveStateReader reader = archiveService.openTransactionReader(txId, lookup::resolve)) {
-      // The archive index is resolved before the callback performs any Wallet lookup. Once the
-      // reader snapshot is fixed, re-read only the canonical header to close the final fork race.
-      requireCanonicalBlockUnchanged(reader, reader.getPoint().getBlockNum());
-      if (!lookup.traceable) {
-        // Only TriggerSmartContract and CreateSmartContract produce TVM opcode traces; other types
-        // (transfers, votes, etc.) have no VM execution to replay. Canonical validation still runs
-        // first so a pre-archive or forked transaction cannot be reported as a successful empty
-        // trace.
-        reader.getQueryContext().recordResponseBytes(64L);
-        return emptyTrace();
+      try {
+        // The archive index is resolved before the callback performs any Wallet lookup. Once the
+        // reader snapshot is fixed, re-read only the canonical header to close the final fork race.
+        requireCanonicalBlockUnchanged(reader, reader.getPoint().getBlockNum());
+        if (!lookup.traceable) {
+          // Only TriggerSmartContract and CreateSmartContract produce TVM opcode traces; other
+          // types (transfers, votes, etc.) have no VM execution to replay. Canonical validation
+          // still runs first so a pre-archive or forked transaction cannot be reported as a
+          // successful empty trace.
+          reader.getQueryContext().recordResponseBytes(64L);
+          return emptyTrace();
+        }
+        // Reuse the real transaction so feeLimit (hence the energy limit) is preserved.
+        return runTrace(lookup.historicalBlock, reader, lookup.transaction, false,
+            "historical debug_traceTransaction",
+            lookup.transactionInfo.getReceipt().getEnergyUsageTotal());
+      } catch (Exception | Error failure) {
+        recordQueryFailure(reader, failure);
+        throw failure;
       }
-      // Reuse the real transaction so feeLimit (hence the energy limit) is preserved.
-      return runTrace(lookup.historicalBlock, reader, lookup.transaction, false,
-          "historical debug_traceTransaction",
-          lookup.transactionInfo.getReceipt().getEnergyUsageTotal());
     } catch (TraceLookupFailure e) {
       if (e.invalidParams) {
         throw new JsonRpcInvalidParamsException(e.getMessage());
@@ -304,6 +314,19 @@ public final class HistoricalTraceSupport {
     QueryContext queryContext = QueryContextHolder.current();
     if (queryContext != null) {
       queryContext.recordBackendRead();
+    }
+  }
+
+  private static void recordQueryFailure(ArchiveStateReader reader, Throwable failure) {
+    try {
+      QueryContext queryContext = reader.getQueryContext();
+      if (queryContext != null) {
+        queryContext.recordFailure(failure);
+      }
+    } catch (Throwable attributionFailure) {
+      if (failure != attributionFailure) {
+        failure.addSuppressed(attributionFailure);
+      }
     }
   }
 
