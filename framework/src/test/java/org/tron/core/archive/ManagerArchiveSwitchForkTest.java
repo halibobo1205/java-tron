@@ -4,16 +4,20 @@ import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import com.google.protobuf.ByteString;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import org.junit.Test;
@@ -45,6 +49,7 @@ import org.tron.core.capsule.WitnessCapsule;
 import org.tron.core.config.args.Args;
 import org.tron.core.consensus.ConsensusService;
 import org.tron.core.db.BlockGenerate;
+import org.tron.core.exception.TronError;
 import org.tron.core.exception.ValidateSignatureException;
 import org.tron.protos.Protocol;
 import org.tron.protos.Protocol.Block;
@@ -203,6 +208,148 @@ public class ManagerArchiveSwitchForkTest extends BaseMethodTest {
           Arrays.asList(ArchiveSource.NORMAL, ArchiveSource.NORMAL,
               ArchiveSource.RECOVERY, ArchiveSource.RECOVERY),
           forkOne, forkTwo);
+    }
+  }
+
+  @Test
+  public void replayBeginFailureRestoresOldCanonicalBranch() throws Exception {
+    ForkScenario scenario = prepareForkScenario(true);
+    ArchiveException injected = new ArchiveException("injected replay begin failure");
+    AtomicBoolean injectedOnce = new AtomicBoolean();
+    ArchiveService failingArchive = (ArchiveService) Proxy.newProxyInstance(
+        ArchiveService.class.getClassLoader(),
+        new Class<?>[] {ArchiveService.class},
+        (proxy, method, args) -> {
+          if ("beginBlock".equals(method.getName())
+              && args != null
+              && args.length == 2
+              && args[1] == ArchiveSource.REPLAY
+              && injectedOnce.compareAndSet(false, true)) {
+            throw injected;
+          }
+          try {
+            return method.invoke(archiveService, args);
+          } catch (InvocationTargetException e) {
+            throw e.getCause();
+          }
+        });
+    ReflectUtils.setFieldValue(dbManager, "archiveService", failingArchive);
+    try {
+      ArchiveException failure = assertThrows(
+          ArchiveException.class, () -> dbManager.pushBlock(scenario.forkHead));
+
+      assertSame(injected, failure);
+      assertTrue("the replay begin hook must be reached", injectedOnce.get());
+      assertEquals("a replay begin failure must restore the old canonical head",
+          scenario.oldTwo.getBlockId(),
+          chainBaseManager.getDynamicPropertiesStore().getLatestBlockHeaderHash());
+      assertEquals(ArchiveSource.RECOVERY, journalFor(scenario.oldOne).getRange().getSource());
+      assertEquals(ArchiveSource.RECOVERY, journalFor(scenario.oldTwo).getRange().getSource());
+    } finally {
+      ReflectUtils.setFieldValue(dbManager, "archiveService", archiveService);
+    }
+  }
+
+  @Test
+  public void recoveryBeginFailureFailsStopAndAbortsPartialArchiveBlock() throws Exception {
+    ForkScenario scenario = prepareForkScenario(false);
+    ArchiveException injected = new ArchiveException("injected partial recovery begin failure");
+    AtomicBoolean injectedOnce = new AtomicBoolean();
+    ArchiveService failingArchive = (ArchiveService) Proxy.newProxyInstance(
+        ArchiveService.class.getClassLoader(),
+        new Class<?>[] {ArchiveService.class},
+        (proxy, method, args) -> {
+          if ("beginBlock".equals(method.getName())
+              && args != null
+              && args.length == 2
+              && args[1] == ArchiveSource.RECOVERY
+              && injectedOnce.compareAndSet(false, true)) {
+            try {
+              method.invoke(archiveService, args);
+            } catch (InvocationTargetException e) {
+              throw e.getCause();
+            }
+            throw injected;
+          }
+          try {
+            return method.invoke(archiveService, args);
+          } catch (InvocationTargetException e) {
+            throw e.getCause();
+          }
+        });
+    ReflectUtils.setFieldValue(dbManager, "archiveService", failingArchive);
+    try {
+      TronError failure = assertThrows(
+          TronError.class, () -> dbManager.pushBlock(scenario.forkHead));
+
+      assertEquals(TronError.ErrCode.ARCHIVE_RUNTIME, failure.getErrCode());
+      assertSame(injected, failure.getCause());
+      assertTrue("the recovery begin hook must be reached", injectedOnce.get());
+      assertFalse(ArchiveExecutionContextHolder.get().current().isPresent());
+    } finally {
+      ReflectUtils.setFieldValue(dbManager, "archiveService", archiveService);
+    }
+
+    archiveService.beginBlock(scenario.oldOne, ArchiveSource.RECOVERY);
+    archiveService.abortBlock(scenario.oldOne);
+  }
+
+  private ForkScenario prepareForkScenario(boolean validForkHead) throws Exception {
+    String bootstrapKey = PublicMethod.getRandomPrivateKey();
+    byte[] bootstrapPrivateKey = ByteArray.fromHexString(bootstrapKey);
+    ByteString bootstrapAddress = ByteString.copyFrom(
+        ECKey.fromPrivate(bootstrapPrivateKey).getAddress());
+    chainBaseManager.getAccountStore().put(bootstrapAddress.toByteArray(),
+        new AccountCapsule(Protocol.Account.newBuilder()
+            .setAddress(bootstrapAddress).build()));
+    chainBaseManager.getWitnessScheduleStore().saveActiveWitnesses(new ArrayList<>());
+    chainBaseManager.addWitness(bootstrapAddress);
+    chainBaseManager.getWitnessStore().put(bootstrapAddress.toByteArray(),
+        new WitnessCapsule(bootstrapAddress));
+
+    BlockCapsule bootstrap = new BlockCapsule(blockGenerate.getSignedBlock(
+        bootstrapAddress, BASE_TIME, bootstrapPrivateKey));
+    dbManager.pushBlock(bootstrap);
+
+    Map<ByteString, String> witnessKeys = addTestWitnesses();
+    witnessKeys.put(bootstrapAddress, bootstrapKey);
+    long base = chainBaseManager.getDynamicPropertiesStore().getLatestBlockHeaderNumber();
+
+    BlockCapsule parent = signedEmptyBlock(BASE_TIME + 3_000L, base + 1L,
+        chainBaseManager.getDynamicPropertiesStore().getLatestBlockHeaderHash().getByteString(),
+        witnessKeys, true);
+    dbManager.pushBlock(parent);
+
+    BlockCapsule forkOne = signedEmptyBlock(BASE_TIME + 6_001L, base + 2L,
+        parent.getBlockId().getByteString(), witnessKeys, true);
+    BlockCapsule forkTwo = signedEmptyBlock(BASE_TIME + 9_001L, base + 3L,
+        forkOne.getBlockId().getByteString(), witnessKeys, true);
+    BlockCapsule forkHead = signedEmptyBlock(BASE_TIME + 12_001L, base + 4L,
+        forkTwo.getBlockId().getByteString(), witnessKeys, validForkHead);
+
+    BlockCapsule oldOne = signedEmptyBlock(BASE_TIME + 6_000L, base + 2L,
+        parent.getBlockId().getByteString(), witnessKeys, true);
+    dbManager.pushBlock(oldOne);
+    BlockCapsule oldTwo = signedEmptyBlock(BASE_TIME + 9_000L, base + 3L,
+        oldOne.getBlockId().getByteString(), witnessKeys, true);
+    dbManager.pushBlock(oldTwo);
+
+    dbManager.pushBlock(forkOne);
+    dbManager.pushBlock(forkTwo);
+
+    return new ForkScenario(forkHead, oldOne, oldTwo);
+  }
+
+  private static final class ForkScenario {
+
+    private final BlockCapsule forkHead;
+    private final BlockCapsule oldOne;
+    private final BlockCapsule oldTwo;
+
+    private ForkScenario(BlockCapsule forkHead, BlockCapsule oldOne, BlockCapsule oldTwo) {
+      this.forkHead = forkHead;
+      this.oldOne = oldOne;
+      this.oldTwo = oldTwo;
     }
   }
 
