@@ -5,6 +5,7 @@ if (!JavaVersion.current().isJava11Compatible()) {
     // with "Artifact errorprone-1.0.0.jar wasn't produced by this build".
     tasks.withType(JavaCompile).configureEach { enabled = false }
     tasks.withType(Jar).configureEach { enabled = false }
+    tasks.withType(Test).configureEach { enabled = false }
     tasks.withType(AbstractPublishToMaven).configureEach { enabled = false }
 } else {
     dependencies {
@@ -13,5 +14,27 @@ if (!JavaVersion.current().isJava11Compatible()) {
         compileOnly "com.google.errorprone:error_prone_core:${errorproneVersion}"
         compileOnly "com.google.auto.service:auto-service:1.1.1"
         annotationProcessor "com.google.auto.service:auto-service:1.1.1"
+
+        testImplementation "com.google.errorprone:error_prone_check_api:${errorproneVersion}"
+        testImplementation "com.google.errorprone:error_prone_core:${errorproneVersion}"
+        testImplementation "com.google.errorprone:error_prone_test_helpers:${errorproneVersion}"
+    }
+
+    // ErrorProne's CompilationTestHelper drives javac internals; JDK 16+ needs these exports/opens.
+    tasks.withType(Test).configureEach {
+        jvmArgs += [
+            "--add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED",
+            "--add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED",
+            "--add-exports=jdk.compiler/com.sun.tools.javac.main=ALL-UNNAMED",
+            "--add-exports=jdk.compiler/com.sun.tools.javac.model=ALL-UNNAMED",
+            "--add-exports=jdk.compiler/com.sun.tools.javac.parser=ALL-UNNAMED",
+            "--add-exports=jdk.compiler/com.sun.tools.javac.processing=ALL-UNNAMED",
+            "--add-exports=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED",
+            "--add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED",
+            "--add-exports=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED",
+            "--add-exports=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED",
+            "--add-opens=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED",
+            "--add-opens=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED",
+        ]
     }
 }
