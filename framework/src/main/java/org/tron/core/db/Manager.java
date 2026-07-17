@@ -685,8 +685,8 @@ public class Manager {
         boolean canonicalCommitStarted = false;
         try (ISession genesisSession = archiveService.isEnabled()
             ? revokingStore.buildSession(true) : null) {
-          archiveService.beginBlock(genesisBlock, ArchiveSource.NORMAL);
           archivePending = archiveService.isEnabled();
+          archiveService.beginBlock(genesisBlock, ArchiveSource.NORMAL);
           archiveService.beginSystemTx(genesisBlock, ArchivePhase.BLOCK_PREPARE);
           try {
             chainBaseManager.getBlockStore().put(genesisBlock.getBlockId().getBytes(),
@@ -1519,27 +1519,29 @@ public class Manager {
         ArchiveJournalToken archiveJournalToken = null;
         boolean canonicalCommitted = false;
         // todo  process the exception carefully later
-        archiveService.beginBlock(item.getBlk(), ArchiveSource.REPLAY);
-        try (ISession tmpSession = revokingStore.buildSession()) {
-          if (!item.getBlk().validateSignature(
-              getDynamicPropertiesStore(), getAccountStore())) {
-            throw new ValidateSignatureException(
-                "switch fork: block " + item.getBlk().getNum() + " signature invalid");
+        try {
+          archiveService.beginBlock(item.getBlk(), ArchiveSource.REPLAY);
+          try (ISession tmpSession = revokingStore.buildSession()) {
+            if (!item.getBlk().validateSignature(
+                getDynamicPropertiesStore(), getAccountStore())) {
+              throw new ValidateSignatureException(
+                  "switch fork: block " + item.getBlk().getNum() + " signature invalid");
+            }
+            // The new branch is applied on a rewound, diverged state where account permissions
+            // may have changed, so a cached signature-verification result is no longer
+            // trustworthy. Clear it to force every transaction to re-validate its signature
+            // against the fork-chain state.
+            for (TransactionCapsule tx : item.getBlk().getTransactions()) {
+              tx.setVerified(false);
+            }
+            applyBlock(item.getBlk().setSwitch(true));
+            archiveJournalToken = journalArchiveBlockOnlyOrFailStop(
+                item.getBlk(), "switch fork replay");
+            tmpSession.commit();
+            canonicalCommitted = true;
+            acknowledgeArchiveJournalOrFailStop(
+                archiveJournalToken, item.getBlk(), "switch fork replay");
           }
-          // The new branch is applied on a rewound, diverged state where account permissions
-          // may have changed, so a cached signature-verification result is no longer
-          // trustworthy. Clear it to force every transaction to re-validate its signature
-          // against the fork-chain state.
-          for (TransactionCapsule tx : item.getBlk().getTransactions()) {
-            tx.setVerified(false);
-          }
-          applyBlock(item.getBlk().setSwitch(true));
-          archiveJournalToken = journalArchiveBlockOnlyOrFailStop(
-              item.getBlk(), "switch fork replay");
-          tmpSession.commit();
-          canonicalCommitted = true;
-          acknowledgeArchiveJournalOrFailStop(
-              archiveJournalToken, item.getBlk(), "switch fork replay");
         } catch (AccountResourceInsufficientException
             | ValidateSignatureException
             | ContractValidateException
@@ -1598,15 +1600,17 @@ public class Manager {
               ArchiveJournalToken recoveryJournalToken = null;
               boolean recoveryCanonicalCommitted = false;
               // todo  process the exception carefully later
-              archiveService.beginBlock(khaosBlock.getBlk(), ArchiveSource.RECOVERY);
-              try (ISession tmpSession = revokingStore.buildSession()) {
-                applyBlock(khaosBlock.getBlk().setSwitch(true));
-                recoveryJournalToken = journalArchiveBlockOnlyOrFailStop(
-                    khaosBlock.getBlk(), "switch fork recovery");
-                tmpSession.commit();
-                recoveryCanonicalCommitted = true;
-                acknowledgeArchiveJournalOrFailStop(
-                    recoveryJournalToken, khaosBlock.getBlk(), "switch fork recovery");
+              try {
+                archiveService.beginBlock(khaosBlock.getBlk(), ArchiveSource.RECOVERY);
+                try (ISession tmpSession = revokingStore.buildSession()) {
+                  applyBlock(khaosBlock.getBlk().setSwitch(true));
+                  recoveryJournalToken = journalArchiveBlockOnlyOrFailStop(
+                      khaosBlock.getBlk(), "switch fork recovery");
+                  tmpSession.commit();
+                  recoveryCanonicalCommitted = true;
+                  acknowledgeArchiveJournalOrFailStop(
+                      recoveryJournalToken, khaosBlock.getBlk(), "switch fork recovery");
+                }
               } catch (AccountResourceInsufficientException
                   | ValidateSignatureException
                   | ContractValidateException
@@ -1838,15 +1842,17 @@ public class Manager {
               long oldSolidNum = getDynamicPropertiesStore().getLatestSolidifiedBlockNum();
               ArchiveJournalToken archiveJournalToken = null;
               boolean canonicalCommitted = false;
-              archiveService.beginBlock(newBlock, ArchiveSource.NORMAL);
-              try (ISession tmpSession = revokingStore.buildSession()) {
-                applyBlock(newBlock, txs);
-                // Persist the archive journal before the canonical session commit. A crash between
-                // the two commits must fail-stop on restart, not silently skip the first archive
-                // block as a mid-chain activation.
-                archiveJournalToken = journalArchiveBlockOnlyOrFailStop(newBlock, "push block");
-                tmpSession.commit();
-                canonicalCommitted = true;
+              try {
+                archiveService.beginBlock(newBlock, ArchiveSource.NORMAL);
+                try (ISession tmpSession = revokingStore.buildSession()) {
+                  applyBlock(newBlock, txs);
+                  // Persist the archive journal before the canonical session commit. A crash
+                  // between the two commits must fail-stop on restart, not silently skip the
+                  // first archive block as a mid-chain activation.
+                  archiveJournalToken = journalArchiveBlockOnlyOrFailStop(newBlock, "push block");
+                  tmpSession.commit();
+                  canonicalCommitted = true;
+                }
               } catch (Throwable throwable) {
                 if (!canonicalCommitted && archiveJournalToken != null) {
                   rollbackArchiveJournalBestEffort(

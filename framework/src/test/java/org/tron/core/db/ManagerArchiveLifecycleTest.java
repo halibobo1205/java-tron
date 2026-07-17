@@ -2,6 +2,7 @@ package org.tron.core.db;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.doThrow;
@@ -9,7 +10,10 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.After;
 import org.junit.Test;
@@ -155,6 +159,52 @@ public class ManagerArchiveLifecycleTest extends BaseMethodTest {
     assertEquals(primary, error.getCause());
     assertEquals(1, primary.getSuppressed().length);
     assertEquals(abortFailure, primary.getSuppressed()[0]);
+  }
+
+  @Test
+  public void partialArchiveBeginFailureCleansOrdinaryAppendForRetry() throws Exception {
+    BlockCapsule block = signedEmptyBlock();
+    ArchiveException injected = new ArchiveException("injected partial begin failure");
+    AtomicBoolean injectedOnce = new AtomicBoolean();
+    ArchiveService failingArchive = (ArchiveService) Proxy.newProxyInstance(
+        ArchiveService.class.getClassLoader(),
+        new Class<?>[] {ArchiveService.class},
+        (proxy, method, args) -> {
+          if ("beginBlock".equals(method.getName())
+              && args != null
+              && args.length == 2
+              && args[1] == ArchiveSource.NORMAL
+              && injectedOnce.compareAndSet(false, true)) {
+            try {
+              method.invoke(archiveService, args);
+            } catch (InvocationTargetException e) {
+              throw e.getCause();
+            }
+            throw injected;
+          }
+          try {
+            return method.invoke(archiveService, args);
+          } catch (InvocationTargetException e) {
+            throw e.getCause();
+          }
+        });
+    ReflectUtils.setFieldValue(dbManager, "archiveService", failingArchive);
+    try {
+      ArchiveException failure = assertThrows(
+          ArchiveException.class, () -> dbManager.pushBlock(block));
+
+      assertSame(injected, failure);
+      assertTrue("the archive begin hook must be reached", injectedOnce.get());
+      assertEquals(0L,
+          chainManager.getDynamicPropertiesStore().getLatestBlockHeaderNumber());
+    } finally {
+      ReflectUtils.setFieldValue(dbManager, "archiveService", archiveService);
+    }
+
+    dbManager.pushBlock(block);
+
+    assertEquals(1L, chainManager.getDynamicPropertiesStore().getLatestBlockHeaderNumber());
+    assertFalse(ArchiveExecutionContextHolder.get().current().isPresent());
   }
 
   @Test
