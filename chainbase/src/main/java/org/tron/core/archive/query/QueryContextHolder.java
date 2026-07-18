@@ -14,8 +14,14 @@ public final class QueryContextHolder {
     return entry == null ? null : entry.context;
   }
 
+  /** Returns the query budget visible only to cacheless canonical storage reads. */
+  public static QueryContext currentStorageContext() {
+    Entry entry = CURRENT.get();
+    return entry == null ? null : entry.storageContext;
+  }
+
   public static boolean isActive() {
-    return CURRENT.get() != null;
+    return current() != null;
   }
 
   /**
@@ -26,9 +32,26 @@ public final class QueryContextHolder {
     if (context == null) {
       throw new NullPointerException("context");
     }
-    Entry entry = new Entry(context, CURRENT.get());
-    CURRENT.set(entry);
-    return new Scope(entry, Thread.currentThread());
+    Entry previous = CURRENT.get();
+    Entry entry = new Entry(context, context, previous);
+    Scope scope = new Scope(entry, Thread.currentThread());
+    try {
+      CURRENT.set(entry);
+      return scope;
+    } catch (RuntimeException | Error failure) {
+      try {
+        if (previous == null) {
+          CURRENT.remove();
+        } else {
+          CURRENT.set(previous);
+        }
+      } catch (RuntimeException | Error restoreFailure) {
+        if (failure != restoreFailure) {
+          failure.addSuppressed(restoreFailure);
+        }
+      }
+      throw failure;
+    }
   }
 
   /** Preserves an already-active outer scope when a compatibility reader has no context. */
@@ -36,13 +59,40 @@ public final class QueryContextHolder {
     return context == null ? new Scope(null, Thread.currentThread()) : attach(context);
   }
 
+  /** Temporarily hides the current query context from an application callback. */
+  public static Scope suspend() {
+    Entry previous = CURRENT.get();
+    QueryContext storageContext = previous == null ? null : previous.storageContext;
+    Entry suspended = new Entry(null, storageContext, previous);
+    Scope scope = new Scope(suspended, Thread.currentThread());
+    try {
+      CURRENT.set(suspended);
+      return scope;
+    } catch (RuntimeException | Error failure) {
+      try {
+        if (previous == null) {
+          CURRENT.remove();
+        } else {
+          CURRENT.set(previous);
+        }
+      } catch (RuntimeException | Error restoreFailure) {
+        if (failure != restoreFailure) {
+          failure.addSuppressed(restoreFailure);
+        }
+      }
+      throw failure;
+    }
+  }
+
   private static final class Entry {
 
     private final QueryContext context;
+    private final QueryContext storageContext;
     private final Entry previous;
 
-    private Entry(QueryContext context, Entry previous) {
+    private Entry(QueryContext context, QueryContext storageContext, Entry previous) {
       this.context = context;
+      this.storageContext = storageContext;
       this.previous = previous;
     }
   }

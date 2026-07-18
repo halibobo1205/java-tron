@@ -872,13 +872,13 @@ public class Manager {
     DefaultArchiveService defaultArchiveService = (DefaultArchiveService) archiveService;
     long latestBlockHeaderNumber =
         chainBaseManager.getDynamicPropertiesStore().getLatestBlockHeaderNumber();
-    if (defaultArchiveService.getTxNumIndex().getFirstArchivedBlock() != 0L) {
+    if (defaultArchiveService.getFirstArchivedBlock() != 0L) {
       if (latestBlockHeaderNumber == 0L) {
         throwGenesisArchiveMissing();
       }
       return;
     }
-    ArchiveBlockRange range = defaultArchiveService.getTxNumIndex().getBlockRange(0L)
+    ArchiveBlockRange range = defaultArchiveService.getCommittedBlockRange(0L)
         .orElseThrow(() -> new TronError("Archive enabled but genesis block range is unavailable",
             TronError.ErrCode.GENESIS_BLOCK_INIT));
     try (ArchiveStateReader reader = defaultArchiveService.openRecoveryReader(
@@ -1291,6 +1291,15 @@ public class Manager {
    * when switch fork need erase blocks on fork branch.
    */
   public void eraseBlock() {
+    archiveService.awaitWriterCapacity();
+    try (ArchiveWorkLease writerLease = archiveService.acquireWriterLease();
+        ArchiveMutationLease ignored = archiveService.acquireMutationWriteLease()) {
+      writerLease.start();
+      eraseBlockWithArchiveLease();
+    }
+  }
+
+  private void eraseBlockWithArchiveLease() {
     session.reset();
     try {
       BlockCapsule oldHeadBlock = chainBaseManager.getBlockById(
@@ -1307,7 +1316,9 @@ public class Manager {
           MetricLabels.Gauge.QUEUE_POPPED);
 
     } catch (ItemNotFoundException | BadItemException e) {
-      logger.warn(e.getMessage(), e);
+      throw new TronError(
+          "cannot load canonical head while erasing a fork block",
+          e, TronError.ErrCode.ARCHIVE_RUNTIME);
     }
   }
 
@@ -1319,7 +1330,9 @@ public class Manager {
   ArchiveJournalToken journalArchiveBlockOnlyOrFailStop(BlockCapsule block, String action) {
     try {
       return archiveService.commitBlockJournaled(block, block.getTransactions().size());
-    } catch (RuntimeException e) {
+    } catch (TronError e) {
+      throw e;
+    } catch (RuntimeException | Error e) {
       throw archiveRuntimeError(action, block, e);
     }
   }
@@ -1328,7 +1341,9 @@ public class Manager {
       String action) {
     try {
       archiveService.acknowledgeCanonicalCommit(token);
-    } catch (RuntimeException e) {
+    } catch (TronError e) {
+      throw e;
+    } catch (RuntimeException | Error e) {
       throw archiveRuntimeError(action, block, e);
     }
   }
@@ -1336,7 +1351,9 @@ public class Manager {
   void commitArchiveBlockOnlyOrFailStop(BlockCapsule block, String action) {
     try {
       archiveService.commitBlock(block);
-    } catch (RuntimeException e) {
+    } catch (TronError e) {
+      throw e;
+    } catch (RuntimeException | Error e) {
       throw archiveRuntimeError(action, block, e);
     }
   }
@@ -1368,7 +1385,9 @@ public class Manager {
       }
       archiveService.requestPublishSolidifiedBlocks(
           publishableBlockNum, solidifiedBlockHash);
-    } catch (ItemNotFoundException | RuntimeException e) {
+    } catch (TronError e) {
+      throw e;
+    } catch (ItemNotFoundException | RuntimeException | Error e) {
       throw archiveRuntimeError(action, block, e);
     }
   }
@@ -1376,7 +1395,9 @@ public class Manager {
   void unwindArchiveBlockOrFailStop(BlockCapsule block, String action) {
     try {
       archiveService.unwindBlock(block);
-    } catch (RuntimeException e) {
+    } catch (TronError e) {
+      throw e;
+    } catch (RuntimeException | Error e) {
       throw archiveRuntimeError(action, block, e);
     }
   }
@@ -1384,9 +1405,10 @@ public class Manager {
   void abortArchiveBlockBestEffort(BlockCapsule block, String action, Throwable primary) {
     try {
       archiveService.abortBlock(block);
-    } catch (RuntimeException e) {
-      primary.addSuppressed(e);
-      logger.error("Archive {} abort failed for block {}.", action, block.getNum(), e);
+    } catch (RuntimeException | Error e) {
+      addSuppressedSafely(primary, e);
+      logArchiveErrorBestEffort(
+          "Archive " + action + " abort failed for block " + block.getNum() + ".", e, primary);
     }
   }
 
@@ -1394,20 +1416,38 @@ public class Manager {
       String action, Throwable primary) {
     try {
       archiveService.rollbackJournaledBlock(token);
-    } catch (RuntimeException e) {
-      primary.addSuppressed(e);
-      logger.error("Archive {} journal rollback failed for block {}.", action, block.getNum(), e);
+    } catch (RuntimeException | Error e) {
+      addSuppressedSafely(primary, e);
+      logArchiveErrorBestEffort(
+          "Archive " + action + " journal rollback failed for block " + block.getNum() + ".",
+          e, primary);
+    }
+  }
+
+  private static void addSuppressedSafely(Throwable primary, Throwable candidate) {
+    if (primary == null || primary == candidate) {
+      return;
+    }
+    try {
+      primary.addSuppressed(candidate);
+    } catch (Throwable ignored) {
+      // Preserve the primary fork failure even if suppression is unavailable.
     }
   }
 
   void abortArchiveBlockAndFailStop(BlockCapsule block, String action, Throwable primary) {
     abortArchiveBlockBestEffort(block, action, primary);
+    if (primary instanceof TronError) {
+      throw (TronError) primary;
+    }
     throw archiveRuntimeError(action, block, primary);
   }
 
   private TronError archiveRuntimeError(String action, BlockCapsule block, Throwable e) {
-    logger.error("Archive {} failed after canonical state changed for block {}.",
-        action, block.getNum(), e);
+    logArchiveErrorBestEffort(
+        "Archive " + action + " failed after canonical state changed for block "
+            + block.getNum() + ".",
+        e, e);
     return new TronError(
         "archive " + action + " failed after canonical state changed for block " + block.getNum(),
         e, TronError.ErrCode.ARCHIVE_RUNTIME);
@@ -1478,11 +1518,13 @@ public class Manager {
     MetricsUtil.meterMark(MetricsKey.BLOCKCHAIN_FORK_COUNT);
     Metrics.counterInc(MetricKeys.Counter.BLOCK_FORK, 1, MetricLabels.ALL);
 
+    Sha256Hash canonicalHeadBeforeSwitch =
+        getDynamicPropertiesStore().getLatestBlockHeaderHash();
     Pair<LinkedList<KhaosBlock>, LinkedList<KhaosBlock>> binaryTree;
     try {
       binaryTree =
           khaosDb.getBranch(
-              newHead.getBlockId(), getDynamicPropertiesStore().getLatestBlockHeaderHash());
+              newHead.getBlockId(), canonicalHeadBeforeSwitch);
     } catch (NonCommonBlockException e) {
       Metrics.counterInc(MetricKeys.Counter.BLOCK_FORK, 1, MetricLabels.FAIL);
       MetricsUtil.meterMark(MetricsKey.BLOCKCHAIN_FAIL_FORK_COUNT);
@@ -1498,21 +1540,35 @@ public class Manager {
       throw e;
     }
 
-    if (CollectionUtils.isNotEmpty(binaryTree.getValue())) {
+    LinkedList<KhaosBlock> newBranch = binaryTree.getKey();
+    LinkedList<KhaosBlock> oldBranch = binaryTree.getValue();
+    Sha256Hash commonAncestorHash = CollectionUtils.isNotEmpty(oldBranch)
+        ? oldBranch.peekLast().getParentHash()
+        : canonicalHeadBeforeSwitch;
+    KhaosBlock recoveryHead = CollectionUtils.isNotEmpty(oldBranch)
+        ? oldBranch.peekFirst()
+        : khaosDb.getMiniStore().getByHash(canonicalHeadBeforeSwitch);
+    if (recoveryHead == null) {
+      throw new TronError(
+          "cannot locate the pre-switch canonical head in khaosDB",
+          TronError.ErrCode.ARCHIVE_RUNTIME);
+    }
+
+    if (CollectionUtils.isNotEmpty(oldBranch)) {
       while (!getDynamicPropertiesStore()
           .getLatestBlockHeaderHash()
-          .equals(binaryTree.getValue().peekLast().getParentHash())) {
+          .equals(commonAncestorHash)) {
         if (EventPluginLoader.getInstance().getVersion() == 0) {
           reOrgContractTrigger();
           reOrgBlockTrigger();
         }
         reOrgLogsFilter();
-        eraseBlock();
+        eraseBlockWithArchiveLease();
       }
     }
 
-    if (CollectionUtils.isNotEmpty(binaryTree.getKey())) {
-      List<KhaosBlock> first = new ArrayList<>(binaryTree.getKey());
+    if (CollectionUtils.isNotEmpty(newBranch)) {
+      List<KhaosBlock> first = new ArrayList<>(newBranch);
       Collections.reverse(first);
       for (KhaosBlock item : first) {
         Throwable exception = null;
@@ -1565,79 +1621,78 @@ public class Manager {
           } else if (archiveJournalToken == null) {
             abortArchiveBlockBestEffort(item.getBlk(), "switch fork replay", e);
           }
-          logger.warn(e.getMessage(), e);
+          logArchiveWarningBestEffort("Switch fork replay failed.", e, e);
           throw e;
         } catch (TronError e) {
+          if (e.getErrCode() == TronError.ErrCode.ARCHIVE_RUNTIME) {
+            exception = e;
+          }
           if (!canonicalCommitted && archiveJournalToken != null) {
             rollbackArchiveJournalBestEffort(
                 archiveJournalToken, item.getBlk(), "switch fork replay", e);
           } else if (archiveJournalToken == null) {
             abortArchiveBlockBestEffort(item.getBlk(), "switch fork replay", e);
           }
-          logger.warn(e.getMessage(), e);
+          logArchiveWarningBestEffort("Switch fork replay failed.", e, e);
           if (e.getErrCode() != TronError.ErrCode.ARCHIVE_RUNTIME) {
             throw e;
           }
+          throw e;
+        } catch (Error e) {
           exception = e;
+          if (!canonicalCommitted && archiveJournalToken != null) {
+            rollbackArchiveJournalBestEffort(
+                archiveJournalToken, item.getBlk(), "switch fork replay", e);
+          } else if (archiveJournalToken == null) {
+            abortArchiveBlockBestEffort(item.getBlk(), "switch fork replay", e);
+          }
+          logArchiveWarningBestEffort("Switch fork replay failed.", e, e);
           throw e;
         } finally {
           if (exception != null) {
-            Metrics.counterInc(MetricKeys.Counter.BLOCK_FORK, 1, MetricLabels.FAIL);
-            MetricsUtil.meterMark(MetricsKey.BLOCKCHAIN_FAIL_FORK_COUNT);
-            logger.warn("Switch back because exception thrown while switching forks.", exception);
-            first.forEach(khaosBlock -> khaosDb.removeBlk(khaosBlock.getBlk().getBlockId()));
-            khaosDb.setHead(binaryTree.getValue().peekFirst());
+            try {
+              reportSwitchForkFailureBestEffort(exception);
+              first.forEach(khaosBlock -> khaosDb.removeBlk(khaosBlock.getBlk().getBlockId()));
+              khaosDb.setHead(recoveryHead);
 
-            while (!getDynamicPropertiesStore()
-                .getLatestBlockHeaderHash()
-                .equals(binaryTree.getValue().peekLast().getParentHash())) {
-              eraseBlock();
-            }
-
-            List<KhaosBlock> second = new ArrayList<>(binaryTree.getValue());
-            Collections.reverse(second);
-            for (KhaosBlock khaosBlock : second) {
-              ArchiveJournalToken recoveryJournalToken = null;
-              boolean recoveryCanonicalCommitted = false;
-              // todo  process the exception carefully later
-              try {
-                archiveService.beginBlock(khaosBlock.getBlk(), ArchiveSource.RECOVERY);
-                try (ISession tmpSession = revokingStore.buildSession()) {
-                  applyBlock(khaosBlock.getBlk().setSwitch(true));
-                  recoveryJournalToken = journalArchiveBlockOnlyOrFailStop(
-                      khaosBlock.getBlk(), "switch fork recovery");
-                  tmpSession.commit();
-                  recoveryCanonicalCommitted = true;
-                  acknowledgeArchiveJournalOrFailStop(
-                      recoveryJournalToken, khaosBlock.getBlk(), "switch fork recovery");
-                }
-              } catch (AccountResourceInsufficientException
-                  | ValidateSignatureException
-                  | ContractValidateException
-                  | ContractExeException
-                  | TaposException
-                  | DupTransactionException
-                  | TransactionExpirationException
-                  | TooBigTransactionException
-                  | TooBigTransactionResultException
-                  | ValidateScheduleException
-                  | ReceiptCheckErrException
-                  | VMIllegalException
-                  | ZksnarkException
-                  | BadBlockException
-                  | EventBloomException
-                  | RuntimeException
-                  | TronError e) {
-                logger.warn(e.getMessage(), e);
-                if (!recoveryCanonicalCommitted && recoveryJournalToken != null) {
-                  rollbackArchiveJournalBestEffort(
-                      recoveryJournalToken, khaosBlock.getBlk(), "switch fork recovery", e);
-                } else if (recoveryJournalToken == null) {
-                  abortArchiveBlockBestEffort(
-                      khaosBlock.getBlk(), "switch fork recovery", e);
-                }
-                throw switchForkRecoveryError(khaosBlock.getBlk(), e, exception);
+              while (!getDynamicPropertiesStore()
+                  .getLatestBlockHeaderHash()
+                  .equals(commonAncestorHash)) {
+                eraseBlockWithArchiveLease();
               }
+
+              List<KhaosBlock> second = new ArrayList<>(oldBranch);
+              Collections.reverse(second);
+              for (KhaosBlock khaosBlock : second) {
+                ArchiveJournalToken recoveryJournalToken = null;
+                boolean recoveryCanonicalCommitted = false;
+                try {
+                  archiveService.beginBlock(khaosBlock.getBlk(), ArchiveSource.RECOVERY);
+                  try (ISession tmpSession = revokingStore.buildSession()) {
+                    applyBlock(khaosBlock.getBlk().setSwitch(true));
+                    recoveryJournalToken = journalArchiveBlockOnlyOrFailStop(
+                        khaosBlock.getBlk(), "switch fork recovery");
+                    tmpSession.commit();
+                    recoveryCanonicalCommitted = true;
+                    acknowledgeArchiveJournalOrFailStop(
+                        recoveryJournalToken, khaosBlock.getBlk(), "switch fork recovery");
+                  }
+                } catch (Throwable recoveryFailure) {
+                  if (!recoveryCanonicalCommitted && recoveryJournalToken != null) {
+                    rollbackArchiveJournalBestEffort(
+                        recoveryJournalToken, khaosBlock.getBlk(),
+                        "switch fork recovery", recoveryFailure);
+                  } else if (recoveryJournalToken == null) {
+                    abortArchiveBlockBestEffort(
+                        khaosBlock.getBlk(), "switch fork recovery", recoveryFailure);
+                  }
+                  logArchiveWarningBestEffort(
+                      "Switch fork recovery failed.", recoveryFailure, recoveryFailure);
+                  throw recoveryFailure;
+                }
+              }
+            } catch (Throwable recoveryFailure) {
+              throw switchForkRecoveryError(item.getBlk(), recoveryFailure, exception);
             }
           }
         }
@@ -1650,18 +1705,54 @@ public class Manager {
 
   private TronError switchForkRecoveryError(BlockCapsule block, Throwable recoveryFailure,
       Throwable originalFailure) {
-    if (recoveryFailure instanceof TronError
-        && ((TronError) recoveryFailure).getErrCode() != TronError.ErrCode.ARCHIVE_RUNTIME) {
-      if (originalFailure != null && originalFailure != recoveryFailure) {
-        recoveryFailure.addSuppressed(originalFailure);
-      }
+    if (recoveryFailure instanceof TronError) {
+      addSuppressedSafely(recoveryFailure, originalFailure);
       return (TronError) recoveryFailure;
     }
     TronError error = archiveRuntimeError("switch fork recovery", block, recoveryFailure);
-    if (originalFailure != null && originalFailure != recoveryFailure) {
-      error.addSuppressed(originalFailure);
-    }
+    addSuppressedSafely(error, originalFailure);
     return error;
+  }
+
+  private void reportSwitchForkFailureBestEffort(Throwable failure) {
+    try {
+      Metrics.counterInc(MetricKeys.Counter.BLOCK_FORK, 1, MetricLabels.FAIL);
+    } catch (Throwable metricFailure) {
+      addSuppressedSafely(failure, metricFailure);
+    }
+    try {
+      MetricsUtil.meterMark(MetricsKey.BLOCKCHAIN_FAIL_FORK_COUNT);
+    } catch (Throwable metricFailure) {
+      addSuppressedSafely(failure, metricFailure);
+    }
+    logArchiveWarningBestEffort(
+        "Switch back because exception was thrown while switching forks.", failure, failure);
+  }
+
+  private void logArchiveWarningBestEffort(
+      String message, Throwable failure, Throwable primary) {
+    try {
+      logger.warn("{} ({})", message, safeFailureType(failure));
+    } catch (Throwable loggingFailure) {
+      addSuppressedSafely(primary, loggingFailure);
+    }
+  }
+
+  private void logArchiveErrorBestEffort(
+      String message, Throwable failure, Throwable primary) {
+    try {
+      logger.error("{} ({})", message, safeFailureType(failure));
+    } catch (Throwable loggingFailure) {
+      addSuppressedSafely(primary, loggingFailure);
+    }
+  }
+
+  private static String safeFailureType(Throwable failure) {
+    try {
+      return failure == null ? "unknown" : failure.getClass().getName();
+    } catch (Throwable ignored) {
+      return "unknown";
+    }
   }
 
   private boolean isSameSig(TransactionCapsule tx1, TransactionCapsule tx2) {
@@ -1860,11 +1951,10 @@ public class Manager {
                 } else if (archiveJournalToken == null) {
                   abortArchiveBlockBestEffort(newBlock, "push block", throwable);
                 }
-                logger.error(throwable.getMessage(), throwable);
                 if (!canonicalCommitted) {
-                  khaosDb.removeBlk(block.getBlockId());
-                  clearSolidityContractTriggerCache(block.getNum());
+                  cleanupFailedPushBestEffort(block, throwable);
                 }
+                logArchiveErrorBestEffort("push block failed", throwable, throwable);
                 throw throwable;
               }
               acknowledgeArchiveJournalOrFailStop(archiveJournalToken, newBlock, "push block");
@@ -1900,6 +1990,19 @@ public class Manager {
       }
     } finally {
       setBlockWaitLock(false);
+    }
+  }
+
+  private void cleanupFailedPushBestEffort(BlockCapsule block, Throwable primary) {
+    try {
+      khaosDb.removeBlk(block.getBlockId());
+    } catch (Throwable cleanupFailure) {
+      addSuppressedSafely(primary, cleanupFailure);
+    }
+    try {
+      clearSolidityContractTriggerCache(block.getNum());
+    } catch (Throwable cleanupFailure) {
+      addSuppressedSafely(primary, cleanupFailure);
     }
   }
 

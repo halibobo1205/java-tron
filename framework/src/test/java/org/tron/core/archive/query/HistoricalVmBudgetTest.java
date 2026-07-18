@@ -1,6 +1,7 @@
 package org.tron.core.archive.query;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
@@ -12,11 +13,27 @@ import org.tron.core.vm.JumpTable;
 import org.tron.core.vm.Op;
 import org.tron.core.vm.Operation;
 import org.tron.core.vm.VM;
+import org.tron.core.vm.config.VMConfig;
 import org.tron.core.vm.program.Program;
 import org.tron.core.vm.program.invoke.ProgramInvokeMockImpl;
 import org.tron.protos.Protocol;
 
 public class HistoricalVmBudgetTest {
+
+  @Test
+  public void archiveQueryDisablesGlobalVmTraceWhenProgramIsCreated() throws Exception {
+    boolean previous = VMConfig.vmTrace();
+    VMConfig.setVmTrace(true);
+    try {
+      assertTrue(newProgram(new byte[0]).isVmTraceEnabled());
+      QueryContext context = new QueryContext(ArchiveQueryLimits.unlimited());
+      try (QueryContextHolder.Scope ignored = QueryContextHolder.attach(context)) {
+        assertFalse(newProgram(new byte[0]).isVmTraceEnabled());
+      }
+    } finally {
+      VMConfig.setVmTrace(previous);
+    }
+  }
 
   @Test
   public void deadlineIsCheckedAfterANonInterruptiblePrecompileBoundary() throws Exception {
@@ -38,9 +55,7 @@ public class HistoricalVmBudgetTest {
         return Long.MAX_VALUE;
       }
     };
-    Program program = new Program(code, code, invoke, new InternalTransaction(
-        Protocol.Transaction.getDefaultInstance(),
-        InternalTransaction.TrxType.TRX_UNKNOWN_TYPE));
+    Program program = new Program(code, code, invoke, internalTransaction());
     program.setRootTransactionId(new byte[32]);
 
     try (QueryContextHolder.Scope ignored = QueryContextHolder.attach(context)) {
@@ -52,5 +67,15 @@ public class HistoricalVmBudgetTest {
     assertEquals(HistoricalQueryLimitException.Limit.DEADLINE, terminal.getLimit());
     assertEquals(1L, context.getVmSteps());
     assertSame(terminal, program.getResult().getException());
+  }
+
+  private static Program newProgram(byte[] code) throws Exception {
+    return new Program(code, code, new ProgramInvokeMockImpl(), internalTransaction());
+  }
+
+  private static InternalTransaction internalTransaction() throws Exception {
+    return new InternalTransaction(
+        Protocol.Transaction.getDefaultInstance(),
+        InternalTransaction.TrxType.TRX_UNKNOWN_TYPE);
   }
 }

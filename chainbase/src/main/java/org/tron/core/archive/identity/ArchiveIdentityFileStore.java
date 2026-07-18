@@ -29,6 +29,18 @@ final class ArchiveIdentityFileStore {
       new ConcurrentHashMap<>();
 
   private final ArchiveIdentityCodec codec = new ArchiveIdentityCodec();
+  private final LockDurability lockDurability;
+
+  ArchiveIdentityFileStore() {
+    this(ArchiveIdentityFileStore::forceLockFile);
+  }
+
+  ArchiveIdentityFileStore(LockDurability lockDurability) {
+    if (lockDurability == null) {
+      throw new NullPointerException("lockDurability");
+    }
+    this.lockDurability = lockDurability;
+  }
 
   <T> T withExclusiveFileLock(Path lockPath, LockedOperation<T> operation)
       throws IOException {
@@ -40,6 +52,7 @@ final class ArchiveIdentityFileStore {
         StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
          FileLock ignored = channel.lock()) {
       requireRegularLockFile(lockPath);
+      lockDurability.force(channel, lockPath);
       return operation.run();
     } finally {
       localLock.unlock();
@@ -278,6 +291,17 @@ final class ArchiveIdentityFileStore {
     } catch (IOException e) {
       throw new IOException("could not fsync archive identity directory " + directory, e);
     }
+  }
+
+  static void forceLockFile(FileChannel channel, Path lockPath) throws IOException {
+    channel.force(true);
+    forceDirectory(requireParent(lockPath));
+  }
+
+  @FunctionalInterface
+  interface LockDurability {
+
+    void force(FileChannel channel, Path lockPath) throws IOException;
   }
 
   @FunctionalInterface

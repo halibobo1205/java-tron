@@ -85,6 +85,22 @@ public class ArchiveTemporalCodecTest {
   }
 
   @Test
+  public void anchorKeyRoundTripsAcrossLatestAndHistoryPrefixes() {
+    byte[] key = {1, 2, 3, 4};
+    byte[] latest = ArchiveTemporalCodec.latestKey(ArchiveDomain.CONTRACT_STATE, key);
+    byte[] history = ArchiveTemporalCodec.historyKey(
+        ArchiveDomain.CONTRACT_STATE, key, 99L);
+    byte[] anchor = ArchiveTemporalCodec.anchorKey(ArchiveDomain.CONTRACT_STATE, key);
+
+    assertEquals(0x23, anchor[0]);
+    assertArrayEquals(anchor, ArchiveTemporalCodec.anchorKeyOfLatest(latest));
+    assertArrayEquals(anchor, ArchiveTemporalCodec.anchorKeyOfHistory(history));
+    assertArrayEquals(anchor, ArchiveTemporalCodec.anchorKeyOfHistoryPrefix(
+        ArchiveTemporalCodec.historyPrefix(ArchiveDomain.CONTRACT_STATE, key)));
+    assertArrayEquals(latest, ArchiveTemporalCodec.latestKeyOfAnchor(anchor));
+  }
+
+  @Test
   public void keyLengthUsesFourByteBigEndianForLargeKeys() {
     byte[] key = new byte[0x10001];
     key[0] = 1;
@@ -190,6 +206,16 @@ public class ArchiveTemporalCodecTest {
     ArchiveException ex = assertThrows(ArchiveException.class,
         () -> ArchiveTemporalCodec.decodeValue(new byte[] {1, 7}));
     assertTrue(ex.getMessage().contains("tombstone value must be empty"));
+  }
+
+  @Test
+  public void valueEncodingRejectsFormatOverflowBeforeCopy() {
+    DomainValue value = DomainValue.present(new byte[] {4, 5});
+
+    ArchiveException failure = assertThrows(ArchiveException.class,
+        () -> ArchiveTemporalCodec.encodeValue(value, 2));
+
+    assertTrue(failure.getMessage().contains("payload exceeds format limit 2"));
   }
 
   @Test

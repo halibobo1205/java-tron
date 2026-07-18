@@ -7,9 +7,9 @@ import org.tron.core.archive.domain.ArchiveDomain;
 /**
  * An isolated, point-in-time read view over an {@link ArchiveTemporalStore}, exposing exactly the
  * two methods the archive state reader needs. Opened via {@code openReadView()} under the archive
- * read lock, it lets a historical {@code eth_call} / {@code debug_trace} run its VM against a
- * frozen snapshot after the lock is released, so a long call no longer stalls block commit. The
- * view MUST be closed (it may hold a RocksDB snapshot that otherwise pins SST files).
+ * read lock, it lets a historical {@code eth_call} run its VM against a frozen snapshot after the
+ * lock is released, so a long call no longer stalls block commit. The view MUST be closed (it may
+ * hold a RocksDB snapshot that otherwise pins SST files).
  */
 public interface ArchiveTemporalReadView extends AutoCloseable {
 
@@ -28,9 +28,9 @@ public interface ArchiveTemporalReadView extends AutoCloseable {
   void close();
 
   /**
-   * A non-isolated view that delegates straight to a live store; {@code close()} is a no-op. Used
-   * on the mid-chain read path, where the archive read lock (held for the reader's whole lifetime)
-   * provides the isolation instead of a snapshot.
+   * A non-isolated view that delegates straight to a live store; {@code close()} is a no-op. This
+   * is retained for internal callers and tests that already own the required consistency scope;
+   * public historical queries use an isolated snapshot.
    */
   static ArchiveTemporalReadView passThrough(ArchiveTemporalStore store) {
     return new ArchiveTemporalReadView() {

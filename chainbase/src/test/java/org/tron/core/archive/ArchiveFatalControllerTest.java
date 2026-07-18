@@ -121,4 +121,36 @@ public class ArchiveFatalControllerTest {
     assertEquals(70, status.get());
     controller.close();
   }
+
+  @Test
+  public void watchdogTerminatesWhenFatalMessageCannotBeRendered() throws Exception {
+    CountDownLatch terminated = new CountDownLatch(1);
+    AtomicInteger status = new AtomicInteger();
+    ArchiveFatalController controller = new ArchiveFatalController(
+        "archive-fatal-hostile-message-test", 20L, value -> {
+          status.set(value);
+          terminated.countDown();
+        });
+    controller.setHandler(failure -> {
+      // Returning without closing keeps the watchdog armed.
+    });
+
+    controller.signal(new HostileMessageException());
+
+    assertTrue(terminated.await(1, TimeUnit.SECONDS));
+    assertEquals(70, status.get());
+    controller.close();
+  }
+
+  private static final class HostileMessageException extends ArchiveException {
+
+    private HostileMessageException() {
+      super("unrenderable");
+    }
+
+    @Override
+    public String getMessage() {
+      throw new AssertionError("message rendering failed");
+    }
+  }
 }

@@ -22,11 +22,12 @@ public class ArchiveQueryLimitsTest {
     assertEquals(ArchiveQueryLimits.UNLIMITED, limits.getBatchDeadlineMs());
     assertEquals(ArchiveQueryLimits.UNLIMITED, limits.getMaxLogicalReadsPerRequest());
     assertEquals(ArchiveQueryLimits.UNLIMITED, limits.getMaxBackendReadsPerRequest());
+    assertEquals(ArchiveQueryLimits.UNLIMITED, limits.getMaxBackendValueBytes());
+    assertEquals(ArchiveQueryLimits.UNLIMITED, limits.getMaxBackendReadBytesPerRequest());
     assertEquals(ArchiveQueryLimits.DEFAULT_MAX_CACHED_ENTRIES, limits.getMaxCachedEntries());
     assertEquals(ArchiveQueryLimits.DEFAULT_MAX_CACHED_BYTES, limits.getMaxCachedBytes());
     assertEquals(ArchiveQueryLimits.UNLIMITED, limits.getMaxVmSteps());
-    assertEquals(ArchiveQueryLimits.UNLIMITED, limits.getMaxTraceBytes());
-    assertEquals(ArchiveQueryLimits.UNLIMITED, limits.getMaxRetainedTraceBytes());
+    assertEquals(ArchiveQueryLimits.UNLIMITED, limits.getMaxVmOverlayBytes());
     assertEquals(ArchiveQueryLimits.UNLIMITED, limits.getMaxResponseBytes());
     assertEquals(limits, new ArchiveQueryLimits());
   }
@@ -43,12 +44,13 @@ public class ArchiveQueryLimitsTest {
         .batchDeadlineMs(16)
         .maxLogicalReads(7)
         .maxBackendReads(8)
+        .maxBackendValueBytes(18)
+        .maxBackendReadBytesPerRequest(19)
         .maxCachedEntries(9)
         .maxCachedBytes(10)
-        .maxTraceSteps(11)
-        .maxTraceBytes(12)
-        .maxRetainedTraceBytes(13)
-        .maxTraceResponseBytes(17)
+        .maxVmSteps(11)
+        .maxVmOverlayBytes(20)
+        .maxResponseBytes(17)
         .build();
 
     assertEquals(3, limits.getMaxConcurrentQueries());
@@ -62,12 +64,13 @@ public class ArchiveQueryLimitsTest {
     assertEquals(16, limits.getBatchDeadlineMs());
     assertEquals(7, limits.getMaxLogicalReads());
     assertEquals(8, limits.getMaxBackendReads());
+    assertEquals(18, limits.getMaxBackendValueBytes());
+    assertEquals(19, limits.getMaxBackendReadBytesPerRequest());
     assertEquals(9, limits.getMaxCachedEntries());
     assertEquals(10, limits.getMaxCachedBytes());
-    assertEquals(11, limits.getMaxTraceSteps());
-    assertEquals(12, limits.getMaxTraceBytes());
-    assertEquals(13, limits.getMaxRetainedTraceBytes());
-    assertEquals(17, limits.getMaxTraceResponseBytes());
+    assertEquals(11, limits.getMaxVmSteps());
+    assertEquals(20, limits.getMaxVmOverlayBytes());
+    assertEquals(17, limits.getMaxResponseBytes());
     assertEquals(limits, limits.toBuilder().build());
     assertEquals(limits.hashCode(), limits.toBuilder().build().hashCode());
   }
@@ -93,15 +96,17 @@ public class ArchiveQueryLimitsTest {
     assertThrows(IllegalArgumentException.class,
         () -> ArchiveQueryLimits.builder().maxBackendReads(-2).build());
     assertThrows(IllegalArgumentException.class,
+        () -> ArchiveQueryLimits.builder().maxBackendValueBytes(-2).build());
+    assertThrows(IllegalArgumentException.class,
+        () -> ArchiveQueryLimits.builder().maxBackendReadBytesPerRequest(-2).build());
+    assertThrows(IllegalArgumentException.class,
         () -> ArchiveQueryLimits.builder().maxCachedEntries(-1).build());
     assertThrows(IllegalArgumentException.class,
         () -> ArchiveQueryLimits.builder().maxCachedBytes(-1).build());
     assertThrows(IllegalArgumentException.class,
         () -> ArchiveQueryLimits.builder().maxVmSteps(-2).build());
     assertThrows(IllegalArgumentException.class,
-        () -> ArchiveQueryLimits.builder().maxTraceBytes(-2).build());
-    assertThrows(IllegalArgumentException.class,
-        () -> ArchiveQueryLimits.builder().maxRetainedTraceBytes(-2).build());
+        () -> ArchiveQueryLimits.builder().maxVmOverlayBytes(-2).build());
     assertThrows(IllegalArgumentException.class,
         () -> ArchiveQueryLimits.builder().maxResponseBytes(-2).build());
   }

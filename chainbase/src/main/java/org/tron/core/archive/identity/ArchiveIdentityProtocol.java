@@ -25,6 +25,12 @@ public final class ArchiveIdentityProtocol {
   private final ArchiveIdentityFileStore files;
   private final DurableStageListener stageListener;
 
+  @FunctionalInterface
+  public interface ActiveIdentityAction<T> {
+
+    T run(ArchiveIdentity identity) throws IOException;
+  }
+
   /** Package-private identity-only entry point for protocol tests. */
   ArchiveIdentityProtocol() {
     this(new ArchiveIdentityPayload() {
@@ -283,6 +289,22 @@ public final class ArchiveIdentityProtocol {
   public ArchiveIdentity validateActive(Path anchorDirectory, Path archiveRoot,
       String expectedChainId, String expectedSchema, String expectedLayout, long expectedFloor)
       throws IOException {
+    return withValidatedActive(anchorDirectory, archiveRoot,
+        expectedChainId, expectedSchema, expectedLayout, active -> {
+          if (active.getFloor() != expectedFloor) {
+            throw mismatch("active", "floor");
+          }
+          return active;
+        });
+  }
+
+  /**
+   * Runs one payload validation while both matching ACTIVE identity copies remain shared-locked.
+   */
+  public <T> T withValidatedActive(Path anchorDirectory, Path archiveRoot,
+      String expectedChainId, String expectedSchema, String expectedLayout,
+      ActiveIdentityAction<T> action) throws IOException {
+    Objects.requireNonNull(action, "action");
     Path anchors = requirePhysicalCanonicalPath(anchorDirectory, "anchorDirectory");
     Path root = requirePhysicalCanonicalPath(archiveRoot, "archiveRoot");
     return files.withSharedFileLock(rootLockPath(root), () -> {
@@ -299,10 +321,7 @@ public final class ArchiveIdentityProtocol {
         if (!active.getLayout().equals(expectedLayout)) {
           throw mismatch("active", "layout");
         }
-        if (active.getFloor() != expectedFloor) {
-          throw mismatch("active", "floor");
-        }
-        return active;
+        return action.run(active);
       });
     });
   }

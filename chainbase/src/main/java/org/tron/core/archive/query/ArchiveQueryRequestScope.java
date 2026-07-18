@@ -13,6 +13,7 @@ public final class ArchiveQueryRequestScope implements AutoCloseable {
   private final long startedNanos;
   private long admittedQueries;
   private long configuredDeadlineNanos = Long.MAX_VALUE;
+  private boolean deadlineConfigured;
   private boolean closed;
 
   private ArchiveQueryRequestScope(LongSupplier nanoTime) {
@@ -32,8 +33,19 @@ public final class ArchiveQueryRequestScope implements AutoCloseable {
       throw new NullPointerException("nanoTime");
     }
     ArchiveQueryRequestScope scope = new ArchiveQueryRequestScope(nanoTime);
-    CURRENT.set(scope);
-    return scope;
+    try {
+      CURRENT.set(scope);
+      return scope;
+    } catch (RuntimeException | Error failure) {
+      try {
+        CURRENT.remove();
+      } catch (RuntimeException | Error restoreFailure) {
+        if (failure != restoreFailure) {
+          failure.addSuppressed(restoreFailure);
+        }
+      }
+      throw failure;
+    }
   }
 
   static void admit(ArchiveQueryLimits limits) {
@@ -44,8 +56,9 @@ public final class ArchiveQueryRequestScope implements AutoCloseable {
     scope.requireOwner();
     scope.registerAndCheckDeadline(limits.getBatchDeadlineMs());
     long maximum = limits.getMaxQueriesPerBatch();
-    long observed = scope.admittedQueries + 1L;
-    if (!ArchiveQueryLimits.isUnlimited(maximum) && observed > maximum) {
+    long observed = scope.admittedQueries == Long.MAX_VALUE
+        ? Long.MAX_VALUE : scope.admittedQueries + 1L;
+    if (!ArchiveQueryLimits.isUnlimited(maximum) && scope.admittedQueries >= maximum) {
       throw HistoricalQueryLimitException.budgetExceeded(
           HistoricalQueryLimitException.Limit.BATCH_QUERIES, maximum, observed);
     }
@@ -61,7 +74,7 @@ public final class ArchiveQueryRequestScope implements AutoCloseable {
     long sampledNanos = scope.nanoTime.getAsLong();
     long remainingNanos = scope.registerAndRemainingNanos(
         limits.getBatchDeadlineMs(), sampledNanos);
-    if (remainingNanos == Long.MAX_VALUE) {
+    if (!scope.deadlineConfigured) {
       return null;
     }
     return new DeadlineConstraint(scope.nanoTime, sampledNanos, remainingNanos);
@@ -69,7 +82,7 @@ public final class ArchiveQueryRequestScope implements AutoCloseable {
 
   public static void checkCurrentDeadline() {
     ArchiveQueryRequestScope scope = CURRENT.get();
-    if (scope == null || scope.configuredDeadlineNanos == Long.MAX_VALUE) {
+    if (scope == null || !scope.deadlineConfigured) {
       return;
     }
     scope.requireOwner();
@@ -89,19 +102,20 @@ public final class ArchiveQueryRequestScope implements AutoCloseable {
       return remainingNanos(sampledNanos - startedNanos);
     }
     long deadlineNanos = TimeUnit.MILLISECONDS.toNanos(deadlineMs);
+    deadlineConfigured = true;
     configuredDeadlineNanos = Math.min(configuredDeadlineNanos, deadlineNanos);
     return remainingNanos(sampledNanos - startedNanos);
   }
 
   private void checkDeadline() {
-    if (configuredDeadlineNanos == Long.MAX_VALUE) {
+    if (!deadlineConfigured) {
       return;
     }
     remainingNanos(elapsedNanos());
   }
 
   private long remainingNanos(long elapsedNanos) {
-    if (configuredDeadlineNanos == Long.MAX_VALUE) {
+    if (!deadlineConfigured) {
       return Long.MAX_VALUE;
     }
     if (elapsedNanos >= configuredDeadlineNanos) {
@@ -121,8 +135,11 @@ public final class ArchiveQueryRequestScope implements AutoCloseable {
     if (closed) {
       return;
     }
-    closed = true;
+    if (CURRENT.get() != this) {
+      throw new IllegalStateException("archive query request scope is not current");
+    }
     CURRENT.remove();
+    closed = true;
   }
 
   private void requireOwner() {

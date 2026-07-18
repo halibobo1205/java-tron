@@ -178,6 +178,7 @@ public class JsonRpcServlet extends RateLimiterServlet {
         try (ArchiveQueryTransportScope ignored = ArchiveQueryTransportScope.open()) {
           try {
             rpcServer.handleRequest(new ByteArrayInputStream(body), output);
+            ArchiveQueryTransportScope.recordSerializedResponseBytes(output.size());
           } catch (ResponseSerializationAbortedException aborted) {
             // The bounded stream records whether this was a per-response or global-budget overflow.
           } catch (RuntimeException e) {
@@ -242,20 +243,27 @@ public class JsonRpcServlet extends RateLimiterServlet {
           JsonNode subRequest = rootNode.get(i);
           boolean notification = isNotification(subRequest);
           try {
-            ArchiveQueryRequestScope.checkCurrentDeadline();
+            checkBatchInterrupted();
+            checkBatchDeadline();
           } catch (HistoricalQueryLimitException deadlineFailure) {
             if (notification) {
               finishBatchResponse(resp, batchOutput, hasResponse, maxResponseSize);
             } else {
-              batchOutput.discard();
-              writeJsonRpcError(resp, JsonRpcError.EXCEED_LIMIT,
-                  deadlineFailure.getMessage(), subRequest.get("id"), true);
+              finishBatchDeadlineResponse(resp, batchOutput, hasResponse,
+                  deadlineFailure, subRequest.get("id"), maxResponseSize);
             }
             return;
           }
           if (!subRequest.isObject()) {
             byte[] errorBytes = MAPPER.writeValueAsBytes(
                 buildErrorNode(JsonRpcError.INVALID_REQUEST, "Invalid Request", null));
+            try {
+              checkBatchDeadline();
+            } catch (HistoricalQueryLimitException deadlineFailure) {
+              finishBatchDeadlineResponse(resp, batchOutput, hasResponse,
+                  deadlineFailure, null, maxResponseSize);
+              return;
+            }
             if (!appendBatchElement(batchOutput, errorBytes, hasResponse, maxResponseSize)) {
               boolean exhausted = batchOutput.isResourceExhausted();
               batchOutput.discard();
@@ -263,14 +271,6 @@ public class JsonRpcServlet extends RateLimiterServlet {
               return;
             }
             hasResponse = true;
-            try {
-              ArchiveQueryRequestScope.checkCurrentDeadline();
-            } catch (HistoricalQueryLimitException deadlineFailure) {
-              batchOutput.discard();
-              writeJsonRpcError(resp, JsonRpcError.EXCEED_LIMIT,
-                  deadlineFailure.getMessage(), null, true);
-              return;
-            }
             continue;
           }
 
@@ -293,49 +293,95 @@ public class JsonRpcServlet extends RateLimiterServlet {
                    new BoundedByteArrayOutputStream(remaining, subBytes, true)) {
             // Retain each query permit through its own serialization, then release it before the
             // next element. The request scope separately caps aggregate historical work.
-            try (ArchiveQueryTransportScope ignored = ArchiveQueryTransportScope.open()) {
+            ArchiveQueryTransportScope transport = ArchiveQueryTransportScope.open();
+            Throwable transportFailure = null;
+            try {
               rpcServer.handleRequest(new ByteArrayInputStream(subBody), subOutput);
-              ArchiveQueryRequestScope.checkCurrentDeadline();
+              checkBatchInterrupted();
+              ArchiveQueryTransportScope.recordSerializedResponseBytes(subOutput.size());
+              checkBatchDeadline();
             } catch (ResponseSerializationAbortedException aborted) {
-              // Overflow state is inspected after the transport/query scopes release their leases.
+              // Overflow state is inspected after the transport/query scope releases its leases.
             } catch (RuntimeException e) {
               executionFailure = e;
+              transportFailure = e;
+            } catch (IOException | Error e) {
+              transportFailure = e;
+            }
+            try {
+              transport.close();
+            } catch (RuntimeException | Error closeFailure) {
+              if (transportFailure == null) {
+                if (closeFailure instanceof Error) {
+                  throw (Error) closeFailure;
+                }
+                executionFailure = (RuntimeException) closeFailure;
+              } else if (transportFailure != closeFailure) {
+                if (!(transportFailure instanceof Error) && closeFailure instanceof Error) {
+                  addSuppressedSafely(closeFailure, transportFailure);
+                  throw (Error) closeFailure;
+                }
+                addSuppressedSafely(transportFailure, closeFailure);
+              }
+            }
+            if (transportFailure == null && Thread.currentThread().isInterrupted()) {
+              executionFailure = interruptedBatchFailure();
+              transportFailure = executionFailure;
+            }
+            if (transportFailure instanceof IOException) {
+              throw (IOException) transportFailure;
+            }
+            if (transportFailure instanceof Error) {
+              throw (Error) transportFailure;
             }
             subOverflow = subOutput.isOverflow();
             subExhausted = subOutput.isResourceExhausted();
             responseSize = subOutput.size();
             if (executionFailure == null && !subOverflow && responseSize != 0
                 && !notification) {
-              appended = appendBatchElement(
-                  batchOutput, subOutput, hasResponse, maxResponseSize);
-              if (appended) {
-                try {
-                  ArchiveQueryRequestScope.checkCurrentDeadline();
-                } catch (RuntimeException e) {
-                  executionFailure = e;
-                }
+              try {
+                checkBatchDeadline();
+              } catch (RuntimeException e) {
+                executionFailure = e;
+              }
+              if (executionFailure == null) {
+                appended = appendBatchElement(
+                    batchOutput, subOutput, hasResponse, maxResponseSize);
               }
             }
           }
           if (notification) {
-            if (executionFailure instanceof HistoricalQueryLimitException
-                && ((HistoricalQueryLimitException) executionFailure).getLimit()
-                    == HistoricalQueryLimitException.Limit.BATCH_DEADLINE) {
+            if (terminatesBatch(executionFailure)) {
               finishBatchResponse(resp, batchOutput, hasResponse, maxResponseSize);
               return;
             }
             continue;
           }
           if (executionFailure != null) {
-            batchOutput.discard();
+            JsonRpcError errorCode;
+            String errorMessage;
             if (executionFailure instanceof HistoricalQueryLimitException) {
-              writeJsonRpcError(resp, JsonRpcError.EXCEED_LIMIT,
-                  executionFailure.getMessage(), subRequest.get("id"), true);
+              errorCode = JsonRpcError.EXCEED_LIMIT;
+              errorMessage = executionFailure.getMessage();
+            } else {
+              logger.error("RPC execution failed for batch sub-request {}", i, executionFailure);
+              errorCode = JsonRpcError.INTERNAL_ERROR;
+              errorMessage = "Internal error";
+            }
+            byte[] errorBytes = MAPPER.writeValueAsBytes(
+                buildErrorNode(errorCode, errorMessage, subRequest.get("id")));
+            if (!appendBatchElement(batchOutput, errorBytes, hasResponse, maxResponseSize)) {
+              boolean exhausted = batchOutput.isResourceExhausted();
+              batchOutput.discard();
+              writeBatchOverflow(resp, subRequest.get("id"), maxResponseSize, exhausted);
               return;
             }
-            logger.error("RPC execution failed for batch sub-request {}", i, executionFailure);
-            writeJsonRpcError(resp, JsonRpcError.INTERNAL_ERROR, "Internal error", null, true);
-            return;
+            hasResponse = true;
+            if (terminatesBatch(executionFailure)) {
+              finishBatchResponse(resp, batchOutput, true, maxResponseSize);
+              return;
+            }
+            continue;
           }
           if (subExhausted || batchOutput.isResourceExhausted()) {
             batchOutput.discard();
@@ -351,18 +397,6 @@ public class JsonRpcServlet extends RateLimiterServlet {
           if (responseSize != 0) {
             hasResponse = true;
           }
-        }
-        try {
-          ArchiveQueryRequestScope.checkCurrentDeadline();
-        } catch (HistoricalQueryLimitException deadlineFailure) {
-          batchOutput.discard();
-          if (hasResponse) {
-            writeJsonRpcError(resp, JsonRpcError.EXCEED_LIMIT,
-                deadlineFailure.getMessage(), null, true);
-          } else {
-            writeEmptyResponse(resp);
-          }
-          return;
         }
       }
       finishBatchResponse(resp, batchOutput, hasResponse, maxResponseSize);
@@ -394,8 +428,61 @@ public class JsonRpcServlet extends RateLimiterServlet {
     writeRetainedResponse(resp, batchOutput);
   }
 
+  private void finishBatchDeadlineResponse(HttpServletResponse resp,
+      BoundedByteArrayOutputStream batchOutput, boolean hasResponse,
+      HistoricalQueryLimitException deadlineFailure, JsonNode id, int maxResponseSize)
+      throws IOException {
+    byte[] errorBytes = MAPPER.writeValueAsBytes(
+        buildErrorNode(JsonRpcError.EXCEED_LIMIT, deadlineFailure.getMessage(), id));
+    if (!appendBatchElement(batchOutput, errorBytes, hasResponse, maxResponseSize)) {
+      boolean exhausted = batchOutput.isResourceExhausted();
+      batchOutput.discard();
+      writeBatchOverflow(resp, id, maxResponseSize, exhausted);
+      return;
+    }
+    finishBatchResponse(resp, batchOutput, true, maxResponseSize);
+  }
+
   private static boolean isNotification(JsonNode request) {
     return request != null && request.isObject() && !request.has("id");
+  }
+
+  private static boolean terminatesBatch(RuntimeException failure) {
+    if (!(failure instanceof HistoricalQueryLimitException)) {
+      return false;
+    }
+    HistoricalQueryLimitException.Limit limit =
+        ((HistoricalQueryLimitException) failure).getLimit();
+    return limit == HistoricalQueryLimitException.Limit.BATCH_DEADLINE
+        || limit == HistoricalQueryLimitException.Limit.INTERRUPTED;
+  }
+
+  private static void checkBatchInterrupted() {
+    if (Thread.currentThread().isInterrupted()) {
+      throw interruptedBatchFailure();
+    }
+  }
+
+  private static HistoricalQueryLimitException interruptedBatchFailure() {
+    return new HistoricalQueryLimitException(
+        HistoricalQueryLimitException.Reason.RESOURCE_EXHAUSTED,
+        HistoricalQueryLimitException.Limit.INTERRUPTED,
+        "historical JSON-RPC batch thread was interrupted");
+  }
+
+  private static void addSuppressedSafely(Throwable primary, Throwable candidate) {
+    if (primary == candidate) {
+      return;
+    }
+    try {
+      primary.addSuppressed(candidate);
+    } catch (Throwable ignored) {
+      // Preserve the higher-priority transport or cleanup failure.
+    }
+  }
+
+  void checkBatchDeadline() {
+    ArchiveQueryRequestScope.checkCurrentDeadline();
   }
 
   private static int remainingElementBytes(

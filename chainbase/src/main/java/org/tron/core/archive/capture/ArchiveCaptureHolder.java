@@ -54,7 +54,7 @@ public final class ArchiveCaptureHolder {
       return;
     }
     active.recordFailure(operation, cause);
-    logger.warn("archive capture helper failed during {}: {}", operation, cause.getMessage());
+    logFailureBestEffort(operation, cause);
   }
 
   /** Aggregates a previous-value read without invoking a metrics reporter on the Store hot path. */
@@ -145,7 +145,7 @@ public final class ArchiveCaptureHolder {
       active.capturePut(dbName, key, prevValue, value);
     } catch (Exception e) {
       active.recordFailure("capturePut(" + dbName + ")", e);
-      logger.warn("archive capture(put) failed for store {} (dropped): {}", dbName, e.getMessage());
+      logFailureBestEffort("capturePut(" + dbName + ")", e);
     }
   }
 
@@ -161,7 +161,7 @@ public final class ArchiveCaptureHolder {
       active.captureDelete(dbName, key, prevValue);
     } catch (Exception e) {
       active.recordFailure("captureDelete(" + dbName + ")", e);
-      logger.warn("archive capture(delete) failed for {} (dropped): {}", dbName, e.getMessage());
+      logFailureBestEffort("captureDelete(" + dbName + ")", e);
     }
   }
 
@@ -178,7 +178,7 @@ public final class ArchiveCaptureHolder {
       active.captureAccountAsset(addressKey, oldAccount, newAccount);
     } catch (Exception e) {
       active.recordFailure("captureAccountAsset", e);
-      logger.warn("archive account-asset capture failed (dropped): {}", e.getMessage());
+      logFailureBestEffort("captureAccountAsset", e);
     }
   }
 
@@ -196,7 +196,59 @@ public final class ArchiveCaptureHolder {
       active.captureAccountAsset(addressKey, assetId, oldBalance, newBalance);
     } catch (Exception e) {
       active.recordFailure("captureAccountAsset", e);
-      logger.warn("archive account-asset capture failed (dropped): {}", e.getMessage());
+      logFailureBestEffort("captureAccountAsset", e);
+    }
+  }
+
+  /**
+   * Reserves the raw account inputs before the store-specific asset planner parses protobufs,
+   * builds collections, or scans physical rows. An inactive scope means capture has already failed
+   * or the watermark rejected the input; callers must skip planning but may continue the canonical
+   * store write, which the archive commit will subsequently fail-stop.
+   */
+  public static AccountAssetPlanningScope openAccountAssetPlanning(
+      byte[] addressKey, byte[] oldAccount, byte[] newAccount) {
+    ArchiveCaptureEngine active = engine;
+    if (active == null || active.failure().isPresent()
+        || !ensureCurrentTx(active, "accountAssetPlanning")) {
+      return AccountAssetPlanningScope.inactive();
+    }
+    try {
+      active.beginAccountAssetPlanning(addressKey, oldAccount, newAccount);
+      return new AccountAssetPlanningScope(active);
+    } catch (Exception e) {
+      active.recordFailure("accountAssetPlanning", e);
+      logFailureBestEffort("accountAssetPlanning", e);
+      return AccountAssetPlanningScope.inactive();
+    }
+  }
+
+  public static final class AccountAssetPlanningScope implements AutoCloseable {
+
+    private static final AccountAssetPlanningScope INACTIVE =
+        new AccountAssetPlanningScope(null);
+
+    private final ArchiveCaptureEngine captureEngine;
+    private boolean closed;
+
+    private AccountAssetPlanningScope(ArchiveCaptureEngine captureEngine) {
+      this.captureEngine = captureEngine;
+    }
+
+    private static AccountAssetPlanningScope inactive() {
+      return INACTIVE;
+    }
+
+    public boolean isActive() {
+      return captureEngine != null;
+    }
+
+    @Override
+    public void close() {
+      if (captureEngine != null && !closed) {
+        closed = true;
+        captureEngine.endAccountAssetPlanning();
+      }
     }
   }
 
@@ -215,8 +267,7 @@ public final class ArchiveCaptureHolder {
       active.captureSemanticPut(domain, canonicalKey, prevValue, value);
     } catch (Exception e) {
       active.recordFailure("captureSemanticPut(" + domain + ")", e);
-      logger.warn("archive semantic capture(put) failed for {} (dropped): {}",
-          domain, e.getMessage());
+      logFailureBestEffort("captureSemanticPut(" + domain + ")", e);
     }
   }
 
@@ -235,8 +286,7 @@ public final class ArchiveCaptureHolder {
       active.captureSemanticDelete(domain, canonicalKey, prevValue);
     } catch (Exception e) {
       active.recordFailure("captureSemanticDelete(" + domain + ")", e);
-      logger.warn("archive semantic capture(delete) failed for {} (dropped): {}", domain,
-          e.getMessage());
+      logFailureBestEffort("captureSemanticDelete(" + domain + ")", e);
     }
   }
 
@@ -249,5 +299,22 @@ public final class ArchiveCaptureHolder {
           new IllegalStateException("archive write without current tx context"));
     }
     return false;
+  }
+
+  private static void logFailureBestEffort(String operation, Throwable failure) {
+    try {
+      logger.warn("archive capture failure recorded during {}; record dropped ({})", operation,
+          safeFailureType(failure));
+    } catch (Throwable ignored) {
+      // Logging is observational; capture failure remains recorded for fail-closed commit.
+    }
+  }
+
+  private static String safeFailureType(Throwable failure) {
+    try {
+      return failure == null ? "unknown" : failure.getClass().getName();
+    } catch (Throwable ignored) {
+      return "unknown";
+    }
   }
 }

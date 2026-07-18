@@ -24,34 +24,7 @@ public class VMConfigIsolationTest {
   @After
   public void restoreConfig() {
     VMConfig.clearLocalSnapshot();
-    VMConfig.clearLocalVmTrace();
     VMConfig.setGlobalSnapshot(savedGlobal);
-  }
-
-  /**
-   * The historical debug_traceCall path enables tracing via a thread-local override. With no
-   * override set, vmTrace() must return the unchanged global default (false), so the latest /
-   * consensus path is byte-identical; setting the override on this thread must not leak to the
-   * global static nor to another (concurrent consensus) thread.
-   */
-  @Test
-  public void testLocalVmTraceDoesNotPolluteGlobalDefault() throws InterruptedException {
-    // No thread-local override -> the global default is read unchanged.
-    assertFalse("global vmTrace default must be unchanged", VMConfig.vmTrace());
-
-    VMConfig.setLocalVmTrace(true);
-    assertTrue("this thread sees its own trace override", VMConfig.vmTrace());
-
-    // Another thread (e.g. block processing) must still read the global default, not this override.
-    AtomicBoolean otherThreadSaw = new AtomicBoolean(true);
-    Thread t = new Thread(() -> otherThreadSaw.set(VMConfig.vmTrace()));
-    t.start();
-    t.join();
-    assertFalse("a thread-local vmTrace must not leak to other threads", otherThreadSaw.get());
-
-    // After clearing, this thread falls back to the global default again.
-    VMConfig.clearLocalVmTrace();
-    assertFalse("clearing the override restores the global default", VMConfig.vmTrace());
   }
 
   /**
@@ -118,6 +91,25 @@ public class VMConfigIsolationTest {
         VMConfig.getEnergyLimitHardFork());
     assertFalse("setGlobalSnapshot must drop the fork thread-local view",
         VMConfig.passFork4811());
+  }
+
+  @Test
+  public void nestedLocalConfigScopeRestoresOuterView() {
+    VMConfig.Snapshot head = new VMConfig.Snapshot();
+    head.allowTvmOsaka = false;
+    VMConfig.setGlobalSnapshot(head);
+    VMConfig.Snapshot outer = new VMConfig.Snapshot();
+    outer.allowTvmOsaka = true;
+    VMConfig.setLocalSnapshot(outer);
+
+    try (VMConfig.LocalSnapshotScope ignored = VMConfig.preserveLocalSnapshot()) {
+      VMConfig.Snapshot inner = new VMConfig.Snapshot();
+      inner.allowTvmOsaka = false;
+      VMConfig.setLocalSnapshot(inner);
+      assertFalse(VMConfig.allowTvmOsaka());
+    }
+
+    assertTrue(VMConfig.allowTvmOsaka());
   }
 
   // Deep-copy the current global config through the public getters (no thread-local set here, so

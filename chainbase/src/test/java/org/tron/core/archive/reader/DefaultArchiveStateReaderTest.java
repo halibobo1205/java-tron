@@ -20,9 +20,10 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.function.ThrowingRunnable;
+import org.rocksdb.RocksDBException;
 import org.tron.common.utils.ByteArray;
-import org.tron.core.ChainBaseManager;
 import org.tron.core.archive.ArchiveException;
+import org.tron.core.archive.ArchivePersistentStateCorruptionException;
 import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveSource;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
@@ -36,10 +37,10 @@ import org.tron.core.archive.reader.ArchiveReadResult.Status;
 import org.tron.core.archive.temporal.ArchiveTemporalStore;
 import org.tron.core.archive.temporal.ArchiveTemporalReadView;
 import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
+import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.archive.txnum.ArchiveTxPosition;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.ContractStateCapsule;
-import org.tron.core.store.DynamicPropertiesStore;
 import org.tron.protos.Protocol.Account;
 import org.tron.protos.contract.SmartContractOuterClass.ContractState;
 import org.tron.protos.contract.SmartContractOuterClass.SmartContract;
@@ -56,12 +57,8 @@ public class DefaultArchiveStateReaderTest {
   }
 
   private ArchiveStateReader readerAt(long txNum) {
-    return readerAt(txNum, ArchiveReadThrough.NONE);
-  }
-
-  private ArchiveStateReader readerAt(long txNum, ArchiveReadThrough readThrough) {
     return new DefaultArchiveStateReader(store, catalog,
-        ArchiveStatePoint.blockEnd(1, new byte[] {1}, txNum), readThrough);
+        ArchiveStatePoint.blockEnd(1, new byte[] {1}, txNum));
   }
 
   // Models "key created at txNum with `value`, absent before" (prev = tombstone). getAsOf at/after
@@ -91,6 +88,48 @@ public class DefaultArchiveStateReaderTest {
     // A key never written by a proposal is MISSING (the historical view maps this to the default).
     assertEquals(Status.MISSING, reader.getDynamicProperty(
         "ALLOW_TVM_CANCUN".getBytes(StandardCharsets.US_ASCII)).getStatus());
+  }
+
+  @Test
+  public void blockHashUsesBoundSnapshotLookupWithoutGuessingBackendCost() throws Exception {
+    byte[] hash = new byte[ArchiveBlockRange.BLOCK_HASH_LENGTH];
+    hash[31] = 0x2a;
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        0L, 0L, 1L, 0L, 1L, hash, 0, ArchiveSource.NORMAL, new byte[32]);
+    QueryContext context = new QueryContext(ArchiveQueryLimits.unlimited());
+    AtomicInteger lookups = new AtomicInteger();
+    ArchiveTemporalReadView view = mock(ArchiveTemporalReadView.class);
+    DefaultArchiveStateReader reader = new DefaultArchiveStateReader(
+        view, catalog, ArchiveStatePoint.blockEnd(1L, new byte[32], 3L),
+        () -> { }, true, 16, 4_096L, context, blockNum -> {
+          lookups.incrementAndGet();
+          return Optional.of(range);
+        });
+
+    byte[] actual = reader.getBlockHash(0L);
+    actual[31] = 0;
+
+    assertEquals(0x2a, reader.getBlockHash(0L)[31]);
+    assertEquals(2, lookups.get());
+    assertEquals(2L, context.getLogicalReads());
+    assertEquals(0L, context.getBackendReads());
+    reader.close();
+  }
+
+  @Test
+  public void missingBlockHashRangeFailsAsCorruptForCompleteHistory() {
+    QueryContext context = new QueryContext(ArchiveQueryLimits.unlimited());
+    DefaultArchiveStateReader reader = new DefaultArchiveStateReader(
+        mock(ArchiveTemporalReadView.class), catalog,
+        ArchiveStatePoint.blockEnd(1L, new byte[32], 3L),
+        () -> { }, true, 16, 4_096L, context, blockNum -> Optional.empty());
+
+    ArchiveReaderException failure = assertThrows(
+        ArchiveReaderException.class, () -> reader.getBlockHash(0L));
+
+    assertEquals(ArchiveReaderException.Reason.CORRUPT_INDEX, failure.getReason());
+    assertEquals(0L, context.getBackendReads());
+    reader.close();
   }
 
   @Test
@@ -207,36 +246,6 @@ public class DefaultArchiveStateReaderTest {
   }
 
   @Test
-  public void readThroughSuppliesMidChainBaselineWhenTemporalMisses() throws Exception {
-    byte[] address = addr(1);
-    ArchiveReadThrough readThrough = (domain, key, point) -> {
-      if (domain == ArchiveDomain.ACCOUNT && java.util.Arrays.equals(key, address)) {
-        return java.util.Optional.of(DomainValue.present(account(77)));
-      }
-      return java.util.Optional.empty();
-    };
-
-    ArchiveReadResult<AccountCapsule> account = readerAt(5, readThrough).getAccount(address);
-
-    assertEquals(Status.PRESENT, account.getStatus());
-    assertEquals(77, account.getValue().getBalance());
-  }
-
-  @Test
-  public void temporalFutureChangeWinsOverReadThrough() throws Exception {
-    byte[] address = addr(1);
-    put(ArchiveDomain.ACCOUNT, address, DomainValue.present(account(30)),
-        DomainValue.present(account(31)), 6);
-    ArchiveReadThrough readThrough = (domain, key, point) ->
-        java.util.Optional.of(DomainValue.present(account(99)));
-
-    ArchiveReadResult<AccountCapsule> account = readerAt(5, readThrough).getAccount(address);
-
-    assertEquals(Status.PRESENT, account.getStatus());
-    assertEquals(30, account.getValue().getBalance());
-  }
-
-  @Test
   public void rawMemoUsesContentKeysAndDefensiveValueCopies() throws Exception {
     AtomicInteger backendReads = new AtomicInteger();
     AtomicInteger closes = new AtomicInteger();
@@ -259,8 +268,7 @@ public class DefaultArchiveStateReaderTest {
       }
     };
     DefaultArchiveStateReader reader = new DefaultArchiveStateReader(
-        view, catalog, ArchiveStatePoint.blockEnd(1, new byte[] {1}, 5),
-        ArchiveReadThrough.NONE);
+        view, catalog, ArchiveStatePoint.blockEnd(1, new byte[] {1}, 5));
 
     byte[] first = reader.getCode(addr(1)).getValue();
     first[0] = 9;
@@ -280,7 +288,7 @@ public class DefaultArchiveStateReaderTest {
   }
 
   @Test
-  public void decodedProtoMemoReusesImmutableMessagesAndIsolatesMutableCapsules()
+  public void typedProtoReadsReparseRawMemoAndIsolateMutableCapsules()
       throws Exception {
     byte[] address = addr(1);
     put(ArchiveDomain.ACCOUNT, address, DomainValue.present(account(100L)), 5L);
@@ -297,7 +305,7 @@ public class DefaultArchiveStateReaderTest {
     firstAccount.setBalance(999L);
     AccountCapsule secondAccount = reader.getAccount(address).getValue();
     assertNotSame(firstAccount, secondAccount);
-    assertSame(originalAccount, secondAccount.getInstance());
+    assertNotSame(originalAccount, secondAccount.getInstance());
     assertEquals(100L, secondAccount.getBalance());
 
     org.tron.core.capsule.ContractCapsule firstContract =
@@ -305,12 +313,51 @@ public class DefaultArchiveStateReaderTest {
     org.tron.core.capsule.ContractCapsule secondContract =
         reader.getContract(address).getValue();
     assertNotSame(firstContract, secondContract);
-    assertSame(firstContract.getInstance(), secondContract.getInstance());
+    assertNotSame(firstContract.getInstance(), secondContract.getInstance());
 
     ContractStateCapsule firstState = reader.getContractState(address).getValue();
     ContractStateCapsule secondState = reader.getContractState(address).getValue();
     assertNotSame(firstState, secondState);
-    assertSame(firstState.getInstance(), secondState.getInstance());
+    assertNotSame(firstState.getInstance(), secondState.getInstance());
+    reader.close();
+  }
+
+  @Test
+  public void mapHeavyAccountKeepsOnlyByteBoundedRawMemo() throws Exception {
+    byte[] address = addr(1);
+    Account.Builder account = Account.newBuilder().setBalance(100L);
+    for (int i = 0; i < 1_000; i++) {
+      account.putFreeAssetNetUsageV2("asset-" + i, i);
+    }
+    byte[] encoded = account.build().toByteArray();
+    AtomicInteger backendReads = new AtomicInteger();
+    ArchiveTemporalReadView view = new ArchiveTemporalReadView() {
+      @Override
+      public Optional<DomainValue> getAsOf(ArchiveDomain domain, byte[] key, long txNum) {
+        backendReads.incrementAndGet();
+        return Optional.of(DomainValue.present(encoded));
+      }
+
+      @Override
+      public Optional<DomainValue> latest(ArchiveDomain domain, byte[] key) {
+        return Optional.empty();
+      }
+
+      @Override
+      public void close() {
+      }
+    };
+    long memoLimit = encoded.length + 512L;
+    DefaultArchiveStateReader reader = new DefaultArchiveStateReader(
+        view, catalog, ArchiveStatePoint.blockEnd(1, new byte[] {1}, 5L),
+        () -> { }, true, 4, memoLimit);
+
+    Account first = reader.getAccount(address).getValue().getInstance();
+    Account second = reader.getAccount(address).getValue().getInstance();
+
+    assertEquals(1, backendReads.get());
+    assertNotSame(first, second);
+    assertEquals(1_000, second.getFreeAssetNetUsageV2Count());
     reader.close();
   }
 
@@ -337,7 +384,7 @@ public class DefaultArchiveStateReaderTest {
     };
     DefaultArchiveStateReader reader = new DefaultArchiveStateReader(
         view, catalog, ArchiveStatePoint.blockEnd(1, new byte[] {1}, 5),
-        ArchiveReadThrough.NONE, () -> {
+        () -> {
           releases.incrementAndGet();
           throw releaseFailure;
         });
@@ -357,7 +404,7 @@ public class DefaultArchiveStateReaderTest {
     ArchiveTemporalReadView entryLimitedView = countingPresentView(entryLimitedReads);
     DefaultArchiveStateReader entryLimited = new DefaultArchiveStateReader(
         entryLimitedView, catalog, ArchiveStatePoint.blockEnd(1, new byte[] {1}, 5),
-        ArchiveReadThrough.NONE, () -> { }, true, 1, 1_024,
+        () -> { }, true, 1, 1_024,
         new QueryContext(ArchiveQueryLimits.unlimited()));
 
     assertArrayEquals(new byte[] {7}, entryLimited.getCode(addr(1)).getValue());
@@ -370,8 +417,7 @@ public class DefaultArchiveStateReaderTest {
     AtomicInteger byteLimitedReads = new AtomicInteger();
     DefaultArchiveStateReader byteLimited = new DefaultArchiveStateReader(
         countingPresentView(byteLimitedReads), catalog,
-        ArchiveStatePoint.blockEnd(1, new byte[] {1}, 5), ArchiveReadThrough.NONE,
-        () -> { }, true, 10, 0,
+        ArchiveStatePoint.blockEnd(1, new byte[] {1}, 5), () -> { }, true, 10, 0,
         new QueryContext(ArchiveQueryLimits.unlimited()));
 
     assertArrayEquals(new byte[] {7}, byteLimited.getCode(addr(3)).getValue());
@@ -429,23 +475,6 @@ public class DefaultArchiveStateReaderTest {
     assertArrayEquals(new byte[] {0x31}, readerAt(6).getDynamicProperty(existing).getValue());
     assertArrayEquals(new byte[] {0x31}, readerAt(100).getDynamicProperty(existing).getValue());
     assertEquals(Status.MISSING, readerAt(5).getDynamicProperty(gap).getStatus());
-  }
-
-  @Test
-  public void chainBaseReadThroughUsesDynamicGetterDefaultWhenRawRowIsMissing() throws Exception {
-    byte[] osaka = "ALLOW_TVM_OSAKA".getBytes(StandardCharsets.US_ASCII);
-    ChainBaseManager chainBaseManager = mock(ChainBaseManager.class);
-    DynamicPropertiesStore dynamicPropertiesStore = mock(DynamicPropertiesStore.class);
-    when(chainBaseManager.getDynamicPropertiesStore()).thenReturn(dynamicPropertiesStore);
-    when(dynamicPropertiesStore.getUnchecked(osaka)).thenReturn(null);
-    when(dynamicPropertiesStore.getAllowTvmOsaka()).thenReturn(0L);
-
-    ArchiveStateReader reader = readerAt(5,
-        new ChainBaseArchiveReadThrough(chainBaseManager, catalog));
-    ArchiveReadResult<byte[]> result = reader.getDynamicProperty(osaka);
-
-    assertEquals(Status.PRESENT, result.getStatus());
-    assertEquals(0L, ByteArray.toLong(result.getValue()));
   }
 
   @Test
@@ -657,6 +686,38 @@ public class DefaultArchiveStateReaderTest {
     ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
         () -> reader.getAccount(addr(1)));
     assertEquals(ArchiveReaderException.Reason.INTERNAL_IO, e.getReason());
+  }
+
+  @Test
+  public void nativeRocksCorruptionBecomesCorruptValue() {
+    ArchiveTemporalStore throwingStore = mock(ArchiveTemporalStore.class);
+    RocksDBException corruption = new RocksDBException(
+        new org.rocksdb.Status(
+            org.rocksdb.Status.Code.Corruption,
+            org.rocksdb.Status.SubCode.None,
+            "checksum mismatch"));
+    when(throwingStore.getAsOf(any(), any(), anyLong()))
+        .thenThrow(new ArchiveException("archive read failed", corruption));
+    ArchiveStateReader reader = new DefaultArchiveStateReader(throwingStore, catalog,
+        ArchiveStatePoint.blockEnd(1, new byte[] {1}, 5));
+
+    ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
+        () -> reader.getAccount(addr(1)));
+    assertEquals(ArchiveReaderException.Reason.CORRUPT_VALUE, e.getReason());
+  }
+
+  @Test
+  public void explicitPersistentCorruptionWinsOverNestedIoCause() {
+    ArchiveTemporalStore throwingStore = mock(ArchiveTemporalStore.class);
+    RocksDBException ioFailure = new RocksDBException("diagnostic I/O cause");
+    when(throwingStore.getAsOf(any(), any(), anyLong())).thenThrow(
+        new ArchivePersistentStateCorruptionException("persistent corruption", ioFailure));
+    ArchiveStateReader reader = new DefaultArchiveStateReader(throwingStore, catalog,
+        ArchiveStatePoint.blockEnd(1, new byte[] {1}, 5));
+
+    ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
+        () -> reader.getAccount(addr(1)));
+    assertEquals(ArchiveReaderException.Reason.CORRUPT_VALUE, e.getReason());
   }
 
   private static void assertNonOwnerRejected(ThrowingRunnable action) throws InterruptedException {

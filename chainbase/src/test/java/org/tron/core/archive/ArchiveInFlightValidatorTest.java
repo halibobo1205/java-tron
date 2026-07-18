@@ -1,7 +1,11 @@
 package org.tron.core.archive;
 
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
 
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Collections;
@@ -28,6 +32,156 @@ public class ArchiveInFlightValidatorTest {
   @Test
   public void validBlockPasses() {
     ArchiveInFlightValidator.validate(validBlock(), catalog, dynamicKeyPolicy);
+  }
+
+  @Test
+  public void journalStateTransitionRetainsCachedBacklogEstimate() {
+    ArchiveInFlightBlock journaled = validBlock();
+
+    ArchiveInFlightBlock committed = journaled.withJournalState(
+        ArchiveInFlightBlock.JournalState.CANONICAL_COMMITTED);
+
+    assertEquals(journaled.estimatedRetainedBytes(), committed.estimatedRetainedBytes());
+    assertEquals(journaled.encodedBlockBytes(), committed.encodedBlockBytes());
+    assertEquals(journaled.temporalPublicationRetainedBytes(),
+        committed.temporalPublicationRetainedBytes());
+    assertEquals(journaled.temporalPublicationMutations(),
+        committed.temporalPublicationMutations());
+    assertEquals(ArchiveInFlightCodec.encodeBlock(committed).length,
+        committed.encodedBlockBytes());
+  }
+
+  @Test
+  public void decodePreflightRejectsInvalidFixedTokenHashLength() {
+    byte[] encoded = ArchiveInFlightCodec.encodeBlock(validBlock());
+    int tokenHashLengthOffset = 2 + Long.BYTES;
+    ByteBuffer.wrap(encoded, tokenHashLengthOffset, Integer.BYTES)
+        .putInt(ArchiveBlockRange.BLOCK_HASH_LENGTH + 1);
+
+    ArchiveException failure = assertThrows(ArchiveException.class,
+        () -> ArchiveInFlightCodec.decodeBlock(encoded, Long.MAX_VALUE, Long.MAX_VALUE));
+
+    assertTrue(failure.getMessage().contains("journal token block hash must be 32 bytes"));
+  }
+
+  @Test
+  public void decodeRejectsNonCanonicalDomainValueBoolean() {
+    ArchiveInFlightBlock valid = validBlock();
+    ArchiveChangeRecord codeRecord = new ArchiveChangeRecord(
+        valid.getPositions().get(1), ArchiveDomain.CODE, accountKey(),
+        DomainValue.present(new byte[0]), DomainValue.present(new byte[] {0x7f}));
+    ArchiveInFlightBlock block = new ArchiveInFlightBlock(
+        valid.getRange(), valid.getPositions(), Collections.singletonList(codeRecord));
+    byte[] encoded = ArchiveInFlightCodec.encodeBlock(block);
+    int previousDeletedFlagOffset = encoded.length - 11;
+    assertEquals(0, encoded[previousDeletedFlagOffset]);
+    encoded[previousDeletedFlagOffset] = 2;
+
+    ArchiveException failure = assertThrows(ArchiveException.class,
+        () -> ArchiveInFlightCodec.decodeBlock(encoded, Long.MAX_VALUE, Long.MAX_VALUE));
+
+    assertTrue(failure.getMessage().contains("must be encoded as 0 or 1"));
+  }
+
+  @Test
+  public void valueVersionThreeReferencesPositionOnceByTxNum() {
+    ArchiveInFlightBlock block = validBlock();
+    ArchiveChangeRecord record = block.getRecords().get(0);
+    ArchiveInFlightBlock withoutRecords = new ArchiveInFlightBlock(
+        block.getRange(), block.getPositions(), Collections.emptyList());
+
+    byte[] encoded = ArchiveInFlightCodec.encodeBlock(block);
+    long expectedRecordBytes = Long.BYTES + Integer.BYTES
+        + Integer.BYTES + record.canonicalKeySize()
+        + Byte.BYTES + Integer.BYTES + record.getPrevValue().size()
+        + Byte.BYTES + Integer.BYTES + record.getValue().size();
+    assertEquals(3, encoded[0]);
+    assertEquals(expectedRecordBytes,
+        encoded.length - ArchiveInFlightCodec.encodeBlock(withoutRecords).length);
+
+    ArchiveInFlightBlock decoded = ArchiveInFlightCodec.decodeBlock(encoded);
+    assertSame(decoded.getPositions().get(1), decoded.getRecords().get(0).getPosition());
+  }
+
+  @Test
+  public void decodePreflightCountsTemporaryImmutableValueCopy() {
+    ArchiveInFlightBlock valid = validBlock();
+    ArchiveChangeRecord codeRecord = new ArchiveChangeRecord(
+        valid.getPositions().get(1), ArchiveDomain.CODE, accountKey(),
+        DomainValue.present(new byte[32]), DomainValue.present(new byte[64]));
+    ArchiveInFlightBlock block = new ArchiveInFlightBlock(
+        valid.getRange(), valid.getPositions(), Collections.singletonList(codeRecord));
+    byte[] encoded = ArchiveInFlightCodec.encodeBlock(block);
+    long decodeTransientBytes = codeRecord.canonicalKeySize()
+        + Math.max(codeRecord.getPrevValue().size(), codeRecord.getValue().size());
+
+    assertThrows(ArchiveJournalLimitException.class,
+        () -> ArchiveInFlightCodec.decodeBlock(encoded, Long.MAX_VALUE,
+            block.estimatedRetainedBytes() + decodeTransientBytes - 1L));
+    ArchiveInFlightCodec.decodeBlock(encoded, Long.MAX_VALUE,
+        block.estimatedRetainedBytes() + decodeTransientBytes);
+  }
+
+  @Test
+  public void decodePreflightCountsLargestValidationWorkspaceAfterFullBlockRetention() {
+    ArchiveInFlightBlock valid = validBlock();
+    ArchiveChangeRecord largeFirst = new ArchiveChangeRecord(
+        valid.getPositions().get(1), ArchiveDomain.CODE, accountKey(),
+        DomainValue.present(new byte[32]), DomainValue.present(new byte[4_096]));
+    byte[] secondKey = accountKey();
+    secondKey[20] = 1;
+    ArchiveChangeRecord smallLast = new ArchiveChangeRecord(
+        valid.getPositions().get(1), ArchiveDomain.CODE, secondKey,
+        DomainValue.present(new byte[0]), DomainValue.present(new byte[] {1}));
+    ArchiveInFlightBlock block = new ArchiveInFlightBlock(
+        valid.getRange(), valid.getPositions(), Arrays.asList(largeFirst, smallLast));
+    byte[] encoded = ArchiveInFlightCodec.encodeBlock(block);
+    long largestValidationWorkspace = largeFirst.canonicalKeySize()
+        + Math.max(largeFirst.getPrevValue().size(), largeFirst.getValue().size());
+    long requiredBytes = block.estimatedRetainedBytes() + largestValidationWorkspace;
+
+    assertThrows(ArchiveJournalLimitException.class,
+        () -> ArchiveInFlightCodec.decodeBlock(
+            encoded, Long.MAX_VALUE, requiredBytes - 1L));
+    ArchiveInFlightCodec.decodeBlock(encoded, Long.MAX_VALUE, requiredBytes);
+  }
+
+  @Test
+  public void decodePreflightCountsDynamicKeyStringValidationWorkspace() {
+    ArchiveInFlightBlock valid = validBlock();
+    byte[] dynamicKey = new byte[128];
+    Arrays.fill(dynamicKey, (byte) 'A');
+    ArchiveChangeRecord record = new ArchiveChangeRecord(
+        valid.getPositions().get(1), ArchiveDomain.DYNAMIC_PROPERTIES, dynamicKey,
+        DomainValue.tombstone(), DomainValue.present(new byte[] {1}));
+    ArchiveInFlightBlock block = new ArchiveInFlightBlock(
+        valid.getRange(), valid.getPositions(), Collections.singletonList(record));
+    byte[] encoded = ArchiveInFlightCodec.encodeBlock(block);
+    long requiredBytes = block.estimatedRetainedBytes() + 3L * dynamicKey.length;
+
+    assertThrows(ArchiveJournalLimitException.class,
+        () -> ArchiveInFlightCodec.decodeBlock(
+            encoded, Long.MAX_VALUE, requiredBytes - 1L));
+    ArchiveInFlightCodec.decodeBlock(encoded, Long.MAX_VALUE, requiredBytes);
+  }
+
+  @Test
+  public void encodingRejectsRecordWhosePositionWouldBeRebound() {
+    ArchiveInFlightBlock valid = validBlock();
+    ArchiveTxPosition user = valid.getPositions().get(1);
+    ArchiveTxPosition mismatched = new ArchiveTxPosition(
+        user.getTxNum(), user.getBlockNum(), ArchivePhase.BLOCK_FINALIZE,
+        user.getSource(), -1, null);
+    ArchiveChangeRecord record = new ArchiveChangeRecord(
+        mismatched, ArchiveDomain.ACCOUNT, accountKey(),
+        DomainValue.tombstone(), account(1));
+
+    ArchiveException failure = assertThrows(ArchiveException.class,
+        () -> new ArchiveInFlightBlock(
+            valid.getRange(), valid.getPositions(), Collections.singletonList(record)));
+
+    assertTrue(failure.getMessage().contains(
+        "record position does not match persisted position"));
   }
 
   @Test
@@ -91,10 +245,23 @@ public class ArchiveInFlightValidatorTest {
         user.getTxIndex(), user.getTxId(), hash(99));
     ArchiveInFlightBlock block = new ArchiveInFlightBlock(valid.getRange(),
         Arrays.asList(valid.getPositions().get(0), mismatched, valid.getPositions().get(2)),
-        valid.getRecords());
+        Collections.emptyList());
 
     assertThrows(ArchiveException.class,
         () -> ArchiveInFlightValidator.validate(block, catalog, dynamicKeyPolicy));
+  }
+
+  @Test
+  public void rejectsCompleteButOutOfOrderPositionList() {
+    ArchiveInFlightBlock valid = validBlock();
+    ArchiveInFlightBlock block = new ArchiveInFlightBlock(valid.getRange(),
+        Arrays.asList(valid.getPositions().get(1), valid.getPositions().get(2),
+            valid.getPositions().get(0)), Collections.emptyList());
+
+    ArchiveException failure = assertThrows(ArchiveException.class,
+        () -> ArchiveInFlightValidator.validate(block, catalog, dynamicKeyPolicy));
+
+    assertTrue(failure.getMessage().contains("not in txNum order"));
   }
 
   @Test
@@ -119,6 +286,21 @@ public class ArchiveInFlightValidatorTest {
 
     assertThrows(ArchiveException.class,
         () -> ArchiveInFlightValidator.validate(block, catalog, dynamicKeyPolicy));
+  }
+
+  @Test
+  public void proofBoundValidationDoesNotReparseCanonicalProtobuf() {
+    ArchiveInFlightBlock valid = validBlock();
+    ArchiveChangeRecord malformed = new ArchiveChangeRecord(
+        valid.getPositions().get(1), ArchiveDomain.ACCOUNT, accountKey(),
+        DomainValue.tombstone(), DomainValue.present(new byte[] {(byte) 0xff, 0x01}));
+    ArchiveInFlightBlock block = new ArchiveInFlightBlock(
+        valid.getRange(), valid.getPositions(), Collections.singletonList(malformed));
+
+    assertThrows(ArchiveException.class,
+        () -> ArchiveInFlightValidator.validateForWrite(block, catalog, dynamicKeyPolicy));
+
+    ArchiveInFlightValidator.validateProofBound(block, catalog, dynamicKeyPolicy);
   }
 
   @Test

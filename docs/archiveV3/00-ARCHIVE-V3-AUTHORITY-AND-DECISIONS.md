@@ -6,6 +6,30 @@
 
 > 这是 `docs/archiveV3/` 的**唯一事实源（single source of truth）**。开始写代码前先读本文件；任何与本文件冲突的设计文档**以本文件为准**。
 
+## 0. 2026-07-18 实现态修订（覆盖下文早期物理与查询草案）
+
+当前尚未上线、无需兼容旧 archive 数据，以下实现态结论覆盖本文后续保留的早期方案推演：
+
+1. 物理布局只有 `UNIFIED_V1` schema 5：一个 RocksDB、多个固定 column family，index、
+   temporal、payload、journal 与 marker 的块发布使用一个原子 `WriteBatch`。不存在可选
+   legacy 布局或自动迁移路径。
+2. 对外历史状态点只有 `ArchiveStatePoint`。block selector、canonical hash 与 tx lookup
+   直接在 `ArchiveJsonRpcStateAdapter` / `ArchiveService.open*Reader` 内解析；已删除未装配的
+   `ResolvedArchiveStatePoint` 和 `JsonRpcArchiveStatePointResolver`。
+3. 公共历史查询要求从 genesis 完整覆盖。temporal miss 不得读取 live latest：完整覆盖渲染
+   MISSING，mid-chain 覆盖 fail-closed。已删除 `ArchiveReadThrough` 与
+   `ChainBaseArchiveReadThrough`。
+4. 生产查询使用统一 RocksDB snapshot，并在响应提交前后校验 canonical mutation epoch；
+   不再提供外部 `ReadGuard` 协议。查询 snapshot `fillCache=false`，不会污染执行热缓存。
+5. archive-enabled 查询的并发、等待、deadline、backend value/read bytes、VM steps、VM
+   overlay 与 response 等上限必须全部有限。默认单请求 VM overlay 上限为
+   32 MiB。
+6. temporal locator 的格式上限仍为 256 MiB，但生产可存 payload 上限为 32 MiB，给发布时
+   同时存活的 Java/JNI/native 表示预留 8 倍工作集；默认查询单值上限为 4 MiB。
+
+下文决策 5/6 中关于拆分 DB、live latest read-through、`ResolvedArchiveStatePoint` 和通用
+`ReadGuard` 的描述仅保留为历史决策背景，不再定义当前实现。
+
 ---
 
 ## 1. 权威分层与基线（FROZEN）
@@ -29,7 +53,7 @@
 | **codec 类名**（M3） | **L5**：store-key codec = `ArchiveStoreKeyCodec`；域 codec = `ArchiveKeyCodec`（两者分离、不碰撞） | S6/S7 类体里把 store codec 仍写成 `ArchiveKeyCodec`（与 L3 域 codec 同名） |
 | **ArchivePhase 基数**（M1） | **L1/L2**：**4 值**（含 `UNWIND`；`UNWIND` 不被 `TxNumMetaCodec` 持久化） | s1-s2 的 3 值 |
 | **config key 风格** | `storage.archive.enable`（getter `isEnable()`）；`storage.archive.debug.enable` | `enabled` / `debug.enabled`（HOCON 静默忽略未知 key → 配置看似生效实则没生效） |
-| **状态点模型** | `ArchiveStatePoint` / `ResolvedArchiveStatePoint`（唯一对外历史状态点模型） | 裸 `StatePoint` / `ResolvedStatePoint`（06-09 明令禁止并行实现） |
+| **状态点模型** | `ArchiveStatePoint`（唯一对外历史状态点模型） | `StatePoint` / `ResolvedStatePoint` / `ResolvedArchiveStatePoint`（选择器解析已收口进 service/adapter） |
 | **typed tombstone 三态** | `empty bytes ≠ TOMBSTONE ≠ MISSING`；tombstone **不进 root**；L5 `ArchiveStoredValue` 是值包装，状态枚举挂 L6 `ArchiveReadResult.Status` | 把三态混为 missing/zero；把枚举挂错类 |
 
 ---
@@ -84,7 +108,7 @@
 - **DECISION（2026-06-26 已拍板）：选 A — per-domain canonicalizing codec（含 map 的域序列化前按 key 字节序排序重编码 + 规范化 protobuf 默认值/未知字段）。须在 L4（no-op 检测）与 L7（root hash）落地前定义；带 shuffled-map 决定性测试。**
 - **补（决策 2 细化）**：**ACCOUNT 域 canonical value 须剥掉 `asset`(6) / `assetV2`(56) / `asset_optimized`(60) 三字段**（资产进 ACCOUNT_ASSET 域），使 root 与本地资产优化配置无关。同理凡"本地存储优化产物字段"（如此类 flag）都应在 canonical 编码里规范化掉。
 
-### 决策 5 — Archive 物理后端 + 目标平台：arm64-first，P0 单 keyspace，后续多 CF/BlobDB（2026-06-26 已拍板，2026-07-09 修订）
+### 决策 5 — Archive 物理后端 + 目标平台（历史方案，当前物理布局以 §0 为准）
 
 - **背景**：x86_64 是 **legacy 工具链**（Java 8 + RocksDB 5.15.10 + 老 protoc，几乎肯定为老生产 OS/glibc + Java 8 主网兼容而钉）；arm64 是现代栈（Java 17 + RocksDB 9.7.4）。**全局**把 x86_64 bump 到 9.7.4 会动共识路径 `RocksDbDataSourceImpl` + 冒老 OS 主网兼容风险 → 属项目级基础设施决策，不塞进 archive 本期。
 - **DECISION（2026-07-09 修订）：archive P0 仍只面向 arm64 现代栈；当前实现采用兼容 RocksDB 5.15/9.7 的单 keyspace/单 CF 编码，`temporal` / `inflight` / `index` 拆为独立 DB path。多 CF、BlobDB、Zstd/compaction/bloom/prefix、SST ingest 是 P0 之后的物理优化，不作为当前验收门。** x86_64 仍留作后续（archive 跑稳后再随 x86 上现代工具链 / 回移）。
@@ -109,7 +133,7 @@
 - **不合并理由**：CHANGESET 与 HISTORY **key 序相反**（txNum-first vs key-first）且生命周期不同 → 不能并；3 个 TXNUM + META + PROGRESS 都小 → 并 `index`；root + 2 个 commitment 表 → 并 `commitment`。**5 个**落在"5–7"目标内，不按 domain 切（否则几百 CF 内存爆）。
 - **BlobDB 阈值**：在 `latest`/`history`/`changeset` 三个 value-bearing CF 开，**`min_blob_size ≈ 1KB`（可调）**——account(剥资产后~100-500B)/storage(32B)/asset(8B)/dynprop 留 **inline**，**只 CODE/大 ABI 分离进 blob**（消其在 append-only LSM 的反复重写写放大）；开 `enable_blob_garbage_collection`；上线前用真实 code/abi/account 尺寸分布 profile 微调。`index`/`commitment` 全小值 → 不开。
 
-### 决策 6 — Archive 持久化模型：sidecar + tx-level capture + solidified persist + latest read-through（2026-06-26 已拍板）
+### 决策 6 — Archive 持久化模型（sidecar/capture/solidified 仍有效；live query read-through 已由 §0 废止）
 
 维持 sidecar，不替换共识执行态存储；三件事定死：
 
@@ -213,7 +237,7 @@ id = **u16 flat 顺序**（决策，作废旧 `0x01XX`）；保留第一版枚�
 | `CONTRACT_META` | `CONTRACT` |
 | `DYNAMIC_GLOBAL` | `DYNAMIC_PROPERTIES` |
 | `TRC10_ASSET / VOTE_WITNESS / DELEGATION_RESOURCE`（基础研究里的猜想域） | 非 P0 域；P0 域集合见 L3 |
-| `StatePoint / ResolvedStatePoint` | `ArchiveStatePoint / ResolvedArchiveStatePoint` |
+| `StatePoint / ResolvedStatePoint / ResolvedArchiveStatePoint` | `ArchiveStatePoint`；选择器解析由 archive service/adapter 完成 |
 | ~~`DOMAIN_ROOT_ONLY`~~（决策 1 选 A） | **保留为合法 RootPolicy 值**，不再 forbidden |
 | `getRawValue`（不存在的方法） | `getUnchecked`（`TronStoreWithRevoking.java:108`） |
 | `enabled / debug.enabled` | `enable / debug.enable` |

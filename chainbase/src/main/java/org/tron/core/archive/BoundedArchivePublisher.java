@@ -28,7 +28,7 @@ public final class BoundedArchivePublisher implements AutoCloseable {
 
   private final Object monitor = new Object();
   private final TargetExecutor executor;
-  private final Consumer<RuntimeException> failureHandler;
+  private final Consumer<Throwable> failureHandler;
   private final Thread worker;
 
   private State state = State.PAUSED;
@@ -36,7 +36,7 @@ public final class BoundedArchivePublisher implements AutoCloseable {
   private boolean processing;
 
   public BoundedArchivePublisher(String threadName, TargetExecutor executor,
-      Consumer<RuntimeException> failureHandler) {
+      Consumer<Throwable> failureHandler) {
     if (threadName == null || threadName.isEmpty()) {
       throw new IllegalArgumentException("threadName must not be empty");
     }
@@ -55,12 +55,23 @@ public final class BoundedArchivePublisher implements AutoCloseable {
 
   /** Opens the worker gate. The thread is created paused and performs no archive access before it. */
   public void activate() {
+    if (!activateForRecovery()) {
+      throw new ArchiveException("archive publisher cannot activate from state " + getState());
+    }
+  }
+
+  /** Lets a recovery activation lose cleanly to a concurrent shutdown drain. */
+  boolean activateForRecovery() {
     synchronized (monitor) {
+      if (state == State.DRAINING || state == State.CLOSED) {
+        return false;
+      }
       if (state != State.PAUSED) {
         throw new ArchiveException("archive publisher cannot activate from state " + state);
       }
       state = State.RUNNING;
       monitor.notifyAll();
+      return true;
     }
   }
 
@@ -141,31 +152,45 @@ public final class BoundedArchivePublisher implements AutoCloseable {
 
   @Override
   public void close() {
+    close(CLOSE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+  }
+
+  void close(long timeout, TimeUnit unit) {
+    if (unit == null) {
+      throw new NullPointerException("unit");
+    }
+    if (timeout < 0L) {
+      throw new IllegalArgumentException("timeout must be non-negative");
+    }
     beginDrain();
     if (Thread.currentThread() == worker) {
-      return;
+      throw new ArchiveException("archive publisher cannot close from its worker thread");
     }
     boolean interrupted = false;
-    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(CLOSE_TIMEOUT_SECONDS);
-    while (worker.isAlive()) {
-      long remaining = deadline - System.nanoTime();
-      if (remaining <= 0L) {
-        throw new ArchiveException("archive publisher did not stop within "
-            + CLOSE_TIMEOUT_SECONDS + " seconds");
+    long remaining = unit.toNanos(timeout);
+    try {
+      while (worker.isAlive()) {
+        if (remaining == 0L) {
+          throw new ArchiveException("archive publisher did not stop within close timeout");
+        }
+        long started = System.nanoTime();
+        try {
+          TimeUnit.NANOSECONDS.timedJoin(worker, remaining);
+        } catch (InterruptedException e) {
+          interrupted = true;
+        }
+        long elapsed = System.nanoTime() - started;
+        remaining = elapsed >= remaining ? 0L : remaining - elapsed;
       }
-      try {
-        TimeUnit.NANOSECONDS.timedJoin(worker, remaining);
-      } catch (InterruptedException e) {
-        interrupted = true;
+    } finally {
+      if (interrupted) {
+        Thread.currentThread().interrupt();
       }
-    }
-    if (interrupted) {
-      Thread.currentThread().interrupt();
     }
   }
 
   private void run() {
-    RuntimeException failure = null;
+    Throwable failure = null;
     try {
       while (true) {
         ArchivePublishTarget next;
@@ -195,9 +220,7 @@ public final class BoundedArchivePublisher implements AutoCloseable {
         }
       }
     } catch (Throwable throwable) {
-      failure = throwable instanceof RuntimeException
-          ? (RuntimeException) throwable
-          : new ArchiveException("archive publisher terminated with a fatal error", throwable);
+      failure = throwable;
       synchronized (monitor) {
         processing = false;
         target = null;
@@ -208,8 +231,8 @@ public final class BoundedArchivePublisher implements AutoCloseable {
       if (failure != null) {
         try {
           failureHandler.accept(failure);
-        } catch (RuntimeException handlerFailure) {
-          failure.addSuppressed(handlerFailure);
+        } catch (Throwable handlerFailure) {
+          addSuppressedSafely(failure, handlerFailure);
         }
       }
       synchronized (monitor) {
@@ -218,6 +241,17 @@ public final class BoundedArchivePublisher implements AutoCloseable {
         }
         monitor.notifyAll();
       }
+    }
+  }
+
+  private static void addSuppressedSafely(Throwable primary, Throwable candidate) {
+    if (primary == candidate) {
+      return;
+    }
+    try {
+      primary.addSuppressed(candidate);
+    } catch (Throwable ignored) {
+      // The FAILED state is authoritative even when failure bookkeeping cannot allocate.
     }
   }
 }

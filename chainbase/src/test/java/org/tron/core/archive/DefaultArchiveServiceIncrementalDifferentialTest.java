@@ -28,15 +28,11 @@ import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
 import org.tron.core.archive.domain.DefaultArchiveDomainCatalog;
 import org.tron.core.archive.domain.DefaultArchiveDomainRegistry;
-import org.tron.core.archive.reader.ArchiveReadResult;
-import org.tron.core.archive.reader.ArchiveStatePoint;
-import org.tron.core.archive.reader.ArchiveStateReader;
 import org.tron.core.archive.temporal.ArchiveTemporalReadView;
 import org.tron.core.archive.temporal.ArchiveTemporalStore;
 import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.archive.txnum.InMemoryArchiveTxNumIndex;
-import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.protos.Protocol.Account;
 
@@ -48,9 +44,7 @@ public class DefaultArchiveServiceIncrementalDifferentialTest {
   private static final int KEY_COUNT = 5;
   private static final byte[][] KEYS = accountKeys();
   private static final Method LATEST_WITH_IN_FLIGHT = privateMethod(
-      "latestWithInFlight", ArchiveDomain.class, byte[].class);
-  private static final Method READ_THROUGH_IN_FLIGHT = privateMethod(
-      "readThroughInFlight", ArchiveDomain.class, byte[].class, long.class);
+      "latestWithInFlight", ArchiveTemporalReadView.class, ArchiveDomain.class, byte[].class);
 
   @After
   public void clearCaptureHolder() {
@@ -143,7 +137,7 @@ public class DefaultArchiveServiceIncrementalDifferentialTest {
       assertTrue(failure.getMessage().contains("injected durable journal put failure"));
       assertEquals(1, store.loadBlocks().size());
       assertOracleEquals(before, RebuildOracle.from(temporal, store), "journal put failure");
-      assertIncrementalMatchesOracle(service, index, before, "journal put failure");
+      assertIncrementalMatchesOracle(service, before, "journal put failure");
     } finally {
       service.close();
     }
@@ -168,7 +162,7 @@ public class DefaultArchiveServiceIncrementalDifferentialTest {
       assertTrue(failure.getMessage().contains("injected durable journal delete failure"));
       assertEquals(2, store.loadBlocks().size());
       assertOracleEquals(before, RebuildOracle.from(temporal, store), "journal delete failure");
-      assertIncrementalMatchesOracle(service, index, before, "journal delete failure");
+      assertIncrementalMatchesOracle(service, before, "journal delete failure");
     } finally {
       service.close();
     }
@@ -193,7 +187,7 @@ public class DefaultArchiveServiceIncrementalDifferentialTest {
       assertEquals(1, store.loadBlocks().size());
       assertOracleEquals(before, RebuildOracle.from(temporal, store),
           "temporal publish failure");
-      assertIncrementalMatchesOracle(service, index, before, "temporal publish failure");
+      assertIncrementalMatchesOracle(service, before, "temporal publish failure");
     } finally {
       service.close();
     }
@@ -205,58 +199,18 @@ public class DefaultArchiveServiceIncrementalDifferentialTest {
     assertOracleEquals(fixture.expectedOracle(), oracle, context + " independent model");
     assertEquals(context + " journal block count",
         fixture.inFlightSize(), fixture.store.loadBlocks().size());
-    assertIncrementalMatchesOracle(fixture.service, fixture.index, oracle, context);
-    assertReaderMatchesEarliestPrev(fixture.service, fixture.index, oracle, context);
+    assertIncrementalMatchesOracle(fixture.service, oracle, context);
   }
 
   private static void assertIncrementalMatchesOracle(DefaultArchiveService service,
-      InMemoryArchiveTxNumIndex index, RebuildOracle oracle, String context) {
-    long publishedPointTxNum = index.getNextTxNum() - 1;
-    for (int key = 0; key < KEY_COUNT; key++) {
-      Optional<DomainValue> actualLatest = invokeDomainValue(
-          LATEST_WITH_IN_FLIGHT, service, ArchiveDomain.ACCOUNT, KEYS[key]);
-      assertDomainValueEquals(
-          oracle.latest.get(key), actualLatest, context + " latest key=" + key);
-
-      Optional<DomainValue> actualEarliest = invokeDomainValue(
-          READ_THROUGH_IN_FLIGHT, service, ArchiveDomain.ACCOUNT, KEYS[key],
-          publishedPointTxNum);
-      assertDomainValueEquals(
-          oracle.earliestPrev.get(key), actualEarliest, context + " earliest-prev key=" + key);
-    }
-  }
-
-  private static void assertReaderMatchesEarliestPrev(DefaultArchiveService service,
-      InMemoryArchiveTxNumIndex index, RebuildOracle oracle, String context) throws Exception {
-    boolean hasExpectedShield = false;
-    for (Optional<DomainValue> value : oracle.earliestPrev) {
-      hasExpectedShield |= value.isPresent();
-    }
-    if (!hasExpectedShield) {
-      return;
-    }
-    long publishedHead = index.getLastArchivedBlock();
-    ArchiveBlockRange range = index.getBlockRange(publishedHead)
-        .orElseThrow(AssertionError::new);
-    ArchiveStatePoint point = ArchiveStatePoint.blockEnd(
-        publishedHead, range.getBlockHash(), range.getFinalizeTxNum());
-    try (ArchiveStateReader reader = service.getReaderFactory().open(point)) {
+      RebuildOracle oracle, String context) {
+    try (ArchiveTemporalReadView view = service.getTemporalStore().openReadView()) {
       for (int key = 0; key < KEY_COUNT; key++) {
-        Optional<DomainValue> expected = oracle.earliestPrev.get(key);
-        if (!expected.isPresent()) {
-          continue;
-        }
-        ArchiveReadResult<?> actual = reader.getAccount(KEYS[key]);
-        if (expected.get().isDeleted()) {
-          assertEquals(context + " reader earliest-prev key=" + key,
-              ArchiveReadResult.Status.TOMBSTONE, actual.getStatus());
-        } else {
-          assertEquals(context + " reader earliest-prev key=" + key,
-              ArchiveReadResult.Status.PRESENT, actual.getStatus());
-          assertArrayEquals(context + " reader earliest-prev bytes key=" + key,
-              expected.get().getValue(),
-              ((AccountCapsule) actual.getValue()).getData());
-        }
+        Optional<DomainValue> actualLatest = invokeDomainValue(
+            LATEST_WITH_IN_FLIGHT, service, view, ArchiveDomain.ACCOUNT, KEYS[key]);
+        assertDomainValueEquals(
+            oracle.latest.get(key), actualLatest, context + " latest key=" + key);
+
       }
     }
   }

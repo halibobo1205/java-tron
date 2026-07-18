@@ -157,4 +157,21 @@ public class ArchiveCaptureHolderTest {
     assertTrue("failed capture must not be recorded", engine.records().isEmpty());
     assertTrue("failed capture must be visible to commitBlock", engine.failure().isPresent());
   }
+
+  @Test
+  public void failureDiagnosticsCannotEscapeCaptureIsolation() {
+    ArchiveCaptureEngine engine = engineWithActiveContext();
+    ArchiveCaptureHolder.set(engine);
+    RuntimeException failure = new RuntimeException("unrenderable") {
+      @Override
+      public String getMessage() {
+        throw new AssertionError("message rendering failed");
+      }
+    };
+
+    ArchiveCaptureHolder.recordFailure("hostileDiagnostic", failure);
+
+    assertTrue(engine.failure().isPresent());
+    assertTrue(engine.failure().get().getCause() == failure);
+  }
 }

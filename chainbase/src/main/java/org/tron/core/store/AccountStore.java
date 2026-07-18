@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.NavigableSet;
 import java.util.OptionalLong;
+import java.util.Set;
 import java.util.TreeSet;
 import org.apache.commons.lang3.ArrayUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -66,13 +67,42 @@ public class AccountStore extends TronStoreWithRevoking<AccountCapsule> {
   @Override
   public AccountCapsule get(byte[] key) {
     byte[] value = revokingDB.getUnchecked(key);
-    return ArrayUtils.isEmpty(value) ? null : new AccountCapsule(value);
+    if (ArrayUtils.isEmpty(value)) {
+      return null;
+    }
+    AccountCapsule account = new AccountCapsule(value);
+    if (ArchiveCaptureHolder.isCapturingCurrentTx()) {
+      try {
+        account.enableAssetV2ChangeTracking(key, value);
+      } catch (RuntimeException e) {
+        account.invalidateAssetV2ChangeTracking();
+        ArchiveCaptureHolder.recordFailure("account asset tracking baseline", e);
+      }
+    }
+    return account;
+  }
+
+  @Override
+  public AccountCapsule getUnchecked(byte[] key) {
+    return get(key);
   }
 
   @Override
   public void put(byte[] key, AccountCapsule item) {
-    if (CommonParameter.getInstance().isHistoryBalanceLookup()) {
-      AccountCapsule old = super.getUnchecked(key);
+    boolean historyBalanceLookup = CommonParameter.getInstance().isHistoryBalanceLookup();
+    boolean archiveActive = ArchiveCaptureHolder.isCapturingCurrentTx();
+    ArchivePreviousValue previous = null;
+    AccountCapsule old = null;
+    if (historyBalanceLookup && archiveActive) {
+      long startedNanos = ArchiveMetrics.startTimer();
+      byte[] previousBytes = revokingDB.getUnchecked(key);
+      ArchiveCaptureHolder.recordPreviousValueRead(startedNanos, true);
+      previous = archivePreviousValue(previousBytes);
+      old = previousBytes == null ? null : new AccountCapsule(previousBytes);
+    } else if (historyBalanceLookup) {
+      old = super.getUnchecked(key);
+    }
+    if (historyBalanceLookup) {
       if (old == null) {
         if (item.getBalance() != 0) {
           recordBalance(item, item.getBalance());
@@ -94,10 +124,10 @@ public class AccountStore extends TronStoreWithRevoking<AccountCapsule> {
     }
     // L4c: read the pre-put account so ACCOUNT_ASSET can value-diff assetV2 (gated to avoid the
     // extra read + serialize when archive is off).
-    boolean archiveActive = ArchiveCaptureHolder.isCapturingCurrentTx();
     byte[] archiveValue = archiveActive ? item.getData() : null;
-    ArchivePreviousValue previous = archiveActive
-        ? readArchivePreviousValue(getDbName(), key) : null;
+    if (archiveActive && previous == null) {
+      previous = readArchivePreviousValue(getDbName(), key);
+    }
     boolean archivePrepared = archiveActive && previous.isAvailable();
     if (archivePrepared) {
       // Preserve the established ACCOUNT -> ACCOUNT_ASSET capture order while still reading the
@@ -107,7 +137,8 @@ public class AccountStore extends TronStoreWithRevoking<AccountCapsule> {
           getDbName(), key, previous.getValue(), archiveValue);
       // SnapshotRoot may migrate/delete account-asset physical rows as part of the account write.
       // Capture the effective transition while the previous physical prefix is still visible.
-      captureAccountAssetTransitions(key, previous.getValue(), item.getInstance());
+      captureAccountAssetTransitions(
+          key, previous.getValue(), archiveValue, item.getInstance(), item);
     }
     if (archiveActive) {
       revokingDB.put(key, archiveValue);
@@ -115,33 +146,66 @@ public class AccountStore extends TronStoreWithRevoking<AccountCapsule> {
       super.put(key, item);
     }
     accountStateCallBackUtils.accountCallBack(key, item);
+    if (archiveActive && !ArchiveCaptureHolder.hasFailure()) {
+      try {
+        item.enableAssetV2ChangeTracking(key, archiveValue);
+      } catch (RuntimeException e) {
+        item.invalidateAssetV2ChangeTracking();
+        ArchiveCaptureHolder.recordFailure("account asset tracking rebase", e);
+      }
+    } else {
+      item.invalidateAssetV2ChangeTracking();
+    }
   }
 
-  private void captureAccountAssetTransitions(
-      byte[] address, byte[] oldAccountBytes, Account newAccount) {
+  private void captureAccountAssetTransitions(byte[] address, byte[] oldAccountBytes,
+      byte[] newAccountBytes, Account newAccount) {
+    captureAccountAssetTransitions(
+        address, oldAccountBytes, newAccountBytes, newAccount, null);
+  }
+
+  private void captureAccountAssetTransitions(byte[] address, byte[] oldAccountBytes,
+      byte[] newAccountBytes, Account newAccount, AccountCapsule trackedAccount) {
     long startedNanos = ArchiveMetrics.startTimer();
     long[] physicalRowsRead = {0L};
     boolean prefixScan = false;
-    try {
-      Account oldAccount = parseAccount(oldAccountBytes);
-      if (oldAccount != null && newAccount != null
-          && oldAccount.getAssetOptimized() == newAccount.getAssetOptimized()
-          && oldAccount.getAssetV2Map().equals(newAccount.getAssetV2Map())) {
+    try (ArchiveCaptureHolder.AccountAssetPlanningScope scope =
+        ArchiveCaptureHolder.openAccountAssetPlanning(
+            address, oldAccountBytes, newAccountBytes)) {
+      if (!scope.isActive()) {
         return;
       }
-      NavigableSet<String> assetIds = new TreeSet<>();
-      if (oldAccount != null) {
-        assetIds.addAll(oldAccount.getAssetV2Map().keySet());
+      boolean changesKnown = trackedAccount != null
+          && trackedAccount.hasCompleteAssetV2ChangeTrackingFor(address, oldAccountBytes);
+      boolean optimizationChanged = changesKnown && trackedAccount.isAssetOptimizedChanged();
+      if (changesKnown && !optimizationChanged && !trackedAccount.hasModifiedAssetV2()) {
+        return;
       }
-      if (newAccount != null) {
-        assetIds.addAll(newAccount.getAssetV2Map().keySet());
+      Account oldAccount = parseAccount(oldAccountBytes);
+      Account plannedNewAccount = newAccount != null ? newAccount : parseAccount(newAccountBytes);
+      if (!changesKnown && oldAccount != null && plannedNewAccount != null
+          && oldAccount.getAssetOptimized() == plannedNewAccount.getAssetOptimized()
+          && oldAccount.getAssetV2Map().equals(plannedNewAccount.getAssetV2Map())) {
+        return;
       }
-
       boolean oldOptimized = oldAccount != null && oldAccount.getAssetOptimized();
-      boolean newOptimized = newAccount != null && newAccount.getAssetOptimized();
-      prefixScan = newAccount == null
+      boolean newOptimized = plannedNewAccount != null && plannedNewAccount.getAssetOptimized();
+      prefixScan = plannedNewAccount == null
           || oldOptimized != newOptimized
           || oldAccount == null && newOptimized;
+      NavigableSet<String> assetIds = new TreeSet<>();
+      if (prefixScan) {
+        if (oldAccount != null) {
+          assetIds.addAll(oldAccount.getAssetV2Map().keySet());
+        }
+        if (plannedNewAccount != null) {
+          assetIds.addAll(plannedNewAccount.getAssetV2Map().keySet());
+        }
+      } else if (changesKnown) {
+        trackedAccount.copyModifiedAssetV2Into(assetIds);
+      } else {
+        addChangedAssetIds(assetIds, oldAccount, plannedNewAccount);
+      }
       if (prefixScan) {
         accountAssetStore.scanPhysicalAssets(address,
             (assetIdBytes, physicalBalance) -> {
@@ -150,31 +214,31 @@ public class AccountStore extends TronStoreWithRevoking<AccountCapsule> {
               while (!assetIds.isEmpty()
                   && assetIds.first().compareTo(physicalAssetId) < 0) {
                 captureAccountAssetTransition(
-                    address, assetIds.pollFirst(), oldAccount, newAccount, 0L);
+                    address, assetIds.pollFirst(), oldAccount, plannedNewAccount, 0L);
                 stopIfArchiveCaptureFailed();
               }
               if (!assetIds.isEmpty() && assetIds.first().equals(physicalAssetId)) {
                 assetIds.pollFirst();
               }
               captureAccountAssetTransition(
-                  address, physicalAssetId, oldAccount, newAccount, physicalBalance);
+                  address, physicalAssetId, oldAccount, plannedNewAccount, physicalBalance);
               stopIfArchiveCaptureFailed();
             });
         while (!assetIds.isEmpty()) {
           captureAccountAssetTransition(
-              address, assetIds.pollFirst(), oldAccount, newAccount, 0L);
+              address, assetIds.pollFirst(), oldAccount, plannedNewAccount, 0L);
           stopIfArchiveCaptureFailed();
         }
       } else {
         for (String assetId : assetIds) {
           long physicalBalance = 0L;
-          if (needsPhysical(oldAccount, assetId) || needsPhysical(newAccount, assetId)) {
+          if (needsPhysical(oldAccount, assetId) || needsPhysical(plannedNewAccount, assetId)) {
             physicalBalance = accountAssetStore.getBalance(
                 address, assetId.getBytes(StandardCharsets.US_ASCII));
             physicalRowsRead[0]++;
           }
           captureAccountAssetTransition(
-              address, assetId, oldAccount, newAccount, physicalBalance);
+              address, assetId, oldAccount, plannedNewAccount, physicalBalance);
           if (ArchiveCaptureHolder.hasFailure()) {
             break;
           }
@@ -187,16 +251,6 @@ public class AccountStore extends TronStoreWithRevoking<AccountCapsule> {
     } finally {
       ArchiveCaptureHolder.recordAccountAssetLookup(
           prefixScan, physicalRowsRead[0], startedNanos);
-    }
-  }
-
-  /** Byte-oriented bridge retained for differential tests and callers that only have snapshots. */
-  private void captureAccountAssetTransitions(
-      byte[] address, byte[] oldAccountBytes, byte[] newAccountBytes) {
-    try {
-      captureAccountAssetTransitions(address, oldAccountBytes, parseAccount(newAccountBytes));
-    } catch (Exception e) {
-      ArchiveCaptureHolder.recordFailure("account-asset effectiveDiff", e);
     }
   }
 
@@ -225,6 +279,25 @@ public class AccountStore extends TronStoreWithRevoking<AccountCapsule> {
         && !account.getAssetV2Map().containsKey(assetId);
   }
 
+  private static void addChangedAssetIds(Set<String> assetIds,
+      Account oldAccount, Account newAccount) {
+    Map<String, Long> oldAssets = oldAccount == null
+        ? java.util.Collections.emptyMap() : oldAccount.getAssetV2Map();
+    Map<String, Long> newAssets = newAccount == null
+        ? java.util.Collections.emptyMap() : newAccount.getAssetV2Map();
+    for (Map.Entry<String, Long> entry : oldAssets.entrySet()) {
+      if (!newAssets.containsKey(entry.getKey())
+          || !entry.getValue().equals(newAssets.get(entry.getKey()))) {
+        assetIds.add(entry.getKey());
+      }
+    }
+    for (String assetId : newAssets.keySet()) {
+      if (!oldAssets.containsKey(assetId)) {
+        assetIds.add(assetId);
+      }
+    }
+  }
+
   private static long effectiveBalance(Account account, String assetId, long physicalBalance) {
     if (account == null) {
       return 0L;
@@ -246,8 +319,20 @@ public class AccountStore extends TronStoreWithRevoking<AccountCapsule> {
 
   @Override
   public void delete(byte[] key) {
-    if (CommonParameter.getInstance().isHistoryBalanceLookup()) {
-      AccountCapsule old = super.getUnchecked(key);
+    boolean historyBalanceLookup = CommonParameter.getInstance().isHistoryBalanceLookup();
+    boolean archiveActive = ArchiveCaptureHolder.isCapturingCurrentTx();
+    ArchivePreviousValue previous = null;
+    AccountCapsule old = null;
+    if (historyBalanceLookup && archiveActive) {
+      long startedNanos = ArchiveMetrics.startTimer();
+      byte[] previousBytes = revokingDB.getUnchecked(key);
+      ArchiveCaptureHolder.recordPreviousValueRead(startedNanos, true);
+      previous = archivePreviousValue(previousBytes);
+      old = previousBytes == null ? null : new AccountCapsule(previousBytes);
+    } else if (historyBalanceLookup) {
+      old = super.getUnchecked(key);
+    }
+    if (historyBalanceLookup) {
       if (old != null) {
         recordBalance(old, -old.getBalance());
       }
@@ -257,14 +342,14 @@ public class AccountStore extends TronStoreWithRevoking<AccountCapsule> {
         accountTraceStore.recordBalanceWithBlock(key, blockId.getNum(), 0);
       }
     }
-    boolean archiveActive = ArchiveCaptureHolder.isCapturingCurrentTx();
-    ArchivePreviousValue previous = archiveActive
-        ? readArchivePreviousValue(getDbName(), key) : null;
+    if (archiveActive && previous == null) {
+      previous = readArchivePreviousValue(getDbName(), key);
+    }
     boolean archivePrepared = archiveActive && previous.isAvailable();
     if (archivePrepared) {
       ArchiveCaptureHolder.captureDelete(getDbName(), key, previous.getValue());
       // SnapshotRoot.remove deletes optimized physical assets, so diff before canonical mutation.
-      captureAccountAssetTransitions(key, previous.getValue(), (Account) null);
+      captureAccountAssetTransitions(key, previous.getValue(), null, null);
     }
     if (archiveActive) {
       revokingDB.delete(key);

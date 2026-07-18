@@ -41,11 +41,29 @@ public interface ArchiveInFlightStore extends AutoCloseable {
         + token.getBlockNum());
   }
 
+  /** Acknowledges a block already validated and retained by the owning archive service. */
+  default void acknowledgeLoadedBlock(ArchiveInFlightBlock block) {
+    acknowledgeBlock(block);
+  }
+
   void deleteBlock(long blockNum);
+
+  /** Deletes a block already validated and retained by the owning archive service. */
+  default void deleteLoadedBlock(ArchiveInFlightBlock block) {
+    deleteBlock(block.getRange().getBlockNum());
+  }
+
+  /** Drops transient metadata after another atomic backend has removed the durable journal. */
+  default void onBlockPublished(long blockNum) {
+  }
 
   /** Usable bytes on the journal filesystem, or {@link Long#MAX_VALUE} when not applicable. */
   default long usableSpaceBytes() {
     return Long.MAX_VALUE;
+  }
+
+  /** Releases transient adapter caches only after the final shared storage owner closed cleanly. */
+  default void ownerCloseSucceeded() {
   }
 
   @Override

@@ -26,6 +26,11 @@ public class LevelDB implements DB<byte[], byte[]>, Flusher {
   }
 
   @Override
+  public byte[] getWithoutCache(byte[] key) {
+    return db.getDataWithoutCache(key);
+  }
+
+  @Override
   public void put(byte[] key, byte[] value) {
     db.putData(key, value);
   }

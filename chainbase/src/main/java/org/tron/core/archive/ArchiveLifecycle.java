@@ -3,6 +3,7 @@ package org.tron.core.archive;
 import java.util.EnumMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
@@ -35,8 +36,10 @@ public final class ArchiveLifecycle {
   private final Condition drained = lock.newCondition();
   private final Map<WorkType, Long> active = new EnumMap<>(WorkType.class);
   private final AtomicReference<RuntimeException> fatal = new AtomicReference<>();
+  private final AtomicBoolean drainRequested = new AtomicBoolean();
   private final ThreadLocal<Lease> current = new ThreadLocal<>();
-  private Phase phase;
+  private boolean recoveryActivationInProgress;
+  private volatile Phase phase;
 
   public ArchiveLifecycle(Phase initialPhase) {
     if (initialPhase == null) {
@@ -70,32 +73,93 @@ public final class ArchiveLifecycle {
     }
   }
 
-  public void completeRecovery() {
-    completeRecovery(() -> {
+  public boolean completeRecovery() {
+    return completeRecovery(() -> {
     });
   }
 
-  /** Publishes startup component gates and RUNNING under the same lifecycle mutex. */
-  public void completeRecovery(Runnable activation) {
+  /** Commits recovery, runs activation without the lifecycle mutex, then publishes the phase. */
+  public boolean completeRecovery(Runnable activation) {
     if (activation == null) {
       throw new NullPointerException("activation");
     }
+    Lease lease;
     lock.lock();
     try {
-      Lease lease = current.get();
+      lease = current.get();
       if (lease == null || lease.type != WorkType.RECOVERY
           || lease.state != LeaseState.STARTED) {
         throw new ArchiveException("archive recovery completion requires the active lease");
       }
+      if (recoveryActivationInProgress) {
+        throw new ArchiveException("archive recovery activation is already in progress");
+      }
       requireNoFatal();
+      applyDrainLocked();
+      if (phase == Phase.DRAINING) {
+        closeLeaseLocked(lease);
+        return false;
+      }
       if (phase != Phase.RECOVERING) {
         throw new ArchiveException("archive recovery cannot complete from phase " + phase);
       }
-      activation.run();
-      phase = Phase.RUNNING;
-      closeLeaseLocked(lease);
+      recoveryActivationInProgress = true;
     } finally {
       lock.unlock();
+    }
+
+    try {
+      activation.run();
+    } catch (RuntimeException | Error activationFailure) {
+      finishFailedRecoveryActivation(lease, activationFailure);
+      throw activationFailure;
+    }
+
+    lock.lock();
+    try {
+      recoveryActivationInProgress = false;
+      try {
+        requireNoFatal();
+        if (phase == Phase.RECOVERING) {
+          phase = Phase.RUNNING;
+        } else if (phase != Phase.DRAINING) {
+          throw new ArchiveException(
+              "archive recovery activation cannot settle from phase " + phase);
+        }
+        applyDrainLocked();
+      } catch (RuntimeException | Error settlementFailure) {
+        closeLeaseAndSuppress(lease, settlementFailure);
+        throw settlementFailure;
+      }
+      closeLeaseLocked(lease);
+      return true;
+    } finally {
+      lock.unlock();
+    }
+  }
+
+  private void finishFailedRecoveryActivation(Lease lease, Throwable activationFailure) {
+    lock.lock();
+    try {
+      recoveryActivationInProgress = false;
+      applyDrainLocked();
+      closeLeaseAndSuppress(lease, activationFailure);
+    } finally {
+      lock.unlock();
+    }
+  }
+
+  private void closeLeaseAndSuppress(Lease lease, Throwable failure) {
+    try {
+      closeLeaseLocked(lease);
+    } catch (RuntimeException | Error closeFailure) {
+      if (failure != closeFailure) {
+        try {
+          failure.addSuppressed(closeFailure);
+        } catch (Throwable ignored) {
+          // Preserve the activation or settlement failure when suppression cannot allocate.
+        }
+      }
     }
   }
 
@@ -103,16 +167,16 @@ public final class ArchiveLifecycle {
     if (failure == null) {
       throw new NullPointerException("failure");
     }
-    boolean first = fatal.compareAndSet(null, failure);
-    if (first) {
-      lock.lock();
-      try {
+    lock.lock();
+    try {
+      boolean first = fatal.compareAndSet(null, failure);
+      if (first) {
         drained.signalAll();
-      } finally {
-        lock.unlock();
       }
+      return first;
+    } finally {
+      lock.unlock();
     }
-    return first;
   }
 
   public RuntimeException getFatalFailure() {
@@ -126,6 +190,8 @@ public final class ArchiveLifecycle {
     }
     lock.lock();
     try {
+      requireNoFatal();
+      applyDrainLocked();
       if (phase == Phase.RUNNING) {
         return;
       }
@@ -141,15 +207,39 @@ public final class ArchiveLifecycle {
     }
   }
 
-  public void beginDrain() {
+  /**
+   * Validates the final settlement of a response admitted while the archive was running.
+   * Normal drain waits for its query lease, so settlement may finish in {@link Phase#DRAINING};
+   * fatal state and every phase that cannot own an admitted query still fail closed.
+   */
+  public void validateAdmittedResponse() {
+    RuntimeException failure = fatal.get();
+    if (failure != null) {
+      throw new ArchiveException("archive is unavailable after fatal failure", failure);
+    }
     lock.lock();
     try {
-      if (phase != Phase.CLOSED) {
-        phase = Phase.DRAINING;
+      requireNoFatal();
+      applyDrainLocked();
+      if (phase == Phase.RUNNING || phase == Phase.DRAINING) {
+        return;
       }
-      drained.signalAll();
+      throw new ArchiveException(
+          "archive response cannot settle in lifecycle phase " + phase);
     } finally {
       lock.unlock();
+    }
+  }
+
+  public void beginDrain() {
+    drainRequested.set(true);
+    if (lock.tryLock()) {
+      try {
+        applyDrainLocked();
+        drained.signalAll();
+      } finally {
+        lock.unlock();
+      }
     }
   }
 
@@ -161,8 +251,19 @@ public final class ArchiveLifecycle {
       throw new IllegalArgumentException("timeout must be non-negative");
     }
     long remaining = unit.toNanos(timeout);
-    lock.lockInterruptibly();
+    long lockStartedNanos = System.nanoTime();
+    boolean acquired = remaining == Long.MAX_VALUE
+        ? acquireInterruptibly()
+        : lock.tryLock(remaining, TimeUnit.NANOSECONDS);
+    if (!acquired) {
+      return false;
+    }
     try {
+      if (remaining != Long.MAX_VALUE) {
+        long elapsed = Math.max(0L, System.nanoTime() - lockStartedNanos);
+        remaining = elapsed >= remaining ? 0L : remaining - elapsed;
+      }
+      applyDrainLocked();
       while (activeCountLocked() != 0) {
         if (remaining == 0) {
           return false;
@@ -192,12 +293,9 @@ public final class ArchiveLifecycle {
   }
 
   public Phase getPhase() {
-    lock.lock();
-    try {
-      return phase;
-    } finally {
-      lock.unlock();
-    }
+    Phase currentPhase = phase;
+    return drainRequested.get() && currentPhase != Phase.CLOSED
+        ? Phase.DRAINING : currentPhase;
   }
 
   public long getActiveCount(WorkType type) {
@@ -211,6 +309,7 @@ public final class ArchiveLifecycle {
 
   private void requireAdmission(WorkType type) {
     requireNoFatal();
+    applyDrainLocked();
     boolean allowed = type == WorkType.RECOVERY
         ? phase == Phase.RECOVERING
         : phase == Phase.RUNNING;
@@ -237,6 +336,17 @@ public final class ArchiveLifecycle {
     return total;
   }
 
+  private boolean acquireInterruptibly() throws InterruptedException {
+    lock.lockInterruptibly();
+    return true;
+  }
+
+  private void applyDrainLocked() {
+    if (drainRequested.get() && phase != Phase.CLOSED) {
+      phase = Phase.DRAINING;
+    }
+  }
+
   private void startLease(Lease lease) {
     lease.requireOwner();
     lock.lock();
@@ -251,8 +361,19 @@ public final class ArchiveLifecycle {
         throw new ArchiveException("nested archive lifecycle leases are not supported");
       }
       requireAdmission(lease.type);
-      lease.state = LeaseState.STARTED;
-      current.set(lease);
+      try {
+        current.set(lease);
+        lease.state = LeaseState.STARTED;
+      } catch (RuntimeException | Error failure) {
+        try {
+          current.remove();
+        } catch (RuntimeException | Error restoreFailure) {
+          if (failure != restoreFailure) {
+            failure.addSuppressed(restoreFailure);
+          }
+        }
+        throw failure;
+      }
     } finally {
       lock.unlock();
     }
@@ -273,6 +394,9 @@ public final class ArchiveLifecycle {
       return;
     }
     if (lease.state == LeaseState.STARTED) {
+      if (current.get() != lease) {
+        throw new ArchiveException("archive lifecycle lease is not current");
+      }
       current.remove();
     }
     lease.state = LeaseState.CLOSED;

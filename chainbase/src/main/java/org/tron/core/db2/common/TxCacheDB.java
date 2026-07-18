@@ -188,6 +188,11 @@ public class TxCacheDB implements DB<byte[], byte[]>, Flusher {
   }
 
   @Override
+  public byte[] getWithoutCache(byte[] key) {
+    return get(key);
+  }
+
+  @Override
   public void put(byte[] key, byte[] value) {
     if (key == null || value == null) {
       return;
@@ -456,4 +461,3 @@ public class TxCacheDB implements DB<byte[], byte[]>, Flusher {
   public void stat() {
   }
 }
-

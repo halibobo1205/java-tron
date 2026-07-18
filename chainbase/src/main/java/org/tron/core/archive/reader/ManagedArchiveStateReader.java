@@ -1,6 +1,11 @@
 package org.tron.core.archive.reader;
 
+import java.util.Objects;
+import java.util.function.Consumer;
 import org.tron.core.archive.ArchiveException;
+import org.tron.core.archive.ArchiveMutationLease;
+import org.tron.core.archive.ArchiveService;
+import org.tron.core.archive.ArchiveSnapshotReleaseException;
 import org.tron.core.archive.ArchiveWorkLease;
 import org.tron.core.archive.query.ArchiveQueryTransportScope;
 import org.tron.core.archive.query.ArchiveSnapshotPermit;
@@ -17,15 +22,44 @@ public final class ManagedArchiveStateReader implements ArchiveStateReader {
   private final ArchiveWorkLease lifecycleLease;
   private final QueryLease queryLease;
   private final ArchiveSnapshotPermit snapshotPermit;
+  private final ArchiveMutationLease mutationLease;
+  private final Runnable responseValidator;
+  private final Consumer<Throwable> integrityFailureHandler;
   private final Thread owner = Thread.currentThread();
   private boolean closed;
 
   public ManagedArchiveStateReader(ArchiveStateReader delegate, ArchiveWorkLease lifecycleLease,
       QueryLease queryLease, ArchiveSnapshotPermit snapshotPermit) {
-    this.delegate = delegate;
-    this.lifecycleLease = lifecycleLease;
-    this.queryLease = queryLease;
+    this(delegate, lifecycleLease, queryLease, snapshotPermit, ignored -> {
+    });
+  }
+
+  public ManagedArchiveStateReader(ArchiveStateReader delegate, ArchiveWorkLease lifecycleLease,
+      QueryLease queryLease, ArchiveSnapshotPermit snapshotPermit,
+      Consumer<Throwable> integrityFailureHandler) {
+    this(delegate, lifecycleLease, queryLease, snapshotPermit,
+        ArchiveService.NOOP_MUTATION_LEASE, () -> { }, integrityFailureHandler);
+  }
+
+  public ManagedArchiveStateReader(ArchiveStateReader delegate, ArchiveWorkLease lifecycleLease,
+      QueryLease queryLease, ArchiveSnapshotPermit snapshotPermit,
+      ArchiveMutationLease mutationLease, Consumer<Throwable> integrityFailureHandler) {
+    this(delegate, lifecycleLease, queryLease, snapshotPermit, mutationLease, () -> { },
+        integrityFailureHandler);
+  }
+
+  public ManagedArchiveStateReader(ArchiveStateReader delegate, ArchiveWorkLease lifecycleLease,
+      QueryLease queryLease, ArchiveSnapshotPermit snapshotPermit,
+      ArchiveMutationLease mutationLease, Runnable responseValidator,
+      Consumer<Throwable> integrityFailureHandler) {
+    this.delegate = Objects.requireNonNull(delegate, "delegate");
+    this.lifecycleLease = Objects.requireNonNull(lifecycleLease, "lifecycleLease");
+    this.queryLease = Objects.requireNonNull(queryLease, "queryLease");
     this.snapshotPermit = snapshotPermit;
+    this.mutationLease = Objects.requireNonNull(mutationLease, "mutationLease");
+    this.responseValidator = Objects.requireNonNull(responseValidator, "responseValidator");
+    this.integrityFailureHandler = Objects.requireNonNull(
+        integrityFailureHandler, "integrityFailureHandler");
   }
 
   @Override
@@ -42,6 +76,11 @@ public final class ManagedArchiveStateReader implements ArchiveStateReader {
   @Override
   public boolean isGenesisComplete() {
     return readUnchecked(delegate::isGenesisComplete);
+  }
+
+  @Override
+  public byte[] getBlockHash(long blockNum) throws ArchiveReaderException {
+    return read(() -> delegate.getBlockHash(blockNum));
   }
 
   @Override
@@ -85,7 +124,7 @@ public final class ManagedArchiveStateReader implements ArchiveStateReader {
   }
 
   @Override
-  public synchronized void close() {
+  public void close() {
     if (Thread.currentThread() != owner) {
       throw new ArchiveException("archive state reader used from a non-owner thread");
     }
@@ -94,16 +133,73 @@ public final class ManagedArchiveStateReader implements ArchiveStateReader {
     }
     closed = true;
     Throwable failure = null;
-    failure = closeAndCollect(failure, delegate::close);
+    failure = closeAndCollect(failure, delegate);
+    boolean snapshotReleaseUncertain = snapshotPermit != null
+        && ArchiveSnapshotReleaseException.contains(failure);
     if (snapshotPermit != null) {
-      failure = closeAndCollect(failure, snapshotPermit::close);
+      if (snapshotReleaseUncertain) {
+        snapshotPermit.retainAfterUncertainRelease();
+      }
+      failure = closeAndCollect(failure, snapshotPermit);
     }
-    failure = closeAndCollect(failure, lifecycleLease::close);
+    failure = closeAndCollect(failure, mutationLease);
+    failure = closeAndCollect(failure, lifecycleLease);
     if (failure != null) {
-      queryLease.getContext().recordFailure(failure);
+      try {
+        queryLease.getContext().recordFailure(failure);
+      } catch (Throwable recordFailure) {
+        failure = collectFailure(failure, recordFailure);
+      }
     }
-    failure = closeAndCollect(failure,
-        () -> ArchiveQueryTransportScope.closeAfterResponse(queryLease));
+    if (snapshotReleaseUncertain) {
+      try {
+        integrityFailureHandler.accept(failure);
+      } catch (Throwable handlerFailure) {
+        failure = collectFailure(failure, handlerFailure);
+      }
+    }
+    try {
+      ArchiveQueryTransportScope.closeAfterResponse(queryLease, responseValidator);
+    } catch (Throwable settlementFailure) {
+      failure = collectFailure(failure, settlementFailure);
+      try {
+        queryLease.getContext().recordFailure(settlementFailure);
+      } catch (Throwable recordFailure) {
+        failure = collectFailure(failure, recordFailure);
+      }
+    }
+    rethrowCloseFailure(failure);
+  }
+
+  private static Throwable closeAndCollect(Throwable failure, AutoCloseable resource) {
+    try {
+      resource.close();
+    } catch (Throwable closeFailure) {
+      return collectFailure(failure, closeFailure);
+    }
+    return failure;
+  }
+
+  private static Throwable collectFailure(Throwable failure, Throwable candidate) {
+    if (failure == null) {
+      return candidate;
+    }
+    addSuppressedSafely(failure, candidate);
+    return failure;
+  }
+
+  private static void addSuppressedSafely(Throwable primary, Throwable candidate) {
+    if (primary == candidate) {
+      return;
+    }
+    try {
+      primary.addSuppressed(candidate);
+    } catch (Throwable ignored) {
+      // Preserve the first failure and continue releasing the remaining leases.
+    }
+  }
+
+  private static void rethrowCloseFailure(Throwable failure) {
     if (failure instanceof RuntimeException) {
       throw (RuntimeException) failure;
     }
@@ -115,27 +211,26 @@ public final class ManagedArchiveStateReader implements ArchiveStateReader {
     }
   }
 
-  private static Throwable closeAndCollect(Throwable failure, Runnable closeAction) {
-    try {
-      closeAction.run();
-    } catch (Throwable closeFailure) {
-      if (failure == null) {
-        return closeFailure;
-      }
-      if (failure != closeFailure) {
-        failure.addSuppressed(closeFailure);
-      }
-    }
-    return failure;
-  }
-
   private <T> T read(ReaderOperation<T> operation) throws ArchiveReaderException {
     try {
       requireOwnerOpen();
       return operation.run();
     } catch (ArchiveReaderException | RuntimeException | Error e) {
       queryLease.getContext().recordFailure(e);
+      if (e instanceof ArchiveReaderException
+          && ((ArchiveReaderException) e).isIntegrityFailure()) {
+        reportIntegrityFailure(e);
+      }
       throw e;
+    }
+  }
+
+  private void reportIntegrityFailure(Throwable failure) {
+    try {
+      integrityFailureHandler.accept(failure);
+    } catch (RuntimeException | Error handlerFailure) {
+      addSuppressedSafely(handlerFailure, failure);
+      throw handlerFailure;
     }
   }
 

@@ -62,6 +62,32 @@ public final class ArchiveChangeRecord {
     return canonicalKey.length;
   }
 
+  /** Copies the immutable canonical key into caller-owned storage without an intermediate array. */
+  public void copyCanonicalKeyTo(byte[] target, int offset) {
+    if (target == null) {
+      throw new NullPointerException("target");
+    }
+    if (offset < 0 || offset > target.length - canonicalKey.length) {
+      throw new IndexOutOfBoundsException("canonical key copy does not fit target");
+    }
+    System.arraycopy(canonicalKey, 0, target, offset, canonicalKey.length);
+  }
+
+  /** Compares canonical keys unsigned and lexicographically without exposing or copying them. */
+  public int compareCanonicalKeyTo(ArchiveChangeRecord other) {
+    if (other == null) {
+      throw new NullPointerException("other");
+    }
+    int length = Math.min(canonicalKey.length, other.canonicalKey.length);
+    for (int i = 0; i < length; i++) {
+      int result = (canonicalKey[i] & 0xff) - (other.canonicalKey[i] & 0xff);
+      if (result != 0) {
+        return result;
+      }
+    }
+    return canonicalKey.length - other.canonicalKey.length;
+  }
+
   /** The value before this change (history / Erigon prev-value); tombstone if absent before. */
   public DomainValue getPrevValue() {
     return prevValue;

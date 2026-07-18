@@ -1,5 +1,7 @@
 package org.tron.core.archive.query;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -16,14 +18,15 @@ public final class QueryContext {
   private final long timeoutNanos;
   private final boolean deadlineEnabled;
   private final HistoricalQueryLimitException.Limit deadlineLimit;
-  private final TraceReservation traceReservation;
   private final AtomicLong logicalReads = new AtomicLong();
   private final AtomicLong backendReads = new AtomicLong();
+  private final AtomicLong backendReadBytes = new AtomicLong();
   private final AtomicLong cacheHits = new AtomicLong();
   private final AtomicLong vmSteps = new AtomicLong();
-  private final AtomicLong traceBytes = new AtomicLong();
-  private final AtomicLong retainedTraceBytes = new AtomicLong();
+  private final AtomicLong vmOverlayBytes = new AtomicLong();
   private final AtomicLong responseBytes = new AtomicLong();
+  private final Object snapshotPermitMutex = new Object();
+  private final List<ArchiveSnapshotPermit> activeSnapshotPermits = new ArrayList<>(1);
   private final AtomicReference<HistoricalQueryLimitException> terminal =
       new AtomicReference<>();
   private final AtomicReference<RuntimeException> vmTerminalFailure =
@@ -38,39 +41,28 @@ public final class QueryContext {
   }
 
   QueryContext(ArchiveQueryLimits limits, LongSupplier nanoTime) {
-    this(limits, nanoTime, null, TraceReservation.NONE);
+    this(limits, nanoTime, null);
   }
 
   QueryContext(ArchiveQueryLimits limits,
       ArchiveQueryRequestScope.DeadlineConstraint batchDeadline) {
     this(limits, batchDeadline == null ? System::nanoTime : batchDeadline.nanoTime,
-        batchDeadline, TraceReservation.NONE);
-  }
-
-  QueryContext(ArchiveQueryLimits limits,
-      ArchiveQueryRequestScope.DeadlineConstraint batchDeadline,
-      TraceReservation traceReservation) {
-    this(limits, batchDeadline == null ? System::nanoTime : batchDeadline.nanoTime,
-        batchDeadline, traceReservation);
+        batchDeadline);
   }
 
   private QueryContext(ArchiveQueryLimits limits, LongSupplier nanoTime,
-      ArchiveQueryRequestScope.DeadlineConstraint batchDeadline,
-      TraceReservation traceReservation) {
+      ArchiveQueryRequestScope.DeadlineConstraint batchDeadline) {
     if (limits == null) {
       throw new NullPointerException("limits");
     }
     if (nanoTime == null) {
       throw new NullPointerException("nanoTime");
     }
-    if (traceReservation == null) {
-      throw new NullPointerException("traceReservation");
-    }
     this.limits = limits;
     this.nanoTime = nanoTime;
-    this.traceReservation = traceReservation;
     startedNanos = nanoTime.getAsLong();
-    long requestTimeout = ArchiveQueryLimits.isUnlimited(limits.getDeadlineMs())
+    boolean requestDeadlineConfigured = !ArchiveQueryLimits.isUnlimited(limits.getDeadlineMs());
+    long requestTimeout = !requestDeadlineConfigured
         ? Long.MAX_VALUE : millisecondsToNanosSaturated(limits.getDeadlineMs());
     long batchTimeout = Long.MAX_VALUE;
     if (batchDeadline != null) {
@@ -79,8 +71,8 @@ public final class QueryContext {
           ? 0L : batchDeadline.remainingNanos - elapsedSinceConstraint;
     }
     timeoutNanos = Math.min(requestTimeout, batchTimeout);
-    deadlineEnabled = timeoutNanos != Long.MAX_VALUE;
-    deadlineLimit = batchTimeout <= requestTimeout
+    deadlineEnabled = requestDeadlineConfigured || batchDeadline != null;
+    deadlineLimit = batchDeadline != null && batchTimeout <= requestTimeout
         ? HistoricalQueryLimitException.Limit.BATCH_DEADLINE
         : HistoricalQueryLimitException.Limit.DEADLINE;
   }
@@ -112,8 +104,51 @@ public final class QueryContext {
     return timeoutNanos - elapsed;
   }
 
+  /**
+   * Samples this context's monotonic clock once for comparison with another deadline expressed in
+   * the same clock domain. This does not newly terminate an expired context; the caller can first
+   * decide which deadline was earlier and then call {@link #checkDeadline()} when archive time won.
+   * A limit failure recorded before or during the sample is still rethrown immediately.
+   */
+  public DeadlineSnapshot sampleDeadline() {
+    HistoricalQueryLimitException existing = terminal.get();
+    if (existing != null) {
+      throw existing;
+    }
+    long sampledNanos = nanoTime.getAsLong();
+    long remainingNanos = Long.MAX_VALUE;
+    if (deadlineEnabled) {
+      remainingNanos = timeoutNanos - elapsedNanos(sampledNanos);
+    }
+    existing = terminal.get();
+    if (existing != null) {
+      throw existing;
+    }
+    return new DeadlineSnapshot(sampledNanos, remainingNanos);
+  }
+
   public long getElapsedNanos() {
     return elapsedNanos(nanoTime.getAsLong());
+  }
+
+  /** One immutable monotonic sample of this query deadline. */
+  public static final class DeadlineSnapshot {
+
+    private final long sampledNanos;
+    private final long remainingNanos;
+
+    private DeadlineSnapshot(long sampledNanos, long remainingNanos) {
+      this.sampledNanos = sampledNanos;
+      this.remainingNanos = remainingNanos;
+    }
+
+    public long getSampledNanos() {
+      return sampledNanos;
+    }
+
+    public long getRemainingNanos() {
+      return remainingNanos;
+    }
   }
 
   public long recordLogicalRead() {
@@ -156,6 +191,48 @@ public final class QueryContext {
     return recordBackendReads(count);
   }
 
+  /** Accounts one materialized backend value before allocating its Java byte array. */
+  public long recordBackendValueBytes(long bytes) {
+    if (bytes < 0L) {
+      throw new IllegalArgumentException("backend value bytes must be non-negative");
+    }
+    throwIfTerminated();
+    long singleValueMaximum = limits.getMaxBackendValueBytes();
+    if (!ArchiveQueryLimits.isUnlimited(singleValueMaximum) && bytes > singleValueMaximum) {
+      throw terminate(HistoricalQueryLimitException.budgetExceeded(
+          HistoricalQueryLimitException.Limit.BACKEND_VALUE_BYTES,
+          singleValueMaximum, bytes));
+    }
+    return consume(
+        backendReadBytes,
+        bytes,
+        limits.getMaxBackendReadBytesPerRequest(),
+        HistoricalQueryLimitException.Limit.BACKEND_READ_BYTES);
+  }
+
+  /** Checks value budgets without consuming them before a fixed-size native length probe. */
+  public void validateBackendValueBytes(long bytes) {
+    if (bytes < 0L) {
+      throw new IllegalArgumentException("backend value bytes must be non-negative");
+    }
+    throwIfTerminated();
+    long singleValueMaximum = limits.getMaxBackendValueBytes();
+    if (!ArchiveQueryLimits.isUnlimited(singleValueMaximum) && bytes > singleValueMaximum) {
+      throw terminate(HistoricalQueryLimitException.budgetExceeded(
+          HistoricalQueryLimitException.Limit.BACKEND_VALUE_BYTES,
+          singleValueMaximum, bytes));
+    }
+    long aggregateMaximum = limits.getMaxBackendReadBytesPerRequest();
+    long current = backendReadBytes.get();
+    long projected = current > Long.MAX_VALUE - bytes ? Long.MAX_VALUE : current + bytes;
+    if (!ArchiveQueryLimits.isUnlimited(aggregateMaximum)
+        && wouldExceed(current, bytes, aggregateMaximum)) {
+      throw terminate(HistoricalQueryLimitException.budgetExceeded(
+          HistoricalQueryLimitException.Limit.BACKEND_READ_BYTES,
+          aggregateMaximum, projected));
+    }
+  }
+
   public long recordCacheHit() {
     throwIfTerminated();
     return addSaturated(cacheHits, 1L);
@@ -173,39 +250,17 @@ public final class QueryContext {
         HistoricalQueryLimitException.Limit.VM_STEPS);
   }
 
-  public long recordTraceStep() {
-    return recordVmStep();
-  }
-
-  public long recordTraceSteps(long count) {
-    return recordVmSteps(count);
-  }
-
   public long consumeVmSteps(long count) {
     return recordVmSteps(count);
   }
 
-  public long recordTraceBytes(long bytes) {
-    long observed = consume(
-        traceBytes,
+  /** Accounts allocation retained or generated by the historical VM repository overlay. */
+  public long recordVmOverlayBytes(long bytes) {
+    return consume(
+        vmOverlayBytes,
         bytes,
-        limits.getMaxTraceBytes(),
-        HistoricalQueryLimitException.Limit.TRACE_BYTES);
-    try {
-      traceReservation.reserve(bytes);
-      addSaturated(retainedTraceBytes, bytes);
-    } catch (HistoricalQueryLimitException e) {
-      throw terminate(e);
-    }
-    HistoricalQueryLimitException existing = terminal.get();
-    if (existing != null) {
-      throw existing;
-    }
-    return observed;
-  }
-
-  public long consumeTraceBytes(long bytes) {
-    return recordTraceBytes(bytes);
+        limits.getMaxVmOverlayBytes(),
+        HistoricalQueryLimitException.Limit.VM_OVERLAY_BYTES);
   }
 
   public long recordResponseBytes(long bytes) {
@@ -214,6 +269,36 @@ public final class QueryContext {
         bytes,
         limits.getMaxResponseBytes(),
         HistoricalQueryLimitException.Limit.RESPONSE_BYTES);
+  }
+
+  /** Reconciles estimates with the actual serialized response size without double counting. */
+  public long recordSerializedResponseBytes(long bytes) {
+    if (bytes < 0L) {
+      throw new IllegalArgumentException("serialized response bytes must be non-negative");
+    }
+    throwIfTerminated();
+    long observed;
+    while (true) {
+      long current = responseBytes.get();
+      if (bytes <= current) {
+        observed = current;
+        break;
+      }
+      if (responseBytes.compareAndSet(current, bytes)) {
+        observed = bytes;
+        break;
+      }
+    }
+    long maximum = limits.getMaxResponseBytes();
+    if (!ArchiveQueryLimits.isUnlimited(maximum) && observed > maximum) {
+      throw terminate(HistoricalQueryLimitException.budgetExceeded(
+          HistoricalQueryLimitException.Limit.RESPONSE_BYTES, maximum, observed));
+    }
+    HistoricalQueryLimitException existing = terminal.get();
+    if (existing != null) {
+      throw existing;
+    }
+    return observed;
   }
 
   public long consumeResponseBytes(long bytes) {
@@ -228,6 +313,10 @@ public final class QueryContext {
     return backendReads.get();
   }
 
+  public long getBackendReadBytes() {
+    return backendReadBytes.get();
+  }
+
   public long getCacheHits() {
     return cacheHits.get();
   }
@@ -236,25 +325,81 @@ public final class QueryContext {
     return vmSteps.get();
   }
 
-  public long getTraceSteps() {
-    return getVmSteps();
-  }
-
-  public long getTraceBytes() {
-    return traceBytes.get();
-  }
-
-  long drainRetainedTraceBytes() {
-    return retainedTraceBytes.getAndSet(0L);
+  public long getVmOverlayBytes() {
+    return vmOverlayBytes.get();
   }
 
   public long getResponseBytes() {
     return responseBytes.get();
   }
 
+  /** Returns whether the coordinator currently owns a native-snapshot slot for this query. */
+  public boolean hasActiveSnapshotPermit() {
+    synchronized (snapshotPermitMutex) {
+      return !activeSnapshotPermits.isEmpty();
+    }
+  }
+
+  boolean reserveSnapshotPermit(ArchiveSnapshotPermit permit) {
+    if (permit == null) {
+      throw new NullPointerException("permit");
+    }
+    synchronized (snapshotPermitMutex) {
+      for (ArchiveSnapshotPermit current : activeSnapshotPermits) {
+        if (current == permit) {
+          return false;
+        }
+      }
+      if (activeSnapshotPermits.size() == Integer.MAX_VALUE) {
+        return false;
+      }
+      activeSnapshotPermits.add(permit);
+      return true;
+    }
+  }
+
+  void releaseSnapshotPermit(ArchiveSnapshotPermit permit) {
+    synchronized (snapshotPermitMutex) {
+      for (int i = 0; i < activeSnapshotPermits.size(); i++) {
+        if (activeSnapshotPermits.get(i) == permit) {
+          activeSnapshotPermits.remove(i);
+          return;
+        }
+      }
+      throw new IllegalStateException("query snapshot permit ownership underflow");
+    }
+  }
+
+  /** Atomically claims one currently idle coordinator permit for one native query view. */
+  public ArchiveSnapshotPermit.SnapshotUse tryClaimSnapshotUse() {
+    synchronized (snapshotPermitMutex) {
+      for (ArchiveSnapshotPermit permit : activeSnapshotPermits) {
+        ArchiveSnapshotPermit.SnapshotUse use = permit.tryClaimUse();
+        if (use != null) {
+          return use;
+        }
+      }
+      return null;
+    }
+  }
+
   /** Checks the monotonic deadline and rethrows the first terminal limit failure, if any. */
   public void checkDeadline() {
     throwIfTerminated();
+  }
+
+  /** Terminates a finite context after a timed lock wait consumed its sampled remaining budget. */
+  public HistoricalQueryLimitException deadlineExceeded() {
+    HistoricalQueryLimitException existing = terminal.get();
+    if (existing != null) {
+      return existing;
+    }
+    if (!deadlineEnabled) {
+      throw new IllegalStateException("unlimited query context has no deadline");
+    }
+    long elapsed = Math.max(timeoutNanos, elapsedNanos(nanoTime.getAsLong()));
+    return terminate(HistoricalQueryLimitException.deadlineExceeded(
+        deadlineLimit, timeoutNanos, elapsed));
   }
 
   /** Rethrows the exact first terminal exception, including one previously swallowed by a VM. */
@@ -353,8 +498,15 @@ public final class QueryContext {
       throw new IllegalArgumentException("budget consumption must be non-negative");
     }
     throwIfTerminated();
-    long observed = addSaturated(counter, amount);
-    if (!ArchiveQueryLimits.isUnlimited(maximum) && observed > maximum) {
+    long current;
+    long observed;
+    do {
+      current = counter.get();
+      observed = current > Long.MAX_VALUE - amount
+          ? Long.MAX_VALUE : current + amount;
+    } while (!counter.compareAndSet(current, observed));
+    if (!ArchiveQueryLimits.isUnlimited(maximum)
+        && wouldExceed(current, amount, maximum)) {
       throw terminate(HistoricalQueryLimitException.budgetExceeded(limit, maximum, observed));
     }
     HistoricalQueryLimitException existing = terminal.get();
@@ -422,11 +574,8 @@ public final class QueryContext {
         : milliseconds * NANOS_PER_MILLISECOND;
   }
 
-  @FunctionalInterface
-  interface TraceReservation {
-
-    TraceReservation NONE = bytes -> { };
-
-    void reserve(long bytes);
+  private static boolean wouldExceed(long current, long amount, long maximum) {
+    return current > maximum || amount > maximum - current;
   }
+
 }

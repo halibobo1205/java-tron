@@ -4,6 +4,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
+import java.lang.reflect.Field;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.Test;
@@ -116,6 +117,39 @@ public class ArchiveQueryRequestScopeTest {
       assertEquals(HistoricalQueryLimitException.Limit.BATCH_DEADLINE,
           failure.getLimit());
       assertEquals(0L, context.getRemainingNanos());
+    }
+  }
+
+  @Test
+  public void saturatedFiniteBatchDeadlineStillCreatesConstraint() {
+    ArchiveQueryLimits limits = ArchiveQueryLimits.builder()
+        .batchDeadlineMs(Long.MAX_VALUE)
+        .build();
+
+    try (ArchiveQueryRequestScope ignored = ArchiveQueryRequestScope.open(() -> 0L)) {
+      ArchiveQueryRequestScope.DeadlineConstraint constraint =
+          ArchiveQueryRequestScope.deadlineConstraint(limits);
+
+      assertEquals(Long.MAX_VALUE, constraint.remainingNanos);
+    }
+  }
+
+  @Test
+  public void exactLongMaxBatchCountRejectsTheNextAdmission() throws Exception {
+    ArchiveQueryLimits limits = ArchiveQueryLimits.builder()
+        .maxQueriesPerBatch(Long.MAX_VALUE)
+        .build();
+
+    try (ArchiveQueryRequestScope scope = ArchiveQueryRequestScope.open(() -> 0L)) {
+      Field admittedQueries = ArchiveQueryRequestScope.class.getDeclaredField("admittedQueries");
+      admittedQueries.setAccessible(true);
+      admittedQueries.setLong(scope, Long.MAX_VALUE);
+
+      HistoricalQueryLimitException failure = assertThrows(
+          HistoricalQueryLimitException.class,
+          () -> ArchiveQueryRequestScope.admit(limits));
+
+      assertEquals(HistoricalQueryLimitException.Limit.BATCH_QUERIES, failure.getLimit());
     }
   }
 

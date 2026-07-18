@@ -19,6 +19,11 @@ public class HashDB implements DB<Key, Value> {
   }
 
   @Override
+  public Value getWithoutCache(Key key) {
+    return get(key);
+  }
+
+  @Override
   public void put(Key key, Value value) {
     db.put(key, value);
   }

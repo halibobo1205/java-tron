@@ -5,6 +5,7 @@ import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.Wallet;
 import org.tron.core.archive.ArchiveService;
+import org.tron.core.archive.ArchiveSnapshotInvalidatedException;
 import org.tron.core.archive.query.QueryContext;
 import org.tron.core.archive.reader.ArchiveReadResult;
 import org.tron.core.archive.reader.ArchiveReadResult.Status;
@@ -12,10 +13,8 @@ import org.tron.core.archive.reader.ArchiveReaderException;
 import org.tron.core.archive.reader.ArchiveStateReader;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.capsule.AccountCapsule;
-import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.exception.jsonrpc.JsonRpcInternalException;
 import org.tron.core.exception.jsonrpc.JsonRpcInvalidParamsException;
-import org.tron.protos.Protocol.Block;
 
 /**
  * Bridges the historical {@code eth_getBalance}/{@code eth_getCode}/{@code eth_getStorageAt} paths
@@ -74,6 +73,8 @@ public final class ArchiveJsonRpcStateAdapter {
       }
     } catch (ArchiveReaderException e) {
       throw toInternal(e);
+    } catch (ArchiveSnapshotInvalidatedException e) {
+      throw new JsonRpcInternalException(e.getMessage());
     }
   }
 
@@ -97,6 +98,8 @@ public final class ArchiveJsonRpcStateAdapter {
       }
     } catch (ArchiveReaderException e) {
       throw toInternal(e);
+    } catch (ArchiveSnapshotInvalidatedException e) {
+      throw new JsonRpcInternalException(e.getMessage());
     }
   }
 
@@ -121,6 +124,8 @@ public final class ArchiveJsonRpcStateAdapter {
       }
     } catch (ArchiveReaderException e) {
       throw toInternal(e);
+    } catch (ArchiveSnapshotInvalidatedException e) {
+      throw new JsonRpcInternalException(e.getMessage());
     }
   }
 
@@ -138,36 +143,22 @@ public final class ArchiveJsonRpcStateAdapter {
     }
     ArchiveStateReader reader = null;
     try {
-      // Canonical header lookup, point resolution, and snapshot creation share one admitted archive
-      // boundary. This prevents unauthenticated requests from doing block-store I/O first.
+      // The published archive range already binds block number to canonical hash. Resolve it only
+      // after admission and seal the archive mutation epoch after response serialization.
       if (JsonRpcApiUtil.FINALIZED_STR.equalsIgnoreCase(blockNumOrTag)) {
-        reader = archiveService.openBlockEndReader(
-            wallet::getSolidBlockNum, this::canonicalBlockHashOrThrow);
+        reader = archiveService.openBlockEndReader(wallet::getSolidBlockNum);
       } else {
         long requestedBlockNum = JsonRpcApiUtil.isBlockTag(blockNumOrTag)
             ? JsonRpcApiUtil.parseBlockTag(blockNumOrTag, wallet)
             : JsonRpcApiUtil.parseBlockNumber(blockNumOrTag);
-        reader = archiveService.openBlockEndReader(
-            requestedBlockNum, this::canonicalBlockHashOrThrow);
+        reader = archiveService.openBlockEndReader(requestedBlockNum);
       }
       long blockNum = reader.getPoint().getBlockNum();
       byte[] pointBlockHash = reader.getPoint().getBlockHash();
       if (requestedBlockHash != null) {
         requireBlockHash(blockNum, pointBlockHash, requestedBlockHash);
       }
-      reader.getQueryContext().recordBackendReads(2L);
-      Block currentBlock = wallet.getBlockByNum(blockNum);
-      byte[] currentBlockHash = currentBlock == null
-          ? null
-          : new BlockCapsule(currentBlock).getBlockId().getBytes();
-      // Re-read the canonical header after the archive snapshot is fixed. A fork between the first
-      // Wallet lookup and reader creation must fail closed instead of serving the old point under a
-      // new canonical height.
-      requireBlockHash(blockNum, currentBlockHash, pointBlockHash);
       return reader;
-    } catch (BlockHeaderNotFoundException e) {
-      closeAfterFailure(reader, e);
-      throw new JsonRpcInvalidParamsException("block header not found");
     } catch (ArchiveReaderException e) {
       closeAfterFailure(reader, e);
       throw toInternal(e);
@@ -175,14 +166,6 @@ public final class ArchiveJsonRpcStateAdapter {
       closeAfterFailure(reader, e);
       throw e;
     }
-  }
-
-  private byte[] canonicalBlockHashOrThrow(long blockNum) {
-    Block block = wallet.getBlockByNum(blockNum);
-    if (block == null) {
-      throw new BlockHeaderNotFoundException();
-    }
-    return new BlockCapsule(block).getBlockId().getBytes();
   }
 
   private static void recordJsonHexResponse(ArchiveStateReader reader, long rawBytes) {
@@ -267,8 +250,4 @@ public final class ArchiveJsonRpcStateAdapter {
     return new JsonRpcInternalException(e.getMessage());
   }
 
-  private static final class BlockHeaderNotFoundException extends RuntimeException {
-
-    private static final long serialVersionUID = 1L;
-  }
 }

@@ -24,9 +24,10 @@ public class HistoricalQueryLimitException extends RuntimeException {
     BATCH_DEADLINE,
     LOGICAL_READS,
     BACKEND_READS,
+    BACKEND_VALUE_BYTES,
+    BACKEND_READ_BYTES,
     VM_STEPS,
-    TRACE_BYTES,
-    RETAINED_TRACE_BYTES,
+    VM_OVERLAY_BYTES,
     RESPONSE_BYTES
   }
 

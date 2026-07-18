@@ -16,6 +16,7 @@ import org.junit.Test;
 import org.tron.core.archive.ArchiveExecutionContext;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchivePhase;
+import org.tron.core.archive.ArchiveResourceEstimator;
 import org.tron.core.archive.ArchiveSource;
 import org.tron.core.archive.codec.ContractStorageKeyCodec;
 import org.tron.core.archive.domain.ArchiveDomain;
@@ -177,6 +178,86 @@ public class ArchiveCaptureEngineTest {
     engine.capturePut("account", new byte[21], null, account(1));
     engine.clear();
     assertTrue(engine.records().isEmpty());
+    assertEquals(0L, engine.capturedPayloadBytes());
+  }
+
+  @Test
+  public void captureByteWatermarkUsesPipelineEstimateBeforeAllocation() {
+    ArchiveCaptureEngine bounded = new ArchiveCaptureEngine(
+        new DefaultArchiveDomainRegistry(), new DefaultArchiveDomainCatalog(),
+        new DynamicKeyPolicy(), context, 10L, 600L);
+    enterTx(1);
+
+    ArchiveException failure = assertThrows(ArchiveException.class,
+        () -> bounded.capturePut("account", new byte[21], null, account(1)));
+
+    assertTrue(failure.getMessage().contains("pipeline resource watermark"));
+    assertEquals(0, bounded.rawRecordCount());
+    assertTrue(bounded.records().isEmpty());
+  }
+
+  @Test
+  public void captureBudgetIncludesResourcesRetainedByOlderBlocks() {
+    byte[] account = account(1);
+    long oneRecord = org.tron.core.archive.ArchiveResourceEstimator
+        .estimatedRawRecordPipelineBytes(21, 0, account.length);
+    ArchiveCaptureEngine bounded = new ArchiveCaptureEngine(
+        new DefaultArchiveDomainRegistry(), new DefaultArchiveDomainCatalog(),
+        new DynamicKeyPolicy(), context, 10L, oneRecord + 99L);
+    bounded.beginBlockCapture(100L);
+    enterTx(1);
+
+    ArchiveException failure = assertThrows(ArchiveException.class,
+        () -> bounded.capturePut("account", new byte[21], null, account));
+
+    assertTrue(failure.getMessage().contains("pipeline resource watermark"));
+    assertEquals(0, bounded.rawRecordCount());
+  }
+
+  @Test
+  public void repeatedSameKeyUsesCoalescedResourcePeak() {
+    byte[] first = account(1L);
+    byte[] second = account(2L);
+    long firstPipeline = ArchiveResourceEstimator.estimatedRawRecordPipelineBytes(
+        21, 0, first.length);
+    long retainedFirst = ArchiveResourceEstimator.estimatedRecordRetainedBytes(
+        21, 0, first.length);
+    long secondPipeline = ArchiveResourceEstimator.estimatedRawRecordPipelineBytes(
+        21, first.length, second.length);
+    long hardBytes = Math.max(firstPipeline, retainedFirst + secondPipeline);
+    assertTrue(firstPipeline + secondPipeline > hardBytes);
+    ArchiveCaptureEngine bounded = new ArchiveCaptureEngine(
+        new DefaultArchiveDomainRegistry(), new DefaultArchiveDomainCatalog(),
+        new DynamicKeyPolicy(), context, 10L, hardBytes);
+    enterTx(1L);
+    byte[] key = new byte[21];
+    key[0] = 0x41;
+
+    bounded.capturePut("account", key, null, first);
+    bounded.capturePut("account", key, first, second);
+
+    assertEquals(2, bounded.rawRecordCount());
+    assertEquals(1, bounded.records().size());
+    assertArrayEquals(second, bounded.records().get(0).getValue().getValue());
+    assertTrue(bounded.rawRecordBytes() <= hardBytes);
+    assertEquals(21L + second.length, bounded.capturedPayloadBytes());
+  }
+
+  @Test
+  public void pipelineWatermarkRejectsInvalidProtoBeforeCodecParsing() {
+    ArchiveCaptureEngine bounded = new ArchiveCaptureEngine(
+        new DefaultArchiveDomainRegistry(), new DefaultArchiveDomainCatalog(),
+        new DynamicKeyPolicy(), context, 10L, 1_000L);
+    enterTx(1);
+    byte[] invalidAccount = new byte[128];
+    java.util.Arrays.fill(invalidAccount, (byte) 0xff);
+
+    ArchiveException failure = assertThrows(ArchiveException.class,
+        () -> bounded.capturePut("account", new byte[21], null, invalidAccount));
+
+    assertTrue(failure.getMessage().contains("pipeline resource watermark"));
+    assertFalse(failure.getMessage().contains("valid Account proto"));
+    assertEquals(0, bounded.rawRecordCount());
   }
 
   @Test
@@ -218,6 +299,23 @@ public class ArchiveCaptureEngineTest {
     assertFalse(r.getPrevValue().isDeleted()); // prev balance 100 (present)
     assertFalse(r.getValue().isDeleted());     // new balance 150 (present)
     assertArrayEquals(Bytes.concat(addr, ascii("1000001")), r.getCanonicalKey());
+  }
+
+  @Test
+  public void accountAssetInputIsBudgetedBeforeProtoParsing() {
+    ArchiveCaptureEngine bounded = new ArchiveCaptureEngine(
+        new DefaultArchiveDomainRegistry(), new DefaultArchiveDomainCatalog(),
+        new DynamicKeyPolicy(), context, 10L, 2_000L);
+    enterTx(1);
+    byte[] invalidAccount = new byte[256];
+    java.util.Arrays.fill(invalidAccount, (byte) 0xff);
+
+    ArchiveException failure = assertThrows(ArchiveException.class,
+        () -> bounded.captureAccountAsset(new byte[21], null, invalidAccount));
+
+    assertTrue(failure.getMessage().contains("transient resource watermark"));
+    assertFalse(failure.getMessage().contains("valid Account proto"));
+    assertEquals(0, bounded.rawRecordCount());
   }
 
   @Test

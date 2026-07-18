@@ -2,6 +2,11 @@ package org.tron.core.archive;
 
 import org.rocksdb.RocksDBException;
 import org.rocksdb.RocksIterator;
+import org.rocksdb.Status;
+import org.tron.core.archive.query.HistoricalQueryLimitException;
+import org.tron.core.archive.query.QueryContext;
+import org.tron.core.archive.query.QueryContextHolder;
+import org.tron.core.archive.unified.UnifiedArchiveIterator;
 
 /**
  * Fail-stop helper for archive RocksDB iterators.
@@ -32,7 +37,44 @@ public final class ArchiveRocksIterators {
     try {
       it.status();
     } catch (RocksDBException e) {
+      rethrowIfNativeDeadline(e);
       throw new ArchiveException("archive rocksdb iterator error: " + context, e);
+    }
+  }
+
+  /** Owner-bound unified-view variant of {@link #requireOk(RocksIterator, String)}. */
+  public static void requireOk(UnifiedArchiveIterator it, String context) {
+    try {
+      it.status();
+    } catch (RocksDBException e) {
+      rethrowIfNativeDeadline(e);
+      throw new ArchiveException("archive rocksdb iterator error: " + context, e);
+    }
+  }
+
+  public static void rethrowIfNativeDeadline(RocksDBException failure) {
+    rethrowIfNativeDeadline(failure, QueryContextHolder.current());
+  }
+
+  /** Translates a native timeout against an explicitly retained storage-only query context. */
+  public static void rethrowIfNativeDeadline(RocksDBException failure,
+      QueryContext queryContext) {
+    Status status = failure.getStatus();
+    if (status == null || status.getCode() != Status.Code.TimedOut) {
+      return;
+    }
+    if (queryContext == null) {
+      return;
+    }
+    try {
+      queryContext.checkDeadline();
+    } catch (HistoricalQueryLimitException deadlineFailure) {
+      try {
+        deadlineFailure.addSuppressed(failure);
+      } catch (Throwable ignored) {
+        // Preserve the typed deadline even if suppression cannot allocate.
+      }
+      throw deadlineFailure;
     }
   }
 }

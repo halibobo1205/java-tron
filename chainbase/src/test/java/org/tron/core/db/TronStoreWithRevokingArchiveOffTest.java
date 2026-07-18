@@ -1,5 +1,7 @@
 package org.tron.core.db;
 
+import static org.junit.Assert.assertArrayEquals;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -21,6 +23,9 @@ import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.archive.domain.DefaultArchiveDomainCatalog;
 import org.tron.core.archive.domain.DefaultArchiveDomainRegistry;
 import org.tron.core.archive.domain.DynamicKeyPolicy;
+import org.tron.core.archive.query.ArchiveQueryLimits;
+import org.tron.core.archive.query.QueryContext;
+import org.tron.core.archive.query.QueryContextHolder;
 import org.tron.core.archive.txnum.ArchiveTxPosition;
 import org.tron.core.capsule.ProtoCapsule;
 import org.tron.core.config.args.Storage;
@@ -117,6 +122,25 @@ public class TronStoreWithRevokingArchiveOffTest {
     verify(db).remove(same(key));
   }
 
+  @Test
+  public void cachelessRootReadAccountsMaterializedValueBytes() {
+    byte[] key = new byte[] {1, 2, 3};
+    byte[] value = new byte[] {4, 5, 6, 7};
+    QueryContext context = new QueryContext(ArchiveQueryLimits.builder()
+        .maxBackendValueBytes(value.length)
+        .maxBackendReadBytesPerRequest(value.length)
+        .build());
+    when(db.getWithoutCache(key)).thenReturn(value);
+
+    try (QueryContextHolder.Scope ignored = QueryContextHolder.attach(context)) {
+      assertArrayEquals(value, store.readWithoutCache(key));
+    }
+
+    assertEquals(1L, context.getBackendReads());
+    assertEquals(value.length, context.getBackendReadBytes());
+    verify(db).getWithoutCache(same(key));
+  }
+
   private static ArchiveCaptureEngine enableCapture() {
     ArchiveExecutionContext context = new ArchiveExecutionContext();
     context.enter(new ArchiveTxPosition(
@@ -142,6 +166,10 @@ public class TronStoreWithRevokingArchiveOffTest {
     private void deleteWithSinglePreviousRead(byte[] key) {
       ArchivePreviousValue previous = readArchivePreviousValue(getDbName(), key);
       deleteWithKnownArchivePrevious(key, previous);
+    }
+
+    private byte[] readWithoutCache(byte[] key) {
+      return readRootWithoutCache(key);
     }
   }
 

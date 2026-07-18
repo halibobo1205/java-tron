@@ -24,6 +24,8 @@ import org.tron.common.storage.rocksdb.RocksDbDataSourceImpl;
 import org.tron.common.utils.StorageUtils;
 import org.tron.core.archive.ArchiveMetrics;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
+import org.tron.core.archive.query.QueryContext;
+import org.tron.core.archive.query.QueryContextHolder;
 import org.tron.core.capsule.ProtoCapsule;
 import org.tron.core.db.common.iterator.DBIterator;
 import org.tron.core.db2.common.DB;
@@ -159,6 +161,24 @@ public abstract class TronStoreWithRevoking<T extends ProtoCapsule> implements I
       ArchiveCaptureHolder.recordFailure("prevRead(" + dbName + ")", e);
       return ArchivePreviousValue.unavailable();
     }
+  }
+
+  /** Reads only the durable root and bypasses the underlying engine's block-cache admission. */
+  protected final byte[] readRootWithoutCache(byte[] key) {
+    QueryContext queryContext = QueryContextHolder.currentStorageContext();
+    if (queryContext != null) {
+      queryContext.recordBackendRead();
+    }
+    byte[] value = db.getWithoutCache(key);
+    if (queryContext != null && value != null) {
+      queryContext.recordBackendValueBytes(value.length);
+    }
+    return value;
+  }
+
+  /** Wraps raw bytes already loaded by a canonical hook so archive capture can reuse that read. */
+  protected final ArchivePreviousValue archivePreviousValue(byte[] value) {
+    return ArchivePreviousValue.available(value);
   }
 
   protected static final class ArchivePreviousValue {

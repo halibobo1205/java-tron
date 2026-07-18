@@ -326,6 +326,25 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
   }
 
   @Override
+  public synchronized Optional<ArchiveTransactionLocation> findTransactionByTxId(byte[] txId) {
+    if (txId == null || txId.length == 0) {
+      return Optional.empty();
+    }
+    ArchiveBlockRangeCodec.requireTxId(txId, "archive txId lookup");
+    Long txNum = txNumByTxId.get(ByteArray.toHexString(txId));
+    if (txNum == null) {
+      return Optional.empty();
+    }
+    ArchiveTxPosition position = positionsByTxNum.get(txNum);
+    ArchiveBlockRange range = position == null ? null : blockRanges.get(position.getBlockNum());
+    if (position == null || range == null || position.getTxNum() != txNum
+        || !Arrays.equals(position.getTxId(), txId)) {
+      throw new ArchiveException("archive transaction index is inconsistent for txNum " + txNum);
+    }
+    return Optional.of(new ArchiveTransactionLocation(position, range));
+  }
+
+  @Override
   public synchronized long getNextTxNum() {
     return committedNextTxNum;
   }

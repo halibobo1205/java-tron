@@ -9,11 +9,14 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.tron.common.utils.ByteArray;
+import org.tron.core.archive.ArchiveJournalCorruptionException;
 import org.tron.core.archive.domain.ArchiveDomainCatalog;
 import org.tron.core.archive.domain.ArchiveDomainRegistry;
 import org.tron.core.archive.domain.ArchiveSchemaChecksum;
 import org.tron.core.archive.domain.DefaultArchiveDomainCatalog;
 import org.tron.core.archive.domain.DefaultArchiveDomainRegistry;
+import org.tron.core.archive.txnum.UnifiedArchiveTxNumIndex;
+import org.tron.core.archive.unified.UnifiedArchiveDb;
 
 public class UnifiedArchiveIdentityPayloadTest {
 
@@ -62,5 +65,29 @@ public class UnifiedArchiveIdentityPayloadTest {
     assertThrows(ArchiveIdentityException.class,
         () -> payload.bindAndSync(
             archiveRoot, new ArchiveIdentity(claim, ArchiveIdentityState.BOUND)));
+  }
+
+  @Test
+  public void authenticatedFloorInspectionMarksCorruptionBeforeClosingDetectionHandle()
+      throws Exception {
+    Path archiveRoot = temporaryFolder.getRoot().toPath().resolve("corrupt-floor");
+    java.nio.file.Files.createDirectory(archiveRoot);
+    ArchiveDomainRegistry registry = new DefaultArchiveDomainRegistry();
+    ArchiveDomainCatalog catalog = new DefaultArchiveDomainCatalog();
+    byte[] checksum = ArchiveSchemaChecksum.of(registry, catalog);
+    Path databasePath = UnifiedArchiveIdentityPayload.databasePath(archiveRoot);
+    try (UnifiedArchiveDb db = UnifiedArchiveDb.initialize(databasePath, checksum)) {
+      db.putJournalDurably(
+          new byte[] {0x41, 0, 0, 0, 0, 0, 0, 0, 0}, new byte[] {1});
+    }
+
+    assertThrows(ArchiveJournalCorruptionException.class,
+        () -> UnifiedArchiveIdentityPayload.inspectAuthenticatedFloor(
+            archiveRoot, catalog, checksum, Long.MAX_VALUE, Long.MAX_VALUE,
+            Integer.MAX_VALUE));
+
+    try (UnifiedArchiveDb db = UnifiedArchiveDb.open(databasePath, checksum)) {
+      assertTrue(UnifiedArchiveTxNumIndex.hasRepairRequired(db));
+    }
   }
 }

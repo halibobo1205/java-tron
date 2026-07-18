@@ -5,6 +5,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -17,10 +18,15 @@ import org.tron.core.archive.txnum.ArchiveTxPosition;
 
 final class ArchiveInFlightCodec {
 
-  private static final byte VALUE_VERSION = 2;
+  private static final byte VALUE_VERSION = 3;
+  private static final byte PROOF_VERSION = 2;
   private static final byte BLOCK_PREFIX = 0x40;
   private static final byte ACK_PREFIX = 0x41;
   private static final byte TOKEN_PREFIX = 0x42;
+  static final int LIFECYCLE_VALUE_BYTES = Byte.BYTES + Long.BYTES + 3 * Integer.BYTES
+      + ArchiveBlockRange.BLOCK_HASH_LENGTH + ArchiveJournalToken.GENERATION_NONCE_LENGTH
+      + ArchiveBlockRange.SCHEMA_CHECKSUM_LENGTH + Long.BYTES
+      + ArchiveJournalProof.DIGEST_LENGTH;
 
   private ArchiveInFlightCodec() {
   }
@@ -140,23 +146,90 @@ final class ArchiveInFlightCodec {
   static byte[] encodeBlock(ArchiveInFlightBlock block) {
     ArchiveCoordinates.requireBlockNum(
         block.getRange().getBlockNum(), "archive in-flight block number");
-    try {
-      ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-      DataOutputStream out = new DataOutputStream(bytes);
-      out.writeByte(VALUE_VERSION);
-      out.writeByte(block.getJournalState().ordinal());
-      writeToken(out, block.getJournalToken());
-      writeRange(out, block.getRange());
-      writePositions(out, block.getPositions());
-      writeRecords(out, block.getRecords());
-      out.flush();
-      return bytes.toByteArray();
-    } catch (IOException e) {
-      throw new ArchiveException("archive in-flight block encode failed", e);
+    long encodedBytes = encodedBlockSize(block);
+    if (encodedBytes > Integer.MAX_VALUE) {
+      throw new ArchiveJournalLimitException(
+          "archive in-flight encoded block exceeds Java array limit: bytes=" + encodedBytes);
     }
+    ByteBuffer out = ByteBuffer.wrap(new byte[(int) encodedBytes]);
+    out.put(VALUE_VERSION);
+    out.put((byte) block.getJournalState().ordinal());
+    writeToken(out, block.getJournalToken());
+    writeRange(out, block.getRange());
+    writePositions(out, block.getPositions());
+    writeRecords(out, block.getPositions(), block.getRecords());
+    if (out.hasRemaining()) {
+      throw new ArchiveException("archive in-flight encoded size calculation mismatch: remaining="
+          + out.remaining());
+    }
+    return out.array();
+  }
+
+  /** Exact encoded journal length without allocating the encoded payload. */
+  static long encodedBlockSize(ArchiveInFlightBlock block) {
+    return block.encodedBlockBytes();
+  }
+
+  static long calculateEncodedBlockSize(ArchiveInFlightBlock block) {
+    long bytes = 2L;
+    bytes = addSaturated(bytes, encodedTokenSize(block.getJournalToken()));
+    bytes = addSaturated(bytes, encodedRangeSize(block.getRange()));
+    bytes = addSaturated(bytes, Integer.BYTES);
+    for (ArchiveTxPosition position : block.getPositions()) {
+      bytes = addSaturated(bytes, encodedPositionSize(position));
+    }
+    bytes = addSaturated(bytes, Integer.BYTES);
+    for (ArchiveChangeRecord record : block.getRecords()) {
+      requireRecordPosition(block.getPositions(), record);
+      bytes = addSaturated(bytes, Long.BYTES);
+      bytes = addSaturated(bytes, Integer.BYTES);
+      bytes = addSaturated(bytes, encodedBytesSize(record.canonicalKeySize()));
+      bytes = addSaturated(bytes, encodedDomainValueSize(record.getPrevValue()));
+      bytes = addSaturated(bytes, encodedDomainValueSize(record.getValue()));
+    }
+    return bytes;
+  }
+
+  private static long encodedTokenSize(ArchiveJournalToken token) {
+    long bytes = Long.BYTES;
+    bytes = addSaturated(bytes, encodedBytesSize(token.getBlockHash().length));
+    bytes = addSaturated(bytes, encodedBytesSize(token.getGenerationNonce().length));
+    return addSaturated(bytes, encodedBytesSize(token.getSchemaChecksum().length));
+  }
+
+  private static long encodedRangeSize(ArchiveBlockRange range) {
+    long bytes = 5L * Long.BYTES + Integer.BYTES + Byte.BYTES;
+    bytes = addSaturated(bytes, encodedBytesSize(range.getBlockHash().length));
+    return addSaturated(bytes, encodedBytesSize(range.getSchemaChecksum().length));
+  }
+
+  private static long encodedPositionSize(ArchiveTxPosition position) {
+    long bytes = 2L * Long.BYTES + 2L * Byte.BYTES + Integer.BYTES;
+    bytes = addSaturated(bytes, encodedBytesSize(position.txIdSize()));
+    return addSaturated(bytes, encodedBytesSize(position.blockHashSize()));
+  }
+
+  private static long encodedDomainValueSize(DomainValue value) {
+    return addSaturated(Byte.BYTES, encodedBytesSize(value.size()));
+  }
+
+  private static long encodedBytesSize(int valueBytes) {
+    return addSaturated(Integer.BYTES, valueBytes);
   }
 
   static ArchiveInFlightBlock decodeBlock(byte[] value) {
+    return decodeBlock(value, Long.MAX_VALUE, Long.MAX_VALUE);
+  }
+
+  static ArchiveInFlightBlock decodeBlock(byte[] value, long maxRecords,
+      long maxRetainedBytes) {
+    if (value == null) {
+      throw new ArchiveException("archive in-flight block value is missing");
+    }
+    if (maxRecords < 0L || maxRetainedBytes < 0L) {
+      throw new IllegalArgumentException("archive in-flight decode limits must be non-negative");
+    }
+    preflightBlock(value, maxRecords, maxRetainedBytes);
     try {
       DataInputStream in = new DataInputStream(new ByteArrayInputStream(value));
       requireVersion(in.readByte());
@@ -164,39 +237,289 @@ final class ArchiveInFlightCodec {
       ArchiveJournalToken token = readToken(in);
       ArchiveBlockRange range = readRange(in);
       List<ArchiveTxPosition> positions = readPositions(in);
-      List<ArchiveChangeRecord> records = readRecords(in);
+      List<ArchiveChangeRecord> records = readRecords(in, positions);
       if (in.available() != 0) {
         throw new ArchiveException("archive in-flight block has trailing bytes");
       }
-      return new ArchiveInFlightBlock(range, positions, records, token, state);
+      return ArchiveInFlightBlock.fromOwnedLists(range, positions, records, token, state);
     } catch (IOException e) {
       throw new ArchiveException("archive in-flight block decode failed", e);
     }
   }
 
-  static byte[] encodeAcknowledgement(ArchiveJournalToken token) {
+  private static void preflightBlock(byte[] value, long maxRecords,
+      long maxRetainedBytes) {
     try {
-      ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-      DataOutputStream out = new DataOutputStream(bytes);
-      writeToken(out, token);
-      out.flush();
-      return bytes.toByteArray();
+      DataInputStream in = new DataInputStream(new ByteArrayInputStream(value));
+      requireVersion(in.readByte());
+      journalStateAt(in.readUnsignedByte());
+      preflightToken(in);
+      preflightRange(in);
+      int positionCount = boundedCount(
+          in, in.readInt(), 30, "archive in-flight position count");
+      long retainedBytes = ArchiveResourceEstimator.estimatedPositionSetRetainedBytes(
+          positionCount);
+      requireRetainedBytes(retainedBytes, maxRetainedBytes);
+      for (int i = 0; i < positionCount; i++) {
+        int positionTransientBytes = preflightPosition(in);
+        requireRetainedBytes(
+            addSaturated(retainedBytes, positionTransientBytes), maxRetainedBytes);
+      }
+      int recordCount = boundedCount(
+          in, in.readInt(), 26, "archive in-flight record count");
+      if (recordCount > maxRecords) {
+        throw new ArchiveJournalLimitException(
+            "archive in-flight record count exceeds configured limit "
+                + maxRecords + ": recordCount=" + recordCount);
+      }
+      long maxValidationTransientBytes = 0L;
+      for (int i = 0; i < recordCount; i++) {
+        ArchiveCoordinates.requireTxNum(
+            in.readLong(), "archive in-flight record txNum");
+        ArchiveDomain domain = domainAt(in.readInt());
+        int keyBytes = preflightBytes(in);
+        int prevValueBytes = preflightDomainValue(in);
+        int valueBytes = preflightDomainValue(in);
+        retainedBytes = addSaturated(retainedBytes,
+            ArchiveInFlightBlock.estimatedRecordRetainedBytes(
+                keyBytes, prevValueBytes, valueBytes));
+        long decodeTransientBytes = addSaturated(
+            keyBytes, Math.max(prevValueBytes, valueBytes));
+        requireRetainedBytes(
+            addSaturated(retainedBytes, decodeTransientBytes), maxRetainedBytes);
+        // DynamicKeyPolicy may retain the key copy while constructing a UTF-16 property name.
+        long keyValidationBytes = domain == ArchiveDomain.DYNAMIC_PROPERTIES
+            ? addSaturated(keyBytes, addSaturated(keyBytes, keyBytes)) : keyBytes;
+        long valueValidationBytes = addSaturated(
+            keyBytes, Math.max(prevValueBytes, valueBytes));
+        long validationTransientBytes = Math.max(keyValidationBytes, valueValidationBytes);
+        maxValidationTransientBytes = Math.max(
+            maxValidationTransientBytes, validationTransientBytes);
+      }
+      requireRetainedBytes(
+          addSaturated(retainedBytes, maxValidationTransientBytes), maxRetainedBytes);
+      if (in.available() != 0) {
+        throw new ArchiveException("archive in-flight block has trailing bytes");
+      }
     } catch (IOException e) {
-      throw new ArchiveException("archive acknowledgement encode failed", e);
+      throw new ArchiveException("archive in-flight block preflight failed", e);
     }
   }
 
-  static ArchiveJournalToken decodeAcknowledgement(byte[] value) {
+  private static void preflightToken(DataInputStream in) throws IOException {
+    ArchiveCoordinates.requireBlockNum(
+        in.readLong(), "archive in-flight journal token block number");
+    preflightFixedBytes(in, ArchiveBlockRange.BLOCK_HASH_LENGTH,
+        "archive in-flight journal token block hash");
+    preflightFixedBytes(in, ArchiveJournalToken.GENERATION_NONCE_LENGTH,
+        "archive in-flight journal generation nonce");
+    preflightFixedBytes(in, ArchiveBlockRange.SCHEMA_CHECKSUM_LENGTH,
+        "archive in-flight journal schema checksum");
+  }
+
+  private static void preflightRange(DataInputStream in) throws IOException {
+    in.readLong();
+    in.readLong();
+    in.readLong();
+    in.readLong();
+    in.readLong();
+    in.readInt();
+    sourceAt(in.readUnsignedByte());
+    preflightFixedBytes(in, ArchiveBlockRange.BLOCK_HASH_LENGTH,
+        "archive in-flight range block hash");
+    preflightFixedBytes(in, ArchiveBlockRange.SCHEMA_CHECKSUM_LENGTH,
+        "archive in-flight range schema checksum");
+  }
+
+  private static int preflightPosition(DataInputStream in) throws IOException {
+    in.readLong();
+    in.readLong();
+    ArchivePhase phase = phaseAt(in.readUnsignedByte());
+    sourceAt(in.readUnsignedByte());
+    in.readInt();
+    int txIdBytes = preflightBytes(in);
+    int blockHashBytes = preflightBytes(in);
+    if (blockHashBytes != 0 && blockHashBytes != ArchiveBlockRange.BLOCK_HASH_LENGTH) {
+      throw new ArchiveException("archive in-flight position block hash must be empty or "
+          + ArchiveBlockRange.BLOCK_HASH_LENGTH + " bytes: actual=" + blockHashBytes);
+    }
+    if (phase == ArchivePhase.USER_TX) {
+      if (txIdBytes != ArchiveBlockRange.BLOCK_HASH_LENGTH) {
+        throw new ArchiveException(
+            "archive in-flight position user txId must be a 32-byte txId");
+      }
+    } else if (txIdBytes != 0) {
+      throw new ArchiveException("archive in-flight position system txId must be empty");
+    }
+    return txIdBytes + blockHashBytes;
+  }
+
+  private static int preflightDomainValue(DataInputStream in) throws IOException {
+    boolean deleted = readBoolean(in, "archive in-flight domain-value deleted flag");
+    int valueBytes = preflightBytes(in);
+    if (deleted && valueBytes != 0) {
+      throw new ArchiveException("archive in-flight tombstone value must be empty");
+    }
+    return valueBytes;
+  }
+
+  private static int preflightBytes(DataInputStream in) throws IOException {
+    int length = nonNegativeCount(in.readInt(), "archive in-flight byte length");
+    if (length > in.available()) {
+      throw new ArchiveException("archive in-flight byte length exceeds remaining value bytes");
+    }
+    int skipped = in.skipBytes(length);
+    if (skipped != length) {
+      throw new ArchiveException("archive in-flight byte value is truncated");
+    }
+    return length;
+  }
+
+  private static void preflightFixedBytes(DataInputStream in, int expectedLength, String what)
+      throws IOException {
+    int actualLength = preflightBytes(in);
+    if (actualLength != expectedLength) {
+      throw new ArchiveException(
+          what + " must be " + expectedLength + " bytes: actual=" + actualLength);
+    }
+  }
+
+  private static void requireRetainedBytes(long retainedBytes, long maxRetainedBytes) {
+    if (retainedBytes > maxRetainedBytes) {
+      throw new ArchiveJournalLimitException(
+          "archive journal retained bytes exceed configured limit "
+          + maxRetainedBytes + ": retainedBytes=" + retainedBytes);
+    }
+  }
+
+  private static long addSaturated(long left, long right) {
+    return left > Long.MAX_VALUE - right ? Long.MAX_VALUE : left + right;
+  }
+
+  static byte[] encodeProof(ArchiveJournalProof proof) {
+    try {
+      ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+      DataOutputStream out = new DataOutputStream(bytes);
+      out.writeByte(PROOF_VERSION);
+      writeToken(out, proof.getToken());
+      out.writeLong(proof.getPayloadLength());
+      out.write(proof.getPayloadDigest());
+      out.flush();
+      return bytes.toByteArray();
+    } catch (IOException e) {
+      throw new ArchiveException("archive journal proof encode failed", e);
+    }
+  }
+
+  static ArchiveJournalProof decodeProof(byte[] value) {
+    if (value == null || value.length != LIFECYCLE_VALUE_BYTES) {
+      throw new ArchiveException("archive journal proof has invalid length");
+    }
     try {
       DataInputStream in = new DataInputStream(new ByteArrayInputStream(value));
-      ArchiveJournalToken token = readToken(in);
-      if (in.available() != 0) {
-        throw new ArchiveException("archive acknowledgement has trailing bytes");
+      if (in.readByte() != PROOF_VERSION) {
+        throw new ArchiveException("archive journal proof version mismatch");
       }
-      return token;
+      ArchiveJournalToken token = readToken(in);
+      long payloadLength = in.readLong();
+      byte[] payloadDigest = new byte[ArchiveJournalProof.DIGEST_LENGTH];
+      in.readFully(payloadDigest);
+      if (in.available() != 0) {
+        throw new ArchiveException("archive journal proof has trailing bytes");
+      }
+      return new ArchiveJournalProof(token, payloadLength, payloadDigest);
     } catch (IOException e) {
-      throw new ArchiveException("archive acknowledgement decode failed", e);
+      throw new ArchiveException("archive journal proof decode failed", e);
     }
+  }
+
+  private static void writeToken(ByteBuffer out, ArchiveJournalToken token) {
+    out.putLong(token.getBlockNum());
+    writeBytes(out, token.getBlockHash());
+    writeBytes(out, token.getGenerationNonce());
+    writeBytes(out, token.getSchemaChecksum());
+  }
+
+  private static void writeRange(ByteBuffer out, ArchiveBlockRange range) {
+    out.putLong(range.getBlockNum());
+    out.putLong(range.getFirstTxNum());
+    out.putLong(range.getLastTxNum());
+    out.putLong(range.getPrepareTxNum());
+    out.putLong(range.getFinalizeTxNum());
+    out.putInt(range.getUserTxCount());
+    out.put((byte) range.getSource().ordinal());
+    writeBytes(out, range.getBlockHash());
+    writeBytes(out, range.getSchemaChecksum());
+  }
+
+  private static void writePositions(ByteBuffer out, List<ArchiveTxPosition> positions) {
+    out.putInt(positions.size());
+    for (ArchiveTxPosition position : positions) {
+      writePosition(out, position);
+    }
+  }
+
+  private static void writePosition(ByteBuffer out, ArchiveTxPosition position) {
+    requirePositionTxId(
+        position.getPhase(), position.txIdSize(), "archive in-flight position");
+    out.putLong(position.getTxNum());
+    out.putLong(position.getBlockNum());
+    out.put((byte) position.getPhase().ordinal());
+    out.put((byte) position.getSource().ordinal());
+    out.putInt(position.getTxIndex());
+    writePositionBytes(out, position, true);
+    writePositionBytes(out, position, false);
+  }
+
+  private static void writePositionBytes(ByteBuffer out, ArchiveTxPosition position,
+      boolean transactionId) {
+    int length = transactionId ? position.txIdSize() : position.blockHashSize();
+    out.putInt(length);
+    int offset = out.position();
+    if (transactionId) {
+      position.copyTxIdTo(out.array(), offset);
+    } else {
+      position.copyBlockHashTo(out.array(), offset);
+    }
+    out.position(offset + length);
+  }
+
+  private static void writeRecords(ByteBuffer out, List<ArchiveTxPosition> positions,
+      List<ArchiveChangeRecord> records) {
+    out.putInt(records.size());
+    for (ArchiveChangeRecord record : records) {
+      requireRecordPosition(positions, record);
+      out.putLong(record.getTxNum());
+      out.putInt(record.getDomain().getId());
+      out.putInt(record.canonicalKeySize());
+      int keyOffset = out.position();
+      record.copyCanonicalKeyTo(out.array(), keyOffset);
+      out.position(keyOffset + record.canonicalKeySize());
+      writeDomainValue(out, record.getPrevValue());
+      writeDomainValue(out, record.getValue());
+    }
+  }
+
+  private static void requireRecordPosition(List<ArchiveTxPosition> positions,
+      ArchiveChangeRecord record) {
+    ArchiveTxPosition persisted = positionForTxNum(positions, record.getTxNum());
+    if (!persisted.contentEquals(record.getPosition())) {
+      throw new ArchiveException(
+          "archive in-flight record position does not match persisted position");
+    }
+  }
+
+  private static void writeDomainValue(ByteBuffer out, DomainValue value) {
+    out.put(value.isDeleted() ? (byte) 1 : (byte) 0);
+    out.putInt(value.size());
+    int valueOffset = out.position();
+    value.copyValueTo(out.array(), valueOffset);
+    out.position(valueOffset + value.size());
+  }
+
+  private static void writeBytes(ByteBuffer out, byte[] value) {
+    out.putInt(value.length);
+    out.put(value);
   }
 
   private static void writeToken(DataOutputStream out, ArchiveJournalToken token)
@@ -210,19 +533,6 @@ final class ArchiveInFlightCodec {
   private static ArchiveJournalToken readToken(DataInputStream in) throws IOException {
     return new ArchiveJournalToken(
         in.readLong(), readBytes(in), readBytes(in), readBytes(in));
-  }
-
-  private static void writeRange(DataOutputStream out, ArchiveBlockRange range)
-      throws IOException {
-    out.writeLong(range.getBlockNum());
-    out.writeLong(range.getFirstTxNum());
-    out.writeLong(range.getLastTxNum());
-    out.writeLong(range.getPrepareTxNum());
-    out.writeLong(range.getFinalizeTxNum());
-    out.writeInt(range.getUserTxCount());
-    out.writeByte(range.getSource().ordinal());
-    writeBytes(out, range.getBlockHash());
-    writeBytes(out, range.getSchemaChecksum());
   }
 
   private static ArchiveBlockRange readRange(DataInputStream in) throws IOException {
@@ -239,14 +549,6 @@ final class ArchiveInFlightCodec {
         blockHash, userTxCount, source, schemaChecksum);
   }
 
-  private static void writePositions(DataOutputStream out, List<ArchiveTxPosition> positions)
-      throws IOException {
-    out.writeInt(positions.size());
-    for (ArchiveTxPosition position : positions) {
-      writePosition(out, position);
-    }
-  }
-
   private static List<ArchiveTxPosition> readPositions(DataInputStream in) throws IOException {
     int count = boundedCount(in, in.readInt(), 30, "archive in-flight position count");
     List<ArchiveTxPosition> positions = new ArrayList<>(count);
@@ -254,18 +556,6 @@ final class ArchiveInFlightCodec {
       positions.add(readPosition(in));
     }
     return positions;
-  }
-
-  private static void writePosition(DataOutputStream out, ArchiveTxPosition position)
-      throws IOException {
-    requirePositionTxId(position.getPhase(), position.getTxId(), "archive in-flight position");
-    out.writeLong(position.getTxNum());
-    out.writeLong(position.getBlockNum());
-    out.writeByte(position.getPhase().ordinal());
-    out.writeByte(position.getSource().ordinal());
-    out.writeInt(position.getTxIndex());
-    writeBytes(out, position.getTxId());
-    writeBytes(out, position.getBlockHash());
   }
 
   private static ArchiveTxPosition readPosition(DataInputStream in) throws IOException {
@@ -276,39 +566,28 @@ final class ArchiveInFlightCodec {
     int txIndex = in.readInt();
     byte[] txId = readBytes(in);
     byte[] blockHash = readBytes(in);
-    requirePositionTxId(phase, txId, "archive in-flight position");
+    requirePositionTxId(phase, txId.length, "archive in-flight position");
     return new ArchiveTxPosition(txNum, blockNum, phase, source, txIndex, txId, blockHash);
   }
 
-  private static void requirePositionTxId(ArchivePhase phase, byte[] txId, String what) {
+  private static void requirePositionTxId(ArchivePhase phase, int txIdSize, String what) {
     if (phase == ArchivePhase.USER_TX) {
-      if (txId == null || txId.length != ArchiveBlockRange.BLOCK_HASH_LENGTH) {
+      if (txIdSize != ArchiveBlockRange.BLOCK_HASH_LENGTH) {
         throw new ArchiveException(what + " user txId must be a 32-byte txId");
       }
       return;
     }
-    if (txId != null && txId.length != 0) {
+    if (txIdSize != 0) {
       throw new ArchiveException(what + " system txId must be empty");
     }
   }
 
-  private static void writeRecords(DataOutputStream out, List<ArchiveChangeRecord> records)
-      throws IOException {
-    out.writeInt(records.size());
-    for (ArchiveChangeRecord record : records) {
-      writePosition(out, record.getPosition());
-      out.writeInt(record.getDomain().getId());
-      writeBytes(out, record.getCanonicalKey());
-      writeDomainValue(out, record.getPrevValue());
-      writeDomainValue(out, record.getValue());
-    }
-  }
-
-  private static List<ArchiveChangeRecord> readRecords(DataInputStream in) throws IOException {
-    int count = boundedCount(in, in.readInt(), 48, "archive in-flight record count");
+  private static List<ArchiveChangeRecord> readRecords(DataInputStream in,
+      List<ArchiveTxPosition> positions) throws IOException {
+    int count = boundedCount(in, in.readInt(), 26, "archive in-flight record count");
     List<ArchiveChangeRecord> records = new ArrayList<>(count);
     for (int i = 0; i < count; i++) {
-      ArchiveTxPosition position = readPosition(in);
+      ArchiveTxPosition position = positionForTxNum(positions, in.readLong());
       ArchiveDomain domain = domainAt(in.readInt());
       byte[] canonicalKey = readBytes(in);
       DomainValue prevValue = readDomainValue(in);
@@ -318,14 +597,34 @@ final class ArchiveInFlightCodec {
     return records;
   }
 
-  private static void writeDomainValue(DataOutputStream out, DomainValue value)
-      throws IOException {
-    out.writeBoolean(value.isDeleted());
-    writeBytes(out, value.getValue());
+  private static ArchiveTxPosition positionForTxNum(List<ArchiveTxPosition> positions,
+      long txNum) {
+    ArchiveCoordinates.requireTxNum(txNum, "archive in-flight record txNum");
+    if (positions.isEmpty()) {
+      throw new ArchiveException(
+          "archive in-flight record references a missing tx-position " + txNum);
+    }
+    long firstTxNum = positions.get(0).getTxNum();
+    ArchiveCoordinates.requireTxNum(firstTxNum, "archive in-flight first position txNum");
+    if (txNum < firstTxNum) {
+      throw new ArchiveException(
+          "archive in-flight record references a missing tx-position " + txNum);
+    }
+    long offset = txNum - firstTxNum;
+    if (offset >= positions.size()) {
+      throw new ArchiveException(
+          "archive in-flight record references a missing tx-position " + txNum);
+    }
+    ArchiveTxPosition position = positions.get((int) offset);
+    if (position.getTxNum() != txNum) {
+      throw new ArchiveException(
+          "archive in-flight record references a missing tx-position " + txNum);
+    }
+    return position;
   }
 
   private static DomainValue readDomainValue(DataInputStream in) throws IOException {
-    boolean deleted = in.readBoolean();
+    boolean deleted = readBoolean(in, "archive in-flight domain-value deleted flag");
     byte[] value = readBytes(in);
     if (deleted) {
       if (value.length != 0) {
@@ -334,6 +633,17 @@ final class ArchiveInFlightCodec {
       return DomainValue.tombstone();
     }
     return DomainValue.present(value);
+  }
+
+  private static boolean readBoolean(DataInputStream in, String what) throws IOException {
+    int encoded = in.readUnsignedByte();
+    if (encoded == 0) {
+      return false;
+    }
+    if (encoded == 1) {
+      return true;
+    }
+    throw new ArchiveException(what + " must be encoded as 0 or 1: actual=" + encoded);
   }
 
   private static void writeBytes(DataOutputStream out, byte[] value) throws IOException {

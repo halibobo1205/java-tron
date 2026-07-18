@@ -6,38 +6,61 @@ import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.function.Function;
-import org.rocksdb.RocksIterator;
+import org.rocksdb.RocksDBException;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchiveInFlightBlock;
+import org.tron.core.archive.ArchivePersistentStateCorruptionException;
+import org.tron.core.archive.ArchiveRepairClearPermit;
 import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveRocksIterators;
+import org.tron.core.archive.ArchiveSnapshotReleaseException;
 import org.tron.core.archive.ArchiveSource;
+import org.tron.core.archive.query.QueryContext;
+import org.tron.core.archive.query.QueryContextHolder;
 import org.tron.core.archive.unified.UnifiedArchiveColumnFamily;
 import org.tron.core.archive.unified.UnifiedArchiveDb;
 import org.tron.core.archive.unified.UnifiedArchiveManifest;
 import org.tron.core.archive.unified.UnifiedArchivePublish;
+import org.tron.core.archive.unified.UnifiedArchiveIterator;
 import org.tron.core.archive.unified.UnifiedArchiveReadView;
 
 /** Persistent txNum/index adapter over the UNIFIED_V1 INDEX and META column families. */
 public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCloseable {
 
+  public static final int MAX_REPAIR_MARKER_BYTES = 4096;
+  private static final String TRUNCATED_REPAIR_SUFFIX = "... [truncated]";
   private static final long NO_FIRST_BLOCK = -1L;
+  private static final long MAX_SNAPSHOT_VALUE_BYTES = MAX_REPAIR_MARKER_BYTES;
 
   private final UnifiedArchiveDb db;
   private final byte[] schemaChecksum;
+  private final UnifiedArchiveDb.ProductionWritePermit writePermit;
   private final ThreadLocal<UnifiedArchiveReadView> activeReadView = new ThreadLocal<>();
   private InMemoryArchiveTxNumIndex inner;
   private boolean closed;
 
   public UnifiedArchiveTxNumIndex(UnifiedArchiveDb db, byte[] schemaChecksum,
       boolean fullStartupValidation, boolean deferRepairValidation) {
+    this(db, schemaChecksum, fullStartupValidation, deferRepairValidation, null);
+  }
+
+  public UnifiedArchiveTxNumIndex(UnifiedArchiveDb db, byte[] schemaChecksum,
+      boolean fullStartupValidation, boolean deferRepairValidation,
+      UnifiedArchiveDb.ProductionWritePermit writePermit) {
     if (db == null) {
       throw new NullPointerException("db");
     }
     ArchiveBlockRangeCodec.requireSchemaChecksum(schemaChecksum, "archive txNum index");
+    if (!Arrays.equals(db.getSchemaChecksum(), schemaChecksum)) {
+      throw new ArchiveException("archive txNum index schema checksum does not match its DB");
+    }
     this.db = db;
     this.schemaChecksum = Arrays.copyOf(schemaChecksum, schemaChecksum.length);
-    validateStartup(fullStartupValidation, deferRepairValidation);
+    this.writePermit = writePermit;
+    withScanView(view -> {
+      validateStartup(fullStartupValidation, deferRepairValidation);
+      return null;
+    });
     inner = delegateFromStore();
   }
 
@@ -46,11 +69,28 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
     if (view == null) {
       throw new NullPointerException("view");
     }
+    db.requireOwnedReadView(view);
     if (activeReadView.get() != null) {
       throw new ArchiveException("UNIFIED_V1 index read view is already bound");
     }
-    activeReadView.set(view);
-    return new ReadScope();
+    ReadScope scope = new ReadScope(view);
+    try {
+      activeReadView.set(view);
+      return scope;
+    } catch (RuntimeException | Error failure) {
+      try {
+        activeReadView.remove();
+      } catch (RuntimeException | Error restoreFailure) {
+        if (failure != restoreFailure) {
+          failure.addSuppressed(restoreFailure);
+        }
+      }
+      throw failure;
+    }
+  }
+
+  public boolean isOwnedBy(UnifiedArchiveDb candidate) {
+    return db == candidate;
   }
 
   /** Adds every index row and the published cursor to an atomic block publication. */
@@ -58,6 +98,9 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
       ArchiveInFlightBlock block) {
     if (publish == null || block == null) {
       throw new NullPointerException("publish/block");
+    }
+    if (activeReadView.get() == null) {
+      throw new ArchiveException("UNIFIED_V1 publication requires one bound read view");
     }
     ArchiveBlockRange expected = block.getRange();
     try {
@@ -161,14 +204,16 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
 
   @Override
   public ArchiveBlockRange getHeadBlockRange(long blockNum) {
-    ArchiveBlockRange range = getBlockRange(blockNum)
-        .orElseThrow(() -> new ArchiveException("cannot unwind block " + blockNum
-            + ": not committed"));
-    Optional<ArchiveBlockRange> last = getLastRange();
-    if (!last.isPresent() || last.get().getBlockNum() != blockNum) {
-      throw new ArchiveException("cannot unwind block " + blockNum + ": not archive head");
-    }
-    return range;
+    return withReadView(ignored -> {
+      ArchiveBlockRange range = getBlockRange(blockNum)
+          .orElseThrow(() -> new ArchiveException("cannot unwind block " + blockNum
+              + ": not committed"));
+      Optional<ArchiveBlockRange> last = getLastRange();
+      if (!last.isPresent() || last.get().getBlockNum() != blockNum) {
+        throw new ArchiveException("cannot unwind block " + blockNum + ": not archive head");
+      }
+      return range;
+    });
   }
 
   @Override
@@ -192,6 +237,10 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
   @Override
   public Optional<ArchiveBlockRange> getBlockRange(long blockNum) {
     ArchiveCoordinates.requireBlockNum(blockNum, "archive block range block number");
+    return withReadView(ignored -> getBlockRangeFromCurrentView(blockNum));
+  }
+
+  private Optional<ArchiveBlockRange> getBlockRangeFromCurrentView(long blockNum) {
     byte[] key = ArchiveBlockRangeCodec.rangeKey(blockNum);
     byte[] value = get(UnifiedArchiveColumnFamily.INDEX, key);
     if (value == null) {
@@ -206,6 +255,10 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
   @Override
   public Optional<ArchiveTxPosition> getPosition(long txNum) {
     ArchiveCoordinates.requireTxNum(txNum, "archive tx-position txNum");
+    return withReadView(ignored -> getPositionFromCurrentView(txNum));
+  }
+
+  private Optional<ArchiveTxPosition> getPositionFromCurrentView(long txNum) {
     byte[] value = get(UnifiedArchiveColumnFamily.INDEX,
         ArchiveBlockRangeCodec.positionKey(txNum));
     if (value == null) {
@@ -224,6 +277,10 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
     if (txIndex < 0) {
       return OptionalLong.empty();
     }
+    return withReadView(ignored -> findTxNumByBlockAndIndexFromCurrentView(blockNum, txIndex));
+  }
+
+  private OptionalLong findTxNumByBlockAndIndexFromCurrentView(long blockNum, int txIndex) {
     Optional<ArchiveBlockRange> range = getBlockRange(blockNum);
     if (!range.isPresent() || txIndex >= range.get().getUserTxCount()) {
       return OptionalLong.empty();
@@ -242,24 +299,48 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
 
   @Override
   public OptionalLong findTxNumByTxId(byte[] txId) {
+    Optional<ArchiveTransactionLocation> location = findTransactionByTxId(txId);
+    return location.isPresent()
+        ? OptionalLong.of(location.get().getPosition().getTxNum()) : OptionalLong.empty();
+  }
+
+  @Override
+  public Optional<ArchiveTransactionLocation> findTransactionByTxId(byte[] txId) {
     if (txId == null || txId.length == 0) {
-      return OptionalLong.empty();
+      return Optional.empty();
     }
     ArchiveBlockRangeCodec.requireTxId(txId, "archive txId lookup");
-    byte[] value = get(UnifiedArchiveColumnFamily.INDEX,
+    return withReadView(ignored -> findTransactionByTxIdFromCurrentView(txId));
+  }
+
+  private Optional<ArchiveTransactionLocation> findTransactionByTxIdFromCurrentView(byte[] txId) {
+    byte[] txIdValue = get(UnifiedArchiveColumnFamily.INDEX,
         ArchiveBlockRangeCodec.txIdKey(txId));
-    if (value == null) {
-      return OptionalLong.empty();
+    if (txIdValue == null) {
+      return Optional.empty();
     }
-    long txNum = ArchiveBlockRangeCodec.decodeCursor(value);
-    ArchiveTxPosition position = getPosition(txNum)
-        .orElseThrow(() -> new ArchiveException("archive txId index is orphan for txNum "
-            + txNum));
+    long txNum = ArchiveBlockRangeCodec.decodeCursor(txIdValue);
+    byte[] positionValue = get(UnifiedArchiveColumnFamily.INDEX,
+        ArchiveBlockRangeCodec.positionKey(txNum));
+    if (positionValue == null) {
+      throw new ArchiveException("archive txId index is orphan for txNum " + txNum);
+    }
+    ArchiveTxPosition position = ArchiveBlockRangeCodec.decodePosition(positionValue);
     if (!Arrays.equals(position.getTxId(), txId)) {
       throw new ArchiveException("archive txId index does not match tx-position for txNum "
           + txNum);
     }
-    return OptionalLong.of(txNum);
+    byte[] rangeKey = ArchiveBlockRangeCodec.rangeKey(position.getBlockNum());
+    byte[] rangeValue = get(UnifiedArchiveColumnFamily.INDEX, rangeKey);
+    if (rangeValue == null) {
+      throw new ArchiveException("archive tx-position has no committed block range for txNum "
+          + txNum);
+    }
+    ArchiveBlockRange range = ArchiveBlockRangeCodec.decodeRange(rangeValue);
+    validateRangeKeyMatchesValue(rangeKey, range);
+    validateRangeShape(range);
+    validatePositionShape(range, position, txNum);
+    return Optional.of(new ArchiveTransactionLocation(position, range));
   }
 
   @Override
@@ -281,27 +362,157 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
     return value == null ? NO_FIRST_BLOCK : ArchiveBlockRangeCodec.decodeFirstBlock(value);
   }
 
-  @Override
-  public void markRepairRequired(String reason) {
-    db.putMetaDurably(ArchiveBlockRangeCodec.REPAIR_REQUIRED_KEY,
-        ArchiveBlockRangeCodec.encodeRepairRequired(reason));
+  /**
+   * Proves complete-history coverage from one bound snapshot. A mutable floor marker alone is not
+   * sufficient: it must agree with the physically first range, whose txNum sequence starts at 0.
+   */
+  public boolean hasGenesisCompleteCoverage() {
+    return withReadView(view -> {
+      long floor = getFirstArchivedBlock();
+      Optional<ArchiveBlockRange> firstRange = getFirstRange(view);
+      if (!firstRange.isPresent()) {
+        if (floor != NO_FIRST_BLOCK) {
+          throw new ArchiveException(
+              "archive coverage floor exists without a committed first range");
+        }
+        return false;
+      }
+      ArchiveBlockRange range = firstRange.get();
+      if (floor != range.getBlockNum() || range.getFirstTxNum() != 0L) {
+        throw new ArchiveException(
+            "archive first committed range does not match coverage floor");
+      }
+      if (!Arrays.equals(range.getSchemaChecksum(), schemaChecksum)) {
+        throw new ArchiveException("archive block range schema checksum mismatch for block "
+            + range.getBlockNum());
+      }
+      return floor == 0L;
+    });
   }
 
   @Override
-  public void clearRepairRequired() {
-    if (db.get(UnifiedArchiveColumnFamily.META,
+  public void markRepairRequired(String reason) {
+    runPersistentMutation(() -> markRepairRequired(db, reason));
+  }
+
+  /** Writes repair evidence even when startup validation fails before index construction. */
+  public static void markRepairRequired(UnifiedArchiveDb db, String reason) {
+    if (db == null) {
+      throw new NullPointerException("db");
+    }
+    byte[] encoded = ArchiveBlockRangeCodec.encodeRepairRequired(reason);
+    if (encoded.length > MAX_REPAIR_MARKER_BYTES) {
+      throw new ArchiveException("archive repair marker exceeds "
+          + MAX_REPAIR_MARKER_BYTES + " bytes");
+    }
+    db.putMetaDurably(ArchiveBlockRangeCodec.REPAIR_REQUIRED_KEY, encoded);
+  }
+
+  /** Writes startup repair evidence through the DB-bound production capability. */
+  public static void markRepairRequired(UnifiedArchiveDb db, String reason,
+      UnifiedArchiveDb.ProductionWritePermit writePermit) {
+    if (writePermit == null) {
+      markRepairRequired(db, reason);
+    } else {
+      db.withProductionWritePermit(writePermit, () -> markRepairRequired(db, reason));
+    }
+  }
+
+  @Override
+  public void clearRepairRequired(ArchiveRepairClearPermit permit) {
+    if (permit == null) {
+      throw new ArchiveException("archive repair clear permit is required");
+    }
+    if (get(UnifiedArchiveColumnFamily.META,
         ArchiveBlockRangeCodec.REPAIR_REQUIRED_KEY) != null) {
-      db.deleteMetaDurably(ArchiveBlockRangeCodec.REPAIR_REQUIRED_KEY);
+      runPersistentMutation(() -> db.deleteRepairMetaDurably(
+          ArchiveBlockRangeCodec.REPAIR_REQUIRED_KEY, permit));
+    }
+  }
+
+  private void runPersistentMutation(Runnable mutation) {
+    if (writePermit == null) {
+      mutation.run();
+    } else {
+      db.withProductionWritePermit(writePermit, mutation);
     }
   }
 
   @Override
   public boolean hasRepairRequired() {
-    return get(UnifiedArchiveColumnFamily.META,
-        ArchiveBlockRangeCodec.REPAIR_REQUIRED_KEY) != null;
+    return hasRepairRequired(db);
+  }
+
+  /** Reads repair evidence without requiring startup validation to construct an index adapter. */
+  public static boolean hasRepairRequired(UnifiedArchiveDb db) {
+    if (db == null) {
+      throw new NullPointerException("db");
+    }
+    try (UnifiedArchiveReadView view = db.openReadView()) {
+      return view.getBounded(UnifiedArchiveColumnFamily.META,
+          ArchiveBlockRangeCodec.REPAIR_REQUIRED_KEY, MAX_REPAIR_MARKER_BYTES,
+          "UNIFIED_V1 repair marker") != null;
+    }
+  }
+
+  /** Bounds internally generated failure evidence without splitting a UTF-8 code point. */
+  public static String boundRepairReason(String reason) {
+    if (reason == null) {
+      throw new NullPointerException("reason");
+    }
+    if (utf8PrefixEnd(reason, MAX_REPAIR_MARKER_BYTES) == reason.length()) {
+      return reason;
+    }
+    int suffixBytes = TRUNCATED_REPAIR_SUFFIX.length();
+    int prefixEnd = utf8PrefixEnd(
+        reason, MAX_REPAIR_MARKER_BYTES - suffixBytes);
+    return reason.substring(0, prefixEnd) + TRUNCATED_REPAIR_SUFFIX;
+  }
+
+  private static int utf8PrefixEnd(String value, int byteBudget) {
+    int offset = 0;
+    int bytes = 0;
+    while (offset < value.length()) {
+      int codePoint = value.codePointAt(offset);
+      int encodedBytes = utf8Length(codePoint);
+      if (bytes + encodedBytes > byteBudget) {
+        break;
+      }
+      bytes += encodedBytes;
+      offset += Character.charCount(codePoint);
+    }
+    return offset;
+  }
+
+  private static int utf8Length(int codePoint) {
+    if (codePoint <= 0x7f || codePoint >= Character.MIN_SURROGATE
+        && codePoint <= Character.MAX_SURROGATE) {
+      return 1;
+    }
+    if (codePoint <= 0x7ff) {
+      return 2;
+    }
+    return codePoint <= 0xffff ? 3 : 4;
   }
 
   public void validateStartup(boolean full, boolean deferRepairValidation) {
+    try {
+      validateStartupState(full, deferRepairValidation);
+    } catch (ArchivePersistentStateCorruptionException e) {
+      throw e;
+    } catch (ArchiveException e) {
+      if (hasCause(e, RocksDBException.class)) {
+        throw e;
+      }
+      String detail = e.getMessage();
+      throw new ArchivePersistentStateCorruptionException(
+          detail == null ? "UNIFIED_V1 txNum/index startup state is invalid"
+              : "UNIFIED_V1 txNum/index startup state is invalid: " + detail,
+          e);
+    }
+  }
+
+  private void validateStartupState(boolean full, boolean deferRepairValidation) {
     if (!deferRepairValidation) {
       byte[] repair = get(UnifiedArchiveColumnFamily.META,
           ArchiveBlockRangeCodec.REPAIR_REQUIRED_KEY);
@@ -327,17 +538,28 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
     }
     if (full) {
       validateFullKeyspace();
-      validateFullCoverage();
     }
+    validateRangeCoverage(full);
+  }
+
+  private static boolean hasCause(Throwable failure, Class<? extends Throwable> type) {
+    Throwable current = failure;
+    while (current != null) {
+      if (type.isInstance(current)) {
+        return true;
+      }
+      current = current.getCause();
+    }
+    return false;
   }
 
   private void validateFullKeyspace() {
     withScanView(view -> {
-      RocksIterator meta = view.newIterator(UnifiedArchiveColumnFamily.META);
+      UnifiedArchiveIterator meta = view.newIterator(UnifiedArchiveColumnFamily.META);
       meta.seekToFirst();
       while (meta.isValid()) {
         byte[] key = meta.key();
-        byte[] value = meta.value();
+        byte[] value = get(UnifiedArchiveColumnFamily.META, key);
         if (Arrays.equals(key, UnifiedArchiveManifest.key())) {
           // UnifiedArchiveDb validates the immutable manifest before exposing this adapter.
         } else if (Arrays.equals(key, UnifiedArchiveManifest.publishedCursorKey())) {
@@ -351,12 +573,13 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
       }
       ArchiveRocksIterators.requireOk(meta, "UNIFIED_V1 validate meta keyspace");
 
-      RocksIterator index = view.newIterator(UnifiedArchiveColumnFamily.INDEX);
+      UnifiedArchiveIterator index = view.newIterator(UnifiedArchiveColumnFamily.INDEX);
       index.seekToFirst();
       while (index.isValid()) {
         byte[] key = index.key();
         if (Arrays.equals(key, ArchiveBlockRangeCodec.FIRST_BLOCK_KEY)) {
-          ArchiveBlockRangeCodec.decodeFirstBlock(index.value());
+          ArchiveBlockRangeCodec.decodeFirstBlock(
+              get(UnifiedArchiveColumnFamily.INDEX, key));
           index.next();
           continue;
         }
@@ -365,13 +588,15 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
         }
         switch (key[0]) {
           case ArchiveBlockRangeCodec.TXNUM_BLOCK_PREFIX:
-            ArchiveBlockRange range = ArchiveBlockRangeCodec.decodeRange(index.value());
+            ArchiveBlockRange range = ArchiveBlockRangeCodec.decodeRange(
+                get(UnifiedArchiveColumnFamily.INDEX, key));
             validateRangeKeyMatchesValue(key, range);
             validateRangeShape(range);
             break;
           case ArchiveBlockRangeCodec.TXNUM_BY_TXID_PREFIX:
             byte[] txId = ArchiveBlockRangeCodec.txIdFromKey(key);
-            long txNum = ArchiveBlockRangeCodec.decodeCursor(index.value());
+            long txNum = ArchiveBlockRangeCodec.decodeCursor(
+                get(UnifiedArchiveColumnFamily.INDEX, key));
             ArchiveTxPosition txIdPosition = getPosition(txNum)
                 .orElseThrow(() -> new ArchiveException(
                     "UNIFIED_V1 txId row has no committed position"));
@@ -381,7 +606,8 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
             break;
           case ArchiveBlockRangeCodec.TXNUM_META_PREFIX:
             long positionTxNum = ArchiveBlockRangeCodec.txNumFromPositionKey(key);
-            ArchiveTxPosition decoded = ArchiveBlockRangeCodec.decodePosition(index.value());
+            ArchiveTxPosition decoded = ArchiveBlockRangeCodec.decodePosition(
+                get(UnifiedArchiveColumnFamily.INDEX, key));
             if (decoded.getTxNum() != positionTxNum) {
               throw new ArchiveException("UNIFIED_V1 position key/value txNum mismatch");
             }
@@ -400,7 +626,7 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
 
   public Optional<ArchiveBlockRange> getLastRange() {
     return withReadView(view -> {
-      RocksIterator iterator = view.newIterator(UnifiedArchiveColumnFamily.INDEX);
+      UnifiedArchiveIterator iterator = view.newIterator(UnifiedArchiveColumnFamily.INDEX);
       iterator.seek(new byte[] {ArchiveBlockRangeCodec.TXNUM_BY_TXID_PREFIX});
       if (iterator.isValid()) {
         iterator.prev();
@@ -408,26 +634,40 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
         iterator.seekToLast();
       }
       ArchiveRocksIterators.requireOk(iterator, "UNIFIED_V1 locate highest range row");
-      if (!iterator.isValid()
-          || iterator.key()[0] != ArchiveBlockRangeCodec.TXNUM_BLOCK_PREFIX) {
+      if (!iterator.isValid()) {
         return Optional.empty();
       }
-      ArchiveBlockRange range = ArchiveBlockRangeCodec.decodeRange(iterator.value());
-      validateRangeKeyMatchesValue(iterator.key(), range);
+      byte[] key = iterator.key();
+      if (key.length == 0) {
+        throw new ArchiveException("UNIFIED_V1 index column family has an empty key");
+      }
+      if (key[0] != ArchiveBlockRangeCodec.TXNUM_BLOCK_PREFIX) {
+        return Optional.empty();
+      }
+      ArchiveBlockRange range = readRange(
+          view, key, "UNIFIED_V1 highest block range");
+      validateRangeKeyMatchesValue(key, range);
       validateRangeShape(range);
       return Optional.of(range);
     });
   }
 
-  private void validateFullCoverage() {
+  private void validateRangeCoverage(boolean validatePositions) {
     withScanView(view -> {
-      RocksIterator iterator = view.newIterator(UnifiedArchiveColumnFamily.INDEX);
+      UnifiedArchiveIterator iterator = view.newIterator(UnifiedArchiveColumnFamily.INDEX);
       iterator.seek(new byte[] {ArchiveBlockRangeCodec.TXNUM_BLOCK_PREFIX});
       ArchiveBlockRange previous = null;
-      while (iterator.isValid()
-          && iterator.key()[0] == ArchiveBlockRangeCodec.TXNUM_BLOCK_PREFIX) {
-        ArchiveBlockRange current = ArchiveBlockRangeCodec.decodeRange(iterator.value());
-        validateRangeKeyMatchesValue(iterator.key(), current);
+      while (iterator.isValid()) {
+        byte[] key = iterator.key();
+        if (key.length == 0) {
+          throw new ArchiveException("UNIFIED_V1 index column family has an empty key");
+        }
+        if (key[0] != ArchiveBlockRangeCodec.TXNUM_BLOCK_PREFIX) {
+          break;
+        }
+        ArchiveBlockRange current = readRange(
+            view, key, "UNIFIED_V1 committed block range");
+        validateRangeKeyMatchesValue(key, current);
         validateRangeShape(current);
         if (!Arrays.equals(current.getSchemaChecksum(), schemaChecksum)) {
           throw new ArchiveException("archive block range schema checksum mismatch for block "
@@ -438,11 +678,22 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
         } else {
           validateAdjacentRanges(previous, current);
         }
-        for (long txNum = current.getFirstTxNum();
-            txNum <= current.getLastTxNum(); txNum++) {
-          long currentTxNum = txNum;
-          getPosition(currentTxNum).orElseThrow(() -> new ArchiveException(
-              "archive tx-position missing for committed txNum " + currentTxNum));
+        if (validatePositions) {
+          for (long txNum = current.getFirstTxNum();
+              txNum <= current.getLastTxNum(); txNum++) {
+            long currentTxNum = txNum;
+            byte[] positionValue = view.getBounded(
+                UnifiedArchiveColumnFamily.INDEX,
+                ArchiveBlockRangeCodec.positionKey(currentTxNum),
+                ArchiveBlockRangeCodec.POSITION_VALUE_MAX_LENGTH,
+                "UNIFIED_V1 committed tx-position");
+            if (positionValue == null) {
+              throw new ArchiveException(
+                  "archive tx-position missing for committed txNum " + currentTxNum);
+            }
+            ArchiveTxPosition position = ArchiveBlockRangeCodec.decodePosition(positionValue);
+            validatePosition(current, position, currentTxNum);
+          }
         }
         previous = current;
         iterator.next();
@@ -470,6 +721,38 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
     if (first < 0 || first > last.get().getBlockNum()) {
       throw new ArchiveException("archive first-block marker is inconsistent with committed range");
     }
+    hasGenesisCompleteCoverage();
+  }
+
+  private Optional<ArchiveBlockRange> getFirstRange(UnifiedArchiveReadView view) {
+    UnifiedArchiveIterator iterator = view.newIterator(UnifiedArchiveColumnFamily.INDEX);
+      iterator.seek(new byte[] {ArchiveBlockRangeCodec.TXNUM_BLOCK_PREFIX});
+      ArchiveRocksIterators.requireOk(iterator, "UNIFIED_V1 locate lowest range row");
+      if (!iterator.isValid()) {
+        return Optional.empty();
+      }
+      byte[] key = iterator.key();
+      if (key.length == 0) {
+        throw new ArchiveException("UNIFIED_V1 index column family has an empty key");
+      }
+      if (key[0] != ArchiveBlockRangeCodec.TXNUM_BLOCK_PREFIX) {
+        return Optional.empty();
+      }
+      ArchiveBlockRange range = readRange(
+          view, key, "UNIFIED_V1 lowest block range");
+    validateRangeKeyMatchesValue(key, range);
+    validateRangeShape(range);
+    return Optional.of(range);
+  }
+
+  private static ArchiveBlockRange readRange(UnifiedArchiveReadView view, byte[] key,
+      String what) {
+    byte[] value = view.getExact(
+        UnifiedArchiveColumnFamily.INDEX, key, ArchiveBlockRangeCodec.RANGE_VALUE_LENGTH, what);
+    if (value == null) {
+      throw new ArchiveException(what + " disappeared from the archive snapshot");
+    }
+    return ArchiveBlockRangeCodec.decodeRange(value);
   }
 
   private void validateAppendOnlyCommit(ArchiveBlockRange range, long committedNextTxNum) {
@@ -535,6 +818,19 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
 
   private void validatePosition(ArchiveBlockRange range, ArchiveTxPosition position,
       long txNum) {
+    validatePositionShape(range, position, txNum);
+    if (position.getPhase() != ArchivePhase.USER_TX) {
+      return;
+    }
+    byte[] txIdValue = get(UnifiedArchiveColumnFamily.INDEX,
+        ArchiveBlockRangeCodec.txIdKey(position.getTxId()));
+    if (txIdValue == null || ArchiveBlockRangeCodec.decodeCursor(txIdValue) != txNum) {
+      throw new ArchiveException("archive txId index missing for committed txNum " + txNum);
+    }
+  }
+
+  private static void validatePositionShape(ArchiveBlockRange range,
+      ArchiveTxPosition position, long txNum) {
     if (position.getTxNum() != txNum || position.getBlockNum() != range.getBlockNum()
         || position.getSource() != range.getSource()
         || !Arrays.equals(position.getBlockHash(), range.getBlockHash())) {
@@ -558,11 +854,6 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
         || position.getTxIndex() >= range.getUserTxCount()
         || position.getTxNum() != range.getFirstTxNum() + 1L + position.getTxIndex()) {
       throw new ArchiveException("archive user tx-position mismatch for txNum " + txNum);
-    }
-    byte[] txIdValue = get(UnifiedArchiveColumnFamily.INDEX,
-        ArchiveBlockRangeCodec.txIdKey(position.getTxId()));
-    if (txIdValue == null || ArchiveBlockRangeCodec.decodeCursor(txIdValue) != txNum) {
-      throw new ArchiveException("archive txId index missing for committed txNum " + txNum);
     }
   }
 
@@ -620,7 +911,13 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
 
   private byte[] get(UnifiedArchiveColumnFamily columnFamily, byte[] key) {
     UnifiedArchiveReadView view = activeReadView.get();
-    return view == null ? db.get(columnFamily, key) : view.get(columnFamily, key);
+    if (view != null) {
+      return view.getBounded(columnFamily, key, MAX_SNAPSHOT_VALUE_BYTES,
+          "UNIFIED_V1 index snapshot value");
+    }
+    return withOwnedReadView(openUnboundReadView(), localView ->
+        localView.getBounded(columnFamily, key, MAX_SNAPSHOT_VALUE_BYTES,
+            "UNIFIED_V1 index value"));
   }
 
   private <T> T withReadView(Function<UnifiedArchiveReadView, T> action) {
@@ -628,14 +925,17 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
     if (current != null) {
       return action.apply(current);
     }
-    try (UnifiedArchiveReadView view = db.openReadView()) {
-      activeReadView.set(view);
-      try {
+    return withOwnedReadView(openUnboundReadView(), view -> {
+      try (ReadScope ignored = bindReadView(view)) {
         return action.apply(view);
-      } finally {
-        activeReadView.remove();
       }
-    }
+    });
+  }
+
+  private UnifiedArchiveReadView openUnboundReadView() {
+    QueryContext queryContext = QueryContextHolder.current();
+    return queryContext == null
+        ? db.openReadView() : db.openQueryReadView(queryContext, writePermit);
   }
 
   private <T> T withScanView(Function<UnifiedArchiveReadView, T> action) {
@@ -643,18 +943,55 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
     if (current != null) {
       return action.apply(current);
     }
-    try (UnifiedArchiveReadView view = db.openScanView()) {
-      activeReadView.set(view);
-      try {
+    return withOwnedReadView(db.openScanView(), view -> {
+      try (ReadScope ignored = bindReadView(view)) {
         return action.apply(view);
-      } finally {
-        activeReadView.remove();
+      }
+    });
+  }
+
+  private static <T> T withOwnedReadView(UnifiedArchiveReadView view,
+      Function<UnifiedArchiveReadView, T> action) {
+    Throwable operationFailure = null;
+    try {
+      return action.apply(view);
+    } catch (RuntimeException | Error failure) {
+      operationFailure = failure;
+      throw failure;
+    } finally {
+      try {
+        view.close();
+      } catch (Throwable closeFailure) {
+        if (operationFailure == null) {
+          rethrowUnchecked(closeFailure);
+        }
+        ArchiveSnapshotReleaseException uncertain = new ArchiveSnapshotReleaseException(
+            "UNIFIED_V1 index read could not confirm snapshot release", closeFailure);
+        if (operationFailure != closeFailure) {
+          try {
+            uncertain.addSuppressed(operationFailure);
+          } catch (Throwable ignored) {
+            // The release marker and its direct close cause remain authoritative.
+          }
+        }
+        throw uncertain;
       }
     }
   }
 
+  private static void rethrowUnchecked(Throwable failure) {
+    if (failure instanceof RuntimeException) {
+      throw (RuntimeException) failure;
+    }
+    if (failure instanceof Error) {
+      throw (Error) failure;
+    }
+    throw new ArchiveException("UNIFIED_V1 index snapshot close failed", failure);
+  }
+
   private InMemoryArchiveTxNumIndex delegateFromStore() {
-    return new InMemoryArchiveTxNumIndex(getNextTxNum(), getLastArchivedBlock());
+    return withReadView(ignored ->
+        new InMemoryArchiveTxNumIndex(getNextTxNum(), getLastArchivedBlock()));
   }
 
   private void resetAfterPublication() {
@@ -662,27 +999,36 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
   }
 
   @Override
-  public void close() {
+  public synchronized void close() {
     if (!closed) {
-      closed = true;
       // Final owner of the shared DB. DefaultArchiveService closes the no-op in-flight and
       // temporal adapters before reaching this index.
       db.close();
+      closed = true;
     }
   }
 
   public final class ReadScope implements AutoCloseable {
 
+    private final Thread owner = Thread.currentThread();
+    private final UnifiedArchiveReadView boundView;
     private boolean scopeClosed;
 
-    private ReadScope() {
+    private ReadScope(UnifiedArchiveReadView boundView) {
+      this.boundView = boundView;
     }
 
     @Override
     public void close() {
+      if (Thread.currentThread() != owner) {
+        throw new ArchiveException("UNIFIED_V1 index read scope used from a non-owner thread");
+      }
       if (!scopeClosed) {
-        scopeClosed = true;
+        if (activeReadView.get() != boundView) {
+          throw new ArchiveException("UNIFIED_V1 index read scope is not current");
+        }
         activeReadView.remove();
+        scopeClosed = true;
       }
     }
   }

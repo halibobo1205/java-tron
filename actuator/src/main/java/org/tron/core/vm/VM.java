@@ -7,6 +7,7 @@ import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 import org.bouncycastle.util.encoders.Hex;
 import org.springframework.util.StringUtils;
+import org.tron.core.archive.query.HistoricalQueryLimitException;
 import org.tron.core.archive.query.QueryContext;
 import org.tron.core.archive.query.QueryContextHolder;
 import org.tron.core.vm.config.VMConfig;
@@ -28,6 +29,7 @@ public class VM {
       long energyUsage = 0L;
       // hoist once per execution: avoids a per-opcode VMConfig.current() thread-local lookup
       final boolean allowDynamicEnergy = VMConfig.allowDynamicEnergy();
+      final boolean vmTraceEnabled = program.isVmTraceEnabled();
 
       if (allowDynamicEnergy) {
         factor = program.updateContextContractFactor();
@@ -35,11 +37,11 @@ public class VM {
 
       while (!program.isStopped()) {
         if (queryContext != null) {
-          // Account before trace capture so an oversized historical trace cannot allocate first.
+          // Stop an oversized historical execution before the next opcode can allocate or read.
           queryContext.recordVmStep();
         }
         org.tron.core.vm.trace.Op traceOp = null;
-        if (VMConfig.vmTrace()) {
+        if (vmTraceEnabled) {
           traceOp = program.saveOpTrace();
         }
 
@@ -129,6 +131,11 @@ public class VM {
     } catch (JVMStackOverFlowException | OutOfTimeException e) {
       throw e;
     } catch (RuntimeException e) {
+      if (e instanceof HistoricalQueryLimitException
+          && program.getContractState() != null
+          && program.getContractState().isHistoricalArchive()) {
+        throw e;
+      }
       // https://openjdk.org/jeps/358
       // https://bugs.openjdk.org/browse/JDK-8220715
       // since jdk 14, the NullPointerExceptions message is not empty

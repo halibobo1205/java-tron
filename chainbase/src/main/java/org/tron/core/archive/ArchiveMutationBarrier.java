@@ -1,5 +1,6 @@
 package org.tron.core.archive;
 
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
@@ -15,7 +16,45 @@ public final class ArchiveMutationBarrier {
   public ArchiveMutationLease acquireShared() {
     Lock readLock = lock.readLock();
     readLock.lock();
-    return new Lease(readLock, epoch, false, Thread.currentThread());
+    boolean success = false;
+    try {
+      Lease lease = new Lease(readLock, epoch, false, Thread.currentThread());
+      success = true;
+      return lease;
+    } finally {
+      if (!success) {
+        readLock.unlock();
+      }
+    }
+  }
+
+  /** Returns {@code null} when the shared lease cannot be acquired before the timeout. */
+  public ArchiveMutationLease acquireSharedInterruptibly(long timeoutNanos)
+      throws InterruptedException {
+    if (timeoutNanos < 0L) {
+      throw new IllegalArgumentException("archive mutation timeout must be non-negative");
+    }
+    Lock readLock = lock.readLock();
+    boolean acquired;
+    if (timeoutNanos == Long.MAX_VALUE) {
+      readLock.lockInterruptibly();
+      acquired = true;
+    } else {
+      acquired = readLock.tryLock(timeoutNanos, TimeUnit.NANOSECONDS);
+    }
+    if (!acquired) {
+      return null;
+    }
+    boolean success = false;
+    try {
+      Lease lease = new Lease(readLock, epoch, false, Thread.currentThread());
+      success = true;
+      return lease;
+    } finally {
+      if (!success) {
+        readLock.unlock();
+      }
+    }
   }
 
   public ArchiveMutationLease acquireExclusive() {
@@ -47,10 +86,54 @@ public final class ArchiveMutationBarrier {
     }
   }
 
+  /**
+   * Linearizes a historical response after its snapshot has been consumed. A queued or active
+   * exclusive mutation wins first under the fair lock, then makes the stale response fail closed.
+   */
+  public void requireEpoch(long expectedEpoch) {
+    Lock readLock = lock.readLock();
+    readLock.lock();
+    try {
+      requireEpochValue(expectedEpoch);
+    } finally {
+      readLock.unlock();
+    }
+  }
+
+  /** Returns {@code false} when the epoch cannot be checked before the supplied timeout. */
+  public boolean requireEpochInterruptibly(long expectedEpoch, long timeoutNanos)
+      throws InterruptedException {
+    ArchiveMutationLease lease = acquireSharedInterruptibly(timeoutNanos);
+    if (lease == null) {
+      return false;
+    }
+    try (ArchiveMutationLease ignored = lease) {
+      requireEpochValue(expectedEpoch);
+      return true;
+    }
+  }
+
+  private void requireEpochValue(long expectedEpoch) {
+    if (epoch != expectedEpoch) {
+      throw new ArchiveSnapshotInvalidatedException(
+          "archive historical snapshot was invalidated by canonical mutation");
+    }
+  }
+
   public void requireHeldByCurrentThread() {
     if (!lock.isWriteLockedByCurrentThread() && lock.getReadHoldCount() == 0) {
       throw new ArchiveException("archive mutation lease is required");
     }
+  }
+
+  public void requireExclusiveHeldByCurrentThread() {
+    if (!lock.isWriteLockedByCurrentThread()) {
+      throw new ArchiveException("exclusive archive mutation lease is required");
+    }
+  }
+
+  public boolean isExclusiveHeldByCurrentThread() {
+    return lock.isWriteLockedByCurrentThread();
   }
 
   private static final class Lease implements ArchiveMutationLease {

@@ -11,6 +11,9 @@ import org.tron.core.archive.ArchiveException;
 /** Immutable description of one block publication across unified archive column families. */
 public final class UnifiedArchivePublish {
 
+  private static final long ENTRY_OVERHEAD_BYTES = 48L;
+  private static final long MUTATION_OVERHEAD_BYTES = 64L;
+
   private final Entry journal;
   private final Entry journalToken;
   private final Entry acknowledgement;
@@ -29,7 +32,12 @@ public final class UnifiedArchivePublish {
   }
 
   public static Builder builder() {
-    return new Builder();
+    return new Builder(Long.MAX_VALUE, Long.MAX_VALUE);
+  }
+
+  /** Creates a builder with pre-copy limits for retained bytes and mutation cardinality. */
+  public static Builder builder(long maxRetainedBytes, long maxMutations) {
+    return new Builder(maxRetainedBytes, maxMutations);
   }
 
   byte[] journalKey() {
@@ -85,8 +93,17 @@ public final class UnifiedArchivePublish {
     private Entry cursor;
     private Entry blockMarker;
     private final List<Mutation> mutations = new ArrayList<>();
+    private final long maxRetainedBytes;
+    private final long maxMutations;
+    private long retainedBytes;
+    private long mutationCount;
 
-    private Builder() {
+    private Builder(long maxRetainedBytes, long maxMutations) {
+      if (maxRetainedBytes <= 0L || maxMutations <= 0L) {
+        throw new IllegalArgumentException("publish limits must be positive");
+      }
+      this.maxRetainedBytes = maxRetainedBytes;
+      this.maxMutations = maxMutations;
     }
 
     /** Journal row to compare and delete as part of the publication batch. */
@@ -94,6 +111,7 @@ public final class UnifiedArchivePublish {
       if (journal != null) {
         throw new ArchiveException("UNIFIED_V1 publish journal is already set");
       }
+      reserveEntry(key, expectedValue, "publish journal");
       journal = requiredEntry(key, expectedValue, "publish journal");
       return this;
     }
@@ -103,6 +121,7 @@ public final class UnifiedArchivePublish {
       if (journalToken != null) {
         throw new ArchiveException("UNIFIED_V1 publish journal token is already set");
       }
+      reserveEntry(key, expectedValue, "publish journal token");
       journalToken = requiredEntry(key, expectedValue, "publish journal token");
       return this;
     }
@@ -112,6 +131,7 @@ public final class UnifiedArchivePublish {
       if (acknowledgement != null) {
         throw new ArchiveException("UNIFIED_V1 publish acknowledgement is already set");
       }
+      reserveEntry(key, expectedValue, "publish acknowledgement");
       acknowledgement = requiredEntry(key, expectedValue, "publish acknowledgement");
       return this;
     }
@@ -121,6 +141,7 @@ public final class UnifiedArchivePublish {
       if (cursor != null) {
         throw new ArchiveException("UNIFIED_V1 publish cursor is already set");
       }
+      reserveEntry(key, value, "publish cursor");
       Entry candidate = requiredEntry(key, value, "publish cursor");
       if (!Arrays.equals(candidate.key, UnifiedArchiveManifest.publishedCursorKey())) {
         throw new ArchiveException("UNIFIED_V1 publish cursor key is reserved");
@@ -134,19 +155,42 @@ public final class UnifiedArchivePublish {
       if (blockMarker != null) {
         throw new ArchiveException("UNIFIED_V1 publish block marker is already set");
       }
+      reserveEntry(key, value, "publish block marker");
       blockMarker = requiredEntry(key, value, "publish block marker");
       return this;
     }
 
     public Builder put(UnifiedArchiveColumnFamily columnFamily, byte[] key, byte[] value) {
       requirePublishDataColumnFamily(columnFamily);
+      reserveMutation(key, value, false);
       mutations.add(Mutation.put(columnFamily, key, value));
       return this;
     }
 
     public Builder delete(UnifiedArchiveColumnFamily columnFamily, byte[] key) {
       requirePublishDataColumnFamily(columnFamily);
+      reserveMutation(key, null, true);
       mutations.add(Mutation.delete(columnFamily, key));
+      return this;
+    }
+
+    /** Fails before preparation allocates rows that cannot fit this publication builder. */
+    public Builder requireAdditionalCapacity(long estimatedRetainedBytes,
+        long estimatedMutations, String what) {
+      if (estimatedRetainedBytes < 0L || estimatedMutations < 0L) {
+        throw new IllegalArgumentException("publish capacity estimate must be non-negative");
+      }
+      String operation = what == null ? "UNIFIED_V1 publish" : what;
+      long projectedBytes = addSaturated(retainedBytes, estimatedRetainedBytes);
+      if (projectedBytes > maxRetainedBytes) {
+        throw new ArchiveException(operation + " exceeds retained byte limit "
+            + maxRetainedBytes + ": estimatedBytes=" + projectedBytes);
+      }
+      long projectedMutations = addSaturated(mutationCount, estimatedMutations);
+      if (projectedMutations > maxMutations) {
+        throw new ArchiveException(operation + " exceeds mutation limit "
+            + maxMutations + ": estimatedMutations=" + projectedMutations);
+      }
       return this;
     }
 
@@ -203,12 +247,45 @@ public final class UnifiedArchivePublish {
         case LATEST:
         case HISTORY:
         case CHANGESET:
+        case TEMPORAL_PAYLOAD:
         case COMMITMENT:
           return;
         default:
           throw new ArchiveException("UNIFIED_V1 publish cannot directly mutate "
               + columnFamily.getName());
       }
+    }
+
+    private void reserveEntry(byte[] key, byte[] value, String what) {
+      requireEntryInput(key, value, what);
+      reserveBytes(ENTRY_OVERHEAD_BYTES, key.length, value.length);
+    }
+
+    private void reserveMutation(byte[] key, byte[] value, boolean delete) {
+      if (key == null || key.length == 0) {
+        throw new ArchiveException("UNIFIED_V1 publish mutation key is required");
+      }
+      if (!delete && (value == null || value.length == 0)) {
+        throw new ArchiveException("UNIFIED_V1 publish mutation value is required");
+      }
+      long nextCount = mutationCount == Long.MAX_VALUE
+          ? Long.MAX_VALUE : mutationCount + 1L;
+      if (nextCount > maxMutations) {
+        throw new ArchiveException("UNIFIED_V1 publish exceeds mutation limit "
+            + maxMutations);
+      }
+      reserveBytes(MUTATION_OVERHEAD_BYTES, key.length, value == null ? 0L : value.length);
+      mutationCount = nextCount;
+    }
+
+    private void reserveBytes(long overhead, long keyBytes, long valueBytes) {
+      long added = addSaturated(addSaturated(overhead, keyBytes), valueBytes);
+      long next = addSaturated(retainedBytes, added);
+      if (next > maxRetainedBytes) {
+        throw new ArchiveException("UNIFIED_V1 publish exceeds retained byte limit "
+            + maxRetainedBytes + ": estimatedBytes=" + next);
+      }
+      retainedBytes = next;
     }
   }
 
@@ -295,10 +372,17 @@ public final class UnifiedArchivePublish {
   }
 
   private static Entry requiredEntry(byte[] key, byte[] value, String what) {
+    requireEntryInput(key, value, what);
+    return new Entry(requiredKey(key, what), Arrays.copyOf(value, value.length));
+  }
+
+  private static void requireEntryInput(byte[] key, byte[] value, String what) {
+    if (key == null || key.length == 0) {
+      throw new ArchiveException("UNIFIED_V1 " + what + " key is required");
+    }
     if (value == null || value.length == 0) {
       throw new ArchiveException("UNIFIED_V1 " + what + " value is required");
     }
-    return new Entry(requiredKey(key, what), Arrays.copyOf(value, value.length));
   }
 
   private static byte[] requiredKey(byte[] key, String what) {
@@ -306,5 +390,9 @@ public final class UnifiedArchivePublish {
       throw new ArchiveException("UNIFIED_V1 " + what + " key is required");
     }
     return Arrays.copyOf(key, key.length);
+  }
+
+  private static long addSaturated(long left, long right) {
+    return left > Long.MAX_VALUE - right ? Long.MAX_VALUE : left + right;
   }
 }

@@ -209,6 +209,22 @@ public class InMemoryArchiveTemporalStoreTest {
   }
 
   @Test
+  public void directUnwindRejectsCommittedRangeAndKeepsState() {
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        3, 10, 11, 10, 11, new byte[32], 0, ArchiveSource.NORMAL);
+    store.putBlockChanges(range,
+        Arrays.asList(changeAt(10, 3, KEY, tomb(), val(0x0A))));
+
+    ArchiveException failure = assertThrows(ArchiveException.class,
+        () -> store.unwind(10));
+
+    assertTrue(failure.getMessage().contains("unwindBlock"));
+    assertArrayEquals(new byte[] {0x0A},
+        store.latest(ArchiveDomain.ACCOUNT, KEY).get().getValue());
+    assertEquals(1, store.changeCount());
+  }
+
+  @Test
   public void unwindBlockRejectsNonHeadBlockAndKeepsState() {
     // Parity with UnifiedArchiveTemporalStore.unwindBlock: only the temporal head block may be
     // unwound. The unbounded interface default would unwind(firstTxNum) and silently discard the

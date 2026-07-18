@@ -2,6 +2,8 @@ package org.tron.core.archive;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
@@ -32,7 +34,7 @@ public class BoundedArchivePublisherTest {
           }
           return true;
         }, failure -> {
-          throw failure;
+          throw new AssertionError(failure);
         });
     try {
       assertThrows(ArchiveException.class,
@@ -66,7 +68,7 @@ public class BoundedArchivePublisherTest {
           called.countDown();
           return true;
         }, failure -> {
-          throw failure;
+          throw new AssertionError(failure);
         });
     try {
       publisher.activate();
@@ -84,7 +86,7 @@ public class BoundedArchivePublisherTest {
 
   @Test
   public void failureClosesAdmissionAndReportsExactlyOnce() throws Exception {
-    AtomicReference<RuntimeException> reported = new AtomicReference<>();
+    AtomicReference<Throwable> reported = new AtomicReference<>();
     CountDownLatch failed = new CountDownLatch(1);
     ArchiveException expected = new ArchiveException("publish failed");
     BoundedArchivePublisher publisher = new BoundedArchivePublisher("archive-failure-test",
@@ -109,7 +111,7 @@ public class BoundedArchivePublisherTest {
 
   @Test
   public void fatalErrorStillClosesAdmissionAndSignalsFailureHandler() throws Exception {
-    AtomicReference<RuntimeException> reported = new AtomicReference<>();
+    AtomicReference<Throwable> reported = new AtomicReference<>();
     CountDownLatch failed = new CountDownLatch(1);
     AssertionError fatal = new AssertionError("publisher error");
     BoundedArchivePublisher publisher = new BoundedArchivePublisher("archive-error-test",
@@ -124,7 +126,7 @@ public class BoundedArchivePublisherTest {
       publisher.request(target(1, 1, 0));
 
       assertTrue(failed.await(2, TimeUnit.SECONDS));
-      assertEquals(fatal, reported.get().getCause());
+      assertSame(fatal, reported.get());
       assertEquals(BoundedArchivePublisher.State.FAILED, publisher.getState());
     } finally {
       publisher.close();
@@ -141,7 +143,7 @@ public class BoundedArchivePublisherTest {
           await(release);
           return true;
         }, failure -> {
-          throw failure;
+          throw new AssertionError(failure);
         });
     try {
       publisher.activate();
@@ -165,7 +167,7 @@ public class BoundedArchivePublisherTest {
           executions.incrementAndGet();
           return true;
         }, failure -> {
-          throw failure;
+          throw new AssertionError(failure);
         });
     publisher.activate();
     publisher.beginDrain();
@@ -174,6 +176,46 @@ public class BoundedArchivePublisherTest {
     publisher.close();
 
     assertEquals(0, executions.get());
+  }
+
+  @Test
+  public void recoveryActivationLosesCleanlyToDrain() {
+    BoundedArchivePublisher publisher = new BoundedArchivePublisher(
+        "archive-recovery-drain-test", target -> true, failure -> {
+          throw new AssertionError(failure);
+        });
+    publisher.beginDrain();
+
+    assertFalse(publisher.activateForRecovery());
+    assertTrue(publisher.getState() == BoundedArchivePublisher.State.DRAINING
+        || publisher.getState() == BoundedArchivePublisher.State.CLOSED);
+    publisher.close();
+  }
+
+  @Test
+  public void workerCannotBypassCloseBarrierByClosingItself() throws Exception {
+    AtomicReference<BoundedArchivePublisher> reference = new AtomicReference<>();
+    AtomicReference<Throwable> reported = new AtomicReference<>();
+    CountDownLatch failed = new CountDownLatch(1);
+    BoundedArchivePublisher publisher = new BoundedArchivePublisher(
+        "archive-self-close-test", target -> {
+          reference.get().close();
+          return true;
+        }, failure -> {
+          reported.set(failure);
+          failed.countDown();
+        });
+    reference.set(publisher);
+    try {
+      publisher.activate();
+      publisher.request(target(1L, 1, 0L));
+
+      assertTrue(failed.await(2L, TimeUnit.SECONDS));
+      assertTrue(reported.get().getMessage().contains("worker thread"));
+      assertEquals(BoundedArchivePublisher.State.FAILED, publisher.getState());
+    } finally {
+      publisher.close();
+    }
   }
 
   private static ArchivePublishTarget target(long blockNum, int hashSeed, long epoch) {

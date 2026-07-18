@@ -12,6 +12,10 @@ public final class ArchivePublisherConfig {
   public static final long DEFAULT_SOFT_MIN_FREE_BYTES = 5L * 1024 * 1024 * 1024;
   public static final long DEFAULT_HARD_MIN_FREE_BYTES = 1L * 1024 * 1024 * 1024;
   public static final long DEFAULT_BACKPRESSURE_TIMEOUT_MS = 30_000L;
+  public static final long DEFAULT_PUBLISH_TIMEOUT_MS = 120_000L;
+  public static final long DEFAULT_JOURNAL_TIMEOUT_MS = 120_000L;
+  public static final long DEFAULT_RECOVERY_TIMEOUT_MS = 24L * 60L * 60L * 1_000L;
+  static final long MAX_OPERATION_TIMEOUT_MS = 24L * 60L * 60L * 1_000L;
 
   private final boolean async;
   private final boolean backpressure;
@@ -24,6 +28,9 @@ public final class ArchivePublisherConfig {
   private final long softMinFreeBytes;
   private final long hardMinFreeBytes;
   private final long backpressureTimeoutMs;
+  private final long publishTimeoutMs;
+  private final long journalTimeoutMs;
+  private final long recoveryTimeoutMs;
 
   public ArchivePublisherConfig(boolean async, boolean backpressure, int softInFlightBlocks,
       int hardInFlightBlocks, long backpressureTimeoutMs) {
@@ -46,6 +53,38 @@ public final class ArchivePublisherConfig {
       int hardInFlightBlocks, long softInFlightBytes, long hardInFlightBytes,
       long softInFlightRecords, long hardInFlightRecords, long softMinFreeBytes,
       long hardMinFreeBytes, long backpressureTimeoutMs) {
+    this(async, backpressure, softInFlightBlocks, hardInFlightBlocks,
+        softInFlightBytes, hardInFlightBytes, softInFlightRecords, hardInFlightRecords,
+        softMinFreeBytes, hardMinFreeBytes, backpressureTimeoutMs, DEFAULT_PUBLISH_TIMEOUT_MS,
+        DEFAULT_JOURNAL_TIMEOUT_MS);
+  }
+
+  public ArchivePublisherConfig(boolean async, boolean backpressure, int softInFlightBlocks,
+      int hardInFlightBlocks, long softInFlightBytes, long hardInFlightBytes,
+      long softInFlightRecords, long hardInFlightRecords, long softMinFreeBytes,
+      long hardMinFreeBytes, long backpressureTimeoutMs, long publishTimeoutMs) {
+    this(async, backpressure, softInFlightBlocks, hardInFlightBlocks,
+        softInFlightBytes, hardInFlightBytes, softInFlightRecords, hardInFlightRecords,
+        softMinFreeBytes, hardMinFreeBytes, backpressureTimeoutMs, publishTimeoutMs,
+        DEFAULT_JOURNAL_TIMEOUT_MS);
+  }
+
+  public ArchivePublisherConfig(boolean async, boolean backpressure, int softInFlightBlocks,
+      int hardInFlightBlocks, long softInFlightBytes, long hardInFlightBytes,
+      long softInFlightRecords, long hardInFlightRecords, long softMinFreeBytes,
+      long hardMinFreeBytes, long backpressureTimeoutMs, long publishTimeoutMs,
+      long journalTimeoutMs) {
+    this(async, backpressure, softInFlightBlocks, hardInFlightBlocks,
+        softInFlightBytes, hardInFlightBytes, softInFlightRecords, hardInFlightRecords,
+        softMinFreeBytes, hardMinFreeBytes, backpressureTimeoutMs, publishTimeoutMs,
+        journalTimeoutMs, DEFAULT_RECOVERY_TIMEOUT_MS);
+  }
+
+  public ArchivePublisherConfig(boolean async, boolean backpressure, int softInFlightBlocks,
+      int hardInFlightBlocks, long softInFlightBytes, long hardInFlightBytes,
+      long softInFlightRecords, long hardInFlightRecords, long softMinFreeBytes,
+      long hardMinFreeBytes, long backpressureTimeoutMs, long publishTimeoutMs,
+      long journalTimeoutMs, long recoveryTimeoutMs) {
     if (softInFlightBlocks <= 0) {
       throw new IllegalArgumentException("softInFlightBlocks must be positive");
     }
@@ -77,6 +116,27 @@ public final class ArchivePublisherConfig {
     if (backpressureTimeoutMs < 0) {
       throw new IllegalArgumentException("backpressureTimeoutMs must be non-negative");
     }
+    if (backpressureTimeoutMs > MAX_OPERATION_TIMEOUT_MS) {
+      throw new IllegalArgumentException("backpressureTimeoutMs exceeds 24 hours");
+    }
+    if (publishTimeoutMs <= 0) {
+      throw new IllegalArgumentException("publishTimeoutMs must be positive");
+    }
+    if (publishTimeoutMs > MAX_OPERATION_TIMEOUT_MS) {
+      throw new IllegalArgumentException("publishTimeoutMs exceeds 24 hours");
+    }
+    if (journalTimeoutMs <= 0) {
+      throw new IllegalArgumentException("journalTimeoutMs must be positive");
+    }
+    if (journalTimeoutMs > MAX_OPERATION_TIMEOUT_MS) {
+      throw new IllegalArgumentException("journalTimeoutMs exceeds 24 hours");
+    }
+    if (recoveryTimeoutMs <= 0) {
+      throw new IllegalArgumentException("recoveryTimeoutMs must be positive");
+    }
+    if (recoveryTimeoutMs > MAX_OPERATION_TIMEOUT_MS) {
+      throw new IllegalArgumentException("recoveryTimeoutMs exceeds 24 hours");
+    }
     this.async = async;
     this.backpressure = backpressure;
     this.softInFlightBlocks = softInFlightBlocks;
@@ -88,6 +148,9 @@ public final class ArchivePublisherConfig {
     this.softMinFreeBytes = softMinFreeBytes;
     this.hardMinFreeBytes = hardMinFreeBytes;
     this.backpressureTimeoutMs = backpressureTimeoutMs;
+    this.publishTimeoutMs = publishTimeoutMs;
+    this.journalTimeoutMs = journalTimeoutMs;
+    this.recoveryTimeoutMs = recoveryTimeoutMs;
   }
 
   public static ArchivePublisherConfig synchronous() {
@@ -140,5 +203,17 @@ public final class ArchivePublisherConfig {
 
   public long getBackpressureTimeoutMs() {
     return backpressureTimeoutMs;
+  }
+
+  public long getPublishTimeoutMs() {
+    return publishTimeoutMs;
+  }
+
+  public long getJournalTimeoutMs() {
+    return journalTimeoutMs;
+  }
+
+  public long getRecoveryTimeoutMs() {
+    return recoveryTimeoutMs;
   }
 }

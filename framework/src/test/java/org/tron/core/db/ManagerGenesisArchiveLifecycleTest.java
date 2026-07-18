@@ -16,6 +16,7 @@ import org.tron.common.arch.Arch;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.archive.ArchiveService;
+import org.tron.core.archive.ArchiveServiceTestAccess;
 import org.tron.core.archive.DefaultArchiveService;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
@@ -74,8 +75,10 @@ public class ManagerGenesisArchiveLifecycleTest extends BaseMethodTest {
   @Test
   public void initGenesisArchivesConstructorSeededVmDynamicProperties() throws Exception {
     BlockCapsule genesis = chainBaseManager.getGenesisBlock();
+    assertEquals(0L, archiveService.getFirstArchivedBlock());
     try (ArchiveStateReader reader = archiveService.openBlockEndReader(
         0, genesis.getBlockId().getBytes())) {
+      assertTrue(reader.isGenesisComplete());
       HistoricalArchiveVmDynamicProperties.validateGenesisArchiveRows(reader);
       assertArchivedLong(reader, "ALLOW_CREATION_OF_CONTRACTS",
           chainBaseManager.getDynamicPropertiesStore().getAllowCreationOfContracts());
@@ -122,8 +125,10 @@ public class ManagerGenesisArchiveLifecycleTest extends BaseMethodTest {
 
     assertTrue(chainBaseManager.hasBlocks());
     assertTrue(chainBaseManager.containBlock(genesis.getBlockId()));
+    assertEquals(0L, archiveService.getFirstArchivedBlock());
     try (ArchiveStateReader reader = archiveService.openBlockEndReader(
         0L, genesis.getBlockId().getBytes())) {
+      assertTrue(reader.isGenesisComplete());
       assertArchivedLong(reader, "latest_block_header_timestamp", genesis.getTimeStamp());
     }
   }
@@ -145,9 +150,9 @@ public class ManagerGenesisArchiveLifecycleTest extends BaseMethodTest {
   }
 
   private void assertArchivedInternalBytes(String key, byte[] expected) {
-    ArchiveBlockRange genesisRange = archiveService.getTxNumIndex().getBlockRange(0L)
+    ArchiveBlockRange genesisRange = archiveService.getCommittedBlockRange(0L)
         .orElseThrow(() -> new AssertionError("missing archive genesis range"));
-    DomainValue value = archiveService.getTemporalStore().getAsOf(
+    DomainValue value = ArchiveServiceTestAccess.temporalStore(archiveService).getAsOf(
             ArchiveDomain.DYNAMIC_PROPERTIES, key.getBytes(StandardCharsets.US_ASCII),
             genesisRange.getLastTxNum())
         .orElseThrow(() -> new AssertionError("missing archived dynamic property " + key));
