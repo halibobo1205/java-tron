@@ -29,6 +29,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.servlet.ServletOutputStream;
 import javax.servlet.WriteListener;
 import javax.servlet.http.HttpServletRequest;
@@ -735,6 +736,90 @@ public class JsonRpcServletTest {
   }
 
   @Test
+  public void historicalRequestKeepsTransportSettlementOnArchiveWorker() throws Exception {
+    ArchiveJsonRpcExecutor archiveExecutor = new ArchiveJsonRpcExecutor(1, 1_000L);
+    setArchiveJsonRpcExecutor(archiveExecutor);
+    ArchiveQueryCoordinator coordinator = new ArchiveQueryCoordinator();
+    AtomicReference<Thread> executionThread = new AtomicReference<>();
+    AtomicReference<Thread> validationThread = new AtomicReference<>();
+    try {
+      doAnswer(inv -> {
+        executionThread.set(Thread.currentThread());
+        QueryLease lease = coordinator.acquire();
+        ArchiveQueryTransportScope.closeAfterResponse(
+            lease, () -> validationThread.set(Thread.currentThread()));
+        OutputStream output = inv.getArgument(1);
+        output.write("{\"jsonrpc\":\"2.0\",\"result\":\"0x1\",\"id\":1}"
+            .getBytes(StandardCharsets.UTF_8));
+        return 0;
+      }).when(mockRpcServer).handleRequest(any(InputStream.class), any(OutputStream.class));
+
+      MockHttpServletResponse response = doPost("{\"jsonrpc\":\"2.0\","
+          + "\"method\":\"eth_getBalance\",\"params\":[\"TAddress\",\"0x1\"],\"id\":1}");
+
+      assertEquals("0x1", MAPPER.readTree(response.getContentAsByteArray())
+          .get("result").asText());
+      assertTrue(executionThread.get().getName().startsWith("archive-jsonrpc-"));
+      assertSame(executionThread.get(), validationThread.get());
+      assertEquals(0, coordinator.getActiveLeaseCount());
+    } finally {
+      archiveExecutor.close();
+    }
+  }
+
+  @Test
+  public void slowHistoricalClientDoesNotHoldArchiveWorker() throws Exception {
+    ArchiveJsonRpcExecutor archiveExecutor = new ArchiveJsonRpcExecutor(1, 1_000L);
+    setArchiveJsonRpcExecutor(archiveExecutor);
+    CountDownLatch networkWriteEntered = new CountDownLatch(1);
+    CountDownLatch releaseNetworkWrite = new CountDownLatch(1);
+    ExecutorService caller = Executors.newSingleThreadExecutor();
+    try {
+      doAnswer(inv -> {
+        OutputStream output = inv.getArgument(1);
+        output.write("{\"jsonrpc\":\"2.0\",\"result\":\"0x1\",\"id\":1}"
+            .getBytes(StandardCharsets.UTF_8));
+        return 0;
+      }).when(mockRpcServer).handleRequest(any(InputStream.class), any(OutputStream.class));
+
+      BlockingResponse slowResponse =
+          new BlockingResponse(networkWriteEntered, releaseNetworkWrite);
+      Future<?> slowRequest = caller.submit(() -> postTo(slowResponse, 1));
+      assertTrue(networkWriteEntered.await(5L, TimeUnit.SECONDS));
+
+      MockHttpServletResponse second = doPost("{\"jsonrpc\":\"2.0\","
+          + "\"method\":\"eth_getBalance\","
+          + "\"params\":[\"TAddress\",\"0x2\"],\"id\":2}");
+
+      assertEquals("0x1", MAPPER.readTree(second.getContentAsByteArray())
+          .get("result").asText());
+      releaseNetworkWrite.countDown();
+      slowRequest.get(5L, TimeUnit.SECONDS);
+    } finally {
+      releaseNetworkWrite.countDown();
+      caller.shutdownNow();
+      archiveExecutor.close();
+    }
+  }
+
+  @Test
+  public void closedArchiveWorkerDoesNotRespondToHistoricalNotifications() throws Exception {
+    ArchiveJsonRpcExecutor archiveExecutor = new ArchiveJsonRpcExecutor(1, 1_000L);
+    archiveExecutor.close();
+    setArchiveJsonRpcExecutor(archiveExecutor);
+
+    MockHttpServletResponse single = doPost("{\"jsonrpc\":\"2.0\","
+        + "\"method\":\"eth_getBalance\",\"params\":[\"TAddress\",\"0x1\"]}");
+    assertEquals(0, single.getContentLength());
+
+    MockHttpServletResponse batch = doPost("[{\"jsonrpc\":\"2.0\","
+        + "\"method\":\"eth_getBalance\",\"params\":[\"TAddress\",\"0x1\"]},"
+        + "{\"jsonrpc\":\"2.0\",\"method\":\"eth_getCode\","
+        + "\"params\":[\"TAddress\",\"0x2\"]}]");
+    assertEquals(0, batch.getContentLength());
+  }
+
+  @Test
   public void batchSnapshotSealFailurePreservesPriorResponsesAndFailingId() throws Exception {
     ArchiveQueryCoordinator coordinator = new ArchiveQueryCoordinator();
     AtomicBoolean serialized = new AtomicBoolean();
@@ -1084,6 +1169,12 @@ public class JsonRpcServletTest {
     Field field = JsonRpcServlet.class.getDeclaredField("rpcServer");
     field.setAccessible(true);
     field.set(servlet, server);
+  }
+
+  private void setArchiveJsonRpcExecutor(ArchiveJsonRpcExecutor executor) throws Exception {
+    Field field = JsonRpcServlet.class.getDeclaredField("archiveJsonRpcExecutor");
+    field.setAccessible(true);
+    field.set(servlet, executor);
   }
 
   private void postTo(MockHttpServletResponse response, int id) {

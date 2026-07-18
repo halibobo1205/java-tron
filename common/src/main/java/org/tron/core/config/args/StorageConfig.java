@@ -259,14 +259,14 @@ public class StorageConfig {
       private boolean enable = true;
     }
 
-    /** Runtime solidified-journal publisher. Async is opt-in until the soak gate is complete. */
+    /** Runtime solidified-journal publisher. Archive-enabled nodes publish off the block thread. */
     @Getter
     @Setter
     public static class PublisherConfig {
 
       private static final long MAX_OPERATION_TIMEOUT_MS = 24L * 60L * 60L * 1_000L;
 
-      private boolean async;
+      private boolean async = true;
       private boolean backpressure = true;
       private int softInFlightBlocks = 32_768;
       private int hardInFlightBlocks = 65_536;
@@ -374,6 +374,7 @@ public class StorageConfig {
       private static final long DEFAULT_MAX_VM_OVERLAY_BYTES = 32L * 1024 * 1024;
       private static final long DEFAULT_MAX_RESPONSE_BYTES = 24L * 1024 * 1024;
 
+      private int jsonRpcWorkerThreads = 2;
       private long maxConcurrentQueries = DEFAULT_MAX_CONCURRENT_QUERIES;
       private long maxPendingQueries = DEFAULT_MAX_PENDING_QUERIES;
       private long maxOpenSnapshots = DEFAULT_MAX_OPEN_SNAPSHOTS;
@@ -392,6 +393,9 @@ public class StorageConfig {
       private long maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES;
 
       void postProcess() {
+        if (jsonRpcWorkerThreads <= 0) {
+          throw invalidLimit("jsonRpcWorkerThreads", "must be positive");
+        }
         requirePositiveOrUnlimited("maxConcurrentQueries", maxConcurrentQueries);
         requireNonNegativeOrUnlimited("maxPendingQueries", maxPendingQueries);
         requirePositiveOrUnlimited("maxOpenSnapshots", maxOpenSnapshots);
@@ -513,7 +517,8 @@ public class StorageConfig {
     }
     if (archive.hasPath("query")) {
       requireOnlyKeys("storage.archive.query", archive.getConfig("query").root(),
-          "maxConcurrentQueries", "maxPendingQueries", "acquireTimeoutMs", "deadlineMs",
+          "jsonRpcWorkerThreads", "maxConcurrentQueries", "maxPendingQueries",
+          "acquireTimeoutMs", "deadlineMs",
           "maxQueriesPerBatch", "batchDeadlineMs",
           "maxOpenSnapshots", "maxLogicalReadsPerRequest", "maxBackendReadsPerRequest",
           "maxBackendValueBytes", "maxBackendReadBytesPerRequest",

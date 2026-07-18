@@ -6,11 +6,11 @@
 
 > 这是 `docs/archiveV3/` 的**唯一事实源（single source of truth）**。开始写代码前先读本文件；任何与本文件冲突的设计文档**以本文件为准**。
 
-## 0. 2026-07-18 实现态修订（覆盖下文早期物理与查询草案）
+## 0. 2026-07-19 实现态修订（覆盖下文早期物理与查询草案）
 
 当前尚未上线、无需兼容旧 archive 数据，以下实现态结论覆盖本文后续保留的早期方案推演：
 
-1. 物理布局只有 `UNIFIED_V1` schema 5：一个 RocksDB、多个固定 column family，index、
+1. 物理布局只有 `UNIFIED_V1` schema 6：一个 RocksDB、多个固定 column family，index、
    temporal、payload、journal 与 marker 的块发布使用一个原子 `WriteBatch`。不存在可选
    legacy 布局或自动迁移路径。
 2. 对外历史状态点只有 `ArchiveStatePoint`。block selector、canonical hash 与 tx lookup
@@ -25,7 +25,13 @@
    overlay 与 response 等上限必须全部有限。默认单请求 VM overlay 上限为
    32 MiB。
 6. temporal locator 的格式上限仍为 256 MiB，但生产可存 payload 上限为 32 MiB，给发布时
-   同时存活的 Java/JNI/native 表示预留 8 倍工作集；默认查询单值上限为 4 MiB。
+   同时存活的 Java/JNI/native 表示预留 8 倍工作集；默认查询单值上限为 4 MiB。schema 6
+   中只有 anchor/changeset 拥有 payload，history/latest 只存绑定源 key、目标 key 与目标
+   locator 的固定长度认证引用；不存在 latest-baseline 行。
+7. solidified publication 默认异步运行；历史 JSON-RPC 默认进入独立、低优先级、零队列的
+   有界 worker，饱和时 fail-fast，不在交易/区块执行线程回退执行。查询与有界序列化完成
+   后由 Servlet 线程写网络，慢客户端不占用 archive worker；PBFT/Solidity cursor 在实际
+   执行线程绑定。
 
 下文决策 5/6 中关于拆分 DB、live latest read-through、`ResolvedArchiveStatePoint` 和通用
 `ReadGuard` 的描述仅保留为历史决策背景，不再定义当前实现。

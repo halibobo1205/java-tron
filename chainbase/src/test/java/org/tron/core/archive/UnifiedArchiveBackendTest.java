@@ -922,8 +922,8 @@ public class UnifiedArchiveBackendTest {
 
       publish(block(1L, first, value(2)));
 
-      assertEquals("one locator preflight plus one preparation pass must stay bounded",
-          22L, statistics.getTickerCount(TickerType.NUMBER_KEYS_READ) - before);
+      assertEquals("one metadata preflight plus one preparation pass must stay bounded",
+          20L, statistics.getTickerCount(TickerType.NUMBER_KEYS_READ) - before);
     } finally {
       reopenWithMetrics(metricsPreviouslyEnabled);
     }
@@ -1197,7 +1197,7 @@ public class UnifiedArchiveBackendTest {
 
       temporal.validateCommittedBlock(block.getRange());
 
-      assertEquals(7L,
+      assertEquals(6L,
           statistics.getTickerCount(TickerType.NUMBER_KEYS_READ) - before);
     } finally {
       reopenWithMetrics(metricsPreviouslyEnabled);
@@ -2506,23 +2506,17 @@ public class UnifiedArchiveBackendTest {
     assertPublishedCorruptionRejected("oversized-block-marker-value",
         (caseDb, rowKey) -> replaceFirstValue(
             caseDb, UnifiedArchiveColumnFamily.BLOCK_MARKER, new byte[128 * 1024]));
-    assertPublishedCorruptionRejected("missing-history-payload",
-        (caseDb, rowKey) -> deleteTemporalPayloadFor(
-            caseDb, UnifiedArchiveColumnFamily.HISTORY));
-    assertPublishedCorruptionRejected("missing-latest-payload",
-        (caseDb, rowKey) -> deleteTemporalPayloadFor(
-            caseDb, UnifiedArchiveColumnFamily.LATEST));
     assertPublishedCorruptionRejected("missing-changeset-payload",
         (caseDb, rowKey) -> deleteTemporalPayloadFor(
             caseDb, UnifiedArchiveColumnFamily.CHANGESET));
     assertPublishedCorruptionRejected("missing-anchor-payload",
         (caseDb, rowKey) -> deleteTemporalPayloadFor(
             caseDb, UnifiedArchiveColumnFamily.COMMITMENT));
-    assertPublishedCorruptionRejected("tampered-history-payload",
-        (caseDb, rowKey) -> tamperTemporalPayloadFor(
+    assertPublishedCorruptionRejected("tampered-history-reference",
+        (caseDb, rowKey) -> tamperFirstValue(
             caseDb, UnifiedArchiveColumnFamily.HISTORY));
-    assertPublishedCorruptionRejected("tampered-latest-payload",
-        (caseDb, rowKey) -> tamperTemporalPayloadFor(
+    assertPublishedCorruptionRejected("tampered-latest-reference",
+        (caseDb, rowKey) -> tamperFirstValue(
             caseDb, UnifiedArchiveColumnFamily.LATEST));
     assertPublishedCorruptionRejected("tampered-changeset-payload",
         (caseDb, rowKey) -> tamperTemporalPayloadFor(
@@ -3048,21 +3042,24 @@ public class UnifiedArchiveBackendTest {
         UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD, payloadKey, payload));
   }
 
+  private static void tamperFirstValue(UnifiedArchiveDb db,
+      UnifiedArchiveColumnFamily columnFamily) {
+    byte[] key = firstKey(db, columnFamily);
+    byte[] value = db.get(columnFamily, key);
+    assertTrue(columnFamily.getName() + " row must exist", value != null);
+    value[value.length - 1] ^= 0x01;
+    write(db, new UnifiedArchiveMaintenanceBatch().put(columnFamily, key, value));
+  }
+
   private static byte[] temporalPayloadKey(UnifiedArchiveColumnFamily columnFamily,
       byte[] logicalKey) {
     byte tableTag;
     switch (columnFamily) {
-      case HISTORY:
+      case CHANGESET:
         tableTag = 0x01;
         break;
-      case LATEST:
-        tableTag = 0x02;
-        break;
-      case CHANGESET:
-        tableTag = 0x03;
-        break;
       case COMMITMENT:
-        tableTag = 0x04;
+        tableTag = 0x02;
         break;
       default:
         throw new AssertionError("not a temporal integrity family: " + columnFamily);

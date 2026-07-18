@@ -19,17 +19,16 @@ import org.tron.core.archive.txnum.ArchiveCoordinates;
  * unit-tested without a native RocksDB.
  *
  * <ul>
- *   <li>latest:  {@code 0x20 || domainId(2) || keyLen(4) || canonicalKey} -&gt; value(after)</li>
+ *   <li>latest:  {@code 0x20 || domainId(2) || keyLen(4) || canonicalKey} -&gt;
+ *       authenticated reference to the last changeset</li>
  *   <li>history: {@code 0x21 || domainId(2) || keyLen(4) || canonicalKey || txNum(8, BE)}
- *       -&gt; value(before the change)</li>
+ *       -&gt; authenticated reference to the preceding changeset or anchor</li>
  *   <li>changeset: {@code 0x22 || txNum(8) || domainId(2) || keyLen(4) || canonicalKey}
  *       -&gt; value(after), for unwind and validation</li>
  *   <li>anchor: {@code 0x23 || domainId(2) || keyLen(4) || canonicalKey}
  *       -&gt; immutable first observed pre-value, in the commitment column family</li>
  *   <li>block-commit: {@code 0x01 || "block-commit" || blockNum(8, BE)} -&gt; range
  *       marker, for startup validation</li>
- *   <li>latest-baseline: {@code 0x01 || "latest-baseline" || domainId(2) || keyLen(4)
- *       || canonicalKey} -&gt; value, for latest-only rows restored by unwind</li>
  *   <li>value:   {@code deletedFlag(1) || valueBytes} (flag 1 = tombstone)</li>
  * </ul>
  * txNum is big-endian so lexicographic key order matches numeric txNum order (forward seek works).
@@ -44,8 +43,6 @@ public final class ArchiveTemporalCodec {
   static final byte ANCHOR_PREFIX = 0x23;
   private static final byte[] BLOCK_COMMIT_NAME =
       "block-commit".getBytes(StandardCharsets.US_ASCII);
-  private static final byte[] LATEST_BASELINE_NAME =
-      "latest-baseline".getBytes(StandardCharsets.US_ASCII);
   private static final int BLOCK_COMMIT_DIGEST_LENGTH = 32;
   private static final int BLOCK_COMMIT_VALUE_LENGTH =
       36 + ArchiveBlockRange.BLOCK_HASH_LENGTH + ArchiveBlockRange.SCHEMA_CHECKSUM_LENGTH
@@ -136,28 +133,6 @@ public final class ArchiveTemporalCodec {
 
   static byte[] blockCommitPrefix() {
     return Bytes.concat(new byte[] {META_PREFIX}, BLOCK_COMMIT_NAME);
-  }
-
-  static byte[] latestBaselineKey(ArchiveDomain domain, byte[] canonicalKey) {
-    return Bytes.concat(new byte[] {META_PREFIX}, LATEST_BASELINE_NAME, domainId(domain),
-        keyLength(canonicalKey), canonicalKey);
-  }
-
-  static byte[] latestBaselinePrefix() {
-    return Bytes.concat(new byte[] {META_PREFIX}, LATEST_BASELINE_NAME);
-  }
-
-  static byte[] latestBaselineKeyOfLatest(byte[] latestKey) {
-    validateLatestKey(latestKey);
-    return Bytes.concat(latestBaselinePrefix(), Arrays.copyOfRange(latestKey, 1,
-        latestKey.length));
-  }
-
-  static byte[] latestKeyOfBaseline(byte[] baselineKey) {
-    validateLatestBaselineKey(baselineKey);
-    byte[] prefix = latestBaselinePrefix();
-    return Bytes.concat(new byte[] {LATEST_PREFIX}, Arrays.copyOfRange(baselineKey,
-        prefix.length, baselineKey.length));
   }
 
   static long blockNumOfBlockCommitKey(byte[] key) {
@@ -458,18 +433,6 @@ public final class ArchiveTemporalCodec {
     int keyLen = intAt(key, 3);
     if (key.length != 7 + keyLen) {
       throw new ArchiveException("archive temporal anchor key length is invalid");
-    }
-  }
-
-  private static void validateLatestBaselineKey(byte[] key) {
-    byte[] prefix = latestBaselinePrefix();
-    if (!startsWith(key, prefix) || key.length < prefix.length + 6) {
-      throw new ArchiveException("archive temporal latest baseline key is invalid");
-    }
-    domainAt(key, prefix.length, "archive temporal latest baseline");
-    int keyLen = intAt(key, prefix.length + 2);
-    if (key.length != prefix.length + 6 + keyLen) {
-      throw new ArchiveException("archive temporal latest baseline key length is invalid");
     }
   }
 
