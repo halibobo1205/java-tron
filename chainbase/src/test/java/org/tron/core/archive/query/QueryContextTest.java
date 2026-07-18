@@ -29,20 +29,68 @@ public class QueryContextTest {
         context -> context.recordBackendReads(2),
         QueryContext::recordBackendRead);
     assertBudgetExceeded(
+        ArchiveQueryLimits.builder().maxBackendReadBytesPerRequest(2).build(),
+        HistoricalQueryLimitException.Limit.BACKEND_READ_BYTES,
+        context -> context.recordBackendValueBytes(2),
+        context -> context.recordBackendValueBytes(1));
+    assertBudgetExceeded(
         ArchiveQueryLimits.builder().maxVmSteps(2).build(),
         HistoricalQueryLimitException.Limit.VM_STEPS,
         context -> context.recordVmSteps(2),
         QueryContext::recordVmStep);
     assertBudgetExceeded(
-        ArchiveQueryLimits.builder().maxTraceBytes(2).build(),
-        HistoricalQueryLimitException.Limit.TRACE_BYTES,
-        context -> context.recordTraceBytes(2),
-        context -> context.recordTraceBytes(1));
+        ArchiveQueryLimits.builder().maxVmOverlayBytes(2).build(),
+        HistoricalQueryLimitException.Limit.VM_OVERLAY_BYTES,
+        context -> context.recordVmOverlayBytes(2),
+        context -> context.recordVmOverlayBytes(1));
     assertBudgetExceeded(
         ArchiveQueryLimits.builder().maxResponseBytes(2).build(),
         HistoricalQueryLimitException.Limit.RESPONSE_BYTES,
         context -> context.recordResponseBytes(2),
         context -> context.recordResponseBytes(1));
+  }
+
+  @Test
+  public void singleBackendValueLimitRejectsBeforeAggregateAccounting() {
+    QueryContext context = new QueryContext(ArchiveQueryLimits.builder()
+        .maxBackendValueBytes(2)
+        .maxBackendReadBytesPerRequest(10)
+        .build());
+
+    HistoricalQueryLimitException failure = assertThrows(
+        HistoricalQueryLimitException.class, () -> context.recordBackendValueBytes(3));
+
+    assertEquals(HistoricalQueryLimitException.Limit.BACKEND_VALUE_BYTES,
+        failure.getLimit());
+    assertEquals(0L, context.getBackendReadBytes());
+  }
+
+  @Test
+  public void serializedResponseReconcilesEstimatesWithoutDoubleCounting() {
+    QueryContext context = new QueryContext(ArchiveQueryLimits.builder()
+        .maxResponseBytes(10L)
+        .build());
+    context.recordResponseBytes(4L);
+
+    assertEquals(9L, context.recordSerializedResponseBytes(9L));
+    assertEquals(9L, context.recordSerializedResponseBytes(3L));
+    assertEquals(9L, context.getResponseBytes());
+  }
+
+  @Test
+  public void serializedResponseEnforcesActualWireSize() {
+    QueryContext context = new QueryContext(ArchiveQueryLimits.builder()
+        .maxResponseBytes(8L)
+        .build());
+    context.recordResponseBytes(2L);
+
+    HistoricalQueryLimitException failure = assertThrows(
+        HistoricalQueryLimitException.class,
+        () -> context.recordSerializedResponseBytes(9L));
+
+    assertEquals(HistoricalQueryLimitException.Limit.RESPONSE_BYTES, failure.getLimit());
+    assertEquals(9L, failure.getObserved());
+    assertEquals(9L, context.getResponseBytes());
   }
 
   @Test
@@ -53,20 +101,23 @@ public class QueryContextTest {
     context.recordLogicalRead();
     context.recordBackendReads(Long.MAX_VALUE);
     context.recordBackendRead();
+    context.recordBackendValueBytes(Long.MAX_VALUE);
+    context.recordBackendValueBytes(1);
     context.recordCacheHit();
     context.recordCacheHit();
     context.recordVmSteps(Long.MAX_VALUE);
     context.recordVmStep();
-    context.recordTraceBytes(Long.MAX_VALUE);
-    context.recordTraceBytes(1);
+    context.recordVmOverlayBytes(Long.MAX_VALUE);
+    context.recordVmOverlayBytes(1);
     context.recordResponseBytes(Long.MAX_VALUE);
     context.recordResponseBytes(1);
 
     assertEquals(Long.MAX_VALUE, context.getLogicalReads());
     assertEquals(Long.MAX_VALUE, context.getBackendReads());
+    assertEquals(Long.MAX_VALUE, context.getBackendReadBytes());
     assertEquals(2, context.getCacheHits());
     assertEquals(Long.MAX_VALUE, context.getVmSteps());
-    assertEquals(Long.MAX_VALUE, context.getTraceBytes());
+    assertEquals(Long.MAX_VALUE, context.getVmOverlayBytes());
     assertEquals(Long.MAX_VALUE, context.getResponseBytes());
     assertFalse(context.isTerminated());
   }
@@ -74,19 +125,63 @@ public class QueryContextTest {
   @Test
   public void boundedBudgetCannotBeBypassedByLongOverflow() {
     QueryContext context = new QueryContext(ArchiveQueryLimits.builder()
-        .maxTraceBytes(Long.MAX_VALUE - 1)
+        .maxResponseBytes(Long.MAX_VALUE - 1)
         .build());
-    context.recordTraceBytes(Long.MAX_VALUE - 2);
+    context.recordResponseBytes(Long.MAX_VALUE - 2);
 
     HistoricalQueryLimitException failure = assertThrows(
-        HistoricalQueryLimitException.class, () -> context.recordTraceBytes(10));
+        HistoricalQueryLimitException.class, () -> context.recordResponseBytes(10));
 
     assertEquals(HistoricalQueryLimitException.Reason.RESOURCE_EXHAUSTED,
         failure.getReason());
-    assertEquals(HistoricalQueryLimitException.Limit.TRACE_BYTES, failure.getLimit());
+    assertEquals(HistoricalQueryLimitException.Limit.RESPONSE_BYTES, failure.getLimit());
     assertEquals(Long.MAX_VALUE - 1, failure.getConfiguredLimit());
     assertEquals(Long.MAX_VALUE, failure.getObserved());
-    assertEquals(Long.MAX_VALUE, context.getTraceBytes());
+    assertEquals(Long.MAX_VALUE, context.getResponseBytes());
+  }
+
+  @Test
+  public void exactLongMaxBudgetTerminatesOnTheNextUnit() {
+    QueryContext context = new QueryContext(ArchiveQueryLimits.builder()
+        .maxBackendReads(Long.MAX_VALUE)
+        .build());
+    context.recordBackendReads(Long.MAX_VALUE);
+
+    HistoricalQueryLimitException failure = assertThrows(
+        HistoricalQueryLimitException.class, context::recordBackendRead);
+
+    assertEquals(HistoricalQueryLimitException.Limit.BACKEND_READS, failure.getLimit());
+    assertEquals(Long.MAX_VALUE, failure.getConfiguredLimit());
+    assertEquals(Long.MAX_VALUE, failure.getObserved());
+  }
+
+  @Test
+  public void exactLongMaxAggregateBytePreflightTerminatesOnTheNextUnit() {
+    QueryContext context = new QueryContext(ArchiveQueryLimits.builder()
+        .maxBackendValueBytes(Long.MAX_VALUE)
+        .maxBackendReadBytesPerRequest(Long.MAX_VALUE)
+        .build());
+    context.recordBackendValueBytes(Long.MAX_VALUE);
+
+    HistoricalQueryLimitException failure = assertThrows(
+        HistoricalQueryLimitException.class,
+        () -> context.validateBackendValueBytes(1L));
+
+    assertEquals(HistoricalQueryLimitException.Limit.BACKEND_READ_BYTES,
+        failure.getLimit());
+  }
+
+  @Test
+  public void saturatedFiniteDeadlineDoesNotBecomeUnlimited() {
+    AtomicLong now = new AtomicLong();
+    QueryContext context = new QueryContext(
+        ArchiveQueryLimits.builder().deadlineMs(Long.MAX_VALUE).build(), now::get);
+    now.set(Long.MAX_VALUE);
+
+    HistoricalQueryLimitException failure = assertThrows(
+        HistoricalQueryLimitException.class, context::checkDeadline);
+
+    assertEquals(HistoricalQueryLimitException.Limit.DEADLINE, failure.getLimit());
   }
 
   @Test
@@ -178,15 +273,15 @@ public class QueryContextTest {
     assertThrows(IllegalArgumentException.class, () -> context.recordLogicalReads(-1));
     assertThrows(IllegalArgumentException.class, () -> context.recordBackendReads(-1));
     assertThrows(IllegalArgumentException.class, () -> context.recordVmSteps(-1));
-    assertThrows(IllegalArgumentException.class, () -> context.recordTraceBytes(-1));
     assertThrows(IllegalArgumentException.class, () -> context.recordResponseBytes(-1));
+    assertThrows(IllegalArgumentException.class,
+        () -> context.recordSerializedResponseBytes(-1));
 
     assertFalse(context.isTerminated());
     assertEquals(0, context.getLogicalReads());
     assertEquals(0, context.getBackendReads());
     assertEquals(0, context.getCacheHits());
     assertEquals(0, context.getVmSteps());
-    assertEquals(0, context.getTraceBytes());
     assertEquals(0, context.getResponseBytes());
   }
 
@@ -265,6 +360,21 @@ public class QueryContextTest {
     assertSame(vm, vmFirst.getRecordedExecutionTerminalFailure());
     assertSame(vm, vmFirst.getRecordedFailure());
     assertSame(laterBudget, vmFirst.getRecordedTerminalException());
+  }
+
+  @Test
+  public void deadlineSnapshotUsesOneTickWithoutRetroactivelyTerminating() {
+    AtomicLong now = new AtomicLong(7L);
+    QueryContext context = new QueryContext(
+        ArchiveQueryLimits.builder().deadlineMs(1L).build(), now::get);
+    now.set(1_000_007L);
+
+    QueryContext.DeadlineSnapshot snapshot = context.sampleDeadline();
+
+    assertEquals(1_000_007L, snapshot.getSampledNanos());
+    assertEquals(0L, snapshot.getRemainingNanos());
+    assertNull(context.getRecordedTerminalException());
+    assertThrows(HistoricalQueryLimitException.class, context::checkDeadline);
   }
 
   @Test

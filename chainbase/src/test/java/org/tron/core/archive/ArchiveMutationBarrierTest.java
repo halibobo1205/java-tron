@@ -52,4 +52,47 @@ public class ArchiveMutationBarrierTest {
     shared.close();
     shared.close();
   }
+
+  @Test
+  public void epochSealRejectsSnapshotAfterExclusiveMutation() {
+    ArchiveMutationBarrier barrier = new ArchiveMutationBarrier();
+    long snapshotEpoch;
+    try (ArchiveMutationLease shared = barrier.acquireShared()) {
+      snapshotEpoch = shared.getEpoch();
+    }
+    barrier.requireEpoch(snapshotEpoch);
+
+    try (ArchiveMutationLease ignored = barrier.acquireExclusive()) {
+      assertEquals(snapshotEpoch + 1L, ignored.getEpoch());
+    }
+
+    ArchiveSnapshotInvalidatedException failure = assertThrows(
+        ArchiveSnapshotInvalidatedException.class,
+        () -> barrier.requireEpoch(snapshotEpoch));
+    assertTrue(failure.getMessage().contains("invalidated"));
+  }
+
+  @Test
+  public void interruptibleEpochSealTimesOutBehindExclusiveMutation() throws Exception {
+    ArchiveMutationBarrier barrier = new ArchiveMutationBarrier();
+    CountDownLatch exclusiveHeld = new CountDownLatch(1);
+    CountDownLatch releaseExclusive = new CountDownLatch(1);
+    FutureTask<Void> exclusive = new FutureTask<>(() -> {
+      try (ArchiveMutationLease ignored = barrier.acquireExclusive()) {
+        exclusiveHeld.countDown();
+        assertTrue(releaseExclusive.await(1, TimeUnit.SECONDS));
+      }
+      return null;
+    });
+    Thread thread = new Thread(exclusive);
+    thread.start();
+    assertTrue(exclusiveHeld.await(1, TimeUnit.SECONDS));
+
+    try {
+      assertFalse(barrier.requireEpochInterruptibly(0L, TimeUnit.MILLISECONDS.toNanos(10L)));
+    } finally {
+      releaseExclusive.countDown();
+    }
+    exclusive.get(1, TimeUnit.SECONDS);
+  }
 }

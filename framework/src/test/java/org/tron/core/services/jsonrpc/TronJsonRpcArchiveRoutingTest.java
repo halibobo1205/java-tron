@@ -4,7 +4,10 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.Mockito.when;
 
 import java.util.Collections;
 import org.junit.Test;
@@ -13,6 +16,7 @@ import org.tron.core.Wallet;
 import org.tron.core.archive.NoopArchiveService;
 import org.tron.core.exception.jsonrpc.JsonRpcInternalException;
 import org.tron.core.exception.jsonrpc.JsonRpcInvalidParamsException;
+import org.tron.core.services.jsonrpc.types.CallArguments;
 
 public class TronJsonRpcArchiveRoutingTest {
 
@@ -124,6 +128,76 @@ public class TronJsonRpcArchiveRoutingTest {
           () -> rpc.getCall(null, blockParam));
 
       assertTrue(ex.getMessage().contains("invalid json request"));
+      verifyNoInteractions(wallet);
+    } finally {
+      rpc.close();
+    }
+  }
+
+  @Test
+  public void historicalEthCallRejectsOversizedLoserFieldBeforeHexValidation() throws Exception {
+    Wallet wallet = mock(Wallet.class);
+    HistoricalEthCallSupport support = mock(HistoricalEthCallSupport.class);
+    when(support.shouldUseArchive("0x10")).thenReturn(true);
+    TronJsonRpcImpl rpc = new TronJsonRpcImpl(null, wallet);
+    ReflectUtils.setFieldValue(rpc, "historicalEthCallSupport", support);
+    CallArguments call = new CallArguments();
+    call.setInput("0x");
+    char[] oversized = new char[(int) (org.tron.core.Constant.TRANSACTION_MAX_BYTE_SIZE * 2 + 3)];
+    java.util.Arrays.fill(oversized, '0');
+    oversized[oversized.length - 1] = 'z';
+    call.setData(new String(oversized));
+    try {
+      JsonRpcInvalidParamsException failure = assertThrows(
+          JsonRpcInvalidParamsException.class, () -> rpc.getCall(call, "0x10"));
+
+      assertTrue(failure.getMessage().contains("exceeds maximum transaction size"));
+      verify(support).shouldUseArchive("0x10");
+      verify(support).validateArchiveAvailable();
+      verifyNoMoreInteractions(support);
+      verifyNoInteractions(wallet);
+    } finally {
+      rpc.close();
+    }
+  }
+
+  @Test
+  public void historicalEthCallDoesNotGrantPrefixAllowanceToBareData() throws Exception {
+    Wallet wallet = mock(Wallet.class);
+    HistoricalEthCallSupport support = mock(HistoricalEthCallSupport.class);
+    when(support.shouldUseArchive("0x10")).thenReturn(true);
+    TronJsonRpcImpl rpc = new TronJsonRpcImpl(null, wallet);
+    ReflectUtils.setFieldValue(rpc, "historicalEthCallSupport", support);
+    CallArguments call = new CallArguments();
+    char[] oversized = new char[
+        (int) (org.tron.core.Constant.TRANSACTION_MAX_BYTE_SIZE * 2L + 1L)];
+    java.util.Arrays.fill(oversized, '0');
+    call.setData(new String(oversized));
+    try {
+      JsonRpcInvalidParamsException failure = assertThrows(
+          JsonRpcInvalidParamsException.class, () -> rpc.getCall(call, "0x10"));
+
+      assertTrue(failure.getMessage().contains("exceeds maximum transaction size"));
+      verify(support).shouldUseArchive("0x10");
+      verify(support).validateArchiveAvailable();
+      verifyNoMoreInteractions(support);
+      verifyNoInteractions(wallet);
+    } finally {
+      rpc.close();
+    }
+  }
+
+  @Test
+  public void stringBlockNumberEthCallFailsClosedBeforeCallObjectValidation() throws Exception {
+    Wallet wallet = mock(Wallet.class);
+    TronJsonRpcImpl rpc = new TronJsonRpcImpl(null, wallet);
+    ReflectUtils.setFieldValue(rpc, "historicalEthCallSupport",
+        new HistoricalEthCallSupport(wallet, NoopArchiveService.INSTANCE));
+    try {
+      JsonRpcInternalException ex = assertThrows(JsonRpcInternalException.class,
+          () -> rpc.getCall(null, "0x10"));
+
+      assertTrue(ex.getMessage().contains("archive is not available"));
       verifyNoInteractions(wallet);
     } finally {
       rpc.close();

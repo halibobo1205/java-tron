@@ -23,42 +23,17 @@ public final class ArchiveQueryLimits {
   private final long batchDeadlineMs;
   private final long maxLogicalReadsPerRequest;
   private final long maxBackendReadsPerRequest;
+  private final long maxBackendValueBytes;
+  private final long maxBackendReadBytesPerRequest;
   private final int maxCachedEntries;
   private final long maxCachedBytes;
   private final long maxVmSteps;
-  private final long maxTraceBytes;
-  private final long maxRetainedTraceBytes;
+  private final long maxVmOverlayBytes;
   private final long maxResponseBytes;
 
   /** Creates the compatibility default: unlimited resources with fail-fast permit acquisition. */
   public ArchiveQueryLimits() {
     this(new Builder());
-  }
-
-  /**
-   * Creates a complete limit set. Use {@link #UNLIMITED} for any unenforced dimension.
-   */
-  public ArchiveQueryLimits(
-      long maxConcurrentQueries,
-      long maxPendingQueries,
-      long acquireTimeoutMs,
-      long deadlineMs,
-      long maxLogicalReadsPerRequest,
-      long maxBackendReadsPerRequest,
-      long maxVmSteps,
-      long maxTraceBytes,
-      long maxResponseBytes) {
-    this(new Builder()
-        .maxConcurrentQueries(maxConcurrentQueries)
-        .maxPendingQueries(maxPendingQueries)
-        .acquireTimeoutMs(acquireTimeoutMs)
-        .deadlineMs(deadlineMs)
-        .maxLogicalReadsPerRequest(maxLogicalReadsPerRequest)
-        .maxBackendReadsPerRequest(maxBackendReadsPerRequest)
-        .maxVmSteps(maxVmSteps)
-        .maxTraceBytes(maxTraceBytes)
-        .maxRetainedTraceBytes(UNLIMITED)
-        .maxResponseBytes(maxResponseBytes));
   }
 
   private ArchiveQueryLimits(Builder builder) {
@@ -79,12 +54,15 @@ public final class ArchiveQueryLimits {
         "maxLogicalReadsPerRequest", builder.maxLogicalReadsPerRequest);
     maxBackendReadsPerRequest = requireNonNegativeOrUnlimited(
         "maxBackendReadsPerRequest", builder.maxBackendReadsPerRequest);
+    maxBackendValueBytes = requireNonNegativeOrUnlimited(
+        "maxBackendValueBytes", builder.maxBackendValueBytes);
+    maxBackendReadBytesPerRequest = requireNonNegativeOrUnlimited(
+        "maxBackendReadBytesPerRequest", builder.maxBackendReadBytesPerRequest);
     maxCachedEntries = requireNonNegative("maxCachedEntries", builder.maxCachedEntries);
     maxCachedBytes = requireNonNegative("maxCachedBytes", builder.maxCachedBytes);
     maxVmSteps = requireNonNegativeOrUnlimited("maxVmSteps", builder.maxVmSteps);
-    maxTraceBytes = requireNonNegativeOrUnlimited("maxTraceBytes", builder.maxTraceBytes);
-    maxRetainedTraceBytes = requireNonNegativeOrUnlimited(
-        "maxRetainedTraceBytes", builder.maxRetainedTraceBytes);
+    maxVmOverlayBytes = requireNonNegativeOrUnlimited(
+        "maxVmOverlayBytes", builder.maxVmOverlayBytes);
     maxResponseBytes = requireNonNegativeOrUnlimited(
         "maxResponseBytes", builder.maxResponseBytes);
   }
@@ -153,6 +131,14 @@ public final class ArchiveQueryLimits {
     return maxBackendReadsPerRequest;
   }
 
+  public long getMaxBackendValueBytes() {
+    return maxBackendValueBytes;
+  }
+
+  public long getMaxBackendReadBytesPerRequest() {
+    return maxBackendReadBytesPerRequest;
+  }
+
   public int getMaxCachedEntries() {
     return maxCachedEntries;
   }
@@ -165,23 +151,11 @@ public final class ArchiveQueryLimits {
     return maxVmSteps;
   }
 
-  public long getMaxTraceSteps() {
-    return maxVmSteps;
-  }
-
-  public long getMaxTraceBytes() {
-    return maxTraceBytes;
-  }
-
-  public long getMaxRetainedTraceBytes() {
-    return maxRetainedTraceBytes;
+  public long getMaxVmOverlayBytes() {
+    return maxVmOverlayBytes;
   }
 
   public long getMaxResponseBytes() {
-    return maxResponseBytes;
-  }
-
-  public long getMaxTraceResponseBytes() {
     return maxResponseBytes;
   }
 
@@ -207,11 +181,12 @@ public final class ArchiveQueryLimits {
         && batchDeadlineMs == that.batchDeadlineMs
         && maxLogicalReadsPerRequest == that.maxLogicalReadsPerRequest
         && maxBackendReadsPerRequest == that.maxBackendReadsPerRequest
+        && maxBackendValueBytes == that.maxBackendValueBytes
+        && maxBackendReadBytesPerRequest == that.maxBackendReadBytesPerRequest
         && maxCachedEntries == that.maxCachedEntries
         && maxCachedBytes == that.maxCachedBytes
         && maxVmSteps == that.maxVmSteps
-        && maxTraceBytes == that.maxTraceBytes
-        && maxRetainedTraceBytes == that.maxRetainedTraceBytes
+        && maxVmOverlayBytes == that.maxVmOverlayBytes
         && maxResponseBytes == that.maxResponseBytes;
   }
 
@@ -227,11 +202,12 @@ public final class ArchiveQueryLimits {
         batchDeadlineMs,
         maxLogicalReadsPerRequest,
         maxBackendReadsPerRequest,
+        maxBackendValueBytes,
+        maxBackendReadBytesPerRequest,
         maxCachedEntries,
         maxCachedBytes,
         maxVmSteps,
-        maxTraceBytes,
-        maxRetainedTraceBytes,
+        maxVmOverlayBytes,
         maxResponseBytes);
   }
 
@@ -247,11 +223,12 @@ public final class ArchiveQueryLimits {
         + ", batchDeadlineMs=" + batchDeadlineMs
         + ", maxLogicalReadsPerRequest=" + maxLogicalReadsPerRequest
         + ", maxBackendReadsPerRequest=" + maxBackendReadsPerRequest
+        + ", maxBackendValueBytes=" + maxBackendValueBytes
+        + ", maxBackendReadBytesPerRequest=" + maxBackendReadBytesPerRequest
         + ", maxCachedEntries=" + maxCachedEntries
         + ", maxCachedBytes=" + maxCachedBytes
         + ", maxVmSteps=" + maxVmSteps
-        + ", maxTraceBytes=" + maxTraceBytes
-        + ", maxRetainedTraceBytes=" + maxRetainedTraceBytes
+        + ", maxVmOverlayBytes=" + maxVmOverlayBytes
         + ", maxResponseBytes=" + maxResponseBytes
         + '}';
   }
@@ -296,11 +273,12 @@ public final class ArchiveQueryLimits {
     private long batchDeadlineMs = UNLIMITED;
     private long maxLogicalReadsPerRequest = UNLIMITED;
     private long maxBackendReadsPerRequest = UNLIMITED;
+    private long maxBackendValueBytes = UNLIMITED;
+    private long maxBackendReadBytesPerRequest = UNLIMITED;
     private int maxCachedEntries = DEFAULT_MAX_CACHED_ENTRIES;
     private long maxCachedBytes = DEFAULT_MAX_CACHED_BYTES;
     private long maxVmSteps = UNLIMITED;
-    private long maxTraceBytes = UNLIMITED;
-    private long maxRetainedTraceBytes = UNLIMITED;
+    private long maxVmOverlayBytes = UNLIMITED;
     private long maxResponseBytes = UNLIMITED;
 
     public Builder() {
@@ -316,11 +294,12 @@ public final class ArchiveQueryLimits {
       batchDeadlineMs = limits.batchDeadlineMs;
       maxLogicalReadsPerRequest = limits.maxLogicalReadsPerRequest;
       maxBackendReadsPerRequest = limits.maxBackendReadsPerRequest;
+      maxBackendValueBytes = limits.maxBackendValueBytes;
+      maxBackendReadBytesPerRequest = limits.maxBackendReadBytesPerRequest;
       maxCachedEntries = limits.maxCachedEntries;
       maxCachedBytes = limits.maxCachedBytes;
       maxVmSteps = limits.maxVmSteps;
-      maxTraceBytes = limits.maxTraceBytes;
-      maxRetainedTraceBytes = limits.maxRetainedTraceBytes;
+      maxVmOverlayBytes = limits.maxVmOverlayBytes;
       maxResponseBytes = limits.maxResponseBytes;
     }
 
@@ -385,6 +364,16 @@ public final class ArchiveQueryLimits {
       return maxBackendReadsPerRequest(value);
     }
 
+    public Builder maxBackendValueBytes(long value) {
+      maxBackendValueBytes = value;
+      return this;
+    }
+
+    public Builder maxBackendReadBytesPerRequest(long value) {
+      maxBackendReadBytesPerRequest = value;
+      return this;
+    }
+
     public Builder maxCachedEntries(int value) {
       maxCachedEntries = value;
       return this;
@@ -400,27 +389,14 @@ public final class ArchiveQueryLimits {
       return this;
     }
 
-    public Builder maxTraceSteps(long value) {
-      return maxVmSteps(value);
-    }
-
-    public Builder maxTraceBytes(long value) {
-      maxTraceBytes = value;
-      return this;
-    }
-
-    public Builder maxRetainedTraceBytes(long value) {
-      maxRetainedTraceBytes = value;
+    public Builder maxVmOverlayBytes(long value) {
+      maxVmOverlayBytes = value;
       return this;
     }
 
     public Builder maxResponseBytes(long value) {
       maxResponseBytes = value;
       return this;
-    }
-
-    public Builder maxTraceResponseBytes(long value) {
-      return maxResponseBytes(value);
     }
 
     public ArchiveQueryLimits build() {

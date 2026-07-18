@@ -192,6 +192,33 @@ public class CallArgumentsTest extends BaseTest {
     Assert.assertEquals("0x123", args.resolveData());
   }
 
+  @Test
+  public void resolveData_dataWhitespace_acceptedForBackwardCompat()
+      throws JsonRpcInvalidParamsException {
+    CallArguments args = new CallArguments();
+    args.setData("de ad\nbeef");
+    Assert.assertEquals("de ad\nbeef", args.resolveData());
+  }
+
+  @Test
+  public void resolveData_lenientWhitespacePreservesLegacyRawLengthParity()
+      throws JsonRpcInvalidParamsException {
+    CallArguments accepted = new CallArguments();
+    accepted.setData("a  ");
+    Assert.assertEquals("a  ", accepted.resolveData());
+
+    CallArguments rejected = new CallArguments();
+    rejected.setData("a ");
+    Assert.assertThrows(JsonRpcInvalidParamsException.class, rejected::resolveData);
+  }
+
+  @Test
+  public void resolveData_inputWhitespace_rejectedByStrictMode() {
+    CallArguments args = new CallArguments();
+    args.setInput("0xde adbeef");
+    Assert.assertThrows(JsonRpcInvalidParamsException.class, args::resolveData);
+  }
+
   /** Reproduces issue #6517 contract-creation symptom. */
   @Test
   public void getContractType_createSmartContractViaInput_succeeds()

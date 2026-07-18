@@ -1,5 +1,7 @@
 package org.tron.core.vm.archive;
 
+import java.util.Objects;
+import java.util.function.Supplier;
 import org.tron.common.runtime.ProgramResult;
 import org.tron.core.actuator.VMActuator;
 import org.tron.core.archive.query.QueryContext;
@@ -28,6 +30,16 @@ import org.tron.core.vm.config.VMConfig;
  */
 public final class HistoricalConstantCallExecutor {
 
+  private final Supplier<VMActuator> vmActuatorFactory;
+
+  public HistoricalConstantCallExecutor() {
+    this(() -> new VMActuator(true));
+  }
+
+  HistoricalConstantCallExecutor(Supplier<VMActuator> vmActuatorFactory) {
+    this.vmActuatorFactory = Objects.requireNonNull(vmActuatorFactory, "vmActuatorFactory");
+  }
+
   public HistoricalConstantCallResult execute(ArchiveStateReader reader,
       VmDynamicProperties vmProperties, BlockCapsule block, TransactionCapsule trxCap)
       throws ContractValidateException, ContractExeException {
@@ -39,16 +51,19 @@ public final class HistoricalConstantCallExecutor {
       boolean genesisComplete) throws ContractValidateException, ContractExeException {
     QueryContext readerQueryContext = reader.getQueryContext();
     try (QueryContextHolder.Scope ignored =
-        QueryContextHolder.attachIfPresent(readerQueryContext)) {
+            QueryContextHolder.attachIfPresent(readerQueryContext);
+        VMConfig.LocalSnapshotScope ignoredVmConfig = VMConfig.preserveLocalSnapshot()) {
       QueryContext queryContext = QueryContextHolder.current();
       ArchiveRepositoryAdapter root =
           new ArchiveRepositoryAdapter(reader, vmProperties, genesisComplete);
       TransactionContext context =
           new TransactionContext(block, trxCap, StoreFactory.getInstance(), true, false);
-      VMActuator vmActuator = new VMActuator(true);
+      VMActuator vmActuator = Objects.requireNonNull(
+          vmActuatorFactory.get(), "vmActuatorFactory result");
       vmActuator.setInjectedRootRepository(root);
       vmActuator.setInjectedVmProperties(vmProperties);
       boolean completedSuccessfully = false;
+      Error hardFailure = null;
       try {
         vmActuator.validate(context);
         vmActuator.execute(context);
@@ -64,14 +79,20 @@ public final class HistoricalConstantCallExecutor {
             result.getRuntimeError());
         completedSuccessfully = true;
         return callResult;
+      } catch (Error failure) {
+        hardFailure = failure;
+        throw failure;
       } finally {
-        VMConfig.clearLocalSnapshot();
         if (queryContext != null) {
-          if (queryContext.getRecordedExecutionTerminalFailure() != null) {
+          RuntimeException terminalFailure =
+              queryContext.getRecordedExecutionTerminalFailure();
+          if (terminalFailure != null && hardFailure != null) {
+            hardFailure.addSuppressed(terminalFailure);
+          } else if (terminalFailure != null) {
             // Restore the first budget or nested archive failure swallowed by VM execution.
-            throw queryContext.getRecordedExecutionTerminalFailure();
+            throw terminalFailure;
           }
-          if (completedSuccessfully) {
+          if (hardFailure == null && completedSuccessfully) {
             // Sample a newly-expired deadline only when no independent VM/validation failure won.
             queryContext.throwIfTerminated();
           }

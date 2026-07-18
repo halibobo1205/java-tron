@@ -1,19 +1,20 @@
 # From-0 archive-node production validation runbook
 
 **Purpose:** the go/no-go gate before running an **archive-ON** node syncing from genesis in production.
-**Scope:** archive-nodes-only. **Archive-OFF is out of scope** — it is byte-identical to a normal node
-(verified across three review rounds: `capturesStore` short-circuits on `engine==null`), so an
-archive-OFF from-0 sync carries no archive risk and needs no validation here.
+**Scope:** archive-nodes-only. **Archive-OFF is out of scope** — source invariants and regression
+tests through Round 16 preserve the normal-node mutation path when no capture engine is installed;
+the scale and fault gates below apply to archive-ON resources and persistence.
 
 ## Why this gate exists
 
-The archive code is functionally reviewed (3 adversarial rounds, no confirmed high/critical) and unit
-+ integration green. What is **not** yet demonstrated is behavior **at mainnet scale**: the design
-doc's own hard acceptance gates (`20260713-archive-performance-hardening-plan.md` §4) have not been
-measured on real data. A from-0 mainnet sync with archive ON is exactly the workload those gates
-target — sustained capture write-throughput, publisher catch-up, multi-day soak, disk/heap growth —
-and the **fail-stop design** means any archive error (disk full, corruption, an untested edge) halts
-the node mid-sync. So: validate the scale profile on non-critical infra first.
+The archive code has completed sixteen adversarial source-review rounds; those rounds found and
+fixed high-severity archive-ON defects, and the current focused/aggregate regression matrix is green.
+That evidence does **not** demonstrate behavior **at mainnet scale**: the design doc's own hard
+acceptance gates (`20260713-archive-performance-hardening-plan.md` §4) have not been measured on real
+data. A from-0 mainnet sync with archive ON is exactly the workload those gates target — sustained
+capture write-throughput, publisher catch-up, multi-day soak, disk/heap growth — and the
+**fail-stop design** means an archive error (disk full, corruption, an untested edge) halts the node
+mid-sync. So: validate the scale profile on non-critical infra first.
 
 ## Config to enable archive (the ON path under test)
 
@@ -61,12 +62,13 @@ continuously (§ Watch metrics). Pass criteria:
   reconcile publishes solidified in-flight) **without** `fullScrubOnStartup` and **without** a brick.
 
 ### Stage C — query correctness + soak (days)
-- **Correctness:** against an independent full/archive node, diff `eth_call` / `debug_traceTransaction`
-  / `eth_getBalance` / `eth_getStorageAt` at a **sample of historical blocks** (include an SSTORE-heavy
-  contract, a delete-recreate account, a TRC10 asset, and a block just before a fork-flag activation).
-  Any mismatch = blocker.
-- **Soak:** run the §4 mixed query load (32 getters / 8 eth_call / 2 trace concurrent) for ≥72h against
-  a finality-stall/catch-up cycle; retained heap flat after a 6h warmup (gate 7).
+- **Correctness:** against an independent full/archive node, diff `eth_call`, `eth_getBalance`,
+  `eth_getCode`, `eth_getTransactionCount`, and `eth_getStorageAt` at a **sample of historical
+  blocks** (include an SSTORE-heavy contract, a delete-recreate account, a TRC10 asset, and a block
+  just before a fork-flag activation). Any mismatch = blocker. Historical `debug_trace*` is outside
+  the supported archive API and must remain method-not-found.
+- **Soak:** run the §4 mixed query load (40 getters / 8 `eth_call` concurrent) for ≥72h against a
+  finality-stall/catch-up cycle; retained heap flat after a 6h warmup (gate 7).
 
 ### Stage D — production go/no-go
 Only after Stage B + C pass on non-critical infra **and** the remaining UNIFIED activation gates
@@ -98,8 +100,6 @@ Alert on:
   `tron:archive_state{type="oldest_inflight_block"}` remains fixed.
 - `tron:archive_state{type="disk_free_bytes"} < hardMinFreeBytes` or
   `tron:archive_state{type="active_snapshots"}` pinned at `maxOpenSnapshots`.
-- `tron:archive_state{type="retained_trace_bytes"}` approaching
-  `storage.archive.query.maxRetainedTraceBytes`.
 - `tron:archive_state{type="rocksdb_pending_compaction_bytes"}` rising without recovery, or a
   sustained increase in `tron:archive_work_total{type="rocksdb_stall_micros"}`.
 - `tron:archive_queries_total` failure/rejection labels spiking.

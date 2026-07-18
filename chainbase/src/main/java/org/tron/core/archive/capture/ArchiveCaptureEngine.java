@@ -12,8 +12,10 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.function.LongConsumer;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchiveExecutionContext;
+import org.tron.core.archive.ArchiveResourceEstimator;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
 import org.tron.core.archive.domain.ArchiveDomainCatalog;
@@ -44,15 +46,23 @@ import org.tron.protos.Protocol.Account;
  */
 public final class ArchiveCaptureEngine {
 
+  private static final LongConsumer IGNORE_RESOURCE_RESERVATION = ignored -> { };
+
   private final ArchiveDomainRegistry registry;
   private final ArchiveDomainCatalog catalog;
   private final DynamicKeyPolicy dynamicKeyPolicy;
   private final ArchiveExecutionContext context;
   private final long maxRawRecords;
   private final long maxRawBytes;
+  private final LongConsumer resourceReservation;
+  private final LongConsumer recordReservation;
   private final Map<ChangeKey, ArchiveChangeRecord> records = new LinkedHashMap<>();
   private int rawRecordCount;
+  private long retainedRecordBytes;
   private long rawRecordBytes;
+  private long capturedPayloadBytes;
+  private long resourceBaselineBytes;
+  private long transientRawBytes;
   private long previousValueReads;
   private long previousValueReadFailures;
   private long previousValueReadNanos;
@@ -71,15 +81,39 @@ public final class ArchiveCaptureEngine {
   public ArchiveCaptureEngine(ArchiveDomainRegistry registry, ArchiveDomainCatalog catalog,
       DynamicKeyPolicy dynamicKeyPolicy, ArchiveExecutionContext context,
       long maxRawRecords, long maxRawBytes) {
+    this(registry, catalog, dynamicKeyPolicy, context,
+        maxRawRecords, maxRawBytes, IGNORE_RESOURCE_RESERVATION,
+        IGNORE_RESOURCE_RESERVATION);
+  }
+
+  public ArchiveCaptureEngine(ArchiveDomainRegistry registry, ArchiveDomainCatalog catalog,
+      DynamicKeyPolicy dynamicKeyPolicy, ArchiveExecutionContext context,
+      long maxRawRecords, long maxRawBytes, LongConsumer resourceReservation) {
+    this(registry, catalog, dynamicKeyPolicy, context, maxRawRecords, maxRawBytes,
+        resourceReservation, IGNORE_RESOURCE_RESERVATION);
+  }
+
+  public ArchiveCaptureEngine(ArchiveDomainRegistry registry, ArchiveDomainCatalog catalog,
+      DynamicKeyPolicy dynamicKeyPolicy, ArchiveExecutionContext context,
+      long maxRawRecords, long maxRawBytes, LongConsumer resourceReservation,
+      LongConsumer recordReservation) {
     this.registry = registry;
     this.catalog = catalog;
     this.dynamicKeyPolicy = dynamicKeyPolicy;
     this.context = context;
+    if (resourceReservation == null) {
+      throw new NullPointerException("resourceReservation");
+    }
+    if (recordReservation == null) {
+      throw new NullPointerException("recordReservation");
+    }
     if (maxRawRecords <= 0 || maxRawBytes <= 0) {
       throw new IllegalArgumentException("archive capture limits must be positive");
     }
     this.maxRawRecords = maxRawRecords;
     this.maxRawBytes = maxRawBytes;
+    this.resourceReservation = resourceReservation;
+    this.recordReservation = recordReservation;
   }
 
   public void capturePut(String dbName, byte[] key, byte[] prevValue, byte[] value) {
@@ -110,8 +144,8 @@ public final class ArchiveCaptureEngine {
     if (failure != null) {
       return;
     }
-    Optional<ArchiveTxPosition> position = context.current();
-    if (!position.isPresent()) {
+    ArchiveTxPosition position = context.currentOrNull();
+    if (position == null) {
       return;
     }
     ArchiveDomainDescriptor descriptor = catalog.descriptorFor(domain);
@@ -124,7 +158,7 @@ public final class ArchiveCaptureEngine {
     DomainValue domainValue = delete
         ? descriptor.getValueCodec().normalizeDelete()
         : descriptor.getValueCodec().normalizePut(value);
-    append(new ArchiveChangeRecord(position.get(), domain, key, prev, domainValue));
+    append(position, domain, key, prev, domainValue);
   }
 
   /** Whether writes to {@code dbName} are archived; lets the Store path skip the prev-value read
@@ -173,7 +207,7 @@ public final class ArchiveCaptureEngine {
   }
 
   public boolean hasCurrentPosition() {
-    return context.current().isPresent();
+    return context.hasCurrent();
   }
 
   public boolean hasActiveBlock() {
@@ -181,7 +215,20 @@ public final class ArchiveCaptureEngine {
   }
 
   public void beginBlockCapture() {
+    beginBlockCapture(0L);
+  }
+
+  /** Starts capture while reserving resources retained by older in-flight blocks. */
+  public void beginBlockCapture(long resourceBaselineBytes) {
+    if (resourceBaselineBytes < 0L) {
+      throw new IllegalArgumentException("archive capture resource baseline must be non-negative");
+    }
     clear();
+    if (resourceBaselineBytes >= maxRawBytes) {
+      throw new ArchiveException("archive capture resource baseline reached hard watermark: bytes="
+          + resourceBaselineBytes);
+    }
+    this.resourceBaselineBytes = resourceBaselineBytes;
     blockActive = true;
   }
 
@@ -204,28 +251,42 @@ public final class ArchiveCaptureEngine {
     if (failure != null) {
       return;
     }
-    Optional<ArchiveTxPosition> position = context.current();
-    if (!position.isPresent()) {
+    ArchiveTxPosition position = context.currentOrNull();
+    if (position == null) {
       return;
     }
-    Map<String, Long> oldAssets = assetV2(oldAccount);
-    Map<String, Long> newAssets = assetV2(newAccount);
-    if (oldAssets.isEmpty() && newAssets.isEmpty()) {
-      return;
+    beginAccountAssetPlanning(addressKey, oldAccount, newAccount);
+    try {
+      Map<String, Long> oldAssets = assetV2(oldAccount);
+      Map<String, Long> newAssets = assetV2(newAccount);
+      if (oldAssets.isEmpty() && newAssets.isEmpty()) {
+        return;
+      }
+      ArchiveDomainDescriptor descriptor = catalog.descriptorFor(ArchiveDomain.ACCOUNT_ASSET);
+      if (descriptor == null) {
+        throw missingDescriptor(ArchiveDomain.ACCOUNT_ASSET);
+      }
+      Set<String> assetIds = new TreeSet<>(); // sorted for deterministic capture order
+      assetIds.addAll(oldAssets.keySet());
+      assetIds.addAll(newAssets.keySet());
+      for (String assetId : assetIds) {
+        long oldBalance = oldAssets.getOrDefault(assetId, 0L);
+        long newBalance = newAssets.getOrDefault(assetId, 0L);
+        captureAccountAsset(addressKey, assetId.getBytes(StandardCharsets.US_ASCII),
+            oldBalance, newBalance);
+      }
+    } finally {
+      endAccountAssetPlanning();
     }
-    ArchiveDomainDescriptor descriptor = catalog.descriptorFor(ArchiveDomain.ACCOUNT_ASSET);
-    if (descriptor == null) {
-      throw missingDescriptor(ArchiveDomain.ACCOUNT_ASSET);
-    }
-    Set<String> assetIds = new TreeSet<>(); // sorted for deterministic capture order
-    assetIds.addAll(oldAssets.keySet());
-    assetIds.addAll(newAssets.keySet());
-    for (String assetId : assetIds) {
-      long oldBalance = oldAssets.getOrDefault(assetId, 0L);
-      long newBalance = newAssets.getOrDefault(assetId, 0L);
-      captureAccountAsset(addressKey, assetId.getBytes(StandardCharsets.US_ASCII),
-          oldBalance, newBalance);
-    }
+  }
+
+  void beginAccountAssetPlanning(byte[] addressKey, byte[] oldAccount, byte[] newAccount) {
+    beginTransientRawInput(length(addressKey), length(oldAccount), length(newAccount));
+  }
+
+  void endAccountAssetPlanning() {
+    transientRawBytes = 0L;
+    reserveCaptureResources(Math.max(rawRecordBytes, retainedRecordBytes));
   }
 
   /** Captures one effective TRC10 balance transition without materializing an Account proto. */
@@ -234,8 +295,8 @@ public final class ArchiveCaptureEngine {
     if (failure != null) {
       return;
     }
-    Optional<ArchiveTxPosition> position = context.current();
-    if (!position.isPresent() || oldBalance == newBalance) {
+    ArchiveTxPosition position = context.currentOrNull();
+    if (position == null || oldBalance == newBalance) {
       return;
     }
     ArchiveDomainDescriptor descriptor = catalog.descriptorFor(ArchiveDomain.ACCOUNT_ASSET);
@@ -250,8 +311,7 @@ public final class ArchiveCaptureEngine {
     DomainValue value = newBalance == 0
         ? descriptor.getValueCodec().normalizeDelete()
         : descriptor.getValueCodec().normalizePut(Longs.toByteArray(newBalance));
-    append(new ArchiveChangeRecord(
-        position.get(), ArchiveDomain.ACCOUNT_ASSET, canonicalKey, prev, value));
+    append(position, ArchiveDomain.ACCOUNT_ASSET, canonicalKey, prev, value);
   }
 
   private Map<String, Long> assetV2(byte[] accountBytes) {
@@ -269,8 +329,8 @@ public final class ArchiveCaptureEngine {
     if (failure != null) {
       return;
     }
-    Optional<ArchiveTxPosition> position = context.current();
-    if (!position.isPresent()) {
+    ArchiveTxPosition position = context.currentOrNull();
+    if (position == null) {
       return; // outside block apply / archive disabled
     }
     StoreBinding binding = registry.bindingForDbName(dbName);
@@ -288,8 +348,7 @@ public final class ArchiveCaptureEngine {
     DomainValue domainValue = delete
         ? descriptor.getValueCodec().normalizeDelete()
         : descriptor.getValueCodec().normalizePut(value);
-    append(new ArchiveChangeRecord(position.get(), binding.getDomain().get(),
-        canonicalKey, prev, domainValue));
+    append(position, binding.getDomain().get(), canonicalKey, prev, domainValue);
   }
 
   /**
@@ -318,7 +377,7 @@ public final class ArchiveCaptureEngine {
   }
 
   private void requireKnownStore(StoreBinding binding) {
-    if (!binding.isKnown() && (context.current().isPresent() || blockActive)) {
+    if (!binding.isKnown() && (context.hasCurrent() || blockActive)) {
       throw new ArchiveException("archive store dbName is not classified: " + binding.getDbName());
     }
   }
@@ -339,6 +398,11 @@ public final class ArchiveCaptureEngine {
 
   public long rawRecordBytes() {
     return rawRecordBytes;
+  }
+
+  /** Exact merged key/value payload bytes, maintained incrementally for block metrics. */
+  public long capturedPayloadBytes() {
+    return capturedPayloadBytes;
   }
 
   public long previousValueReads() {
@@ -408,9 +472,14 @@ public final class ArchiveCaptureEngine {
   }
 
   public void clear() {
+    reserveCapturedRecords(0L);
     records.clear();
     rawRecordCount = 0;
+    retainedRecordBytes = 0L;
     rawRecordBytes = 0L;
+    capturedPayloadBytes = 0L;
+    resourceBaselineBytes = 0L;
+    transientRawBytes = 0L;
     previousValueReads = 0L;
     previousValueReadFailures = 0L;
     previousValueReadNanos = 0L;
@@ -420,36 +489,137 @@ public final class ArchiveCaptureEngine {
     accountAssetLookupNanos = 0L;
     failure = null;
     blockActive = false;
+    reserveCaptureResources(0L);
   }
 
-  private void append(ArchiveChangeRecord record) {
-    ChangeKey key = new ChangeKey(record);
+  private void append(ArchiveTxPosition position, ArchiveDomain domain, byte[] canonicalKey,
+      DomainValue prevValue, DomainValue value) {
+    ChangeKey key = new ChangeKey(position.getTxNum(), domain, canonicalKey);
     ArchiveChangeRecord prior = records.get(key);
     if (prior == null) {
-      records.put(key, record);
-      return;
-    }
-    if (!prior.getValue().contentEquals(record.getPrevValue())) {
-      if (failure == null) {
-        failure = new ArchiveException("archive capture prev-value chain mismatch for txNum "
-            + record.getTxNum());
+      long previousCount = records.size();
+      reserveCapturedRecords(previousCount + 1L);
+      try {
+        ArchiveChangeRecord record = new ArchiveChangeRecord(
+            position, domain, canonicalKey, prevValue, value);
+        updateRecordResources(null, record);
+        records.put(new ChangeKey(record), record);
+      } catch (RuntimeException | Error failure) {
+        try {
+          reserveCapturedRecords(previousCount);
+        } catch (RuntimeException | Error cleanupFailure) {
+          if (failure != cleanupFailure) {
+            failure.addSuppressed(cleanupFailure);
+          }
+        }
+        throw failure;
       }
       return;
     }
-    records.put(key, prior.withValue(record.getValue()));
+    if (!prior.getValue().contentEquals(prevValue)) {
+      if (failure == null) {
+        failure = new ArchiveException("archive capture prev-value chain mismatch for txNum "
+            + position.getTxNum());
+      }
+      return;
+    }
+    ArchiveChangeRecord merged = prior.withValue(value);
+    updateRecordResources(prior, merged);
+    records.put(key, merged);
   }
 
   private void reserveRawRecord(int keyBytes, int prevBytes, int valueBytes) {
-    long estimated = 256L + keyBytes + prevBytes + valueBytes;
+    long estimated = ArchiveResourceEstimator.estimatedRawRecordPipelineBytes(
+        keyBytes, prevBytes, valueBytes);
     long nextCount = (long) rawRecordCount + 1L;
-    long nextBytes = rawRecordBytes > Long.MAX_VALUE - estimated
-        ? Long.MAX_VALUE : rawRecordBytes + estimated;
-    if (nextCount > maxRawRecords || nextBytes > maxRawBytes) {
-      throw new ArchiveException("archive capture reached hard watermark: records="
-          + nextCount + ", bytes=" + nextBytes);
+    long capturePeak = ArchiveResourceEstimator.addSaturated(
+        retainedRecordBytes,
+        ArchiveResourceEstimator.addSaturated(transientRawBytes, estimated));
+    long captureBytes = Math.max(rawRecordBytes, capturePeak);
+    long activeBytes = ArchiveResourceEstimator.addSaturated(
+        resourceBaselineBytes, captureBytes);
+    if (nextCount > maxRawRecords || activeBytes > maxRawBytes) {
+      throw new ArchiveException("archive capture reached pipeline resource watermark: records="
+          + nextCount + ", bytes=" + activeBytes);
     }
+    reserveCaptureResources(captureBytes);
     rawRecordCount++;
-    rawRecordBytes = nextBytes;
+  }
+
+  private void beginTransientRawInput(int keyBytes, int prevBytes, int valueBytes) {
+    if (transientRawBytes != 0L) {
+      throw new ArchiveException("archive capture transient resource scope is already active");
+    }
+    long estimated = ArchiveResourceEstimator.estimatedRawRecordPipelineBytes(
+        keyBytes, prevBytes, valueBytes);
+    long capturePeak = ArchiveResourceEstimator.addSaturated(retainedRecordBytes, estimated);
+    long captureBytes = Math.max(rawRecordBytes, capturePeak);
+    long activeBytes = ArchiveResourceEstimator.addSaturated(
+        resourceBaselineBytes, captureBytes);
+    if (activeBytes > maxRawBytes) {
+      throw new ArchiveException("archive capture reached transient resource watermark: bytes="
+          + activeBytes);
+    }
+    reserveCaptureResources(captureBytes);
+    transientRawBytes = estimated;
+  }
+
+  private void updateRecordResources(ArchiveChangeRecord prior, ArchiveChangeRecord replacement) {
+    long previousRetained = prior == null ? 0L : estimatedRetainedBytes(prior);
+    long previousPipeline = prior == null ? 0L : estimatedPipelineBytes(prior);
+    long previousPayload = prior == null ? 0L : payloadBytes(prior);
+    long nextRetained = ArchiveResourceEstimator.addSaturated(
+        subtractChecked(retainedRecordBytes, previousRetained),
+        estimatedRetainedBytes(replacement));
+    long nextPipeline = ArchiveResourceEstimator.addSaturated(
+        subtractChecked(rawRecordBytes, previousPipeline),
+        estimatedPipelineBytes(replacement));
+    long nextPayload = ArchiveResourceEstimator.addSaturated(
+        subtractChecked(capturedPayloadBytes, previousPayload), payloadBytes(replacement));
+    long capturePeak = ArchiveResourceEstimator.addSaturated(
+        nextRetained, transientRawBytes);
+    long captureBytes = Math.max(nextPipeline, capturePeak);
+    long activeBytes = ArchiveResourceEstimator.addSaturated(
+        resourceBaselineBytes, captureBytes);
+    if (activeBytes > maxRawBytes) {
+      throw new ArchiveException("archive capture reached normalized resource watermark: bytes="
+          + activeBytes);
+    }
+    reserveCaptureResources(captureBytes);
+    retainedRecordBytes = nextRetained;
+    rawRecordBytes = nextPipeline;
+    capturedPayloadBytes = nextPayload;
+  }
+
+  private void reserveCaptureResources(long bytes) {
+    resourceReservation.accept(bytes);
+  }
+
+  private void reserveCapturedRecords(long count) {
+    recordReservation.accept(count);
+  }
+
+  private static long estimatedRetainedBytes(ArchiveChangeRecord record) {
+    return ArchiveResourceEstimator.estimatedRecordRetainedBytes(
+        record.canonicalKeySize(), record.getPrevValue().size(), record.getValue().size());
+  }
+
+  private static long estimatedPipelineBytes(ArchiveChangeRecord record) {
+    return ArchiveResourceEstimator.estimatedRawRecordPipelineBytes(
+        record.canonicalKeySize(), record.getPrevValue().size(), record.getValue().size());
+  }
+
+  private static long payloadBytes(ArchiveChangeRecord record) {
+    return ArchiveResourceEstimator.addSaturated(record.canonicalKeySize(),
+        ArchiveResourceEstimator.addSaturated(
+            record.getPrevValue().size(), record.getValue().size()));
+  }
+
+  private static long subtractChecked(long current, long amount) {
+    if (amount > current) {
+      throw new IllegalStateException("archive capture resource accounting underflow");
+    }
+    return current - amount;
   }
 
   private static int length(byte[] value) {
@@ -471,9 +641,13 @@ public final class ArchiveCaptureEngine {
     private final byte[] canonicalKey;
 
     private ChangeKey(ArchiveChangeRecord record) {
-      txNum = record.getTxNum();
-      domain = record.getDomain();
-      canonicalKey = record.canonicalKeyView();
+      this(record.getTxNum(), record.getDomain(), record.canonicalKeyView());
+    }
+
+    private ChangeKey(long txNum, ArchiveDomain domain, byte[] canonicalKey) {
+      this.txNum = txNum;
+      this.domain = domain;
+      this.canonicalKey = canonicalKey;
     }
 
     @Override

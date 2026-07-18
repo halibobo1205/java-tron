@@ -7,6 +7,9 @@ public interface DB<K, V> extends Iterable<Map.Entry<K, V>>, Instance<DB<K, V>> 
 
   V get(K k);
 
+  /** Point read that must not admit the fetched value into an implementation cache. */
+  V getWithoutCache(K k);
+
   void put(K k, V v);
 
   long size();

@@ -174,6 +174,16 @@ public class NoopArchiveServiceTest {
     assertTrue(failure.getMessage().contains("persistTxRoots cannot be true"));
   }
 
+  @Test
+  public void factoryRejectsUnsupportedDebugEnabled() {
+    StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
+    config.setEnable(true);
+    config.getDebug().setEnable(true);
+    ArchiveException failure = assertThrows(ArchiveException.class,
+        () -> createViaFactory(config));
+    assertTrue(failure.getMessage().contains("debug.enable is not supported"));
+  }
+
   @After
   public void clearCaptureHolder() {
     ArchiveCaptureHolder.clear();

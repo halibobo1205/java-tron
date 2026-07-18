@@ -17,6 +17,11 @@ public class ConcurrentHashDB implements DB<byte[], BytesCapsule> {
   }
 
   @Override
+  public BytesCapsule getWithoutCache(byte[] bytes) {
+    return get(bytes);
+  }
+
+  @Override
   public void put(byte[] bytes, BytesCapsule bytes2) {
     db.put(Key.of(bytes), bytes2);
   }

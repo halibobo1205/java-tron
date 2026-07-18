@@ -225,6 +225,17 @@ public final class InMemoryArchiveTemporalStore implements ArchiveTemporalStore 
 
   @Override
   public void unwind(long fromTxNum) {
+    if (fromTxNum < 0L) {
+      throw new ArchiveException("archive temporal txNum must be non-negative");
+    }
+    if (fromTxNum != 0L && !committedBlockNums.isEmpty()) {
+      throw new ArchiveException(
+          "committed archive temporal data must be unwound with unwindBlock");
+    }
+    unwindChanges(fromTxNum);
+  }
+
+  private void unwindChanges(long fromTxNum) {
     if (fromTxNum < 0) {
       throw new ArchiveException("archive temporal txNum must be non-negative");
     }
@@ -263,7 +274,7 @@ public final class InMemoryArchiveTemporalStore implements ArchiveTemporalStore 
       throw new ArchiveException("cannot unwind archive temporal block " + range.getBlockNum()
           + ": not temporal head");
     }
-    unwind(range.getFirstTxNum());
+    unwindChanges(range.getFirstTxNum());
     committedBlockNums.remove(range.getBlockNum());
   }
 

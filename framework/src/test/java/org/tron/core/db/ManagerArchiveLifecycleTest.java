@@ -13,6 +13,9 @@ import com.google.protobuf.ByteString;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.util.Arrays;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.After;
@@ -41,7 +44,6 @@ import org.tron.core.capsule.WitnessCapsule;
 import org.tron.core.config.args.Args;
 import org.tron.core.consensus.ConsensusService;
 import org.tron.core.exception.TronError;
-import org.tron.core.exception.jsonrpc.JsonRpcInternalException;
 import org.tron.core.services.jsonrpc.ArchiveJsonRpcStateAdapter;
 import org.tron.protos.Protocol;
 
@@ -112,6 +114,21 @@ public class ManagerArchiveLifecycleTest extends BaseMethodTest {
   }
 
   @Test
+  public void archiveErrorAfterCanonicalCommitEscalatesToTronError() {
+    ArchiveService failingArchive = mock(ArchiveService.class);
+    BlockCapsule block = new BlockCapsule(1, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY);
+    AssertionError failure = new AssertionError("ack failed");
+    doThrow(failure).when(failingArchive).acknowledgeCanonicalCommit(null);
+    ReflectUtils.setFieldValue(dbManager, "archiveService", failingArchive);
+
+    TronError error = assertThrows(TronError.class,
+        () -> dbManager.acknowledgeArchiveJournalOrFailStop(null, block, "push block"));
+
+    assertEquals(TronError.ErrCode.ARCHIVE_RUNTIME, error.getErrCode());
+    assertEquals(failure, error.getCause());
+  }
+
+  @Test
   public void archiveUnwindFailureAfterCanonicalPopEscalatesToTronError() {
     ArchiveService failingArchive = mock(ArchiveService.class);
     BlockCapsule block = new BlockCapsule(1, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY);
@@ -164,7 +181,12 @@ public class ManagerArchiveLifecycleTest extends BaseMethodTest {
   @Test
   public void partialArchiveBeginFailureCleansOrdinaryAppendForRetry() throws Exception {
     BlockCapsule block = signedEmptyBlock();
-    ArchiveException injected = new ArchiveException("injected partial begin failure");
+    ArchiveException injected = new ArchiveException("injected partial begin failure") {
+      @Override
+      public String getMessage() {
+        throw new AssertionError("message rendering failed");
+      }
+    };
     AtomicBoolean injectedOnce = new AtomicBoolean();
     ArchiveService failingArchive = (ArchiveService) Proxy.newProxyInstance(
         ArchiveService.class.getClassLoader(),
@@ -231,6 +253,58 @@ public class ManagerArchiveLifecycleTest extends BaseMethodTest {
         ((InMemoryArchiveTemporalStore) archiveService.getTemporalStore()).changeCount());
   }
 
+  @Test
+  public void standaloneEraseParticipatesInWriterLifecycle() throws Exception {
+    dbManager.pushBlock(signedEmptyBlock());
+    CountDownLatch unwindEntered = new CountDownLatch(1);
+    CountDownLatch allowUnwind = new CountDownLatch(1);
+    ArchiveService gatedArchive = (ArchiveService) Proxy.newProxyInstance(
+        ArchiveService.class.getClassLoader(), new Class<?>[] {ArchiveService.class},
+        (proxy, method, args) -> {
+          if ("unwindBlock".equals(method.getName())) {
+            unwindEntered.countDown();
+            assertTrue(allowUnwind.await(2, TimeUnit.SECONDS));
+          }
+          try {
+            return method.invoke(archiveService, args);
+          } catch (InvocationTargetException e) {
+            throw e.getCause();
+          }
+        });
+    ReflectUtils.setFieldValue(dbManager, "archiveService", gatedArchive);
+    FutureTask<Void> erase = new FutureTask<>(() -> {
+      dbManager.eraseBlock();
+      return null;
+    });
+    CountDownLatch closeStarted = new CountDownLatch(1);
+    FutureTask<Void> close = new FutureTask<>(() -> {
+      closeStarted.countDown();
+      archiveService.close();
+      return null;
+    });
+    Thread eraseThread = new Thread(erase, "archive-standalone-erase");
+    Thread closeThread = new Thread(close, "archive-close-during-erase");
+    try {
+      eraseThread.start();
+      assertTrue(unwindEntered.await(2, TimeUnit.SECONDS));
+      closeThread.start();
+      assertTrue(closeStarted.await(1, TimeUnit.SECONDS));
+      Thread.sleep(100L);
+
+      assertFalse("archive close must wait for canonical erase", close.isDone());
+      allowUnwind.countDown();
+      erase.get(2, TimeUnit.SECONDS);
+      close.get(2, TimeUnit.SECONDS);
+      assertEquals(0L,
+          chainManager.getDynamicPropertiesStore().getLatestBlockHeaderNumber());
+    } finally {
+      allowUnwind.countDown();
+      eraseThread.join(2_000L);
+      closeThread.join(2_000L);
+      ReflectUtils.setFieldValue(dbManager, "archiveService", archiveService);
+    }
+  }
+
   @After
   public void clearArchiveCaptureHolder() {
     // The enabled DefaultArchiveService installs a process-wide capture engine; clear it so other
@@ -270,6 +344,8 @@ public class ManagerArchiveLifecycleTest extends BaseMethodTest {
     }
     long expectedBalance = 123_456_789L;
 
+    publishArchiveGenesis();
+
     archiveService.beginBlock(block, ArchiveSource.NORMAL);
     archiveService.beginSystemTx(block, ArchivePhase.BLOCK_PREPARE);
     chainManager.getAccountStore().put(addr, new AccountCapsule(Protocol.Account.newBuilder()
@@ -292,13 +368,22 @@ public class ManagerArchiveLifecycleTest extends BaseMethodTest {
     assertEquals(ByteArray.toJsonHex(expectedBalance),
         adapter.getBalance(ByteArray.toHexString(addr), blockTag));
 
-    // This manual archive starts at block 1, so an account never written in this block is an
-    // unknown pre-coverage value rather than an implicit genesis-complete zero.
+    // From-genesis coverage makes a never-created account unambiguously absent.
     byte[] unknown = new byte[21];
     unknown[0] = 0x41;
     unknown[20] = (byte) 0xff;
-    JsonRpcInternalException ex = assertThrows(JsonRpcInternalException.class,
-        () -> adapter.getBalance(ByteArray.toHexString(unknown), blockTag));
-    assertEquals("archive account is unknown before mid-chain coverage", ex.getMessage());
+    assertEquals("0x0", adapter.getBalance(ByteArray.toHexString(unknown), blockTag));
+  }
+
+  private void publishArchiveGenesis() {
+    BlockCapsule genesis = new BlockCapsule(
+        0L, Sha256Hash.ZERO_HASH, 0L, ByteString.EMPTY);
+    archiveService.beginBlock(genesis, ArchiveSource.NORMAL);
+    archiveService.beginSystemTx(genesis, ArchivePhase.BLOCK_PREPARE);
+    archiveService.endTx();
+    archiveService.beginSystemTx(genesis, ArchivePhase.BLOCK_FINALIZE);
+    archiveService.endTx();
+    archiveService.commitBlock(genesis);
+    archiveService.publishSolidifiedBlocks(0L);
   }
 }

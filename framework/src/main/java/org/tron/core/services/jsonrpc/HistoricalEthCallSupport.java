@@ -5,15 +5,19 @@ import static org.tron.core.services.jsonrpc.JsonRpcApiUtil.triggerCallContract;
 
 import com.google.protobuf.ByteString;
 import java.util.Arrays;
+import java.util.Objects;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.Wallet;
 import org.tron.core.archive.ArchiveService;
+import org.tron.core.archive.ArchiveSnapshotInvalidatedException;
 import org.tron.core.archive.query.QueryContext;
+import org.tron.core.archive.query.QueryContextHolder;
 import org.tron.core.archive.reader.ArchiveReaderException;
 import org.tron.core.archive.reader.ArchiveStateReader;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
+import org.tron.core.config.args.Args;
 import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractValidateException;
 import org.tron.core.exception.jsonrpc.JsonRpcInternalException;
@@ -44,10 +48,25 @@ public final class HistoricalEthCallSupport {
 
   private final Wallet wallet;
   private final ArchiveService archiveService;
+  private final HistoricalConstantCallExecutor executor;
+  private final ConstantCallGate constantCallGate;
 
   public HistoricalEthCallSupport(Wallet wallet, ArchiveService archiveService) {
+    this(wallet, archiveService, new HistoricalConstantCallExecutor());
+  }
+
+  HistoricalEthCallSupport(Wallet wallet, ArchiveService archiveService,
+      HistoricalConstantCallExecutor executor) {
+    this(wallet, archiveService, executor,
+        HistoricalEthCallSupport::requireConstantCallsEnabled);
+  }
+
+  HistoricalEthCallSupport(Wallet wallet, ArchiveService archiveService,
+      HistoricalConstantCallExecutor executor, ConstantCallGate constantCallGate) {
     this.wallet = wallet;
     this.archiveService = archiveService;
+    this.executor = Objects.requireNonNull(executor, "executor");
+    this.constantCallGate = Objects.requireNonNull(constantCallGate, "constantCallGate");
   }
 
   /** True when the call is historical and must not fall back to latest state. */
@@ -76,9 +95,8 @@ public final class HistoricalEthCallSupport {
       validateHistoricalSelectorSyntax(blockNumOrTag);
     }
     requireArchiveEnabled();
-    // The reader (openReader) owns read consistency: a genesis-complete point runs against a
-    // released-lock snapshot, a mid-chain point holds the read lock until the reader closes. So the
-    // whole request no longer sits under the write-blocking lock -- only the snapshot capture does.
+    // The reader owns a from-genesis snapshot and validates its canonical epoch on close. A long
+    // VM execution therefore does not block fork handling, while a stale result still fails closed.
     try {
       BlockCapsule[] resolvedBlock = new BlockCapsule[1];
       ArchiveStateReader admittedReader;
@@ -103,16 +121,12 @@ public final class HistoricalEthCallSupport {
           if (requestedBlockHash != null) {
             requireResolvedBlockHash(blockNum, canonicalBlockHash, requestedBlockHash);
           }
-          reader.getQueryContext().recordBackendReads(2L);
-          Block currentBlock = wallet.getBlockByNum(blockNum);
-          byte[] currentBlockHash = currentBlock == null
-              ? null
-              : new BlockCapsule(currentBlock).getBlockId().getBytes();
-          requireResolvedBlockHash(blockNum, currentBlockHash, reader.getPoint().getBlockHash());
+          requireCanonicalBlockUnchanged(reader, blockNum);
 
           // Coverage and canonical identity are proven before touching the live VM configuration or
           // constructing the call. This keeps unsupported historical points on the archive error
           // surface even when the request payload itself is incomplete.
+          constantCallGate.requireEnabled();
           TriggerSmartContract trigger =
               triggerCallContract(ownerAddress, contractAddress, callValue, data, 0, null);
           boolean genesisComplete = reader.isGenesisComplete();
@@ -124,8 +138,11 @@ public final class HistoricalEthCallSupport {
               historicalEnergyFee, reader, genesisComplete);
           TransactionCapsule trxCap =
               createHistoricalCallTransaction(trigger, historicalBlock);
-          HistoricalConstantCallResult result = new HistoricalConstantCallExecutor()
-              .execute(reader, vmProperties, historicalBlock, trxCap, genesisComplete);
+          HistoricalConstantCallResult result = executor.execute(
+              reader, vmProperties, historicalBlock, trxCap, genesisComplete);
+          // Linearize the response before returning it: a fork during VM execution invalidates the
+          // old snapshot instead of allowing an orphan-state result to escape.
+          requireCanonicalBlockUnchanged(reader, blockNum);
           if (result.isReverted()) {
             recordJsonHexResponse(reader, result.getResult());
             // Mirror the latest path: message carries the decoded revert reason, while data carries
@@ -151,7 +168,8 @@ public final class HistoricalEthCallSupport {
       // Match the latest eth_call path, which maps a validate failure to an invalid-request error.
       throw new JsonRpcInvalidRequestException(
           e.getMessage() == null ? CONTRACT_VALIDATE_ERROR : e.getMessage());
-    } catch (ArchiveReaderException | HistoricalVmExecutionException
+    } catch (ArchiveReaderException | ArchiveSnapshotInvalidatedException
+        | HistoricalVmExecutionException
         | UnsupportedHistoricalStateException | ContractExeException e) {
       throw new JsonRpcInternalException(
           e.getMessage() == null ? "historical eth_call failed" : e.getMessage());
@@ -159,7 +177,7 @@ public final class HistoricalEthCallSupport {
   }
 
   private byte[] resolveCanonicalBlock(long blockNum, BlockCapsule[] resolvedBlock) {
-    Block block = wallet.getBlockByNum(blockNum);
+    Block block = wallet.getBlockByNumWithoutCache(blockNum);
     if (block == null) {
       throw new BlockHeaderNotFoundException();
     }
@@ -170,19 +188,27 @@ public final class HistoricalEthCallSupport {
 
   private BlockCapsule resolveCanonicalBlock(byte[] requestedHash,
       BlockCapsule[] resolvedBlock) {
-    Block requested = wallet.getBlockById(ByteString.copyFrom(requestedHash));
+    Block requested = wallet.getBlockByIdWithoutCache(ByteString.copyFrom(requestedHash));
     if (requested == null) {
       throw new BlockHeaderNotFoundException();
     }
     long blockNum = requested.getBlockHeader().getRawData().getNumber();
-    Block canonical = wallet.getBlockByNum(blockNum);
-    if (canonical == null
-        || !JsonRpcApiUtil.getBlockID(canonical).equals(JsonRpcApiUtil.getBlockID(requested))) {
+    byte[] canonicalBlockHash = wallet.getBlockIdByNumWithoutCache(blockNum);
+    if (!Arrays.equals(canonicalBlockHash, requestedHash)) {
       throw new BlockHeaderNotFoundException();
     }
     BlockCapsule blockCapsule = new BlockCapsule(requested);
     resolvedBlock[0] = blockCapsule;
     return blockCapsule;
+  }
+
+  private void requireCanonicalBlockUnchanged(ArchiveStateReader reader, long blockNum)
+      throws JsonRpcInternalException {
+    QueryContext queryContext = reader.getQueryContext();
+    try (QueryContextHolder.Scope ignored = QueryContextHolder.attach(queryContext)) {
+      byte[] currentBlockHash = wallet.getBlockIdByNumWithoutCache(blockNum);
+      requireResolvedBlockHash(blockNum, currentBlockHash, reader.getPoint().getBlockHash());
+    }
   }
 
   private static void recordJsonHexResponse(ArchiveStateReader reader, byte[] value) {
@@ -217,7 +243,19 @@ public final class HistoricalEthCallSupport {
     }
   }
 
-  private static void validateHistoricalSelectorSyntax(String blockNumOrTag)
+  static void requireConstantCallsEnabled() throws JsonRpcInvalidRequestException {
+    if (!Args.getInstance().isSupportConstant()) {
+      throw new JsonRpcInvalidRequestException("this node does not support constant");
+    }
+  }
+
+  @FunctionalInterface
+  interface ConstantCallGate {
+
+    void requireEnabled() throws JsonRpcInvalidRequestException;
+  }
+
+  static void validateHistoricalSelectorSyntax(String blockNumOrTag)
       throws JsonRpcInvalidParamsException {
     if (JsonRpcApiUtil.PENDING_STR.equalsIgnoreCase(blockNumOrTag)) {
       throw new JsonRpcInvalidParamsException(JsonRpcApiUtil.TAG_PENDING_SUPPORT_ERROR);

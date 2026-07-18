@@ -65,6 +65,15 @@ public class DeterministicProtoValueCodecTest {
     assertThrows(ArchiveException.class, () -> codec.normalizePut(new byte[] {(byte) 0xff, 0x01}));
   }
 
+  @Test
+  public void proofBoundValidationDoesNotInvokeProtoParser() {
+    DomainValue malformed = DomainValue.present(new byte[] {(byte) 0xff, 0x01});
+
+    assertThrows(ArchiveException.class, () -> codec.validate(malformed));
+    codec.validateProofBound(malformed);
+    assertThrows(ArchiveException.class, () -> codec.validateProofBound(null));
+  }
+
   private static UnknownFieldSet unknownFields() {
     return UnknownFieldSet.newBuilder()
         .addField(12345, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())

@@ -59,7 +59,35 @@ public final class ArchiveTxPosition {
     return Arrays.copyOf(txId, txId.length);
   }
 
+  public int txIdSize() {
+    return txId.length;
+  }
+
+  public void copyTxIdTo(byte[] target, int offset) {
+    System.arraycopy(txId, 0, target, offset, txId.length);
+  }
+
   public byte[] getBlockHash() {
     return Arrays.copyOf(blockHash, blockHash.length);
+  }
+
+  public int blockHashSize() {
+    return blockHash.length;
+  }
+
+  public void copyBlockHashTo(byte[] target, int offset) {
+    System.arraycopy(blockHash, 0, target, offset, blockHash.length);
+  }
+
+  /** Allocation-free equality for persistent journal/index integrity checks. */
+  public boolean contentEquals(ArchiveTxPosition other) {
+    return other != null
+        && txNum == other.txNum
+        && blockNum == other.blockNum
+        && phase == other.phase
+        && source == other.source
+        && txIndex == other.txIndex
+        && Arrays.equals(txId, other.txId)
+        && Arrays.equals(blockHash, other.blockHash);
   }
 }

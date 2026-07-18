@@ -43,7 +43,7 @@ public final class BytesValueCodec implements CanonicalValueCodec {
     if (value == null) {
       throw new ArchiveException(codecId + ": DomainValue must not be null");
     }
-    if (!value.isDeleted() && !allowEmptyValue && value.getValue().length == 0) {
+    if (!value.isDeleted() && !allowEmptyValue && value.size() == 0) {
       throw new ArchiveException(codecId + ": present value must not be empty");
     }
   }

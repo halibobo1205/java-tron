@@ -9,6 +9,7 @@ import static org.mockito.AdditionalMatchers.aryEq;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -24,10 +25,12 @@ import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -46,6 +49,7 @@ import org.tron.core.archive.domain.DefaultArchiveDomainRegistry;
 import org.tron.core.archive.domain.DynamicKeyPolicy;
 import org.tron.core.archive.txnum.ArchiveTxPosition;
 import org.tron.core.capsule.AccountCapsule;
+import org.tron.core.capsule.utils.AssetUtil;
 import org.tron.core.db.TronStoreWithRevoking;
 import org.tron.core.db.accountstate.AccountStateCallBackUtils;
 import org.tron.core.db2.common.IRevokingDB;
@@ -54,17 +58,25 @@ import org.tron.protos.Protocol.Account;
 public class AccountStoreArchiveCaptureTest {
 
   private boolean historyBalanceLookup;
+  private AccountAssetStore previousAssetUtilStore;
+  private DynamicPropertiesStore previousAssetUtilDynamicStore;
 
   @Before
-  public void disableHistoryBalanceLookup() {
+  public void disableHistoryBalanceLookup() throws Exception {
     historyBalanceLookup = CommonParameter.getInstance().isHistoryBalanceLookup();
     CommonParameter.getInstance().setHistoryBalanceLookup(false);
+    previousAssetUtilStore = (AccountAssetStore) getStaticField(
+        AssetUtil.class, "accountAssetStore");
+    previousAssetUtilDynamicStore = (DynamicPropertiesStore) getStaticField(
+        AssetUtil.class, "dynamicPropertiesStore");
   }
 
   @After
   public void cleanUp() {
     ArchiveCaptureHolder.clear();
     CommonParameter.getInstance().setHistoryBalanceLookup(historyBalanceLookup);
+    AssetUtil.setAccountAssetStore(previousAssetUtilStore);
+    AssetUtil.setDynamicPropertiesStore(previousAssetUtilDynamicStore);
   }
 
   @Test
@@ -142,6 +154,45 @@ public class AccountStoreArchiveCaptureTest {
   }
 
   @Test
+  public void historyLookupAndArchivePutShareOnePreviousAccountRead() throws Exception {
+    CommonParameter.getInstance().setHistoryBalanceLookup(true);
+    byte[] address = address();
+    AccountCapsule oldAccount = account(address, false);
+    AccountCapsule newAccount = account(address, false);
+    AccountAssetStore assetStore = mock(AccountAssetStore.class);
+    IRevokingDB revokingDb = mock(IRevokingDB.class);
+    when(revokingDb.getUnchecked(same(address))).thenReturn(oldAccount.getData());
+    AccountStore store = accountStore(assetStore, revokingDb);
+    ArchiveCaptureEngine engine = startCapture();
+
+    store.put(address, newAccount);
+
+    verify(revokingDb, times(1)).getUnchecked(same(address));
+    verify(revokingDb).put(same(address), aryEq(newAccount.getData()));
+    assertEquals(1, engine.records().size());
+    assertFalse(engine.failure().isPresent());
+  }
+
+  @Test
+  public void historyLookupAndArchiveDeleteShareOnePreviousAccountRead() throws Exception {
+    CommonParameter.getInstance().setHistoryBalanceLookup(true);
+    byte[] address = address();
+    AccountCapsule oldAccount = account(address, false);
+    AccountAssetStore assetStore = mock(AccountAssetStore.class);
+    IRevokingDB revokingDb = mock(IRevokingDB.class);
+    when(revokingDb.getUnchecked(same(address))).thenReturn(oldAccount.getData());
+    AccountStore store = accountStore(assetStore, revokingDb);
+    ArchiveCaptureEngine engine = startCapture();
+
+    store.delete(address);
+
+    verify(revokingDb, times(1)).getUnchecked(same(address));
+    verify(revokingDb).delete(same(address));
+    assertEquals(1, engine.records().size());
+    assertFalse(engine.failure().isPresent());
+  }
+
+  @Test
   public void unchangedAssetStateSkipsAssetPlanningAndPhysicalReads() throws Exception {
     byte[] address = address();
     AccountCapsule oldAccount = account(address, true, "asset", 7L);
@@ -162,6 +213,141 @@ public class AccountStoreArchiveCaptureTest {
     assertEquals(1, engine.records().size());
     assertEquals(ArchiveDomain.ACCOUNT, engine.records().get(0).getDomain());
     assertFalse(engine.failure().isPresent());
+  }
+
+  @Test
+  public void storeLoadedAccountCapturesOnlyTouchedAssetAndRebasesHint() throws Exception {
+    byte[] address = address();
+    AccountCapsule oldAccount = account(address, false,
+        "asset-a", 1L, "asset-b", 2L, "asset-c", 3L);
+    AccountAssetStore assetStore = mock(AccountAssetStore.class);
+    IRevokingDB revokingDb = mock(IRevokingDB.class);
+    when(revokingDb.getUnchecked(same(address))).thenReturn(oldAccount.getData());
+    AccountStore store = accountStore(assetStore, revokingDb);
+    ArchiveCaptureEngine engine = startCapture();
+
+    AccountCapsule updated = store.get(address);
+    updated.addAssetMapV2(Collections.singletonMap("asset-b", 9L));
+    assertTrue(updated.hasCompleteAssetV2ChangeTracking());
+    assertEquals(Collections.singleton("asset-b"), updated.snapshotModifiedAssetV2());
+
+    store.put(address, updated);
+
+    assertTrue(updated.hasCompleteAssetV2ChangeTracking());
+    assertTrue(updated.snapshotModifiedAssetV2().isEmpty());
+    verify(assetStore, never()).scanPhysicalAssets(
+        any(byte[].class), any(AccountAssetStore.PhysicalAssetConsumer.class));
+    verify(assetStore, never()).getBalance(any(byte[].class), any(byte[].class));
+    assertEquals(2, engine.records().size());
+    assertAccountPut(engine.records().get(0), address);
+    assertAsset(engine.records().get(1), address, "asset-b", 2L, 9L);
+    assertFalse(engine.failure().isPresent());
+  }
+
+  @Test
+  public void staleStoreLoadedHintFallsBackToActualPreviousVersion() throws Exception {
+    byte[] address = address();
+    AccountCapsule oldAccount = account(address, false, "asset", 1L);
+    AtomicReference<byte[]> canonical = new AtomicReference<>(oldAccount.getData());
+    AccountAssetStore assetStore = mock(AccountAssetStore.class);
+    IRevokingDB revokingDb = mock(IRevokingDB.class);
+    when(revokingDb.getUnchecked(same(address))).thenAnswer(
+        invocation -> canonical.get());
+    doAnswer(invocation -> {
+      byte[] value = invocation.getArgument(1);
+      canonical.set(Arrays.copyOf(value, value.length));
+      return null;
+    }).when(revokingDb).put(same(address), any(byte[].class));
+    AccountStore store = accountStore(assetStore, revokingDb);
+    ArchiveCaptureEngine engine = startCapture();
+
+    AccountCapsule stale = store.get(address);
+    AccountCapsule assetWriter = store.get(address);
+    assetWriter.addAssetMapV2(Collections.singletonMap("asset", 9L));
+    store.put(address, assetWriter);
+
+    stale.setBalance(99L);
+    store.put(address, stale);
+
+    List<ArchiveChangeRecord> assetRecords = new ArrayList<>();
+    for (ArchiveChangeRecord record : engine.records()) {
+      if (record.getDomain() == ArchiveDomain.ACCOUNT_ASSET) {
+        assetRecords.add(record);
+      }
+    }
+    assertEquals(1, assetRecords.size());
+    assertAsset(assetRecords.get(0), address, "asset", 1L, 1L);
+    assertFalse(engine.failure().isPresent());
+  }
+
+  @Test
+  public void lazyImportedAssetTracksPhysicalVersionWhenAccountRowIsUnchanged() throws Exception {
+    byte[] address = address();
+    byte[] assetId = bytes("asset");
+    AccountCapsule canonicalAccount = account(address, true);
+    AccountAssetStore assetStore = mock(AccountAssetStore.class);
+    when(assetStore.getBalance(any(Account.class), any(byte[].class))).thenReturn(1L);
+    when(assetStore.getBalance(any(byte[].class), any(byte[].class))).thenReturn(9L);
+    DynamicPropertiesStore dynamicStore = mock(DynamicPropertiesStore.class);
+    when(dynamicStore.supportAllowAssetOptimization()).thenReturn(true);
+    AssetUtil.setAccountAssetStore(assetStore);
+    AssetUtil.setDynamicPropertiesStore(dynamicStore);
+    IRevokingDB revokingDb = mock(IRevokingDB.class);
+    when(revokingDb.getUnchecked(same(address))).thenReturn(canonicalAccount.getData());
+    AccountStore store = accountStore(assetStore, revokingDb);
+    ArchiveCaptureEngine engine = startCapture();
+
+    AccountCapsule stale = store.get(address);
+    assertEquals(1L, stale.getAssetV2("asset"));
+    assertEquals(Collections.singleton("asset"), stale.snapshotModifiedAssetV2());
+    stale.setBalance(99L);
+    store.put(address, stale);
+
+    verify(assetStore).getBalance(any(Account.class), aryEq(assetId));
+    verify(assetStore).getBalance(same(address), aryEq(assetId));
+    verify(assetStore, never()).scanPhysicalAssets(
+        any(byte[].class), any(AccountAssetStore.PhysicalAssetConsumer.class));
+    assertEquals(2, engine.records().size());
+    assertEquals(ArchiveDomain.ACCOUNT, engine.records().get(0).getDomain());
+    assertArrayEquals(address, engine.records().get(0).getCanonicalKey());
+    assertAsset(engine.records().get(1), address, "asset", 9L, 1L);
+    assertFalse(engine.failure().isPresent());
+  }
+
+  @Test
+  public void wholeAccountReplacementInvalidatesHintAndFallsBackToValueDiff() throws Exception {
+    byte[] address = address();
+    AccountCapsule oldAccount = account(address, false, "asset-a", 1L, "asset-b", 2L);
+    AccountAssetStore assetStore = mock(AccountAssetStore.class);
+    IRevokingDB revokingDb = mock(IRevokingDB.class);
+    when(revokingDb.getUnchecked(same(address))).thenReturn(oldAccount.getData());
+    AccountStore store = accountStore(assetStore, revokingDb);
+    ArchiveCaptureEngine engine = startCapture();
+
+    AccountCapsule updated = store.get(address);
+    updated.setInstance(updated.getInstance().toBuilder().putAssetV2("asset-a", 7L).build());
+    assertFalse(updated.hasCompleteAssetV2ChangeTracking());
+
+    store.put(address, updated);
+
+    assertEquals(2, engine.records().size());
+    assertAsset(engine.records().get(1), address, "asset-a", 1L, 7L);
+    assertFalse(engine.failure().isPresent());
+  }
+
+  @Test
+  public void storeReadOutsideArchiveCaptureDoesNotEnableAssetTracking() throws Exception {
+    byte[] address = address();
+    AccountCapsule oldAccount = account(address, false, "asset", 1L);
+    AccountAssetStore assetStore = mock(AccountAssetStore.class);
+    IRevokingDB revokingDb = mock(IRevokingDB.class);
+    when(revokingDb.getUnchecked(same(address))).thenReturn(oldAccount.getData());
+    AccountStore store = accountStore(assetStore, revokingDb);
+
+    AccountCapsule loaded = store.get(address);
+
+    assertFalse(loaded.hasCompleteAssetV2ChangeTracking());
+    assertTrue(loaded.snapshotModifiedAssetV2().isEmpty());
   }
 
   @Test
@@ -280,12 +466,52 @@ public class AccountStoreArchiveCaptureTest {
     assertTrue(engine.failure().isPresent());
   }
 
+  @Test
+  public void plannerInputBudgetRejectsBeforeProtoParsingOrPhysicalReads() throws Exception {
+    byte[] address = address();
+    AccountAssetStore assetStore = mock(AccountAssetStore.class);
+    AccountStore store = plannerStore(assetStore);
+    ArchiveCaptureEngine engine = startCapture(Long.MAX_VALUE, 2_000L);
+    byte[] oversizedInvalidAccount = new byte[256];
+    Arrays.fill(oversizedInvalidAccount, (byte) 0xff);
+
+    capturePlannedTransitions(store, address, null, oversizedInvalidAccount);
+
+    assertTrue(engine.failure().isPresent());
+    assertTrue(engine.failure().get().getCause().getMessage()
+        .contains("transient resource watermark"));
+    verify(assetStore, never()).scanPhysicalAssets(
+        any(byte[].class), any(AccountAssetStore.PhysicalAssetConsumer.class));
+    verify(assetStore, never()).getBalance(any(byte[].class), any(byte[].class));
+  }
+
+  @Test
+  public void plannerScopeClosesAfterUnchangedAssetEarlyReturn() throws Exception {
+    byte[] address = address();
+    AccountAssetStore assetStore = mock(AccountAssetStore.class);
+    AccountStore store = plannerStore(assetStore);
+    ArchiveCaptureEngine engine = startCapture();
+    byte[] oldAccount = account(address, true, "asset", 7L).getData();
+    byte[] newAccount = account(address, true, "asset", 7L).getData();
+
+    capturePlannedTransitions(store, address, oldAccount, newAccount);
+    capturePlannedTransitions(store, address, oldAccount, newAccount);
+
+    assertTrue(engine.records().isEmpty());
+    assertFalse(engine.failure().isPresent());
+    verify(assetStore, never()).scanPhysicalAssets(
+        any(byte[].class), any(AccountAssetStore.PhysicalAssetConsumer.class));
+    verify(assetStore, never()).getBalance(any(byte[].class), any(byte[].class));
+  }
+
   private static AccountStore accountStore(AccountAssetStore assetStore, IRevokingDB revokingDb)
       throws Exception {
     AccountStore store = plannerStore(assetStore);
     setField(TronStoreWithRevoking.class, store, "revokingDB", revokingDb);
     setField(AccountStore.class, store, "accountStateCallBackUtils",
         mock(AccountStateCallBackUtils.class));
+    setField(AccountStore.class, store, "balanceTraceStore", mock(BalanceTraceStore.class));
+    setField(AccountStore.class, store, "accountTraceStore", mock(AccountTraceStore.class));
     doReturn("account").when(store).getDbName();
     return store;
   }
@@ -303,12 +529,18 @@ public class AccountStoreArchiveCaptureTest {
     field.set(target, value);
   }
 
+  private static Object getStaticField(Class<?> owner, String name) throws Exception {
+    Field field = owner.getDeclaredField(name);
+    field.setAccessible(true);
+    return field.get(null);
+  }
+
   private static void capturePlannedTransitions(AccountStore store, byte[] address,
       byte[] oldAccount, byte[] newAccount) throws Exception {
     Method capture = AccountStore.class.getDeclaredMethod("captureAccountAssetTransitions",
-        byte[].class, byte[].class, byte[].class);
+        byte[].class, byte[].class, byte[].class, Account.class);
     capture.setAccessible(true);
-    capture.invoke(store, address, oldAccount, newAccount);
+    capture.invoke(store, address, oldAccount, newAccount, null);
   }
 
   private static void stubPhysicalScan(AccountAssetStore store, byte[] address,
@@ -329,10 +561,14 @@ public class AccountStoreArchiveCaptureTest {
   }
 
   private static ArchiveCaptureEngine startCapture(long maxRawRecords) {
+    return startCapture(maxRawRecords, Long.MAX_VALUE);
+  }
+
+  private static ArchiveCaptureEngine startCapture(long maxRawRecords, long maxRawBytes) {
     ArchiveExecutionContext context = new ArchiveExecutionContext();
     ArchiveCaptureEngine engine = new ArchiveCaptureEngine(
         new DefaultArchiveDomainRegistry(), new DefaultArchiveDomainCatalog(),
-        new DynamicKeyPolicy(), context, maxRawRecords, Long.MAX_VALUE);
+        new DynamicKeyPolicy(), context, maxRawRecords, maxRawBytes);
     context.enter(new ArchiveTxPosition(
         41L, 7L, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, new byte[] {1}));
     ArchiveCaptureHolder.set(engine);

@@ -10,6 +10,8 @@ import static org.mockito.Mockito.when;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.Test;
+import org.rocksdb.RocksDBException;
+import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveSource;
 import org.tron.core.archive.codec.DomainValue;
@@ -158,6 +160,36 @@ public class ArchiveStateReaderFactoryTest {
         () -> guarded.open(ArchiveStatePoint.blockEnd(1, hash, range.getFinalizeTxNum())));
 
     assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, e.getReason());
+  }
+
+  @Test
+  public void blockRangeIoFailureIsNotMisclassifiedAsCorruption() {
+    ArchiveTxNumIndex index = mock(ArchiveTxNumIndex.class);
+    when(index.getBlockRange(1L)).thenThrow(new ArchiveException(
+        "block-range read failed", new RocksDBException("injected RocksDB I/O failure")));
+    ArchiveStateReaderFactory factory = factory(index, new InMemoryArchiveTemporalStore());
+
+    ArchiveReaderException failure = assertThrows(ArchiveReaderException.class,
+        () -> factory.open(ArchiveStatePoint.blockEnd(1L, blockHash(1), 1L)));
+
+    assertEquals(ArchiveReaderException.Reason.INTERNAL_IO, failure.getReason());
+  }
+
+  @Test
+  public void coverageFloorIoFailureIsNotMisclassifiedAsCorruption() {
+    byte[] hash = blockHash(1);
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        1L, 0L, 1L, 0L, 1L, hash, 0, ArchiveSource.NORMAL, new byte[32]);
+    ArchiveTxNumIndex index = mock(ArchiveTxNumIndex.class);
+    when(index.getBlockRange(1L)).thenReturn(Optional.of(range));
+    when(index.getFirstArchivedBlock()).thenThrow(new ArchiveException(
+        "coverage read failed", new RocksDBException("injected RocksDB I/O failure")));
+    ArchiveStateReaderFactory factory = factory(index, new InMemoryArchiveTemporalStore());
+
+    ArchiveReaderException failure = assertThrows(ArchiveReaderException.class,
+        () -> factory.open(ArchiveStatePoint.blockEnd(1L, hash, range.getFinalizeTxNum())));
+
+    assertEquals(ArchiveReaderException.Reason.INTERNAL_IO, failure.getReason());
   }
 
   @Test

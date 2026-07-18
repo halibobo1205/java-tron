@@ -3,6 +3,7 @@ package org.tron.core.vm.archive;
 import static org.tron.common.math.Maths.addExact;
 
 import com.google.protobuf.ByteString;
+import com.google.protobuf.MessageLite;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -17,6 +18,7 @@ import org.tron.core.archive.reader.ArchiveReaderException;
 import org.tron.core.archive.reader.ArchiveStateReader;
 import org.tron.core.archive.query.QueryContext;
 import org.tron.core.archive.query.QueryContextHolder;
+import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.AssetIssueCapsule;
 import org.tron.core.capsule.BlockCapsule;
@@ -32,7 +34,6 @@ import org.tron.core.store.AssetIssueStore;
 import org.tron.core.store.AssetIssueV2Store;
 import org.tron.core.store.DelegationStore;
 import org.tron.core.store.DynamicPropertiesStore;
-import org.tron.core.store.StoreFactory;
 import org.tron.core.store.VmDynamicProperties;
 import org.tron.core.vm.config.VMConfig;
 import org.tron.core.vm.program.Storage;
@@ -58,7 +59,9 @@ import org.tron.protos.Protocol;
 public class ArchiveRepositoryAdapter implements Repository {
 
   private static final String NEEDS_BLOCK_CTX = " needs block context (L8 Slice 3b)";
-  private static final int MAX_BLOCK_HASH_CACHE_ENTRIES = 256;
+  // BLOCKHASH exposes 256 ancestors and CHAINID additionally pins block zero at mature heights.
+  private static final int MAX_BLOCK_HASH_CACHE_ENTRIES = 257;
+  private static final long OVERLAY_ENTRY_OVERHEAD_BYTES = 192L;
 
   // Root: reader + vmProperties set, parent null. Child: parent set, reader/vmProperties null.
   private final ArchiveStateReader reader;
@@ -117,12 +120,12 @@ public class ArchiveRepositoryAdapter implements Repository {
     Key key = Key.create(address);
     if (accounts.containsKey(key)) {
       AccountCapsule account = accounts.get(key);
-      return account == null ? null : new AccountCapsule(account.getData());
+      return account == null ? null : copyAccount(account);
     }
     if (parent != null) {
       return parent.getAccount(address);
     }
-    return present(read(() -> reader.getAccount(address), "account"), "account");
+    return copyAccount(present(read(() -> reader.getAccount(address), "account"), "account"));
   }
 
   @Override
@@ -139,13 +142,13 @@ public class ArchiveRepositoryAdapter implements Repository {
     }
     Key accountKey = Key.create(address);
     Key tokenKey = Key.create(tokenIdWithoutLeadingZero);
-    Map<Key, Long> balances = tokenBalances.get(accountKey);
-    if (balances != null && balances.containsKey(tokenKey)) {
-      return balances.get(tokenKey);
-    }
     AccountCapsule account = getAccount(address);
     if (account == null) {
       return 0L;
+    }
+    Map<Key, Long> balances = tokenBalances.get(accountKey);
+    if (balances != null && balances.containsKey(tokenKey)) {
+      return balances.get(tokenKey);
     }
     if (parent != null) {
       return parent.getTokenBalance(address, tokenId);
@@ -166,7 +169,8 @@ public class ArchiveRepositoryAdapter implements Repository {
     if (parent != null) {
       return parent.getCode(address);
     }
-    return present(read(() -> reader.getCode(address), "code"), "code");
+    byte[] code = present(read(() -> reader.getCode(address), "code"), "code");
+    return code == null ? null : code.clone();
   }
 
   @Override
@@ -174,17 +178,20 @@ public class ArchiveRepositoryAdapter implements Repository {
     Key key = Key.create(address);
     if (contracts.containsKey(key)) {
       ContractCapsule contract = contracts.get(key);
-      return contract == null ? null : new ContractCapsule(contract.getData());
+      return contract == null ? null : copyContract(contract);
     }
     if (parent != null) {
       return parent.getContract(address);
     }
-    return present(read(() -> reader.getContract(address), "contract"), "contract");
+    return copyContract(present(read(() -> reader.getContract(address), "contract"), "contract"));
   }
 
   @Override
   public DataWord getStorageValue(byte[] address, DataWord key) {
     byte[] tronAddress = TransactionTrace.convertToTronAddress(address);
+    if (getAccount(tronAddress) == null) {
+      return null;
+    }
     Map<DataWord, DataWord> slots = storage.get(Key.create(tronAddress));
     if (slots != null && slots.containsKey(key)) {
       DataWord value = slots.get(key);
@@ -192,9 +199,6 @@ public class ArchiveRepositoryAdapter implements Repository {
     }
     if (parent != null) {
       return parent.getStorageValue(address, key);
-    }
-    if (getAccount(tronAddress) == null) {
-      return null;
     }
     ArchiveReadResult<byte[]> row = read(() -> reader.getStorage(tronAddress, key.getData()),
         "storage");
@@ -227,12 +231,16 @@ public class ArchiveRepositoryAdapter implements Repository {
 
   @Override
   public void putAccountValue(byte[] address, AccountCapsule accountCapsule) {
-    accounts.put(Key.create(address), accountCapsule);
+    reserveOverlayMessage(address,
+        accountCapsule == null ? null : accountCapsule.getInstance());
+    accounts.put(Key.create(address), copyAccount(accountCapsule));
   }
 
   @Override
   public void updateAccount(byte[] address, AccountCapsule accountCapsule) {
-    accounts.put(Key.create(address), accountCapsule);
+    reserveOverlayMessage(address,
+        accountCapsule == null ? null : accountCapsule.getInstance());
+    accounts.put(Key.create(address), copyAccount(accountCapsule));
   }
 
   @Override
@@ -244,38 +252,57 @@ public class ArchiveRepositoryAdapter implements Repository {
       account = createAccount(address, Protocol.AccountType.Normal);
     }
     account.setBalance(addExact(account.getBalance(), value, VMConfig.disableJavaLangMath()));
+    reserveOverlayMessage(address, account.getInstance());
     accounts.put(Key.create(address), account);
     return account.getBalance();
   }
 
   @Override
   public void saveCode(byte[] address, byte[] code) {
-    codes.put(Key.create(address), code);
+    reserveOverlay(address, code);
+    codes.put(Key.create(address), code == null ? null : code.clone());
   }
 
   @Override
   public void createContract(byte[] address, ContractCapsule contractCapsule) {
-    contracts.put(Key.create(address), contractCapsule);
+    reserveOverlayMessage(address,
+        contractCapsule == null ? null : contractCapsule.getInstance());
+    reserveOverlay(address);
+    Key key = Key.create(address);
+    contracts.put(key, copyContract(contractCapsule));
+    newContracts.add(key);
   }
 
   @Override
   public void updateContract(byte[] address, ContractCapsule contractCapsule) {
-    contracts.put(Key.create(address), contractCapsule);
+    reserveOverlayMessage(address,
+        contractCapsule == null ? null : contractCapsule.getInstance());
+    contracts.put(Key.create(address), copyContract(contractCapsule));
   }
 
   @Override
   public void deleteContract(byte[] address) {
-    contracts.put(Key.create(address), null);
+    reserveOverlay(address);
+    reserveOverlay(address);
+    reserveOverlay(address);
+    Key key = Key.create(address);
+    accounts.put(key, null);
+    codes.put(key, null);
+    contracts.put(key, null);
+    storage.remove(key);
+    tokenBalances.remove(key);
   }
 
   @Override
   public void putNewContract(byte[] address) {
+    reserveOverlay(address);
     newContracts.add(Key.create(address));
   }
 
   @Override
   public void putStorageValue(byte[] address, DataWord key, DataWord value) {
     byte[] tronAddress = TransactionTrace.convertToTronAddress(address);
+    reserveOverlay(tronAddress, key.getData(), value.getData());
     storage.computeIfAbsent(Key.create(tronAddress), k -> new HashMap<>())
         .put(key.clone(), value.clone());
   }
@@ -294,7 +321,11 @@ public class ArchiveRepositoryAdapter implements Repository {
         parent.putAccountValue(key.getData(), account);
       }
     });
-    codes.forEach((key, code) -> parent.saveCode(key.getData(), code));
+    codes.forEach((key, code) -> {
+      if (code != null) {
+        parent.saveCode(key.getData(), code);
+      }
+    });
     contracts.forEach((key, contract) -> {
       if (contract == null) {
         parent.deleteContract(key.getData());
@@ -330,7 +361,8 @@ public class ArchiveRepositoryAdapter implements Repository {
   public AccountCapsule createAccount(byte[] address, Protocol.AccountType type) {
     AccountCapsule account = new AccountCapsule(Protocol.Account.newBuilder()
         .setAddress(ByteString.copyFrom(address)).setType(type).build());
-    accounts.put(Key.create(address), account);
+    reserveOverlayMessage(address, account.getInstance());
+    accounts.put(Key.create(address), copyAccount(account));
     return account;
   }
 
@@ -340,7 +372,8 @@ public class ArchiveRepositoryAdapter implements Repository {
     AccountCapsule account = new AccountCapsule(Protocol.Account.newBuilder()
         .setAddress(ByteString.copyFrom(address))
         .setAccountName(ByteString.copyFromUtf8(accountName)).setType(type).build());
-    accounts.put(Key.create(address), account);
+    reserveOverlayMessage(address, account.getInstance());
+    accounts.put(Key.create(address), copyAccount(account));
     return account;
   }
 
@@ -377,6 +410,7 @@ public class ArchiveRepositoryAdapter implements Repository {
 
   @Override
   public void updateTransientStorageValue(byte[] address, byte[] key, byte[] value) {
+    reserveOverlay(address, key, value);
     transientStorage.computeIfAbsent(Key.create(address), k -> new HashMap<>())
         .put(Key.create(key), value == null ? null : value.clone());
   }
@@ -386,7 +420,7 @@ public class ArchiveRepositoryAdapter implements Repository {
     Key key = Key.create(address);
     if (contractStates.containsKey(key)) {
       ContractStateCapsule state = contractStates.get(key);
-      return state == null ? null : new ContractStateCapsule(state.getData());
+      return state == null ? null : copyContractState(state);
     }
     if (parent != null) {
       return parent.getContractState(address);
@@ -401,7 +435,9 @@ public class ArchiveRepositoryAdapter implements Repository {
 
   @Override
   public void updateContractState(byte[] address, ContractStateCapsule contractStateCapsule) {
-    contractStates.put(Key.create(address), contractStateCapsule);
+    reserveOverlayMessage(address,
+        contractStateCapsule == null ? null : contractStateCapsule.getInstance());
+    contractStates.put(Key.create(address), copyContractState(contractStateCapsule));
   }
 
   @Override
@@ -474,35 +510,40 @@ public class ArchiveRepositoryAdapter implements Repository {
     throw unsupported("black-hole address" + NEEDS_BLOCK_CTX);
   }
 
-  /**
-   * Block hashes are immutable canonical-chain data (not mutable latest state), so serving them
-   * from the live block store is correct for historical CHAINID (block 0) and BLOCKHASH (an
-   * ancestor of the executing block) and is NOT a latest-state leak.
-   */
   @Override
   public BlockCapsule getBlockByNum(long num) {
-    QueryContext queryContext = QueryContextHolder.current();
-    if (queryContext != null) {
-      // ChainBaseManager resolves the height index and then the block row.
-      queryContext.recordBackendReads(2L);
-    }
-    try {
-      return StoreFactory.getInstance().getChainBaseManager().getBlockByNum(num);
-    } catch (Exception e) {
-      throw recordUnsupported(new UnsupportedHistoricalStateException(
-          "historical block " + num + " unavailable", e));
-    }
+    throw unsupported("full-block reads" + NEEDS_BLOCK_CTX);
   }
 
   @Override
   public byte[] getBlockHashByNum(long num) {
     byte[] cached = blockHashCache.get(num);
     if (cached != null) {
+      QueryContext queryContext = QueryContextHolder.current();
+      if (queryContext != null) {
+        queryContext.recordLogicalRead();
+        queryContext.recordCacheHit();
+      }
       return cached.clone();
     }
-    byte[] blockHash = getBlockByNum(num).getBlockId().getBytes();
-    blockHashCache.put(num, blockHash.clone());
-    return blockHash;
+    if (parent != null) {
+      return parent.getBlockHashByNum(num);
+    }
+    byte[] blockHash;
+    try {
+      blockHash = reader.getBlockHash(num);
+    } catch (ArchiveReaderException e) {
+      throw recordUnsupported(new UnsupportedHistoricalStateException(
+          "historical block hash " + num + " unavailable", e));
+    }
+    if (blockHash == null || blockHash.length != ArchiveBlockRange.BLOCK_HASH_LENGTH) {
+      throw recordUnsupported(new UnsupportedHistoricalStateException(
+          "historical block hash " + num + " unavailable"));
+    }
+    reserveOverlayBytes(blockHash.length);
+    byte[] cachedHash = blockHash.clone();
+    blockHashCache.put(num, cachedHash);
+    return cachedHash.clone();
   }
 
   @Override
@@ -579,8 +620,54 @@ public class ArchiveRepositoryAdapter implements Repository {
   }
 
   private void putTokenBalance(byte[] address, byte[] tokenId, long balance) {
+    reserveOverlay(address, tokenId);
     tokenBalances.computeIfAbsent(Key.create(address), k -> new HashMap<>())
         .put(Key.create(tokenId), balance);
+  }
+
+  private static AccountCapsule copyAccount(AccountCapsule account) {
+    return account == null ? null : new AccountCapsule(account.getInstance());
+  }
+
+  private static ContractCapsule copyContract(ContractCapsule contract) {
+    return contract == null ? null : new ContractCapsule(contract.getInstance());
+  }
+
+  private static ContractStateCapsule copyContractState(ContractStateCapsule state) {
+    return state == null ? null : new ContractStateCapsule(state.getInstance());
+  }
+
+  private static void reserveOverlay(byte[]... values) {
+    long payloadBytes = 0L;
+    if (values != null) {
+      for (byte[] value : values) {
+        if (value != null) {
+          payloadBytes = addSaturated(payloadBytes, value.length);
+        }
+      }
+    }
+    reserveOverlayBytes(payloadBytes);
+  }
+
+  private static void reserveOverlayMessage(byte[] key, MessageLite value) {
+    long payloadBytes = addSaturated(length(key), value == null ? 0L : value.getSerializedSize());
+    reserveOverlayBytes(payloadBytes);
+  }
+
+  private static void reserveOverlayBytes(long payloadBytes) {
+    QueryContext queryContext = QueryContextHolder.current();
+    if (queryContext != null) {
+      queryContext.recordVmOverlayBytes(
+          addSaturated(OVERLAY_ENTRY_OVERHEAD_BYTES, payloadBytes));
+    }
+  }
+
+  private static int length(byte[] value) {
+    return value == null ? 0 : value.length;
+  }
+
+  private static long addSaturated(long left, long right) {
+    return left > Long.MAX_VALUE - right ? Long.MAX_VALUE : left + right;
   }
 
   private static byte[] canonicalTokenId(byte[] tokenId) {

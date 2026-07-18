@@ -28,6 +28,7 @@ import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.utils.StringUtil;
 import org.tron.common.utils.WalletUtil;
 import org.tron.core.ChainBaseManager;
+import org.tron.core.archive.query.HistoricalQueryLimitException;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.ContractCapsule;
@@ -110,12 +111,6 @@ public class VMActuator implements Actuator2 {
   public VMActuator(boolean isConstantCall) {
     this.isConstantCall = isConstantCall;
     this.maxEnergyLimit = CommonParameter.getInstance().maxEnergyLimitForConstant;
-  }
-
-  // Exposes the Program so the historical debug_traceCall path can read the in-memory ProgramTrace
-  // (program.getTrace()) captured during execute(). Null before execute() builds the program.
-  public Program getProgram() {
-    return program;
   }
 
   public void setConstantCallMaxEnergyLimit(long maxEnergyLimit) {
@@ -316,6 +311,12 @@ public class VMActuator implements Actuator2 {
       result.setRuntimeError(result.getException().getMessage());
       logger.info("timeout: {}", result.getException().getMessage());
     } catch (Throwable e) {
+      if (injectedRootRepository != null && e instanceof Error) {
+        throw (Error) e;
+      }
+      if (injectedRootRepository != null && e instanceof HistoricalQueryLimitException) {
+        throw (HistoricalQueryLimitException) e;
+      }
       if (injectedRootRepository != null && e instanceof UnsupportedHistoricalStateException) {
         throw (UnsupportedHistoricalStateException) e;
       }

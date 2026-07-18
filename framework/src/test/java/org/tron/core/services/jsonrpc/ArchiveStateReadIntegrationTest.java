@@ -28,7 +28,7 @@ import org.tron.protos.contract.SmartContractOuterClass.SmartContract;
 
 /**
  * End-to-end positive test for the L6 historical state-read path: an archive populated with an
- * account / code / storage slot at block 1 makes the
+ * account / code / storage slot at block 0 makes the
  * {@link ArchiveJsonRpcStateAdapter} renders eth_getBalance / eth_getCode / eth_getStorageAt with
  * the ARCHIVED values -- proving resolver -> coverage gate -> reader -> hex render end to end. The
  * eth-form 20-byte address is converted to the 21-byte TRON address the reader keys on.
@@ -45,7 +45,7 @@ public class ArchiveStateReadIntegrationTest {
     InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
     DefaultArchiveService svc = new DefaultArchiveService(true, temporal);
 
-    ArchiveBlockRange range = commitEmptyBlock(svc, 1);
+    ArchiveBlockRange range = commitEmptyBlock(svc, 0);
     long t = range.getFinalizeTxNum();
 
     byte[] addr21 = new byte[21];
@@ -65,21 +65,18 @@ public class ArchiveStateReadIntegrationTest {
         ArchiveStorageKeyCodec.contractStorageKey(addr21, slot, 0), word);
 
     Wallet wallet = mock(Wallet.class);
-    BlockCapsule block = blockCapsule(1);
-    when(wallet.getBlockByNum(1L)).thenReturn(block.getInstance());
-
     ArchiveJsonRpcStateAdapter adapter = new ArchiveJsonRpcStateAdapter(wallet, svc);
     // 20-byte eth form; addressCompatibleToByteArray prepends 0x41 -> addr21.
     String ethAddr = "0x0000000000000000000000000000000000000011";
 
-    assertEquals("0x309", adapter.getBalance(ethAddr, "0x1"));      // 777 == 0x309
-    assertEquals("0x6000", adapter.getCode(ethAddr, "0x1"));
+    assertEquals("0x309", adapter.getBalance(ethAddr, "0x0"));      // 777 == 0x309
+    assertEquals("0x6000", adapter.getCode(ethAddr, "0x0"));
     assertEquals("0x000000000000000000000000000000000000000000000000000000000000002a",
-        adapter.getStorageAt(ethAddr, "0x0", "0x1"));
+        adapter.getStorageAt(ethAddr, "0x0", "0x0"));
   }
 
   @Test
-  public void blockOneStartRejectsMissingAccountAsUnknown() throws Exception {
+  public void blockOneStartRejectsPublicQueryBeforeStateLookup() throws Exception {
     DefaultArchiveService svc = new DefaultArchiveService(true, new InMemoryArchiveTemporalStore());
     commitEmptyBlock(svc, 1);
     Wallet wallet = walletWithBlock(1);
@@ -89,7 +86,7 @@ public class ArchiveStateReadIntegrationTest {
     JsonRpcInternalException ex = assertThrows(JsonRpcInternalException.class,
         () -> adapter.getBalance(ethAddr, "0x1"));
 
-    assertEquals("archive account is unknown before mid-chain coverage", ex.getMessage());
+    assertEquals("archive public queries require complete from-genesis coverage", ex.getMessage());
   }
 
   @Test
@@ -129,7 +126,7 @@ public class ArchiveStateReadIntegrationTest {
   private void put(InMemoryArchiveTemporalStore temporal, long txNum, ArchiveDomain domain,
       byte[] key, byte[] value) {
     ArchiveTxPosition pos = new ArchiveTxPosition(
-        txNum, 1, ArchivePhase.BLOCK_FINALIZE, ArchiveSource.NORMAL, -1, null);
+        txNum, 0, ArchivePhase.BLOCK_FINALIZE, ArchiveSource.NORMAL, -1, null);
     // Genesis-complete create at txNum (prev = tombstone): getAsOf(txNum) falls through to latest.
     temporal.putChange(new ArchiveChangeRecord(pos, domain, key, DomainValue.tombstone(),
         DomainValue.present(value)));

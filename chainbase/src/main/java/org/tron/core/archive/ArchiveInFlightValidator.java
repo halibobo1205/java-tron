@@ -1,10 +1,8 @@
 package org.tron.core.archive;
 
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
 import org.tron.core.archive.domain.ArchiveDomain;
@@ -24,13 +22,34 @@ final class ArchiveInFlightValidator {
 
   static void validate(ArchiveInFlightBlock block, ArchiveDomainCatalog catalog,
       DynamicKeyPolicy dynamicKeyPolicy) {
+    validateForWrite(block, catalog, dynamicKeyPolicy);
+  }
+
+  static void validateForWrite(ArchiveInFlightBlock block, ArchiveDomainCatalog catalog,
+      DynamicKeyPolicy dynamicKeyPolicy) {
+    validate(block, catalog, dynamicKeyPolicy, false);
+  }
+
+  /**
+   * Validates a decoded block only after its v2 durable proof, token, and current schema have been
+   * checked. Canonical protobuf parsing happened before that proof was authored, so repeating it on
+   * startup would introduce an unbounded object-graph allocation outside the journal byte budget.
+   */
+  static void validateProofBound(ArchiveInFlightBlock block, ArchiveDomainCatalog catalog,
+      DynamicKeyPolicy dynamicKeyPolicy) {
+    validate(block, catalog, dynamicKeyPolicy, true);
+  }
+
+  private static void validate(ArchiveInFlightBlock block, ArchiveDomainCatalog catalog,
+      DynamicKeyPolicy dynamicKeyPolicy, boolean proofBound) {
     if (block == null || block.getRange() == null) {
       throw new ArchiveException("archive in-flight block is invalid");
     }
     ArchiveBlockRange range = block.getRange();
     validateRange(range);
-    Map<Long, ArchiveTxPosition> positions = validatePositions(range, block.getPositions());
-    validateRecords(range, positions, block.getRecords(), catalog, dynamicKeyPolicy);
+    validatePositions(range, block.getPositions());
+    validateRecords(
+        range, block.getPositions(), block.getRecords(), catalog, dynamicKeyPolicy, proofBound);
   }
 
   private static void validateRange(ArchiveBlockRange range) {
@@ -77,7 +96,7 @@ final class ArchiveInFlightValidator {
         "archive in-flight schema checksum");
   }
 
-  private static Map<Long, ArchiveTxPosition> validatePositions(ArchiveBlockRange range,
+  private static void validatePositions(ArchiveBlockRange range,
       List<ArchiveTxPosition> positions) {
     if (positions == null) {
       throw new ArchiveException("archive in-flight positions are missing");
@@ -86,17 +105,17 @@ final class ArchiveInFlightValidator {
     if (expectedCount > Integer.MAX_VALUE || positions.size() != (int) expectedCount) {
       throw new ArchiveException("archive in-flight position count does not match block range");
     }
-    Map<Long, ArchiveTxPosition> byTxNum = new HashMap<>();
     Set<Integer> userIndexes = new HashSet<>();
     Set<ByteArrayKey> userTxIds = new HashSet<>();
     boolean sawPrepare = false;
     boolean sawFinalize = false;
     int userCount = 0;
-    for (ArchiveTxPosition position : positions) {
+    for (int positionIndex = 0; positionIndex < positions.size(); positionIndex++) {
+      ArchiveTxPosition position = positions.get(positionIndex);
       validatePosition(range, position);
-      if (byTxNum.put(position.getTxNum(), position) != null) {
-        throw new ArchiveException("archive in-flight duplicate position txNum "
-            + position.getTxNum());
+      long expectedTxNum = range.getFirstTxNum() + positionIndex;
+      if (position.getTxNum() != expectedTxNum) {
+        throw new ArchiveException("archive in-flight positions are not in txNum order");
       }
       switch (position.getPhase()) {
         case BLOCK_PREPARE:
@@ -128,7 +147,6 @@ final class ArchiveInFlightValidator {
     if (!sawPrepare || !sawFinalize || userCount != range.getUserTxCount()) {
       throw new ArchiveException("archive in-flight positions do not match block range");
     }
-    return byTxNum;
   }
 
   private static void validatePosition(ArchiveBlockRange range, ArchiveTxPosition position) {
@@ -168,8 +186,8 @@ final class ArchiveInFlightValidator {
   }
 
   private static void validateRecords(ArchiveBlockRange range,
-      Map<Long, ArchiveTxPosition> positions, List<ArchiveChangeRecord> records,
-      ArchiveDomainCatalog catalog, DynamicKeyPolicy dynamicKeyPolicy) {
+      List<ArchiveTxPosition> positions, List<ArchiveChangeRecord> records,
+      ArchiveDomainCatalog catalog, DynamicKeyPolicy dynamicKeyPolicy, boolean proofBound) {
     if (records == null) {
       throw new ArchiveException("archive in-flight records are missing");
     }
@@ -179,7 +197,8 @@ final class ArchiveInFlightValidator {
         throw new ArchiveException("archive in-flight record is invalid");
       }
       validatePosition(range, record.getPosition());
-      ArchiveTxPosition persisted = positions.get(record.getTxNum());
+      int positionIndex = (int) (record.getTxNum() - range.getFirstTxNum());
+      ArchiveTxPosition persisted = positions.get(positionIndex);
       if (!samePosition(persisted, record.getPosition())) {
         throw new ArchiveException(
             "archive in-flight record position does not match persisted position");
@@ -192,10 +211,16 @@ final class ArchiveInFlightValidator {
         throw new ArchiveException("archive in-flight record has unknown domain "
             + record.getDomain());
       }
-      descriptor.getKeyCodec().validate(record.getCanonicalKey());
-      validateKeyPolicy(record.getDomain(), record.getCanonicalKey(), dynamicKeyPolicy);
-      descriptor.getValueCodec().validate(record.getPrevValue());
-      descriptor.getValueCodec().validate(record.getValue());
+      byte[] canonicalKey = record.getCanonicalKey();
+      descriptor.getKeyCodec().validate(canonicalKey);
+      validateKeyPolicy(record.getDomain(), canonicalKey, dynamicKeyPolicy);
+      if (proofBound) {
+        descriptor.getValueCodec().validateProofBound(record.getPrevValue());
+        descriptor.getValueCodec().validateProofBound(record.getValue());
+      } else {
+        descriptor.getValueCodec().validate(record.getPrevValue());
+        descriptor.getValueCodec().validate(record.getValue());
+      }
     }
   }
 
@@ -208,15 +233,7 @@ final class ArchiveInFlightValidator {
   }
 
   private static boolean samePosition(ArchiveTxPosition left, ArchiveTxPosition right) {
-    return left != null
-        && right != null
-        && left.getTxNum() == right.getTxNum()
-        && left.getBlockNum() == right.getBlockNum()
-        && left.getPhase() == right.getPhase()
-        && left.getSource() == right.getSource()
-        && left.getTxIndex() == right.getTxIndex()
-        && Arrays.equals(left.getTxId(), right.getTxId())
-        && Arrays.equals(left.getBlockHash(), right.getBlockHash());
+    return left != null && left.contentEquals(right);
   }
 
   private static void requireLength(byte[] value, int length, String what) {

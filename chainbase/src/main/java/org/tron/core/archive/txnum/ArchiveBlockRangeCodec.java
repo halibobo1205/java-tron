@@ -34,6 +34,11 @@ public final class ArchiveBlockRangeCodec {
   static final byte TXNUM_BY_TXID_PREFIX = 0x11;
   static final byte TXNUM_META_PREFIX = 0x12;
   static final int TX_ID_LENGTH = ArchiveBlockRange.BLOCK_HASH_LENGTH;
+  static final int RANGE_VALUE_LENGTH = 1 + Long.BYTES * 5 + Integer.BYTES + 1
+      + Integer.BYTES + ArchiveBlockRange.BLOCK_HASH_LENGTH
+      + Integer.BYTES + ArchiveBlockRange.SCHEMA_CHECKSUM_LENGTH;
+  static final int POSITION_VALUE_MAX_LENGTH = 1 + Long.BYTES * 2 + 2 + Integer.BYTES * 3
+      + TX_ID_LENGTH + ArchiveBlockRange.BLOCK_HASH_LENGTH;
 
   // The lowest block currently committed to this index -- written for the first committed range and
   // cleared if the archive is unwound back to empty. The historical-read coverage gate uses it to
@@ -44,6 +49,11 @@ public final class ArchiveBlockRangeCodec {
   static final byte[] REPAIR_REQUIRED_KEY = metaKey("repair-required");
 
   private ArchiveBlockRangeCodec() {
+  }
+
+  /** Stable META key used to atomically flag writes that require a full startup scrub. */
+  public static byte[] repairRequiredKey() {
+    return Arrays.copyOf(REPAIR_REQUIRED_KEY, REPAIR_REQUIRED_KEY.length);
   }
 
   static byte[] rangeKey(long blockNum) {
@@ -188,20 +198,31 @@ public final class ArchiveBlockRangeCodec {
     ArchiveCoordinates.requireTxNum(position.getTxNum(), "archive tx-position txNum");
     ArchiveCoordinates.requireBlockNum(
         position.getBlockNum(), "archive tx-position block number");
-    byte[] txId = position.getTxId();
-    requirePositionTxId(position.getPhase(), txId, "encode archive tx-position");
-    requireBlockHash(position.getBlockHash(), "encode archive tx-position");
-    return Bytes.concat(
-        new byte[] {VALUE_VERSION},
-        Longs.toByteArray(position.getTxNum()),
-        Longs.toByteArray(position.getBlockNum()),
-        new byte[] {(byte) position.getPhase().ordinal()},
-        new byte[] {(byte) position.getSource().ordinal()},
-        Ints.toByteArray(position.getTxIndex()),
-        Ints.toByteArray(txId.length),
-        txId,
-        Ints.toByteArray(position.getBlockHash().length),
-        position.getBlockHash());
+    int txIdSize = position.txIdSize();
+    int blockHashSize = position.blockHashSize();
+    requirePositionTxIdSize(
+        position.getPhase(), txIdSize, "encode archive tx-position");
+    if (blockHashSize != ArchiveBlockRange.BLOCK_HASH_LENGTH) {
+      throw new ArchiveException("encode archive tx-position requires a 32-byte block hash");
+    }
+    ByteBuffer encoded = ByteBuffer.allocate(
+        1 + 2 * Long.BYTES + 2 * Byte.BYTES + 3 * Integer.BYTES
+            + txIdSize + blockHashSize);
+    encoded.put(VALUE_VERSION);
+    encoded.putLong(position.getTxNum());
+    encoded.putLong(position.getBlockNum());
+    encoded.put((byte) position.getPhase().ordinal());
+    encoded.put((byte) position.getSource().ordinal());
+    encoded.putInt(position.getTxIndex());
+    encoded.putInt(txIdSize);
+    int txIdOffset = encoded.position();
+    position.copyTxIdTo(encoded.array(), txIdOffset);
+    encoded.position(txIdOffset + txIdSize);
+    encoded.putInt(blockHashSize);
+    int blockHashOffset = encoded.position();
+    position.copyBlockHashTo(encoded.array(), blockHashOffset);
+    encoded.position(blockHashOffset + blockHashSize);
+    return encoded.array();
   }
 
   static ArchiveTxPosition decodePosition(byte[] bytes) {
@@ -262,16 +283,22 @@ public final class ArchiveBlockRangeCodec {
     return blockNum;
   }
 
-  static byte[] encodeRepairRequired(String reason) {
+  public static byte[] encodeRepairRequired(String reason) {
     return reason.getBytes(java.nio.charset.StandardCharsets.UTF_8);
   }
 
   static void requirePositionTxId(ArchivePhase phase, byte[] txId, String what) {
+    requirePositionTxIdSize(phase, txId == null ? 0 : txId.length, what);
+  }
+
+  private static void requirePositionTxIdSize(ArchivePhase phase, int txIdSize, String what) {
     if (phase == ArchivePhase.USER_TX) {
-      requireTxId(txId, what + " user txId");
+      if (txIdSize != TX_ID_LENGTH) {
+        throw new ArchiveException(what + " user txId must be a 32-byte txId");
+      }
       return;
     }
-    if (txId != null && txId.length != 0) {
+    if (txIdSize != 0) {
       throw new ArchiveException(what + " system txId must be empty");
     }
   }
