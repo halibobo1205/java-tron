@@ -5,7 +5,8 @@
 - Persisted layout: `UNIFIED_V1`, schema 6
 - Compatibility premise: no archive database has been deployed; no migration, dual-read, or legacy
   format branch is required
-- Status: implemented and regression-tested; production soak and fault injection remain release gates
+- Status: implemented, regression-tested, and locally fault-tested; representative full sync and
+  production soak remain release gates
 
 ## 1. Principles
 
@@ -27,7 +28,7 @@
 | P4 | Use zero queue/fail-fast saturation and write retained responses on the Servlet thread | Done |
 | P5 | Replace duplicated temporal payloads with authenticated references | Done |
 | P6 | Update scrub, marker validation, oracle, corruption, and resource estimates | Done |
-| P7 | Run from-zero sync, crash/EIO/ENOSPC matrix, concurrent max-cost query, and soak | Pending release gate |
+| P7 | Run from-zero sync, crash/EIO/ENOSPC matrix, concurrent max-cost query, and soak | Partial: local private-chain, fault, and query matrices passed; representative full sync and long soak remain |
 
 ## 3. Schema-6 temporal format
 
@@ -88,9 +89,13 @@ but is written to the socket by the Servlet thread, so slow clients cannot occup
   PBFT/Solidity cursor propagation, response settlement, deadline, and lifecycle cleanup remain
   covered.
 
-## 6. Release gates not satisfied by unit tests
+## 6. Release-gate status
 
-This change does not by itself establish production readiness. Before enabling archive in a
-production node, run a from-zero private-chain/full-sync oracle, block-publication kill points,
-restart reconciliation, ENOSPC/EIO and corrupted-file matrices, concurrent maximum-cost historical
-queries, and a long-running heap/native/RSS and compaction-latency soak.
+The 2026-07-19 local schema-6 run completed the empty-database single-SR private-chain oracle,
+block-publication kill points, restart reconciliation, ENOSPC/EIO and corrupted-file matrices, and
+concurrent historical-query saturation. The evidence and exact scope are recorded in
+`20260719-archive-schema6-complete-e2e-results.md`.
+
+This local run does not by itself establish production readiness. A representative network
+from-zero sync, a mature large archive database, multi-node reorg/fork behavior, and a long-running
+heap/native/RSS and compaction-latency soak remain release gates.
