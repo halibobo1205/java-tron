@@ -108,29 +108,17 @@ final class UnifiedArchiveBackend {
           .journal(journalKey, journalValue)
           .journalToken(ArchiveInFlightCodec.tokenKey(blockNum), proof)
           .acknowledgement(ArchiveInFlightCodec.acknowledgementKey(blockNum), proof);
-      ArchiveBlockRange range = null;
-      try {
-        try (UnifiedArchiveReadView view = db.openReadView();
-            UnifiedArchiveTxNumIndex.ReadScope ignored = txNumIndex.bindReadView(view)) {
-          range = txNumIndex.stagePublication(builder, block);
-        }
-        temporalStore.stagePublication(builder, range, preflight);
-        // Preparation has consumed every snapshot-backed locator/payload. Do not pin the snapshot
-        // through the synchronous WriteBatch/WAL phase.
-        preflight.close();
-        runPersistentMutation(() -> db.publishBlockAtomically(builder.build(), true));
-        txNumIndex.publicationSucceeded(range);
-        return range;
-      } catch (RuntimeException | Error e) {
-        try {
-          txNumIndex.publicationFailed();
-        } catch (Throwable cleanupFailure) {
-          if (e != cleanupFailure) {
-            e.addSuppressed(cleanupFailure);
-          }
-        }
-        throw e;
+      ArchiveBlockRange range;
+      try (UnifiedArchiveReadView view = db.openReadView();
+          UnifiedArchiveTxNumIndex.ReadScope ignored = txNumIndex.bindReadView(view)) {
+        range = txNumIndex.stagePublication(builder, block);
       }
+      temporalStore.stagePublication(builder, range, preflight);
+      // Preparation has consumed every snapshot-backed locator/payload. Do not pin the snapshot
+      // through the synchronous WriteBatch/WAL phase.
+      preflight.close();
+      runPersistentMutation(() -> db.publishBlockAtomically(builder.build(), true));
+      return range;
     }
   }
 

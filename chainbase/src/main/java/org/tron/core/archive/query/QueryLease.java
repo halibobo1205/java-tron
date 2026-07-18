@@ -19,10 +19,6 @@ public final class QueryLease implements AutoCloseable {
     return context;
   }
 
-  public QueryContext context() {
-    return context;
-  }
-
   public synchronized boolean isClosed() {
     return closeRequested;
   }

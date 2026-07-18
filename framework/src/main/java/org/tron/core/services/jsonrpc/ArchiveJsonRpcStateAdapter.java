@@ -42,15 +42,6 @@ public final class ArchiveJsonRpcStateAdapter {
     return archiveService.isEnabled() && !JsonRpcApiUtil.LATEST_STR.equalsIgnoreCase(blockNumOrTag);
   }
 
-  void validateArchiveAvailable() throws JsonRpcInternalException {
-    requireArchiveEnabled();
-    try {
-      archiveService.validateAvailable();
-    } catch (RuntimeException e) {
-      throw new JsonRpcInternalException(e.getMessage());
-    }
-  }
-
   public String getBalance(String address, String blockNumOrTag)
       throws JsonRpcInvalidParamsException, JsonRpcInternalException {
     return getBalance(address, blockNumOrTag, null);

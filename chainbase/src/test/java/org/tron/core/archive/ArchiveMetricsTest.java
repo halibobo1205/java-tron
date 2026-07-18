@@ -53,7 +53,7 @@ public class ArchiveMetricsTest {
     double failedBefore = counter("failed");
     double exhaustedBefore = counter("resource_exhausted");
     QueryContext context = new QueryContext(
-        ArchiveQueryLimits.builder().maxLogicalReads(0).build());
+        ArchiveQueryLimits.builder().maxLogicalReadsPerRequest(0).build());
     context.recordFailure(new ArchiveException("reader failed"));
     assertThrows(RuntimeException.class, context::recordLogicalRead);
 

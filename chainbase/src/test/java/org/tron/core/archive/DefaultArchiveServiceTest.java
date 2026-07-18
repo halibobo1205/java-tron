@@ -1851,7 +1851,7 @@ public class DefaultArchiveServiceTest {
         new InMemoryArchiveInFlightStore(), new DefaultArchiveDomainRegistry(),
         new DefaultArchiveDomainCatalog(),
         ArchiveLifecycle.Phase.RUNNING,
-        ArchiveQueryLimits.builder().maxBackendReads(2L).build());
+        ArchiveQueryLimits.builder().maxBackendReadsPerRequest(2L).build());
     try {
       doReturn(0L).when(index).getFirstArchivedBlock();
       HistoricalQueryLimitException failure = assertThrows(
@@ -1925,7 +1925,7 @@ public class DefaultArchiveServiceTest {
         new InMemoryArchiveTemporalStore(), new InMemoryArchiveInFlightStore(),
         new DefaultArchiveDomainRegistry(), new DefaultArchiveDomainCatalog(),
         ArchiveLifecycle.Phase.RUNNING,
-        ArchiveQueryLimits.builder().maxBackendReads(1).build());
+        ArchiveQueryLimits.builder().maxBackendReadsPerRequest(1).build());
     boolean[] providerCalled = {false};
     try {
       BlockCapsule genesis = blockWithParentSeed(0L, (byte) 0);

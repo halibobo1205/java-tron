@@ -729,7 +729,8 @@ public class Manager {
             // Genesis follows the same journal-first ordering as ordinary blocks. The forced
             // revoking session keeps canonical writes reversible until the journal is durable,
             // then commits the sole snapshot into the canonical root stores.
-            archiveJournalToken = archiveService.commitBlockJournaled(genesisBlock, 0);
+            archiveJournalToken = journalArchiveBlockOnlyOrFailStop(
+                genesisBlock, 0, "initialize genesis");
             canonicalCommitStarted = true;
             genesisSession.commitToRoot();
             archiveService.acknowledgeCanonicalCommit(archiveJournalToken);
@@ -1322,14 +1323,20 @@ public class Manager {
     }
   }
 
-  void commitArchiveBlockOrFailStop(BlockCapsule block, String action) {
-    commitArchiveBlockOnlyOrFailStop(block, action);
-    publishArchiveSolidifiedOrFailStop(block, action);
+  ArchiveJournalToken journalArchiveBlockOnlyOrFailStop(BlockCapsule block, String action) {
+    return journalArchiveBlockOnlyOrFailStop(
+        block, block.getTransactions().size(), action);
   }
 
-  ArchiveJournalToken journalArchiveBlockOnlyOrFailStop(BlockCapsule block, String action) {
+  private ArchiveJournalToken journalArchiveBlockOnlyOrFailStop(
+      BlockCapsule block, int userTxCount, String action) {
     try {
-      return archiveService.commitBlockJournaled(block, block.getTransactions().size());
+      ArchiveJournalToken token =
+          archiveService.commitBlockJournaled(block, userTxCount);
+      if (archiveService.isEnabled() && token == null) {
+        throw new ArchiveException("enabled archive returned no durable journal token");
+      }
+      return token;
     } catch (TronError e) {
       throw e;
     } catch (RuntimeException | Error e) {
@@ -1341,16 +1348,6 @@ public class Manager {
       String action) {
     try {
       archiveService.acknowledgeCanonicalCommit(token);
-    } catch (TronError e) {
-      throw e;
-    } catch (RuntimeException | Error e) {
-      throw archiveRuntimeError(action, block, e);
-    }
-  }
-
-  void commitArchiveBlockOnlyOrFailStop(BlockCapsule block, String action) {
-    try {
-      archiveService.commitBlock(block);
     } catch (TronError e) {
       throw e;
     } catch (RuntimeException | Error e) {

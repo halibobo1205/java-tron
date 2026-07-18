@@ -273,10 +273,6 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
     return awaitDrained(timeout, unit);
   }
 
-  public boolean drain(long timeout, TimeUnit unit) throws InterruptedException {
-    return beginDrain(timeout, unit);
-  }
-
   /** Waits only for admitted leases; pending acquirers are rejected by {@link #beginDrain()}. */
   public boolean awaitDrained(long timeout, TimeUnit unit) throws InterruptedException {
     if (unit == null) {
@@ -342,10 +338,6 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
     }
   }
 
-  public long getActiveQueries() {
-    return getActiveLeaseCount();
-  }
-
   public long getActiveSnapshotCount() {
     lock.lock();
     try {
@@ -362,10 +354,6 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
     } finally {
       lock.unlock();
     }
-  }
-
-  public int getPendingQueries() {
-    return getPendingQueryCount();
   }
 
   public boolean isFair() {
