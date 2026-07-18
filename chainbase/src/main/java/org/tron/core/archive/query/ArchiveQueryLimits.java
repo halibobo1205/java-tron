@@ -95,15 +95,7 @@ public final class ArchiveQueryLimits {
     return acquireTimeoutMs;
   }
 
-  public long getAcquireTimeoutMillis() {
-    return acquireTimeoutMs;
-  }
-
   public long getDeadlineMs() {
-    return deadlineMs;
-  }
-
-  public long getDeadlineMillis() {
     return deadlineMs;
   }
 
@@ -119,15 +111,7 @@ public final class ArchiveQueryLimits {
     return maxLogicalReadsPerRequest;
   }
 
-  public long getMaxLogicalReads() {
-    return maxLogicalReadsPerRequest;
-  }
-
   public long getMaxBackendReadsPerRequest() {
-    return maxBackendReadsPerRequest;
-  }
-
-  public long getMaxBackendReads() {
     return maxBackendReadsPerRequest;
   }
 
@@ -323,17 +307,9 @@ public final class ArchiveQueryLimits {
       return this;
     }
 
-    public Builder acquireTimeoutMillis(long value) {
-      return acquireTimeoutMs(value);
-    }
-
     public Builder deadlineMs(long value) {
       deadlineMs = value;
       return this;
-    }
-
-    public Builder deadlineMillis(long value) {
-      return deadlineMs(value);
     }
 
     public Builder maxQueriesPerBatch(long value) {
@@ -351,17 +327,9 @@ public final class ArchiveQueryLimits {
       return this;
     }
 
-    public Builder maxLogicalReads(long value) {
-      return maxLogicalReadsPerRequest(value);
-    }
-
     public Builder maxBackendReadsPerRequest(long value) {
       maxBackendReadsPerRequest = value;
       return this;
-    }
-
-    public Builder maxBackendReads(long value) {
-      return maxBackendReadsPerRequest(value);
     }
 
     public Builder maxBackendValueBytes(long value) {

@@ -98,19 +98,19 @@ public class ManagerArchiveLifecycleTest extends BaseMethodTest {
   }
 
   @Test
-  public void archiveCommitFailureAfterCanonicalCommitEscalatesToTronError() {
+  public void enabledArchiveMustReturnDurableJournalToken() {
     ArchiveService failingArchive = mock(ArchiveService.class);
     BlockCapsule block = new BlockCapsule(1, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY);
-    ArchiveException failure = new ArchiveException("commit failed");
-    doThrow(failure).when(failingArchive).commitBlock(block);
+    when(failingArchive.isEnabled()).thenReturn(true);
     ReflectUtils.setFieldValue(dbManager, "archiveService", failingArchive);
 
     TronError error = assertThrows(TronError.class,
-        () -> dbManager.commitArchiveBlockOrFailStop(block, "push block"));
+        () -> dbManager.journalArchiveBlockOnlyOrFailStop(block, "push block"));
 
     assertEquals(TronError.ErrCode.ARCHIVE_RUNTIME, error.getErrCode());
     assertTrue(error.getMessage().contains("push block"));
-    assertEquals(failure, error.getCause());
+    assertTrue(error.getCause() instanceof ArchiveException);
+    assertTrue(error.getCause().getMessage().contains("no durable journal token"));
   }
 
   @Test

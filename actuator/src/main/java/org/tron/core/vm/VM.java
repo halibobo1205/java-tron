@@ -40,9 +40,8 @@ public class VM {
           // Stop an oversized historical execution before the next opcode can allocate or read.
           queryContext.recordVmStep();
         }
-        org.tron.core.vm.trace.Op traceOp = null;
         if (vmTraceEnabled) {
-          traceOp = program.saveOpTrace();
+          program.saveOpTrace();
         }
 
         try {
@@ -90,10 +89,6 @@ public class VM {
 
           } else {
             program.spendEnergy(energy, opName);
-          }
-
-          if (traceOp != null) {
-            traceOp.setEnergyCost(java.math.BigInteger.valueOf(energy));
           }
 
           if (queryContext != null) {

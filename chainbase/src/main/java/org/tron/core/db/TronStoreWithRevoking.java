@@ -104,16 +104,6 @@ public abstract class TronStoreWithRevoking<T extends ProtoCapsule> implements I
     putWithArchivePrevious(key, item, capture, previous);
   }
 
-  /** Canonical put using a previous value already read by a store-specific semantic hook. */
-  protected final void putWithKnownArchivePrevious(
-      byte[] key, T item, ArchivePreviousValue previous) {
-    if (Objects.isNull(key) || Objects.isNull(item)) {
-      return;
-    }
-    boolean capture = ArchiveCaptureHolder.capturesStore(getDbName(), key);
-    putWithArchivePrevious(key, item, capture, previous);
-  }
-
   private void putWithArchivePrevious(byte[] key, T item, boolean capture,
       ArchivePreviousValue previous) {
     byte[] value = item.getData();
@@ -129,13 +119,6 @@ public abstract class TronStoreWithRevoking<T extends ProtoCapsule> implements I
     boolean capture = ArchiveCaptureHolder.capturesStore(dbName, key);
     ArchivePreviousValue previous = (capture && key != null)
         ? readArchivePreviousValue(dbName, key) : null;
-    deleteWithArchivePrevious(key, capture, previous);
-  }
-
-  /** Canonical delete using a previous value already read by a store-specific semantic hook. */
-  protected final void deleteWithKnownArchivePrevious(
-      byte[] key, ArchivePreviousValue previous) {
-    boolean capture = ArchiveCaptureHolder.capturesStore(getDbName(), key);
     deleteWithArchivePrevious(key, capture, previous);
   }
 

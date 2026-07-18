@@ -1618,12 +1618,11 @@ public class Program {
     }
   }
 
-  public org.tron.core.vm.trace.Op saveOpTrace() {
+  public void saveOpTrace() {
     if (this.pc < ops.length) {
-      return trace.addOp(ops[pc], pc, getCallDeep(), getEnergyLimitLeft(),
+      trace.addOp(ops[pc], pc, getCallDeep(), getEnergyLimitLeft(),
           traceListener.resetActions());
     }
-    return null;
   }
 
   public boolean isVmTraceEnabled() {

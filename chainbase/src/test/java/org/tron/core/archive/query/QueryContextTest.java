@@ -19,12 +19,12 @@ public class QueryContextTest {
   @Test
   public void eachBudgetAllowsExactLimitAndTerminatesOnNextUnit() {
     assertBudgetExceeded(
-        ArchiveQueryLimits.builder().maxLogicalReads(2).build(),
+        ArchiveQueryLimits.builder().maxLogicalReadsPerRequest(2).build(),
         HistoricalQueryLimitException.Limit.LOGICAL_READS,
         context -> context.recordLogicalReads(2),
         QueryContext::recordLogicalRead);
     assertBudgetExceeded(
-        ArchiveQueryLimits.builder().maxBackendReads(2).build(),
+        ArchiveQueryLimits.builder().maxBackendReadsPerRequest(2).build(),
         HistoricalQueryLimitException.Limit.BACKEND_READS,
         context -> context.recordBackendReads(2),
         QueryContext::recordBackendRead);
@@ -143,7 +143,7 @@ public class QueryContextTest {
   @Test
   public void exactLongMaxBudgetTerminatesOnTheNextUnit() {
     QueryContext context = new QueryContext(ArchiveQueryLimits.builder()
-        .maxBackendReads(Long.MAX_VALUE)
+        .maxBackendReadsPerRequest(Long.MAX_VALUE)
         .build());
     context.recordBackendReads(Long.MAX_VALUE);
 
@@ -211,7 +211,7 @@ public class QueryContextTest {
     AtomicLong now = new AtomicLong(100);
     QueryContext context = new QueryContext(ArchiveQueryLimits.builder()
         .deadlineMs(1)
-        .maxLogicalReads(0)
+        .maxLogicalReadsPerRequest(0)
         .build(), now::get);
 
     HistoricalQueryLimitException first = assertThrows(
@@ -243,8 +243,8 @@ public class QueryContextTest {
   @Test
   public void concurrentTerminalRacesConvergeOnOneException() throws Exception {
     QueryContext context = new QueryContext(ArchiveQueryLimits.builder()
-        .maxLogicalReads(0)
-        .maxBackendReads(0)
+        .maxLogicalReadsPerRequest(0)
+        .maxBackendReadsPerRequest(0)
         .build());
     CountDownLatch ready = new CountDownLatch(2);
     CountDownLatch start = new CountDownLatch(1);
@@ -300,14 +300,14 @@ public class QueryContextTest {
   @Test
   public void terminalLimitParticipatesInFirstFailureOrdering() {
     QueryContext limitFirst = new QueryContext(
-        ArchiveQueryLimits.builder().maxLogicalReads(0).build());
+        ArchiveQueryLimits.builder().maxLogicalReadsPerRequest(0).build());
     HistoricalQueryLimitException limit = assertThrows(
         HistoricalQueryLimitException.class, limitFirst::recordLogicalRead);
     limitFirst.recordFailure(new ArchiveException("cleanup failed"));
     assertSame(limit, limitFirst.getRecordedFailure());
 
     QueryContext ioFirst = new QueryContext(
-        ArchiveQueryLimits.builder().maxLogicalReads(0).build());
+        ArchiveQueryLimits.builder().maxLogicalReadsPerRequest(0).build());
     ArchiveException ioFailure = new ArchiveException("reader failed");
     ioFirst.recordFailure(ioFailure);
     assertThrows(HistoricalQueryLimitException.class, ioFirst::recordLogicalRead);

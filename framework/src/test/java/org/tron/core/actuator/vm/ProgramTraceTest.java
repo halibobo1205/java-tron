@@ -49,13 +49,12 @@ public class ProgramTraceTest {
     List<Op> ops = programTrace.getOps();
     Assert.assertFalse(ops.isEmpty());
     Assert.assertEquals(2, ops.size());
+    Assert.assertFalse(programTrace.toString().contains("energyCost"));
     for (Op op : ops) {
       if (op.getCode() == org.tron.core.vm.Op.ADD) {
         Assert.assertEquals(3, op.getDeep());
         Assert.assertEquals(2, op.getPc());
         Assert.assertEquals(BigInteger.valueOf(4), op.getEnergy());
-        op.setEnergyCost(BigInteger.valueOf(2));
-        Assert.assertEquals(BigInteger.valueOf(2), op.getEnergyCost());
       } else if (op.getCode() == org.tron.core.vm.Op.SUB) {
         Assert.assertEquals(6, op.getDeep());
         Assert.assertEquals(5, op.getPc());

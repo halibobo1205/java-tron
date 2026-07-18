@@ -38,12 +38,12 @@ public class ArchiveQueryLimitsTest {
         .maxConcurrentQueries(3)
         .maxPendingQueries(4)
         .maxOpenSnapshots(14)
-        .acquireTimeoutMillis(5)
-        .deadlineMillis(6)
+        .acquireTimeoutMs(5)
+        .deadlineMs(6)
         .maxQueriesPerBatch(15)
         .batchDeadlineMs(16)
-        .maxLogicalReads(7)
-        .maxBackendReads(8)
+        .maxLogicalReadsPerRequest(7)
+        .maxBackendReadsPerRequest(8)
         .maxBackendValueBytes(18)
         .maxBackendReadBytesPerRequest(19)
         .maxCachedEntries(9)
@@ -57,13 +57,13 @@ public class ArchiveQueryLimitsTest {
     assertEquals(4, limits.getMaxPendingQueries());
     assertEquals(14, limits.getMaxOpenSnapshots());
     assertEquals(5, limits.getAcquireTimeoutMs());
-    assertEquals(5, limits.getAcquireTimeoutMillis());
+    assertEquals(5, limits.getAcquireTimeoutMs());
     assertEquals(6, limits.getDeadlineMs());
-    assertEquals(6, limits.getDeadlineMillis());
+    assertEquals(6, limits.getDeadlineMs());
     assertEquals(15, limits.getMaxQueriesPerBatch());
     assertEquals(16, limits.getBatchDeadlineMs());
-    assertEquals(7, limits.getMaxLogicalReads());
-    assertEquals(8, limits.getMaxBackendReads());
+    assertEquals(7, limits.getMaxLogicalReadsPerRequest());
+    assertEquals(8, limits.getMaxBackendReadsPerRequest());
     assertEquals(18, limits.getMaxBackendValueBytes());
     assertEquals(19, limits.getMaxBackendReadBytesPerRequest());
     assertEquals(9, limits.getMaxCachedEntries());
@@ -92,9 +92,9 @@ public class ArchiveQueryLimitsTest {
     assertThrows(IllegalArgumentException.class,
         () -> ArchiveQueryLimits.builder().batchDeadlineMs(-2).build());
     assertThrows(IllegalArgumentException.class,
-        () -> ArchiveQueryLimits.builder().maxLogicalReads(-2).build());
+        () -> ArchiveQueryLimits.builder().maxLogicalReadsPerRequest(-2).build());
     assertThrows(IllegalArgumentException.class,
-        () -> ArchiveQueryLimits.builder().maxBackendReads(-2).build());
+        () -> ArchiveQueryLimits.builder().maxBackendReadsPerRequest(-2).build());
     assertThrows(IllegalArgumentException.class,
         () -> ArchiveQueryLimits.builder().maxBackendValueBytes(-2).build());
     assertThrows(IllegalArgumentException.class,
