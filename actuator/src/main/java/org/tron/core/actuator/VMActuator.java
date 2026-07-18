@@ -97,14 +97,10 @@ public class VMActuator implements Actuator2 {
   @Setter
   private boolean enableEventListener;
 
-  // L8 historical eth_call: when set, the VM reads state from this archive-backed repository and
-  // the matching historical dynamic-properties view instead of the latest stores. Null on the
-  // latest path, so that path is byte-for-byte unchanged.
+  // Historical eth_call injects one archive-backed repository. Its VM properties are part of that
+  // same state view, so repository and protocol flags cannot drift independently.
   @Setter
   private Repository injectedRootRepository;
-
-  @Setter
-  private VmDynamicProperties injectedVmProperties;
 
   private LogInfoTriggerParser logInfoTriggerParser;
 
@@ -134,11 +130,10 @@ public class VMActuator implements Actuator2 {
       throw new RuntimeException("TransactionContext is null");
     }
 
-    // The archive seam is all-or-nothing: a repository without its matching historical config view
-    // (or vice versa) would silently read latest state. Fail fast rather than answer wrongly.
-    if ((injectedRootRepository == null) != (injectedVmProperties == null)) {
-      throw new RuntimeException(
-          "archive seam requires both injectedRootRepository and injectedVmProperties");
+    VmDynamicProperties injectedVmProperties = injectedRootRepository == null
+        ? null : injectedRootRepository.getVmDynamicProperties();
+    if (injectedRootRepository != null && injectedVmProperties == null) {
+      throw new RuntimeException("archive repository has no VM dynamic-properties view");
     }
 
     // Load Config. A historical call installs an isolated thread-local snapshot from its archived

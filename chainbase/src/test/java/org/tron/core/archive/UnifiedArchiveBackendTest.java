@@ -158,6 +158,33 @@ public class UnifiedArchiveBackendTest {
   }
 
   @Test
+  public void indexPublicationRejectsDuplicateUserTxIdsWithinBlock() {
+    byte[] duplicateTxId = hash(99L);
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        0L, 0L, 3L, 0L, 3L, hash(1L), 2, ArchiveSource.NORMAL, schemaChecksum);
+    ArchiveTxPosition prepare = new ArchiveTxPosition(
+        0L, 0L, ArchivePhase.BLOCK_PREPARE, ArchiveSource.NORMAL, -1, null);
+    ArchiveTxPosition first = new ArchiveTxPosition(
+        1L, 0L, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, duplicateTxId);
+    ArchiveTxPosition second = new ArchiveTxPosition(
+        2L, 0L, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 1, duplicateTxId);
+    ArchiveTxPosition finalize = new ArchiveTxPosition(
+        3L, 0L, ArchivePhase.BLOCK_FINALIZE, ArchiveSource.NORMAL, -1, null);
+    ArchiveInFlightBlock duplicate = new ArchiveInFlightBlock(
+        range, Arrays.asList(prepare, first, second, finalize), Collections.emptyList());
+
+    ArchiveException failure;
+    try (UnifiedArchiveReadView view = db.openReadView();
+        UnifiedArchiveTxNumIndex.ReadScope ignored = index.bindReadView(view)) {
+      failure = assertThrows(ArchiveException.class,
+          () -> index.stagePublication(UnifiedArchivePublish.builder(), duplicate));
+    }
+
+    assertTrue(failure.getMessage().contains("duplicate txId"));
+    assertFalse(index.getBlockRange(0L).isPresent());
+  }
+
+  @Test
   public void productionServiceDoesNotExposeMutableStorageOrCaptureInternals() {
     service = unifiedService();
 

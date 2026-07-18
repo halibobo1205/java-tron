@@ -61,7 +61,6 @@ public final class HistoricalConstantCallExecutor {
       VMActuator vmActuator = Objects.requireNonNull(
           vmActuatorFactory.get(), "vmActuatorFactory result");
       vmActuator.setInjectedRootRepository(root);
-      vmActuator.setInjectedVmProperties(vmProperties);
       boolean completedSuccessfully = false;
       Error hardFailure = null;
       try {
