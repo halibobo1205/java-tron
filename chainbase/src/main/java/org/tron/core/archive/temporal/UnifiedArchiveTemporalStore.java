@@ -92,7 +92,7 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
     }
   }
 
-  /** Adds temporal mutations from a locator-only, snapshot-bound publication plan. */
+  /** Adds temporal mutations from a fixed-metadata, snapshot-bound publication plan. */
   public void stagePublication(UnifiedArchivePublish.Builder publish, ArchiveBlockRange range,
       PublicationPreflight preflight) {
     if (publish == null) {
@@ -105,22 +105,17 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
         addSaturated(estimate.retainedBytes, preflight.persistedPreparationBytes),
         estimate.mutations, "UNIFIED_V1 temporal preparation");
     PreparedChanges prepared = prepare(range, preflight);
-    for (Row row : prepared.anchorRows) {
-      stageIntegrityRow(publish, UnifiedArchiveColumnFamily.COMMITMENT,
-          row.key, row.value, row.linkedTxNum);
+    for (PayloadRow row : prepared.anchorRows) {
+      stagePayloadRow(publish, UnifiedArchiveColumnFamily.COMMITMENT, row);
     }
-    for (Row row : prepared.historyRows) {
-      stageIntegrityRow(publish, UnifiedArchiveColumnFamily.HISTORY,
-          row.key, row.value, row.linkedTxNum);
+    for (ReferenceRow row : prepared.historyRows) {
+      stageReferenceRow(publish, UnifiedArchiveColumnFamily.HISTORY, row);
     }
-    for (Row row : prepared.changesetRows) {
-      stageIntegrityRow(publish, UnifiedArchiveColumnFamily.CHANGESET,
-          row.key, row.value, row.linkedTxNum);
+    for (PayloadRow row : prepared.changesetRows) {
+      stagePayloadRow(publish, UnifiedArchiveColumnFamily.CHANGESET, row);
     }
-    for (LatestRows latest : prepared.latestRows.values()) {
-      stageIntegrityRow(publish, UnifiedArchiveColumnFamily.LATEST,
-          latest.latestKey, latest.value, latest.lastTxNum);
-      deleteIntegrityRow(publish, UnifiedArchiveColumnFamily.LATEST, latest.baselineKey);
+    for (ReferenceRow latest : prepared.latestRows.values()) {
+      stageReferenceRow(publish, UnifiedArchiveColumnFamily.LATEST, latest);
     }
     publish.blockMarker(ArchiveTemporalCodec.blockCommitKey(range.getBlockNum()),
         ArchiveTemporalCodec.encodeBlockCommit(
@@ -161,22 +156,17 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
       ArchiveBlockRange range) {
     UnifiedArchiveMaintenanceBatch batch = UnifiedArchiveMaintenanceBatch.bounded(
         maxMaintenanceRetainedBytes, maxMaintenanceMutations);
-    for (Row row : prepared.anchorRows) {
-      putIntegrityRow(batch, UnifiedArchiveColumnFamily.COMMITMENT,
-          row.key, row.value, row.linkedTxNum);
+    for (PayloadRow row : prepared.anchorRows) {
+      putPayloadRow(batch, UnifiedArchiveColumnFamily.COMMITMENT, row);
     }
-    for (Row row : prepared.historyRows) {
-      putIntegrityRow(batch, UnifiedArchiveColumnFamily.HISTORY,
-          row.key, row.value, row.linkedTxNum);
+    for (ReferenceRow row : prepared.historyRows) {
+      putReferenceRow(batch, UnifiedArchiveColumnFamily.HISTORY, row);
     }
-    for (Row row : prepared.changesetRows) {
-      putIntegrityRow(batch, UnifiedArchiveColumnFamily.CHANGESET,
-          row.key, row.value, row.linkedTxNum);
+    for (PayloadRow row : prepared.changesetRows) {
+      putPayloadRow(batch, UnifiedArchiveColumnFamily.CHANGESET, row);
     }
-    for (LatestRows latest : prepared.latestRows.values()) {
-      putIntegrityRow(batch, UnifiedArchiveColumnFamily.LATEST,
-          latest.latestKey, latest.value, latest.lastTxNum);
-      deleteIntegrityRow(batch, UnifiedArchiveColumnFamily.LATEST, latest.baselineKey);
+    for (ReferenceRow latest : prepared.latestRows.values()) {
+      putReferenceRow(batch, UnifiedArchiveColumnFamily.LATEST, latest);
     }
     if (range != null) {
       batch.put(UnifiedArchiveColumnFamily.BLOCK_MARKER,
@@ -208,9 +198,9 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
   }
 
   /**
-   * Reads only fixed-size temporal locators to account for persisted payloads that preparation will
-   * materialize. The returned single-use plan binds those locators, records, and the snapshot used
-   * by preparation; callers must close it when publication admission fails.
+   * Reads only fixed-size temporal locators/references to account for persisted payloads that
+   * preparation will materialize. The returned single-use plan binds that metadata, the records,
+   * and the preparation snapshot; callers must close it when publication admission fails.
    */
   public PublicationPreflight preflightPublication(List<ArchiveChangeRecord> records) {
     if (records == null) {
@@ -257,10 +247,10 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
       byte[] canonicalKey, byte[] latestKey) {
     String operation = "UNIFIED_V1 estimate temporal preparation";
     byte[] anchorKey = ArchiveTemporalCodec.anchorKey(domain, canonicalKey);
-    ArchiveTemporalIntegrityCodec.Locator anchor = readIntegrityLocator(
+    PersistedPayloadPlan anchor = readPersistedPayloadPlan(
         view, UnifiedArchiveColumnFamily.COMMITMENT, anchorKey, operation);
     estimate.addPayload(anchor);
-    ArchiveTemporalIntegrityCodec.Locator current = readIntegrityLocator(
+    PersistedReferencePlan current = readPersistedReferencePlan(
         view, UnifiedArchiveColumnFamily.LATEST, latestKey, operation);
     estimate.addPayload(current);
 
@@ -270,12 +260,10 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
     boolean hasHistory = history.isValid()
         && ArchiveTemporalCodec.startsWith(history.key(), historyPrefix);
     byte[] historyTailKey = hasHistory ? history.key().clone() : null;
-    ArchiveTemporalIntegrityCodec.Locator historyTail = null;
+    PersistedReferencePlan historyTail = null;
     byte[] predecessorHistoryKey = null;
-    byte[] predecessorChangesetKey = null;
-    ArchiveTemporalIntegrityCodec.Locator predecessorChangeset = null;
     if (hasHistory) {
-      historyTail = readIntegrityLocator(
+      historyTail = readPersistedReferencePlan(
           view, UnifiedArchiveColumnFamily.HISTORY, historyTailKey, operation);
       estimate.addPayload(historyTail);
       history.prev();
@@ -283,35 +271,14 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
       if (history.isValid()
           && ArchiveTemporalCodec.startsWith(history.key(), historyPrefix)) {
         predecessorHistoryKey = history.key().clone();
-        predecessorChangesetKey =
-            ArchiveTemporalCodec.changesetKeyOfHistory(predecessorHistoryKey);
-        predecessorChangeset = readIntegrityLocator(
-            view, UnifiedArchiveColumnFamily.CHANGESET, predecessorChangesetKey, operation);
-        estimate.addPayload(predecessorChangeset);
       }
     }
-
-    byte[] baselineKey = ArchiveTemporalCodec.latestBaselineKey(domain, canonicalKey);
-    ArchiveTemporalIntegrityCodec.Locator baseline = readIntegrityLocator(
-        view, UnifiedArchiveColumnFamily.LATEST, baselineKey, operation);
-    estimate.addPayload(baseline);
-    byte[] tailChangesetKey = null;
-    ArchiveTemporalIntegrityCodec.Locator tailChangeset = null;
     if (current != null) {
-      estimate.addCopy(current.payloadBytes());
-      if (hasHistory) {
-        tailChangesetKey = ArchiveTemporalCodec.changesetKeyOfHistory(historyTailKey);
-        tailChangeset = readIntegrityLocator(
-            view, UnifiedArchiveColumnFamily.CHANGESET, tailChangesetKey, operation);
-        estimate.addPayload(tailChangeset);
-      } else if (anchor != null) {
-        estimate.addCopy(anchor.payloadBytes());
-      }
+      estimate.addCopy(current.target.locator.payloadBytes());
     }
     return new PersistedLatestStatePlan(
-        anchorKey, anchor, latestKey, current, historyTailKey, historyTail,
-        predecessorHistoryKey, predecessorChangesetKey, predecessorChangeset,
-        baselineKey, baseline, tailChangesetKey, tailChangeset);
+        anchorKey, anchor, current, historyTailKey, historyTail,
+        predecessorHistoryKey);
   }
 
   private static PreparationEstimate estimatePreparation(List<ArchiveChangeRecord> records,
@@ -328,7 +295,7 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
       retainedBytes = addSaturated(retainedBytes,
           ArchiveResourceEstimator.estimatedTemporalPreparationBytes(
               record.canonicalKeySize(), record.getPrevValue().size(), record.getValue().size()));
-      mutations = addSaturated(mutations, 10L);
+      mutations = addSaturated(mutations, 6L);
     }
     return new PreparationEstimate(retainedBytes, mutations);
   }
@@ -340,10 +307,10 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
   private PreparedChanges prepare(ArchiveBlockRange range, PublicationPreflight preflight) {
     preflight.claim(this);
     List<ArchiveChangeRecord> ordered = preflight.orderedRecords;
-    List<Row> anchorRows = new ArrayList<>();
-    List<Row> historyRows = new ArrayList<>();
-    List<Row> changesetRows = new ArrayList<>();
-    Map<WrappedByteArray, LatestRows> latestRows = new LinkedHashMap<>();
+    List<PayloadRow> anchorRows = new ArrayList<>();
+    List<ReferenceRow> historyRows = new ArrayList<>();
+    List<PayloadRow> changesetRows = new ArrayList<>();
+    Map<WrappedByteArray, ReferenceRow> latestRows = new LinkedHashMap<>();
     List<CommitDigestRow> commitRows = new ArrayList<>();
     Set<WrappedByteArray> changesetKeys = new HashSet<>();
     int rowCount = 0;
@@ -371,8 +338,13 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
         state.anchorValue = ArchiveTemporalCodec.encodeValue(record.getPrevValue());
         state.anchorOriginTxNum = record.getTxNum();
         state.anchored = true;
-        anchorRows.add(new Row(
-            state.anchorKey, state.anchorValue, state.anchorOriginTxNum));
+        PayloadRow anchor = PayloadRow.create(UnifiedArchiveColumnFamily.COMMITMENT,
+            state.anchorKey, state.anchorValue, state.anchorOriginTxNum);
+        anchorRows.add(anchor);
+        state.anchorLocator = anchor.locator;
+        state.valueColumnFamily = UnifiedArchiveColumnFamily.COMMITMENT;
+        state.valueKey = anchor.key;
+        state.valueLocator = anchor.locator;
       }
       if (state.value != null && !state.value.contentEquals(record.getPrevValue())) {
         throw new ArchiveException("archive temporal prev-value chain mismatch for txNum "
@@ -391,16 +363,22 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
         throw new ArchiveException("archive temporal duplicate changeset row");
       }
       long predecessorTxNum = state.lastTxNum;
-      historyRows.add(new Row(historyKey, historyValue, predecessorTxNum));
-      changesetRows.add(new Row(changesetKey, changesetValue, record.getTxNum()));
+      historyRows.add(new ReferenceRow(historyKey, predecessorTxNum,
+          state.valueColumnFamily, state.valueKey, state.valueLocator));
+      PayloadRow changeset = PayloadRow.create(UnifiedArchiveColumnFamily.CHANGESET,
+          changesetKey, changesetValue, record.getTxNum());
+      changesetRows.add(changeset);
       state.value = record.getValue();
       state.lastTxNum = record.getTxNum();
-      latestRows.put(wrappedLatestKey,
-          new LatestRows(latestKey,
-              ArchiveTemporalCodec.latestBaselineKey(domain, canonicalKey),
-              changesetValue, state.lastTxNum));
-      Row anchorForDigest = predecessorTxNum == ArchiveTemporalIntegrityCodec.NO_HISTORY_TX_NUM
-          ? new Row(state.anchorKey, state.anchorValue, state.anchorOriginTxNum) : null;
+      state.valueColumnFamily = UnifiedArchiveColumnFamily.CHANGESET;
+      state.valueKey = changeset.key;
+      state.valueLocator = changeset.locator;
+      latestRows.put(wrappedLatestKey, new ReferenceRow(latestKey, state.lastTxNum,
+          state.valueColumnFamily, state.valueKey, state.valueLocator));
+      PayloadRow anchorForDigest =
+          predecessorTxNum == ArchiveTemporalIntegrityCodec.NO_HISTORY_TX_NUM
+              ? new PayloadRow(state.anchorKey, state.anchorValue, state.anchorOriginTxNum,
+                  state.anchorLocator) : null;
       commitRows.add(new CommitDigestRow(
           changesetKey, changesetValue, record.getTxNum(),
           historyKey, historyValue, predecessorTxNum, anchorForDigest));
@@ -426,68 +404,49 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
   private static LatestState loadLatestState(
       UnifiedArchiveReadView view, PersistedLatestStatePlan plan) {
     String operation = "UNIFIED_V1 validate temporal prev-value chain";
-    ArchiveTemporalIntegrityCodec.DecodedRow anchor = readPlannedIntegrityRow(
-        view, UnifiedArchiveColumnFamily.COMMITMENT,
-        plan.anchorKey, plan.anchor, operation);
+    ArchiveTemporalIntegrityCodec.DecodedRow anchor = readPlannedPayloadRow(
+        view, plan.anchor, operation);
     if (anchor != null) {
       if (anchor.linkedTxNum() < 0L) {
         throw new ArchiveException(operation + ": anchor origin txNum is invalid");
       }
       ArchiveTemporalCodec.validateValueEncoding(anchor.payloadView());
     }
-    ArchiveTemporalIntegrityCodec.DecodedRow current = readPlannedIntegrityRow(
-        view, UnifiedArchiveColumnFamily.LATEST,
-        plan.latestKey, plan.current, operation);
+    ArchiveTemporalIntegrityCodec.DecodedRow current = readPlannedReferenceRow(
+        view, plan.current, anchor, operation);
     boolean hasHistory = plan.historyTailKey != null;
     long actualLastTxNum = hasHistory
         ? ArchiveTemporalCodec.txNumOfHistory(plan.historyTailKey)
         : ArchiveTemporalIntegrityCodec.NO_HISTORY_TX_NUM;
     if (hasHistory) {
-      ArchiveTemporalIntegrityCodec.DecodedRow historyTail = readRequiredPlannedIntegrityRow(
-          view, UnifiedArchiveColumnFamily.HISTORY,
-          plan.historyTailKey, plan.historyTail, operation);
-      requireHistoryPredecessor(view, plan, historyTail, actualLastTxNum, anchor, operation);
+      ArchiveTemporalIntegrityCodec.DecodedRow historyTail = readPlannedReferenceRow(
+          view, plan.historyTail, anchor, operation);
+      if (historyTail == null) {
+        throw new ArchiveException(operation + ": temporal history reference is missing");
+      }
+      requireHistoryPredecessor(plan, historyTail, actualLastTxNum, anchor, operation);
     }
-    ArchiveTemporalIntegrityCodec.DecodedRow baseline = readPlannedIntegrityRow(
-        view, UnifiedArchiveColumnFamily.LATEST, plan.baselineKey, plan.baseline, operation);
     if (current == null) {
-      if (hasHistory || baseline != null || anchor != null) {
+      if (hasHistory || anchor != null) {
         throw new ArchiveException(operation + ": latest row is missing from an existing chain");
       }
       return new LatestState(null, ArchiveTemporalIntegrityCodec.NO_HISTORY_TX_NUM,
-          false, null, null, ArchiveTemporalIntegrityCodec.NO_HISTORY_TX_NUM);
+          false, null, null, null, ArchiveTemporalIntegrityCodec.NO_HISTORY_TX_NUM,
+          null, null, null);
     }
-    if (anchor == null) {
+    if (anchor == null || !hasHistory) {
       throw new ArchiveException(operation + ": temporal chain has no anchor");
     }
     if (current.linkedTxNum() != actualLastTxNum) {
       throw new ArchiveException(operation + ": latest history link mismatch");
     }
-    if (hasHistory) {
-      ArchiveTemporalIntegrityCodec.DecodedRow changeset = readPlannedIntegrityRow(
-          view, UnifiedArchiveColumnFamily.CHANGESET,
-          plan.tailChangesetKey, plan.tailChangeset, operation);
-      if (changeset == null || changeset.linkedTxNum() != actualLastTxNum
-          || !current.payloadEquals(changeset)) {
-        throw new ArchiveException(operation + ": latest value mismatch");
-      }
-      if (baseline != null) {
-        throw new ArchiveException(operation + ": baseline exists for a history chain");
-      }
-    } else {
-      if (baseline == null
-          || baseline.linkedTxNum() != ArchiveTemporalIntegrityCodec.NO_HISTORY_TX_NUM
-          || !current.payloadEquals(baseline)
-          || !baseline.payloadEquals(anchor)) {
-        throw new ArchiveException(operation + ": latest baseline mismatch");
-      }
-    }
     return new LatestState(current.domainValue().decode(), current.linkedTxNum(),
-        true, plan.anchorKey, hasHistory ? null : anchor.payload(), anchor.linkedTxNum());
+        true, plan.anchorKey, null, plan.anchor.locatorBytes, anchor.linkedTxNum(),
+        plan.current.target.columnFamily, plan.current.target.key,
+        plan.current.target.locatorBytes);
   }
 
-  private static void requireHistoryPredecessor(UnifiedArchiveReadView view,
-      PersistedLatestStatePlan plan,
+  private static void requireHistoryPredecessor(PersistedLatestStatePlan plan,
       ArchiveTemporalIntegrityCodec.DecodedRow row, long txNum,
       ArchiveTemporalIntegrityCodec.DecodedRow anchor, String operation) {
     long linkedTxNum = row.linkedTxNum();
@@ -504,45 +463,38 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
     }
     long physicalPredecessorTxNum =
         ArchiveTemporalCodec.txNumOfHistory(plan.predecessorHistoryKey);
-    ArchiveTemporalIntegrityCodec.DecodedRow predecessorChangeset = readPlannedIntegrityRow(
-        view, UnifiedArchiveColumnFamily.CHANGESET,
-        plan.predecessorChangesetKey, plan.predecessorChangeset, operation);
-    if (linkedTxNum != physicalPredecessorTxNum || predecessorChangeset == null
-        || predecessorChangeset.linkedTxNum() != physicalPredecessorTxNum
-        || !row.payloadEquals(predecessorChangeset)) {
+    if (linkedTxNum != physicalPredecessorTxNum) {
       throw new ArchiveException(
           operation + ": history row does not match its physical predecessor");
     }
   }
 
-  private static void stageIntegrityRow(UnifiedArchivePublish.Builder publish,
-      UnifiedArchiveColumnFamily columnFamily, byte[] key, byte[] value, long linkedTxNum) {
-    publish.put(columnFamily, key,
-        ArchiveTemporalIntegrityCodec.encode(columnFamily, key, value, linkedTxNum));
+  private static void stagePayloadRow(UnifiedArchivePublish.Builder publish,
+      UnifiedArchiveColumnFamily columnFamily, PayloadRow row) {
+    publish.put(columnFamily, row.key, row.locator);
     publish.put(UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD,
-        ArchiveTemporalIntegrityCodec.payloadKey(columnFamily, key), value);
+        ArchiveTemporalIntegrityCodec.payloadKey(columnFamily, row.key), row.value);
   }
 
-  private static void putIntegrityRow(UnifiedArchiveMaintenanceBatch batch,
-      UnifiedArchiveColumnFamily columnFamily, byte[] key, byte[] value, long linkedTxNum) {
-    batch.put(columnFamily, key,
-        ArchiveTemporalIntegrityCodec.encode(columnFamily, key, value, linkedTxNum));
+  private static void stageReferenceRow(UnifiedArchivePublish.Builder publish,
+      UnifiedArchiveColumnFamily columnFamily, ReferenceRow row) {
+    publish.put(columnFamily, row.key, ArchiveTemporalIntegrityCodec.encodeReference(
+        columnFamily, row.key, row.linkedTxNum, row.targetColumnFamily,
+        row.targetKey, row.targetLocator));
+  }
+
+  private static void putPayloadRow(UnifiedArchiveMaintenanceBatch batch,
+      UnifiedArchiveColumnFamily columnFamily, PayloadRow row) {
+    batch.put(columnFamily, row.key, row.locator);
     batch.put(UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD,
-        ArchiveTemporalIntegrityCodec.payloadKey(columnFamily, key), value);
+        ArchiveTemporalIntegrityCodec.payloadKey(columnFamily, row.key), row.value);
   }
 
-  private static void deleteIntegrityRow(UnifiedArchivePublish.Builder publish,
-      UnifiedArchiveColumnFamily columnFamily, byte[] key) {
-    publish.delete(columnFamily, key);
-    publish.delete(UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD,
-        ArchiveTemporalIntegrityCodec.payloadKey(columnFamily, key));
-  }
-
-  private static void deleteIntegrityRow(UnifiedArchiveMaintenanceBatch batch,
-      UnifiedArchiveColumnFamily columnFamily, byte[] key) {
-    batch.delete(columnFamily, key);
-    batch.delete(UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD,
-        ArchiveTemporalIntegrityCodec.payloadKey(columnFamily, key));
+  private static void putReferenceRow(UnifiedArchiveMaintenanceBatch batch,
+      UnifiedArchiveColumnFamily columnFamily, ReferenceRow row) {
+    batch.put(columnFamily, row.key, ArchiveTemporalIntegrityCodec.encodeReference(
+        columnFamily, row.key, row.linkedTxNum, row.targetColumnFamily,
+        row.targetKey, row.targetLocator));
   }
 
   @Override
@@ -935,14 +887,7 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
           throw new ArchiveException("UNIFIED_V1 temporal first history/anchor mismatch");
         }
       } else {
-        ArchiveTemporalIntegrityCodec.DecodedRow baseline = readIntegrityRow(
-            view, UnifiedArchiveColumnFamily.LATEST,
-            ArchiveTemporalCodec.latestBaselineKeyOfLatest(latestKey),
-            "UNIFIED_V1 validate baseline for anchor");
-        if (baseline == null || !baseline.payloadEquals(anchor)
-            || !latest.payloadEquals(baseline)) {
-          throw new ArchiveException("UNIFIED_V1 temporal anchor has no matching baseline");
-        }
+        throw new ArchiveException("UNIFIED_V1 temporal anchor has no history row");
       }
       anchors.next();
     }
@@ -951,23 +896,17 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
 
   private void validateLatestDomainRows(UnifiedArchiveReadView view) {
     UnifiedArchiveIterator iterator = view.newIterator(UnifiedArchiveColumnFamily.LATEST);
-    byte[] baselinePrefix = ArchiveTemporalCodec.latestBaselinePrefix();
     iterator.seekToFirst();
     while (iterator.isValid()) {
       byte[] key = iterator.key();
-      byte[] validationKey;
-      if (key.length > 0 && key[0] == ArchiveTemporalCodec.LATEST_PREFIX) {
-        validationKey = key;
-      } else if (ArchiveTemporalCodec.startsWith(key, baselinePrefix)) {
-        validationKey = ArchiveTemporalCodec.latestKeyOfBaseline(key);
-      } else {
+      if (key.length == 0 || key[0] != ArchiveTemporalCodec.LATEST_PREFIX) {
         throw new ArchiveException("UNIFIED_V1 latest column family has an unknown key");
       }
       ArchiveTemporalIntegrityCodec.DecodedRow row = readRequiredIntegrityRow(
           view, UnifiedArchiveColumnFamily.LATEST, key,
           "UNIFIED_V1 validate latest domain row");
       ArchiveTemporalRowValidator.validate(
-          catalog, validationKey, row.payloadView(), true, dynamicKeyPolicy);
+          catalog, key, row.payloadView(), true, dynamicKeyPolicy);
       iterator.next();
     }
     ArchiveRocksIterators.requireOk(iterator, "UNIFIED_V1 validate latest domain rows");
@@ -1071,68 +1010,12 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
             || !latestRow.payloadEquals(expected)) {
           throw new ArchiveException("archive temporal latest value mismatch");
         }
-        if (hasIntegrityRow(view, UnifiedArchiveColumnFamily.LATEST,
-            ArchiveTemporalCodec.latestBaselineKeyOfLatest(latestKey),
-            "UNIFIED_V1 validate latest baseline absence")) {
-          throw new ArchiveException(
-              "archive temporal latest baseline marker has a history row");
-        }
       } else {
-        ArchiveTemporalIntegrityCodec.DecodedRow baseline = readIntegrityRow(
-            view, UnifiedArchiveColumnFamily.LATEST,
-            ArchiveTemporalCodec.latestBaselineKeyOfLatest(latestKey),
-            "UNIFIED_V1 validate latest baseline");
-        if (latestRow.linkedTxNum() != ArchiveTemporalIntegrityCodec.NO_HISTORY_TX_NUM
-            || baseline == null
-            || baseline.linkedTxNum() != ArchiveTemporalIntegrityCodec.NO_HISTORY_TX_NUM
-            || !latestRow.payloadEquals(baseline)
-            || !baseline.payloadEquals(anchor)) {
-          throw new ArchiveException("archive temporal latest has no history row or baseline");
-        }
+        throw new ArchiveException("archive temporal latest has no history row");
       }
       latest.next();
     }
     ArchiveRocksIterators.requireOk(latest, "UNIFIED_V1 validate latest rows");
-    validateLatestBaselineRows(view, history);
-  }
-
-  private static void validateLatestBaselineRows(UnifiedArchiveReadView view,
-      UnifiedArchiveIterator history) {
-    byte[] prefix = ArchiveTemporalCodec.latestBaselinePrefix();
-    UnifiedArchiveIterator baseline = view.newIterator(UnifiedArchiveColumnFamily.LATEST);
-    baseline.seek(prefix);
-    while (baseline.isValid() && ArchiveTemporalCodec.startsWith(baseline.key(), prefix)) {
-      byte[] latestKey = ArchiveTemporalCodec.latestKeyOfBaseline(baseline.key());
-      ArchiveTemporalIntegrityCodec.DecodedRow baselineValue = readRequiredIntegrityRow(
-          view, UnifiedArchiveColumnFamily.LATEST, baseline.key(),
-          "UNIFIED_V1 validate latest baseline row");
-      ArchiveTemporalIntegrityCodec.DecodedRow latestValue = readIntegrityRow(
-          view, UnifiedArchiveColumnFamily.LATEST, latestKey,
-          "UNIFIED_V1 validate latest row for baseline");
-      ArchiveTemporalIntegrityCodec.DecodedRow anchorValue = readIntegrityRow(
-          view, UnifiedArchiveColumnFamily.COMMITMENT,
-          ArchiveTemporalCodec.anchorKeyOfLatest(latestKey),
-          "UNIFIED_V1 validate anchor for baseline");
-      if (baselineValue.linkedTxNum() != ArchiveTemporalIntegrityCodec.NO_HISTORY_TX_NUM
-          || latestValue == null
-          || latestValue.linkedTxNum() != ArchiveTemporalIntegrityCodec.NO_HISTORY_TX_NUM
-          || !latestValue.payloadEquals(baselineValue)
-          || anchorValue == null || anchorValue.linkedTxNum() < 0L
-          || !baselineValue.payloadEquals(anchorValue)) {
-        throw new ArchiveException(
-            "archive temporal latest baseline has no matching latest row");
-      }
-      byte[] historyPrefix = ArchiveTemporalCodec.historyPrefixOfLatest(latestKey);
-      history.seek(historyPrefix);
-      ArchiveRocksIterators.requireOk(history,
-          "UNIFIED_V1 validate latest baseline history");
-      if (history.isValid() && ArchiveTemporalCodec.startsWith(history.key(), historyPrefix)) {
-        throw new ArchiveException("archive temporal latest baseline has a history row");
-      }
-      baseline.next();
-    }
-    ArchiveRocksIterators.requireOk(baseline,
-        "UNIFIED_V1 validate latest baseline rows");
   }
 
   private BlockRows readBlockRows(UnifiedArchiveReadView view, ArchiveBlockRange range) {
@@ -1179,14 +1062,8 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
       ArchiveTemporalIntegrityCodec.DecodedRow anchor = null;
       if (historyValue.linkedTxNum()
           == ArchiveTemporalIntegrityCodec.NO_HISTORY_TX_NUM) {
-        byte[] anchorKey = ArchiveTemporalCodec.anchorKeyOfHistory(historyKey);
-        anchor = readIntegrityRow(view, UnifiedArchiveColumnFamily.COMMITMENT, anchorKey,
-            "UNIFIED_V1 read block commit anchor");
-        if (anchor == null || anchor.linkedTxNum() < 0L
-            || !historyValue.payloadEquals(anchor)) {
-          throw new ArchiveException(
-              "archive temporal first history row has no matching anchor");
-        }
+        // Resolving a first-history reference already authenticated and decoded its anchor.
+        anchor = historyValue.relinked(txNum);
       }
       updateDigest(digest, changesetKey, changesetValue.linkedTxNum(), changesetValue);
       updateDigest(digest, historyKey, historyValue.linkedTxNum(), historyValue);
@@ -1231,20 +1108,9 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
             "UNIFIED_V1 latest row"),
         key -> readIntegrityRow(view, UnifiedArchiveColumnFamily.CHANGESET, key,
             "UNIFIED_V1 changeset row"),
-        key -> readIntegrityRow(view, UnifiedArchiveColumnFamily.LATEST, key,
-            "UNIFIED_V1 latest baseline row"),
-        key -> readIntegrityRow(view, UnifiedArchiveColumnFamily.COMMITMENT, key,
-            "UNIFIED_V1 anchor row"),
+        key -> readIntegrityLocator(view, UnifiedArchiveColumnFamily.COMMITMENT, key,
+            "UNIFIED_V1 anchor metadata"),
         "UNIFIED_V1 getAsOf");
-  }
-
-  private static ArchiveTemporalIntegrityCodec.DecodedRow readIntegrityRow(
-      UnifiedArchiveReadView view,
-      UnifiedArchiveColumnFamily columnFamily, byte[] key, String what) {
-    byte[] locator = view.getExact(
-        columnFamily, key, ArchiveTemporalIntegrityCodec.LOCATOR_BYTES, what + " locator");
-    return locator == null ? null
-        : decodeIntegrityRow(view, columnFamily, key, locator, what);
   }
 
   private static ArchiveTemporalIntegrityCodec.Locator readIntegrityLocator(
@@ -1252,36 +1118,95 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
       UnifiedArchiveColumnFamily columnFamily, byte[] key, String what) {
     byte[] locator = view.getExact(
         columnFamily, key, ArchiveTemporalIntegrityCodec.LOCATOR_BYTES, what + " locator");
-    return locator == null ? null : ArchiveTemporalIntegrityCodec.decodeLocator(
-        columnFamily, key, locator, what);
+    return locator == null ? null
+        : ArchiveTemporalIntegrityCodec.decodeLocator(columnFamily, key, locator, what);
   }
 
-  private static ArchiveTemporalIntegrityCodec.DecodedRow readPlannedIntegrityRow(
+  private static ArchiveTemporalIntegrityCodec.DecodedRow readIntegrityRow(
+      UnifiedArchiveReadView view,
+      UnifiedArchiveColumnFamily columnFamily, byte[] key, String what) {
+    if (isReferenceColumnFamily(columnFamily)) {
+      byte[] reference = view.getExact(
+          columnFamily, key, ArchiveTemporalIntegrityCodec.REFERENCE_BYTES,
+          what + " reference");
+      return reference == null ? null
+          : decodeReferenceRow(view, columnFamily, key, reference, what);
+    }
+    byte[] locator = view.getExact(
+        columnFamily, key, ArchiveTemporalIntegrityCodec.LOCATOR_BYTES, what + " locator");
+    return locator == null ? null
+        : decodeIntegrityRow(view, columnFamily, key, locator, what);
+  }
+
+  private static PersistedPayloadPlan readPersistedPayloadPlan(
       UnifiedArchiveReadView view, UnifiedArchiveColumnFamily columnFamily,
-      byte[] key, ArchiveTemporalIntegrityCodec.Locator locator, String what) {
-    if (locator == null) {
+      byte[] key, String what) {
+    byte[] locatorBytes = view.getExact(
+        columnFamily, key, ArchiveTemporalIntegrityCodec.LOCATOR_BYTES, what + " locator");
+    if (locatorBytes == null) {
       return null;
     }
-    byte[] payloadKey = ArchiveTemporalIntegrityCodec.payloadKey(columnFamily, key);
+    ArchiveTemporalIntegrityCodec.Locator locator =
+        ArchiveTemporalIntegrityCodec.decodeLocator(
+            columnFamily, key, locatorBytes, what);
+    return new PersistedPayloadPlan(columnFamily, key, locatorBytes, locator);
+  }
+
+  private static PersistedReferencePlan readPersistedReferencePlan(
+      UnifiedArchiveReadView view, UnifiedArchiveColumnFamily columnFamily,
+      byte[] key, String what) {
+    byte[] referenceBytes = view.getExact(
+        columnFamily, key, ArchiveTemporalIntegrityCodec.REFERENCE_BYTES,
+        what + " reference");
+    if (referenceBytes == null) {
+      return null;
+    }
+    long linkedTxNum = ArchiveTemporalIntegrityCodec.decodeReferenceLink(
+        columnFamily, key, referenceBytes, what);
+    ReferenceTarget target = referenceTarget(columnFamily, key, linkedTxNum, what);
+    PersistedPayloadPlan targetPlan = readPersistedPayloadPlan(
+        view, target.columnFamily, target.key, what + " target");
+    if (targetPlan == null) {
+      throw new ArchiveException(what + ": temporal reference target is missing");
+    }
+    ArchiveTemporalIntegrityCodec.decodeReference(
+        columnFamily, key, referenceBytes, target.columnFamily, target.key,
+        targetPlan.locatorBytes, what);
+    validateReferenceTarget(columnFamily, key, linkedTxNum, targetPlan, what);
+    return new PersistedReferencePlan(linkedTxNum, targetPlan);
+  }
+
+  private static ArchiveTemporalIntegrityCodec.DecodedRow readPlannedPayloadRow(
+      UnifiedArchiveReadView view, PersistedPayloadPlan plan, String what) {
+    if (plan == null) {
+      return null;
+    }
+    byte[] payloadKey = ArchiveTemporalIntegrityCodec.payloadKey(
+        plan.columnFamily, plan.key);
     byte[] payload = view.getPreaccountedExact(
         UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD, payloadKey,
-        locator.payloadBytes(), what + " payload");
+        plan.locator.payloadBytes(), what + " payload");
     if (payload == null) {
       throw new ArchiveException(what + ": temporal payload is missing");
     }
     return ArchiveTemporalIntegrityCodec.decode(
-        columnFamily, key, locator, payload, what);
+        plan.columnFamily, plan.key, plan.locator, payload, what);
   }
 
-  private static ArchiveTemporalIntegrityCodec.DecodedRow readRequiredPlannedIntegrityRow(
-      UnifiedArchiveReadView view, UnifiedArchiveColumnFamily columnFamily,
-      byte[] key, ArchiveTemporalIntegrityCodec.Locator locator, String what) {
-    ArchiveTemporalIntegrityCodec.DecodedRow row =
-        readPlannedIntegrityRow(view, columnFamily, key, locator, what);
-    if (row == null) {
-      throw new ArchiveException(what + ": temporal locator is missing");
+  private static ArchiveTemporalIntegrityCodec.DecodedRow readPlannedReferenceRow(
+      UnifiedArchiveReadView view, PersistedReferencePlan plan,
+      ArchiveTemporalIntegrityCodec.DecodedRow cachedAnchor, String what) {
+    if (plan == null) {
+      return null;
     }
-    return row;
+    ArchiveTemporalIntegrityCodec.DecodedRow target;
+    if (plan.target.columnFamily == UnifiedArchiveColumnFamily.COMMITMENT
+        && cachedAnchor != null) {
+      target = cachedAnchor;
+    } else {
+      target = readPlannedPayloadRow(view, plan.target, what + " target");
+    }
+    return target.relinked(plan.linkedTxNum);
   }
 
   private static ArchiveTemporalIntegrityCodec.DecodedRow readRequiredIntegrityRow(
@@ -1297,8 +1222,10 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
 
   private static boolean hasIntegrityRow(UnifiedArchiveReadView view,
       UnifiedArchiveColumnFamily columnFamily, byte[] key, String what) {
-    return view.getExact(columnFamily, key, ArchiveTemporalIntegrityCodec.LOCATOR_BYTES,
-        what + " locator") != null;
+    int expectedBytes = isReferenceColumnFamily(columnFamily)
+        ? ArchiveTemporalIntegrityCodec.REFERENCE_BYTES
+        : ArchiveTemporalIntegrityCodec.LOCATOR_BYTES;
+    return view.getExact(columnFamily, key, expectedBytes, what + " row") != null;
   }
 
   private static byte[] readBlockMarker(
@@ -1328,6 +1255,83 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
     }
     return ArchiveTemporalIntegrityCodec.decode(
         columnFamily, key, locator, payload, what);
+  }
+
+  private static ArchiveTemporalIntegrityCodec.DecodedRow decodeReferenceRow(
+      UnifiedArchiveReadView view, UnifiedArchiveColumnFamily columnFamily,
+      byte[] key, byte[] referenceBytes, String what) {
+    long linkedTxNum = ArchiveTemporalIntegrityCodec.decodeReferenceLink(
+        columnFamily, key, referenceBytes, what);
+    ReferenceTarget target = referenceTarget(columnFamily, key, linkedTxNum, what);
+    byte[] targetLocatorBytes = view.getExact(
+        target.columnFamily, target.key, ArchiveTemporalIntegrityCodec.LOCATOR_BYTES,
+        what + " target locator");
+    if (targetLocatorBytes == null) {
+      throw new ArchiveException(what + ": temporal reference target is missing");
+    }
+    ArchiveTemporalIntegrityCodec.decodeReference(
+        columnFamily, key, referenceBytes, target.columnFamily, target.key,
+        targetLocatorBytes, what);
+    ArchiveTemporalIntegrityCodec.Locator targetLocator =
+        ArchiveTemporalIntegrityCodec.decodeLocator(
+            target.columnFamily, target.key, targetLocatorBytes, what + " target");
+    PersistedPayloadPlan targetPlan = new PersistedPayloadPlan(
+        target.columnFamily, target.key, targetLocatorBytes, targetLocator);
+    validateReferenceTarget(columnFamily, key, linkedTxNum, targetPlan, what);
+    return decodeIntegrityRow(
+        view, target.columnFamily, target.key, targetLocator, what + " target")
+        .relinked(linkedTxNum);
+  }
+
+  private static ReferenceTarget referenceTarget(UnifiedArchiveColumnFamily columnFamily,
+      byte[] key, long linkedTxNum, String what) {
+    if (columnFamily == UnifiedArchiveColumnFamily.HISTORY) {
+      long historyTxNum = ArchiveTemporalCodec.txNumOfHistory(key);
+      if (linkedTxNum >= historyTxNum) {
+        throw new ArchiveException(what + ": history predecessor link is invalid");
+      }
+      if (linkedTxNum == ArchiveTemporalIntegrityCodec.NO_HISTORY_TX_NUM) {
+        return new ReferenceTarget(UnifiedArchiveColumnFamily.COMMITMENT,
+            ArchiveTemporalCodec.anchorKeyOfHistory(key));
+      }
+      return new ReferenceTarget(UnifiedArchiveColumnFamily.CHANGESET,
+          ArchiveTemporalCodec.changesetKey(linkedTxNum,
+              ArchiveTemporalCodec.domainOfHistoryKey(key),
+              ArchiveTemporalCodec.canonicalKeyOfHistoryKey(key)));
+    }
+    if (columnFamily == UnifiedArchiveColumnFamily.LATEST) {
+      if (linkedTxNum < 0L) {
+        throw new ArchiveException(what + ": latest changeset link is invalid");
+      }
+      return new ReferenceTarget(UnifiedArchiveColumnFamily.CHANGESET,
+          ArchiveTemporalCodec.changesetKey(linkedTxNum,
+              ArchiveTemporalCodec.domainOfLatestKey(key),
+              ArchiveTemporalCodec.canonicalKeyOfLatestKey(key)));
+    }
+    throw new ArchiveException(what + ": temporal reference column family is invalid");
+  }
+
+  private static void validateReferenceTarget(UnifiedArchiveColumnFamily columnFamily,
+      byte[] key, long linkedTxNum, PersistedPayloadPlan target, String what) {
+    if (columnFamily == UnifiedArchiveColumnFamily.HISTORY
+        && linkedTxNum == ArchiveTemporalIntegrityCodec.NO_HISTORY_TX_NUM) {
+      long historyTxNum = ArchiveTemporalCodec.txNumOfHistory(key);
+      if (target.columnFamily != UnifiedArchiveColumnFamily.COMMITMENT
+          || target.locator.linkedTxNum() != historyTxNum) {
+        throw new ArchiveException(what + ": first history reference target is invalid");
+      }
+      return;
+    }
+    if (target.columnFamily != UnifiedArchiveColumnFamily.CHANGESET
+        || target.locator.linkedTxNum() != linkedTxNum) {
+      throw new ArchiveException(what + ": changeset reference target is invalid");
+    }
+  }
+
+  private static boolean isReferenceColumnFamily(
+      UnifiedArchiveColumnFamily columnFamily) {
+    return columnFamily == UnifiedArchiveColumnFamily.HISTORY
+        || columnFamily == UnifiedArchiveColumnFamily.LATEST;
   }
 
   private static void closeAfterFailure(UnifiedArchiveReadView view, Throwable failure) {
@@ -1496,10 +1500,21 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
 
     private long payloadAndCopyBytes;
     private long maxNativeReadBytes;
+    private final Set<WrappedByteArray> accountedPayloadKeys = new HashSet<>();
 
-    private void addPayload(ArchiveTemporalIntegrityCodec.Locator locator) {
-      if (locator != null) {
-        addPayloadBytes(locator.payloadBytes());
+    private void addPayload(PersistedPayloadPlan plan) {
+      if (plan != null) {
+        byte[] payloadKey = ArchiveTemporalIntegrityCodec.payloadKey(
+            plan.columnFamily, plan.key);
+        if (accountedPayloadKeys.add(WrappedByteArray.copyOf(payloadKey))) {
+          addPayloadBytes(plan.locator.payloadBytes());
+        }
+      }
+    }
+
+    private void addPayload(PersistedReferencePlan plan) {
+      if (plan != null) {
+        addPayload(plan.target);
       }
     }
 
@@ -1514,47 +1529,66 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
     }
   }
 
+  private static final class PersistedPayloadPlan {
+
+    private final UnifiedArchiveColumnFamily columnFamily;
+    private final byte[] key;
+    private final byte[] locatorBytes;
+    private final ArchiveTemporalIntegrityCodec.Locator locator;
+
+    private PersistedPayloadPlan(UnifiedArchiveColumnFamily columnFamily, byte[] key,
+        byte[] locatorBytes, ArchiveTemporalIntegrityCodec.Locator locator) {
+      this.columnFamily = columnFamily;
+      this.key = key;
+      this.locatorBytes = locatorBytes;
+      this.locator = locator;
+    }
+  }
+
+  private static final class PersistedReferencePlan {
+
+    private final long linkedTxNum;
+    private final PersistedPayloadPlan target;
+
+    private PersistedReferencePlan(long linkedTxNum, PersistedPayloadPlan target) {
+      this.linkedTxNum = linkedTxNum;
+      this.target = target;
+    }
+  }
+
+  private static final class ReferenceTarget {
+
+    private final UnifiedArchiveColumnFamily columnFamily;
+    private final byte[] key;
+
+    private ReferenceTarget(UnifiedArchiveColumnFamily columnFamily, byte[] key) {
+      this.columnFamily = columnFamily;
+      this.key = key;
+    }
+  }
+
   private static final class PersistedLatestStatePlan {
 
     private final byte[] anchorKey;
-    private final ArchiveTemporalIntegrityCodec.Locator anchor;
-    private final byte[] latestKey;
-    private final ArchiveTemporalIntegrityCodec.Locator current;
+    private final PersistedPayloadPlan anchor;
+    private final PersistedReferencePlan current;
     private final byte[] historyTailKey;
-    private final ArchiveTemporalIntegrityCodec.Locator historyTail;
+    private final PersistedReferencePlan historyTail;
     private final byte[] predecessorHistoryKey;
-    private final byte[] predecessorChangesetKey;
-    private final ArchiveTemporalIntegrityCodec.Locator predecessorChangeset;
-    private final byte[] baselineKey;
-    private final ArchiveTemporalIntegrityCodec.Locator baseline;
-    private final byte[] tailChangesetKey;
-    private final ArchiveTemporalIntegrityCodec.Locator tailChangeset;
 
-    private PersistedLatestStatePlan(byte[] anchorKey,
-        ArchiveTemporalIntegrityCodec.Locator anchor, byte[] latestKey,
-        ArchiveTemporalIntegrityCodec.Locator current, byte[] historyTailKey,
-        ArchiveTemporalIntegrityCodec.Locator historyTail, byte[] predecessorHistoryKey,
-        byte[] predecessorChangesetKey,
-        ArchiveTemporalIntegrityCodec.Locator predecessorChangeset, byte[] baselineKey,
-        ArchiveTemporalIntegrityCodec.Locator baseline, byte[] tailChangesetKey,
-        ArchiveTemporalIntegrityCodec.Locator tailChangeset) {
+    private PersistedLatestStatePlan(byte[] anchorKey, PersistedPayloadPlan anchor,
+        PersistedReferencePlan current, byte[] historyTailKey,
+        PersistedReferencePlan historyTail, byte[] predecessorHistoryKey) {
       this.anchorKey = anchorKey;
       this.anchor = anchor;
-      this.latestKey = latestKey;
       this.current = current;
       this.historyTailKey = historyTailKey;
       this.historyTail = historyTail;
       this.predecessorHistoryKey = predecessorHistoryKey;
-      this.predecessorChangesetKey = predecessorChangesetKey;
-      this.predecessorChangeset = predecessorChangeset;
-      this.baselineKey = baselineKey;
-      this.baseline = baseline;
-      this.tailChangesetKey = tailChangesetKey;
-      this.tailChangeset = tailChangeset;
     }
   }
 
-  /** Single-use locator plan whose snapshot remains open until publication preparation completes. */
+  /** Single-use metadata plan whose snapshot remains open until preparation completes. */
   public static final class PublicationPreflight implements AutoCloseable {
 
     private final UnifiedArchiveTemporalStore owner;
@@ -1645,15 +1679,16 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
 
   private static final class PreparedChanges {
 
-    private final List<Row> anchorRows;
-    private final List<Row> historyRows;
-    private final List<Row> changesetRows;
-    private final Map<WrappedByteArray, LatestRows> latestRows;
+    private final List<PayloadRow> anchorRows;
+    private final List<ReferenceRow> historyRows;
+    private final List<PayloadRow> changesetRows;
+    private final Map<WrappedByteArray, ReferenceRow> latestRows;
     private final int rowCount;
     private final byte[] digest;
 
-    private PreparedChanges(List<Row> anchorRows, List<Row> historyRows, List<Row> changesetRows,
-        Map<WrappedByteArray, LatestRows> latestRows, int rowCount, byte[] digest) {
+    private PreparedChanges(List<PayloadRow> anchorRows, List<ReferenceRow> historyRows,
+        List<PayloadRow> changesetRows, Map<WrappedByteArray, ReferenceRow> latestRows,
+        int rowCount, byte[] digest) {
       this.anchorRows = anchorRows;
       this.historyRows = historyRows;
       this.changesetRows = changesetRows;
@@ -1674,11 +1709,11 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
     private final byte[] historyKey;
     private final byte[] historyValue;
     private final long historyLinkedTxNum;
-    private final Row anchor;
+    private final PayloadRow anchor;
 
     private CommitDigestRow(byte[] changesetKey, byte[] changesetValue,
         long changesetLinkedTxNum, byte[] historyKey, byte[] historyValue,
-        long historyLinkedTxNum, Row anchor) {
+        long historyLinkedTxNum, PayloadRow anchor) {
       this.changesetKey = changesetKey;
       this.changesetValue = changesetValue;
       this.changesetLinkedTxNum = changesetLinkedTxNum;
@@ -1689,35 +1724,44 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
     }
   }
 
-  private static final class Row {
+  private static final class PayloadRow {
 
     private final byte[] key;
     private final byte[] value;
     private final long linkedTxNum;
+    private final byte[] locator;
 
-    private Row(byte[] key, byte[] value) {
-      this(key, value, ArchiveTemporalIntegrityCodec.NO_HISTORY_TX_NUM);
-    }
-
-    private Row(byte[] key, byte[] value, long linkedTxNum) {
+    private PayloadRow(byte[] key, byte[] value, long linkedTxNum, byte[] locator) {
       this.key = key;
       this.value = value;
       this.linkedTxNum = linkedTxNum;
+      this.locator = locator;
+    }
+
+    private static PayloadRow create(UnifiedArchiveColumnFamily columnFamily,
+        byte[] key, byte[] value, long linkedTxNum) {
+      return new PayloadRow(key, value, linkedTxNum,
+          ArchiveTemporalIntegrityCodec.encode(
+              columnFamily, key, value, linkedTxNum));
     }
   }
 
-  private static final class LatestRows {
+  private static final class ReferenceRow {
 
-    private final byte[] latestKey;
-    private final byte[] baselineKey;
-    private final byte[] value;
-    private final long lastTxNum;
+    private final byte[] key;
+    private final long linkedTxNum;
+    private final UnifiedArchiveColumnFamily targetColumnFamily;
+    private final byte[] targetKey;
+    private final byte[] targetLocator;
 
-    private LatestRows(byte[] latestKey, byte[] baselineKey, byte[] value, long lastTxNum) {
-      this.latestKey = latestKey;
-      this.baselineKey = baselineKey;
-      this.value = value;
-      this.lastTxNum = lastTxNum;
+    private ReferenceRow(byte[] key, long linkedTxNum,
+        UnifiedArchiveColumnFamily targetColumnFamily, byte[] targetKey,
+        byte[] targetLocator) {
+      this.key = key;
+      this.linkedTxNum = linkedTxNum;
+      this.targetColumnFamily = targetColumnFamily;
+      this.targetKey = targetKey;
+      this.targetLocator = targetLocator;
     }
   }
 
@@ -1728,16 +1772,25 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
     private boolean anchored;
     private byte[] anchorKey;
     private byte[] anchorValue;
+    private byte[] anchorLocator;
     private long anchorOriginTxNum;
+    private UnifiedArchiveColumnFamily valueColumnFamily;
+    private byte[] valueKey;
+    private byte[] valueLocator;
 
     private LatestState(DomainValue value, long lastTxNum, boolean anchored, byte[] anchorKey,
-        byte[] anchorValue, long anchorOriginTxNum) {
+        byte[] anchorValue, byte[] anchorLocator, long anchorOriginTxNum,
+        UnifiedArchiveColumnFamily valueColumnFamily, byte[] valueKey, byte[] valueLocator) {
       this.value = value;
       this.lastTxNum = lastTxNum;
       this.anchored = anchored;
       this.anchorKey = anchorKey;
       this.anchorValue = anchorValue;
+      this.anchorLocator = anchorLocator;
       this.anchorOriginTxNum = anchorOriginTxNum;
+      this.valueColumnFamily = valueColumnFamily;
+      this.valueKey = valueKey;
+      this.valueLocator = valueLocator;
     }
   }
 

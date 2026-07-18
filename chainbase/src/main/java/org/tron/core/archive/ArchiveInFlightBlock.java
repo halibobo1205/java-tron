@@ -146,7 +146,7 @@ public final class ArchiveInFlightBlock {
           ArchiveResourceEstimator.estimatedTemporalPreparationBytes(
               record.canonicalKeySize(), record.getPrevValue().size(),
               record.getValue().size()));
-      temporalMutations = addSaturated(temporalMutations, 10L);
+      temporalMutations = addSaturated(temporalMutations, 6L);
     }
     return new ResourceEstimates(
         retainedBytes, temporalRetainedBytes, temporalMutations);

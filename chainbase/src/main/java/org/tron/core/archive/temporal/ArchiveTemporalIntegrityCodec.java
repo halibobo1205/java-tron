@@ -6,28 +6,38 @@ import java.util.Arrays;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.unified.UnifiedArchiveColumnFamily;
 
-/** Fixed locator and key-bound integrity codec for out-of-line temporal payloads. */
+/** Fixed payload locators and authenticated references for temporal rows. */
 final class ArchiveTemporalIntegrityCodec {
 
   static final long NO_HISTORY_TX_NUM = -1L;
   static final int LOCATOR_BYTES = 1 + Long.BYTES + Integer.BYTES + 32;
+  static final int REFERENCE_BYTES = 1 + Long.BYTES + 32;
   static final int MAX_PAYLOAD_BYTES = 256 * 1024 * 1024;
   // Publication reserves eight value-sized working copies before persistence. With the factory
   // capping that reservation at MAX_PAYLOAD_BYTES, no valid writer can emit a larger single row.
   static final int MAX_STORED_PAYLOAD_BYTES = MAX_PAYLOAD_BYTES / 8;
 
-  private static final byte LOCATOR_VERSION = 0x01;
+  private static final byte LOCATOR_VERSION = 0x02;
+  private static final byte REFERENCE_VERSION = 0x01;
   private static final byte HISTORY_TABLE = 0x01;
   private static final byte LATEST_TABLE = 0x02;
   private static final byte CHANGESET_TABLE = 0x03;
   private static final byte ANCHOR_TABLE = 0x04;
+  private static final byte CHANGESET_PAYLOAD_TABLE = 0x01;
+  private static final byte ANCHOR_PAYLOAD_TABLE = 0x02;
   private static final int LINK_OFFSET = 1;
   private static final int LENGTH_OFFSET = LINK_OFFSET + Long.BYTES;
   private static final int DIGEST_OFFSET = LENGTH_OFFSET + Integer.BYTES;
+  private static final int REFERENCE_DIGEST_OFFSET = 1 + Long.BYTES;
   private static final byte[] HASH_DOMAIN = new byte[] {
       't', 'r', 'o', 'n', '-', 'a', 'r', 'c', 'h', 'i', 'v', 'e', '-',
       't', 'e', 'm', 'p', 'o', 'r', 'a', 'l', '-', 'l', 'o', 'c', 'a', 't', 'o', 'r', '-',
-      'v', '1'
+      'v', '2'
+  };
+  private static final byte[] REFERENCE_HASH_DOMAIN = new byte[] {
+      't', 'r', 'o', 'n', '-', 'a', 'r', 'c', 'h', 'i', 'v', 'e', '-',
+      't', 'e', 'm', 'p', 'o', 'r', 'a', 'l', '-', 'r', 'e', 'f', 'e', 'r', 'e', 'n', 'c', 'e',
+      '-', 'v', '1'
   };
   private static final ThreadLocal<MessageDigest> DIGEST =
       ThreadLocal.withInitial(ArchiveTemporalIntegrityCodec::newDigest);
@@ -39,7 +49,8 @@ final class ArchiveTemporalIntegrityCodec {
       byte[] payload, long linkedTxNum) {
     requireRowKey(rowKey);
     requirePayload(payload);
-    requireLinkedTxNum(linkedTxNum);
+    requirePayloadColumnFamily(columnFamily);
+    requirePayloadLinkedTxNum(linkedTxNum);
     byte[] locator = new byte[LOCATOR_BYTES];
     locator[0] = LOCATOR_VERSION;
     putLong(locator, LINK_OFFSET, linkedTxNum);
@@ -49,10 +60,28 @@ final class ArchiveTemporalIntegrityCodec {
     return locator;
   }
 
+  static byte[] encodeReference(UnifiedArchiveColumnFamily columnFamily, byte[] rowKey,
+      long linkedTxNum, UnifiedArchiveColumnFamily targetColumnFamily, byte[] targetKey,
+      byte[] targetLocator) {
+    requireRowKey(rowKey);
+    requireReferenceColumnFamily(columnFamily);
+    requireReferenceLinkedTxNum(linkedTxNum);
+    requireRowKey(targetKey);
+    requireLocatorEncoding(
+        targetColumnFamily, targetKey, targetLocator, "encode temporal reference target");
+    byte[] reference = new byte[REFERENCE_BYTES];
+    reference[0] = REFERENCE_VERSION;
+    putLong(reference, LINK_OFFSET, linkedTxNum);
+    byte[] digest = referenceDigest(columnFamily, rowKey, linkedTxNum,
+        targetColumnFamily, targetKey, targetLocator);
+    System.arraycopy(digest, 0, reference, REFERENCE_DIGEST_OFFSET, digest.length);
+    return reference;
+  }
+
   static byte[] payloadKey(UnifiedArchiveColumnFamily columnFamily, byte[] rowKey) {
     requireRowKey(rowKey);
     byte[] payloadKey = new byte[1 + rowKey.length];
-    payloadKey[0] = tableId(columnFamily);
+    payloadKey[0] = payloadTableId(columnFamily);
     System.arraycopy(rowKey, 0, payloadKey, 1, rowKey.length);
     return payloadKey;
   }
@@ -61,13 +90,9 @@ final class ArchiveTemporalIntegrityCodec {
       byte[] payloadKey, String operation) {
     requirePayloadKey(payloadKey, operation);
     switch (payloadKey[0]) {
-      case HISTORY_TABLE:
-        return UnifiedArchiveColumnFamily.HISTORY;
-      case LATEST_TABLE:
-        return UnifiedArchiveColumnFamily.LATEST;
-      case CHANGESET_TABLE:
+      case CHANGESET_PAYLOAD_TABLE:
         return UnifiedArchiveColumnFamily.CHANGESET;
-      case ANCHOR_TABLE:
+      case ANCHOR_PAYLOAD_TABLE:
         return UnifiedArchiveColumnFamily.COMMITMENT;
       default:
         throw new ArchiveException(operation + ": temporal payload table tag is invalid");
@@ -81,14 +106,9 @@ final class ArchiveTemporalIntegrityCodec {
 
   static Locator decodeLocator(UnifiedArchiveColumnFamily columnFamily, byte[] rowKey,
       byte[] locator, String operation) {
-    requireRowKey(rowKey);
-    tableId(columnFamily);
-    if (locator == null || locator.length != LOCATOR_BYTES
-        || locator[0] != LOCATOR_VERSION) {
-      throw new ArchiveException(operation + ": temporal locator encoding is invalid");
-    }
+    requireLocatorEncoding(columnFamily, rowKey, locator, operation);
     long linkedTxNum = longAt(locator, LINK_OFFSET);
-    requireLinkedTxNum(linkedTxNum);
+    requirePayloadLinkedTxNum(linkedTxNum);
     int payloadBytes = intAt(locator, LENGTH_OFFSET);
     if (payloadBytes <= 0 || payloadBytes > MAX_STORED_PAYLOAD_BYTES) {
       throw new ArchiveException(operation + ": temporal payload length is invalid: "
@@ -99,9 +119,42 @@ final class ArchiveTemporalIntegrityCodec {
         Arrays.copyOfRange(locator, DIGEST_OFFSET, LOCATOR_BYTES));
   }
 
+  static long decodeReference(UnifiedArchiveColumnFamily columnFamily, byte[] rowKey,
+      byte[] reference, UnifiedArchiveColumnFamily targetColumnFamily, byte[] targetKey,
+      byte[] targetLocator, String operation) {
+    requireRowKey(rowKey);
+    requireReferenceColumnFamily(columnFamily);
+    requireRowKey(targetKey);
+    requireLocatorEncoding(
+        targetColumnFamily, targetKey, targetLocator, operation + " target");
+    long linkedTxNum = decodeReferenceLink(columnFamily, rowKey, reference, operation);
+    byte[] expected = referenceDigest(columnFamily, rowKey, linkedTxNum,
+        targetColumnFamily, targetKey, targetLocator);
+    byte[] actual = Arrays.copyOfRange(
+        reference, REFERENCE_DIGEST_OFFSET, REFERENCE_BYTES);
+    if (!MessageDigest.isEqual(expected, actual)) {
+      throw new ArchiveException(operation + ": temporal reference digest mismatch");
+    }
+    return linkedTxNum;
+  }
+
+  static long decodeReferenceLink(UnifiedArchiveColumnFamily columnFamily, byte[] rowKey,
+      byte[] reference, String operation) {
+    requireRowKey(rowKey);
+    requireReferenceColumnFamily(columnFamily);
+    if (reference == null || reference.length != REFERENCE_BYTES
+        || reference[0] != REFERENCE_VERSION) {
+      throw new ArchiveException(operation + ": temporal reference encoding is invalid");
+    }
+    long linkedTxNum = longAt(reference, LINK_OFFSET);
+    requireReferenceLinkedTxNum(linkedTxNum);
+    return linkedTxNum;
+  }
+
   static DecodedRow decode(UnifiedArchiveColumnFamily columnFamily, byte[] rowKey,
       Locator locator, byte[] payload, String operation) {
     requireRowKey(rowKey);
+    requirePayloadColumnFamily(columnFamily);
     if (payload == null || payload.length != locator.payloadBytes) {
       throw new ArchiveException(operation + ": temporal payload length mismatch");
     }
@@ -117,7 +170,7 @@ final class ArchiveTemporalIntegrityCodec {
     MessageDigest digest = DIGEST.get();
     digest.reset();
     digest.update(HASH_DOMAIN);
-    digest.update(tableId(columnFamily));
+    digest.update(logicalTableId(columnFamily));
     updateInt(digest, rowKey.length);
     digest.update(rowKey);
     updateLong(digest, linkedTxNum);
@@ -126,7 +179,25 @@ final class ArchiveTemporalIntegrityCodec {
     return digest.digest();
   }
 
-  private static byte tableId(UnifiedArchiveColumnFamily columnFamily) {
+  private static byte[] referenceDigest(UnifiedArchiveColumnFamily columnFamily,
+      byte[] rowKey, long linkedTxNum, UnifiedArchiveColumnFamily targetColumnFamily,
+      byte[] targetKey, byte[] targetLocator) {
+    MessageDigest digest = DIGEST.get();
+    digest.reset();
+    digest.update(REFERENCE_HASH_DOMAIN);
+    digest.update(logicalTableId(columnFamily));
+    updateInt(digest, rowKey.length);
+    digest.update(rowKey);
+    updateLong(digest, linkedTxNum);
+    digest.update(logicalTableId(targetColumnFamily));
+    updateInt(digest, targetKey.length);
+    digest.update(targetKey);
+    updateInt(digest, targetLocator.length);
+    digest.update(targetLocator);
+    return digest.digest();
+  }
+
+  private static byte logicalTableId(UnifiedArchiveColumnFamily columnFamily) {
     if (columnFamily == UnifiedArchiveColumnFamily.HISTORY) {
       return HISTORY_TABLE;
     }
@@ -141,6 +212,39 @@ final class ArchiveTemporalIntegrityCodec {
     }
     throw new ArchiveException("archive temporal integrity does not support column family "
         + (columnFamily == null ? "null" : columnFamily.getName()));
+  }
+
+  private static byte payloadTableId(UnifiedArchiveColumnFamily columnFamily) {
+    if (columnFamily == UnifiedArchiveColumnFamily.CHANGESET) {
+      return CHANGESET_PAYLOAD_TABLE;
+    }
+    if (columnFamily == UnifiedArchiveColumnFamily.COMMITMENT) {
+      return ANCHOR_PAYLOAD_TABLE;
+    }
+    throw new ArchiveException("archive temporal payload does not support column family "
+        + (columnFamily == null ? "null" : columnFamily.getName()));
+  }
+
+  private static void requirePayloadColumnFamily(UnifiedArchiveColumnFamily columnFamily) {
+    payloadTableId(columnFamily);
+  }
+
+  private static void requireLocatorEncoding(UnifiedArchiveColumnFamily columnFamily,
+      byte[] rowKey, byte[] locator, String operation) {
+    requireRowKey(rowKey);
+    requirePayloadColumnFamily(columnFamily);
+    if (locator == null || locator.length != LOCATOR_BYTES
+        || locator[0] != LOCATOR_VERSION) {
+      throw new ArchiveException(operation + ": temporal locator encoding is invalid");
+    }
+  }
+
+  private static void requireReferenceColumnFamily(UnifiedArchiveColumnFamily columnFamily) {
+    if (columnFamily != UnifiedArchiveColumnFamily.HISTORY
+        && columnFamily != UnifiedArchiveColumnFamily.LATEST) {
+      throw new ArchiveException("archive temporal reference does not support column family "
+          + (columnFamily == null ? "null" : columnFamily.getName()));
+    }
   }
 
   private static void requireRowKey(byte[] rowKey) {
@@ -165,7 +269,13 @@ final class ArchiveTemporalIntegrityCodec {
     }
   }
 
-  private static void requireLinkedTxNum(long linkedTxNum) {
+  private static void requirePayloadLinkedTxNum(long linkedTxNum) {
+    if (linkedTxNum < 0L) {
+      throw new ArchiveException("archive temporal payload linked txNum is invalid");
+    }
+  }
+
+  private static void requireReferenceLinkedTxNum(long linkedTxNum) {
     if (linkedTxNum < NO_HISTORY_TX_NUM) {
       throw new ArchiveException("archive temporal integrity linked txNum is invalid");
     }
@@ -282,6 +392,10 @@ final class ArchiveTemporalIntegrityCodec {
 
     boolean payloadEquals(DecodedRow other) {
       return other != null && Arrays.equals(payload, other.payload);
+    }
+
+    DecodedRow relinked(long newLinkedTxNum) {
+      return new DecodedRow(payload, newLinkedTxNum);
     }
   }
 

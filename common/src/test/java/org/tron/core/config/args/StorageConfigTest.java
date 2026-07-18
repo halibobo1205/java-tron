@@ -153,7 +153,7 @@ public class StorageConfigTest {
     assertTrue(a.getTxnum().isEnable());
     assertTrue(a.getTemporal().isEnable());
     StorageConfig.ArchiveConfig.PublisherConfig publisher = a.getPublisher();
-    assertFalse(publisher.isAsync());
+    assertTrue(publisher.isAsync());
     assertTrue(publisher.isBackpressure());
     assertEquals(32_768, publisher.getSoftInFlightBlocks());
     assertEquals(65_536, publisher.getHardInFlightBlocks());
@@ -168,6 +168,7 @@ public class StorageConfigTest {
     assertEquals(120_000, publisher.getJournalTimeoutMs());
     assertEquals(86_400_000, publisher.getRecoveryTimeoutMs());
     StorageConfig.ArchiveConfig.QueryConfig query = a.getQuery();
+    assertEquals(2, query.getJsonRpcWorkerThreads());
     assertEquals(8, query.getMaxConcurrentQueries());
     assertEquals(16, query.getMaxPendingQueries());
     assertEquals(8, query.getMaxOpenSnapshots());
@@ -243,7 +244,7 @@ public class StorageConfigTest {
   @Test
   public void testArchivePublisherOverride() {
     StorageConfig.ArchiveConfig.PublisherConfig publisher = StorageConfig.fromConfig(withRef(
-        "storage.archive.publisher { async = true, backpressure = false,"
+        "storage.archive.publisher { async = false, backpressure = false,"
             + " softInFlightBlocks = 2, hardInFlightBlocks = 3,"
             + " softInFlightBytes = 4, hardInFlightBytes = 5,"
             + " softInFlightRecords = 6, hardInFlightRecords = 7,"
@@ -252,7 +253,7 @@ public class StorageConfigTest {
             + " recoveryTimeoutMs = 13 }"))
         .getArchive().getPublisher();
 
-    assertTrue(publisher.isAsync());
+    assertFalse(publisher.isAsync());
     assertFalse(publisher.isBackpressure());
     assertEquals(2, publisher.getSoftInFlightBlocks());
     assertEquals(3, publisher.getHardInFlightBlocks());
@@ -323,14 +324,16 @@ public class StorageConfigTest {
   @Test
   public void testArchiveQueryAcceptsZeroForIntentionalDisableOrFailFastLimits() {
     StorageConfig.ArchiveConfig.QueryConfig query = StorageConfig.fromConfig(withRef(
-        "storage.archive.query { maxConcurrentQueries = 1, maxPendingQueries = 0,"
+        "storage.archive.query { jsonRpcWorkerThreads = 3, maxConcurrentQueries = 4,"
+            + " maxPendingQueries = 0,"
             + " maxOpenSnapshots = 1,"
             + " acquireTimeoutMs = 0, deadlineMs = 1, maxLogicalReadsPerRequest = 1,"
             + " maxBackendReadsPerRequest = 1, maxCachedEntries = 0, maxCachedBytes = 0,"
             + " maxVmSteps = 0, maxVmOverlayBytes = 0, maxResponseBytes = 0 }"))
         .getArchive().getQuery();
 
-    assertEquals(1, query.getMaxConcurrentQueries());
+    assertEquals(3, query.getJsonRpcWorkerThreads());
+    assertEquals(4, query.getMaxConcurrentQueries());
     assertEquals(0, query.getMaxPendingQueries());
     assertEquals(0, query.getAcquireTimeoutMs());
     assertEquals(0, query.getMaxCachedEntries());
@@ -342,6 +345,8 @@ public class StorageConfigTest {
 
   @Test
   public void testArchiveQueryRejectsInvalidConcurrencyLimit() {
+    assertArchiveQueryRejected("jsonRpcWorkerThreads", 0);
+    assertArchiveQueryRejected("jsonRpcWorkerThreads", -1);
     assertArchiveQueryRejected("maxConcurrentQueries", 0);
     assertArchiveQueryRejected("maxConcurrentQueries", -2);
   }

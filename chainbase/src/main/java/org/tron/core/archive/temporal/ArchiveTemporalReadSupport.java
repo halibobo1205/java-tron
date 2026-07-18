@@ -16,13 +16,10 @@ final class ArchiveTemporalReadSupport {
   static Optional<DomainValue> getAsOf(ArchiveDomain domain, byte[] canonicalKey, long txNum,
       UnifiedArchiveIterator history, IntegrityRowLookup historyLookup,
       IntegrityRowLookup latestLookup, IntegrityRowLookup changesetLookup,
-      IntegrityRowLookup baselineLookup, IntegrityRowLookup anchorLookup, String operation) {
+      IntegrityLocatorLookup anchorLookup, String operation) {
     if (txNum < 0) {
       throw new ArchiveException("archive temporal txNum must be non-negative");
     }
-    ArchiveTemporalIntegrityCodec.DecodedRow anchor = anchorLookup.get(
-        ArchiveTemporalCodec.anchorKey(domain, canonicalKey));
-    validateAnchor(anchor, operation);
     if (txNum != Long.MAX_VALUE) {
       byte[] prefix = ArchiveTemporalCodec.historyPrefix(domain, canonicalKey);
       history.seek(ArchiveTemporalCodec.historyKey(domain, canonicalKey, txNum + 1L));
@@ -39,12 +36,13 @@ final class ArchiveTemporalReadSupport {
             || historyValue.linkedTxNum() > txNum) {
           throw new ArchiveException(operation + ": history chain has a missing version");
         }
-        requireAnchor(anchor, operation);
-        requirePhysicalPredecessor(
-            history, prefix, historyValue, anchor, changesetLookup, operation);
+        requirePhysicalPredecessor(history, prefix, historyValue, operation);
         return Optional.of(historyValue.domainValue().decode());
       }
     }
+    ArchiveTemporalIntegrityCodec.Locator anchor = anchorLookup.get(
+        ArchiveTemporalCodec.anchorKey(domain, canonicalKey));
+    validateAnchor(anchor, operation);
     byte[] latestKey = ArchiveTemporalCodec.latestKey(domain, canonicalKey);
     ArchiveTemporalIntegrityCodec.DecodedRow latest = latestLookup.get(latestKey);
     history.seekForPrev(ArchiveTemporalCodec.historyKey(domain, canonicalKey, Long.MAX_VALUE));
@@ -53,44 +51,23 @@ final class ArchiveTemporalReadSupport {
     if (history.isValid() && ArchiveTemporalCodec.startsWith(history.key(), prefix)) {
       requireAnchor(anchor, operation);
       long latestHistoryTxNum = ArchiveTemporalCodec.txNumOfHistory(history.key());
-      ArchiveTemporalIntegrityCodec.DecodedRow changeset =
-          requireMatchingChangeset(history.key(), changesetLookup, operation);
-      if (latest == null || latest.linkedTxNum() != latestHistoryTxNum
-          || !latest.payloadEquals(changeset)) {
+      if (latest == null || latest.linkedTxNum() != latestHistoryTxNum) {
         throw new ArchiveException(operation + ": latest value does not match last changeset");
       }
     } else {
-      ArchiveTemporalIntegrityCodec.DecodedRow baseline = baselineLookup.get(
-          ArchiveTemporalCodec.latestBaselineKey(domain, canonicalKey));
       if (anchor == null) {
-        if (latest == null && baseline == null) {
+        if (latest == null) {
           return Optional.empty();
         }
         throw new ArchiveException(operation + ": temporal rows have no anchor");
       }
-      if (latest == null && baseline == null) {
-        throw new ArchiveException(operation + ": anchor has no matching temporal rows");
-      }
-      if (latest != null && latest.linkedTxNum()
-          != ArchiveTemporalIntegrityCodec.NO_HISTORY_TX_NUM) {
-        throw new ArchiveException(operation + ": latest history chain is missing");
-      }
-      if (baseline != null && baseline.linkedTxNum()
-          != ArchiveTemporalIntegrityCodec.NO_HISTORY_TX_NUM) {
-        throw new ArchiveException(operation + ": latest baseline link is invalid");
-      }
-      if (latest == null ? baseline != null : !latest.payloadEquals(baseline)) {
-        throw new ArchiveException(operation + ": latest value has no matching baseline");
-      }
-      if (baseline != null && !baseline.payloadEquals(anchor)) {
-        throw new ArchiveException(operation + ": latest baseline does not match anchor");
-      }
+      throw new ArchiveException(operation + ": temporal anchor has no history row");
     }
     return latest == null ? Optional.empty()
         : Optional.of(latest.domainValue().decode());
   }
 
-  private static void validateAnchor(ArchiveTemporalIntegrityCodec.DecodedRow anchor,
+  private static void validateAnchor(ArchiveTemporalIntegrityCodec.Locator anchor,
       String operation) {
     if (anchor == null) {
       return;
@@ -98,10 +75,9 @@ final class ArchiveTemporalReadSupport {
     if (anchor.linkedTxNum() < 0L) {
       throw new ArchiveException(operation + ": anchor origin txNum is invalid");
     }
-    anchor.domainValue().decode();
   }
 
-  private static void requireAnchor(ArchiveTemporalIntegrityCodec.DecodedRow anchor,
+  private static void requireAnchor(ArchiveTemporalIntegrityCodec.Locator anchor,
       String operation) {
     if (anchor == null) {
       throw new ArchiveException(operation + ": temporal history has no anchor");
@@ -111,14 +87,12 @@ final class ArchiveTemporalReadSupport {
   private static void requirePhysicalPredecessor(UnifiedArchiveIterator history,
       byte[] historyPrefix,
       ArchiveTemporalIntegrityCodec.DecodedRow current,
-      ArchiveTemporalIntegrityCodec.DecodedRow anchor,
-      IntegrityRowLookup changesetLookup, String operation) {
+      String operation) {
     history.prev();
     ArchiveRocksIterators.requireOk(history, operation + ": physical predecessor seek");
     if (!history.isValid()
         || !ArchiveTemporalCodec.startsWith(history.key(), historyPrefix)) {
-      if (current.linkedTxNum() != ArchiveTemporalIntegrityCodec.NO_HISTORY_TX_NUM
-          || !current.payloadEquals(anchor)) {
+      if (current.linkedTxNum() != ArchiveTemporalIntegrityCodec.NO_HISTORY_TX_NUM) {
         throw new ArchiveException(
             operation + ": first history row does not match anchor/physical predecessor");
       }
@@ -126,10 +100,7 @@ final class ArchiveTemporalReadSupport {
     }
     byte[] predecessorKey = history.key();
     long predecessorTxNum = ArchiveTemporalCodec.txNumOfHistory(predecessorKey);
-    ArchiveTemporalIntegrityCodec.DecodedRow predecessorChangeset =
-        requireMatchingChangeset(predecessorKey, changesetLookup, operation);
-    if (current.linkedTxNum() != predecessorTxNum
-        || !current.payloadEquals(predecessorChangeset)) {
+    if (current.linkedTxNum() != predecessorTxNum) {
       throw new ArchiveException(
           operation + ": history row does not match its physical predecessor");
     }
@@ -154,5 +125,11 @@ final class ArchiveTemporalReadSupport {
   interface IntegrityRowLookup {
 
     ArchiveTemporalIntegrityCodec.DecodedRow get(byte[] key);
+  }
+
+  @FunctionalInterface
+  interface IntegrityLocatorLookup {
+
+    ArchiveTemporalIntegrityCodec.Locator get(byte[] key);
   }
 }

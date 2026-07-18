@@ -29,6 +29,7 @@ import org.tron.core.services.interfaceOnPBFT.RpcApiServiceOnPBFT;
 import org.tron.core.services.interfaceOnPBFT.http.PBFT.HttpApiOnPBFTService;
 import org.tron.core.services.interfaceOnSolidity.RpcApiServiceOnSolidity;
 import org.tron.core.services.interfaceOnSolidity.http.solidity.HttpApiOnSolidityService;
+import org.tron.core.services.jsonrpc.ArchiveJsonRpcExecutor;
 import org.tron.core.services.jsonrpc.ArchiveJsonRpcStateAdapter;
 import org.tron.core.services.jsonrpc.HistoricalEthCallSupport;
 
@@ -110,6 +111,17 @@ public class DefaultConfig {
   public HistoricalEthCallSupport historicalEthCallSupport(Wallet wallet,
       ArchiveService archiveService) {
     return new HistoricalEthCallSupport(wallet, archiveService);
+  }
+
+  @Bean(destroyMethod = "close")
+  public ArchiveJsonRpcExecutor archiveJsonRpcExecutor(ArchiveService archiveService) {
+    if (!archiveService.isEnabled()) {
+      return ArchiveJsonRpcExecutor.disabled();
+    }
+    StorageConfig.ArchiveConfig.QueryConfig query = CommonParameter.getInstance()
+        .getStorage().getArchive().getQuery();
+    return new ArchiveJsonRpcExecutor(
+        query.getJsonRpcWorkerThreads(), query.getDeadlineMs());
   }
 
   @Bean(destroyMethod = "")
