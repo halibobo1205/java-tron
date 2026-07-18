@@ -9,6 +9,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.LongFunction;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
@@ -19,8 +20,11 @@ import org.tron.core.archive.domain.ReaderPolicy;
 import org.tron.core.archive.query.ArchiveQueryLimits;
 import org.tron.core.archive.query.HistoricalQueryLimitException;
 import org.tron.core.archive.query.QueryContext;
+import org.tron.core.archive.query.QueryContextHolder;
 import org.tron.core.archive.temporal.ArchiveTemporalReadView;
 import org.tron.core.archive.temporal.ArchiveTemporalStore;
+import org.tron.core.archive.txnum.ArchiveBlockRange;
+import org.tron.core.archive.txnum.ArchiveCoordinates;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.ContractCapsule;
 import org.tron.core.capsule.ContractStateCapsule;
@@ -31,8 +35,8 @@ import org.tron.protos.contract.SmartContractOuterClass.SmartContract;
 /**
  * Reads historical state from an {@link ArchiveTemporalStore} at a fixed {@link ArchiveStatePoint},
  * mapping the store's PRESENT/TOMBSTONE/MISSING outcome (via {@code getAsOf}, inclusive-after) to a
- * typed {@link ArchiveReadResult}. When the temporal store has no row, an optional service-level
- * read-through may supply a guarded mid-chain baseline without exposing non-solidified writes.
+ * typed {@link ArchiveReadResult}. A temporal miss is never filled from live state: complete
+ * from-genesis coverage renders it MISSING, while incomplete coverage fails closed as UNKNOWN.
  */
 public final class DefaultArchiveStateReader implements ArchiveStateReader {
 
@@ -44,7 +48,6 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
 
   private final ArchiveTemporalReadView temporalView;
   private final ArchiveDomainCatalog catalog;
-  private final ArchiveReadThrough readThrough;
   private final DynamicKeyPolicy dynamicKeyPolicy = new DynamicKeyPolicy();
   private final ArchiveStatePoint point;
   private final boolean completeHistory;
@@ -55,6 +58,7 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
   private final AtomicBoolean closed = new AtomicBoolean();
   private final Thread ownerThread;
   private final QueryContext queryContext;
+  private final LongFunction<Optional<ArchiveBlockRange>> blockRangeLookup;
   private long memoBytes;
   // Runs on close() after the view is released -- e.g. releases the archive read lock a mid-chain
   // reader holds for its lifetime. A no-op for a snapshot reader (the lock was already released).
@@ -62,58 +66,62 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
 
   DefaultArchiveStateReader(ArchiveTemporalStore temporalStore,
       ArchiveDomainCatalog catalog, ArchiveStatePoint point) {
-    this(temporalStore, catalog, point, ArchiveReadThrough.NONE);
-  }
-
-  DefaultArchiveStateReader(ArchiveTemporalStore temporalStore,
-      ArchiveDomainCatalog catalog, ArchiveStatePoint point, ArchiveReadThrough readThrough) {
-    this(ArchiveTemporalReadView.passThrough(temporalStore), catalog, point, readThrough,
+    this(ArchiveTemporalReadView.passThrough(temporalStore), catalog, point,
         () -> { }, true, DEFAULT_MAX_MEMO_ENTRIES, DEFAULT_MAX_MEMO_BYTES,
         new QueryContext(ArchiveQueryLimits.unlimited()));
   }
 
   DefaultArchiveStateReader(ArchiveTemporalReadView temporalView,
-      ArchiveDomainCatalog catalog, ArchiveStatePoint point, ArchiveReadThrough readThrough) {
-    this(temporalView, catalog, point, readThrough, () -> { }, true,
+      ArchiveDomainCatalog catalog, ArchiveStatePoint point) {
+    this(temporalView, catalog, point, () -> { }, true,
         DEFAULT_MAX_MEMO_ENTRIES, DEFAULT_MAX_MEMO_BYTES,
         new QueryContext(ArchiveQueryLimits.unlimited()));
   }
 
   DefaultArchiveStateReader(ArchiveTemporalReadView temporalView, ArchiveDomainCatalog catalog,
-      ArchiveStatePoint point, ArchiveReadThrough readThrough, Runnable onClose) {
-    this(temporalView, catalog, point, readThrough, onClose, true,
+      ArchiveStatePoint point, Runnable onClose) {
+    this(temporalView, catalog, point, onClose, true,
         DEFAULT_MAX_MEMO_ENTRIES, DEFAULT_MAX_MEMO_BYTES,
         new QueryContext(ArchiveQueryLimits.unlimited()));
   }
 
   DefaultArchiveStateReader(ArchiveTemporalReadView temporalView, ArchiveDomainCatalog catalog,
-      ArchiveStatePoint point, ArchiveReadThrough readThrough, Runnable onClose,
+      ArchiveStatePoint point, Runnable onClose,
       boolean completeHistory) {
-    this(temporalView, catalog, point, readThrough, onClose, completeHistory,
+    this(temporalView, catalog, point, onClose, completeHistory,
         DEFAULT_MAX_MEMO_ENTRIES, DEFAULT_MAX_MEMO_BYTES,
         new QueryContext(ArchiveQueryLimits.unlimited()));
   }
 
   DefaultArchiveStateReader(ArchiveTemporalReadView temporalView, ArchiveDomainCatalog catalog,
-      ArchiveStatePoint point, ArchiveReadThrough readThrough, Runnable onClose,
+      ArchiveStatePoint point, Runnable onClose,
       boolean completeHistory, int maxMemoEntries, long maxMemoBytes) {
-    this(temporalView, catalog, point, readThrough, onClose, completeHistory, maxMemoEntries,
+    this(temporalView, catalog, point, onClose, completeHistory, maxMemoEntries,
         maxMemoBytes, new QueryContext(ArchiveQueryLimits.unlimited()));
   }
 
   DefaultArchiveStateReader(ArchiveTemporalReadView temporalView, ArchiveDomainCatalog catalog,
-      ArchiveStatePoint point, ArchiveReadThrough readThrough, Runnable onClose,
+      ArchiveStatePoint point, Runnable onClose,
       boolean completeHistory, int maxMemoEntries, long maxMemoBytes,
       QueryContext queryContext) {
+    this(temporalView, catalog, point, onClose, completeHistory, maxMemoEntries, maxMemoBytes,
+        queryContext, null);
+  }
+
+  DefaultArchiveStateReader(ArchiveTemporalReadView temporalView, ArchiveDomainCatalog catalog,
+      ArchiveStatePoint point, Runnable onClose,
+      boolean completeHistory, int maxMemoEntries, long maxMemoBytes,
+      QueryContext queryContext,
+      LongFunction<Optional<ArchiveBlockRange>> blockRangeLookup) {
     this.temporalView = temporalView;
     this.catalog = catalog;
     this.point = point;
-    this.readThrough = readThrough == null ? ArchiveReadThrough.NONE : readThrough;
     this.onClose = onClose;
     this.completeHistory = completeHistory;
     this.maxMemoEntries = Math.max(0, maxMemoEntries);
     this.maxMemoBytes = Math.max(0, maxMemoBytes);
     this.queryContext = queryContext;
+    this.blockRangeLookup = blockRangeLookup;
     this.ownerThread = Thread.currentThread();
   }
 
@@ -136,6 +144,48 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
   }
 
   @Override
+  public byte[] getBlockHash(long blockNum) throws ArchiveReaderException {
+    requireOwnerAndOpen();
+    queryContext.recordLogicalRead();
+    if (blockRangeLookup == null) {
+      throw new ArchiveReaderException(ArchiveReaderException.Reason.DOMAIN_UNSUPPORTED,
+          "archive block-hash lookup is not available");
+    }
+    if (blockNum < 0L || blockNum > point.getBlockNum()
+        || blockNum > ArchiveCoordinates.MAX_COORDINATE) {
+      throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
+          "archive block-hash height is outside this reader's history");
+    }
+    try (QueryContextHolder.Scope ignored = QueryContextHolder.attach(queryContext)) {
+      Optional<ArchiveBlockRange> resolved = blockRangeLookup.apply(blockNum);
+      if (!resolved.isPresent()) {
+        throw new ArchiveReaderException(
+            completeHistory ? ArchiveReaderException.Reason.CORRUPT_INDEX
+                : ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
+            "archive block range is missing for block-hash lookup " + blockNum);
+      }
+      ArchiveBlockRange range = resolved.get();
+      byte[] blockHash = range.getBlockHash();
+      if (range.getBlockNum() != blockNum
+          || blockHash == null || blockHash.length != ArchiveBlockRange.BLOCK_HASH_LENGTH) {
+        throw new ArchiveReaderException(ArchiveReaderException.Reason.CORRUPT_INDEX,
+            "archive block range is invalid for block-hash lookup " + blockNum);
+      }
+      return blockHash;
+    } catch (ArchiveReaderException | HistoricalQueryLimitException e) {
+      throw e;
+    } catch (ArchiveException e) {
+      throw new ArchiveReaderException(
+          ArchiveReaderException.reasonForStorageFailure(
+              e, ArchiveReaderException.Reason.CORRUPT_INDEX),
+          "archive block-range index read failed", e);
+    } catch (RuntimeException e) {
+      throw new ArchiveReaderException(ArchiveReaderException.Reason.INTERNAL_IO,
+          "archive block-hash read failed", e);
+    }
+  }
+
+  @Override
   public ArchiveReadResult<AccountCapsule> getAccount(byte[] address)
       throws ArchiveReaderException {
     requireOwnerAndOpen();
@@ -147,7 +197,7 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
     }
     try {
       return ArchiveReadResult.present(
-          new AccountCapsule(lookup.decode(Account.class, Account.parser())));
+          new AccountCapsule(lookup.decode(Account.parser())));
     } catch (InvalidProtocolBufferException e) {
       forget(ArchiveDomain.ACCOUNT, address);
       throw new ArchiveReaderException(ArchiveReaderException.Reason.CODEC_ERROR,
@@ -186,7 +236,7 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
     }
     try {
       return ArchiveReadResult.present(
-          new ContractCapsule(lookup.decode(SmartContract.class, SmartContract.parser())));
+          new ContractCapsule(lookup.decode(SmartContract.parser())));
     } catch (InvalidProtocolBufferException e) {
       forget(ArchiveDomain.CONTRACT, address);
       throw new ArchiveReaderException(ArchiveReaderException.Reason.CODEC_ERROR,
@@ -207,7 +257,7 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
     try {
       return ArchiveReadResult.present(
           new ContractStateCapsule(
-              lookup.decode(ContractState.class, ContractState.parser())));
+              lookup.decode(ContractState.parser())));
     } catch (InvalidProtocolBufferException e) {
       forget(ArchiveDomain.CONTRACT_STATE, address);
       throw new ArchiveReaderException(ArchiveReaderException.Reason.CODEC_ERROR,
@@ -280,22 +330,22 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
       return memoized;
     }
     RawLookup lookup;
-    try {
+    try (QueryContextHolder.Scope ignored = QueryContextHolder.attach(queryContext)) {
       queryContext.recordBackendReads(temporalView.getAsOfBackendReadCost());
       Optional<DomainValue> stored = temporalView.getAsOf(
           domain, memoKey.canonicalKey(), point.getTxNum());
       if (stored.isPresent()) {
         lookup = RawLookup.from(stored.get());
       } else {
-        queryContext.recordBackendReads(readThrough.backendReadCost(domain));
-        Optional<DomainValue> readThroughValue = readThrough.read(
-            domain, memoKey.canonicalKey(), point);
-        lookup = readThroughValue.isPresent()
-            ? RawLookup.from(readThroughValue.get())
-            : completeHistory ? RawLookup.missing() : RawLookup.unknown();
+        lookup = completeHistory ? RawLookup.missing() : RawLookup.unknown();
       }
     } catch (HistoricalQueryLimitException e) {
       throw e;
+    } catch (ArchiveException e) {
+      throw new ArchiveReaderException(
+          ArchiveReaderException.reasonForStorageFailure(
+              e, ArchiveReaderException.Reason.CORRUPT_VALUE),
+          "archive temporal read failed for " + domain, e);
     } catch (RuntimeException e) {
       throw new ArchiveReaderException(ArchiveReaderException.Reason.INTERNAL_IO,
           "archive temporal read failed for " + domain, e);
@@ -332,7 +382,7 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
   }
 
   private static long estimatedEntryBytes(RawKey key, RawLookup lookup) {
-    return addSaturated(key.estimatedBytes(), lookup.estimatedBytes(key.domain));
+    return addSaturated(key.estimatedBytes(), lookup.estimatedBytes());
   }
 
   private ArchiveReadResult<byte[]> toReadResult(ArchiveDomain domain, RawLookup lookup)
@@ -386,7 +436,7 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
       if (failure == null) {
         failure = e;
       } else if (failure != e) {
-        failure.addSuppressed(e);
+        addSuppressedSafely(failure, e);
       }
     }
     rethrowCloseFailure(failure);
@@ -401,6 +451,14 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
     }
     if (failure != null) {
       throw new ArchiveException("archive state reader close failed", failure);
+    }
+  }
+
+  private static void addSuppressedSafely(Throwable primary, Throwable candidate) {
+    try {
+      primary.addSuppressed(candidate);
+    } catch (Throwable ignored) {
+      // Preserve the first close failure when suppression cannot allocate.
     }
   }
 
@@ -426,7 +484,6 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
 
   private static final class RawLookup {
 
-    private static final long DECODED_PROTO_OVERHEAD_BYTES = 128L;
     private static final RawLookup TOMBSTONE = new RawLookup(RawStatus.TOMBSTONE, null);
     private static final RawLookup MISSING = new RawLookup(RawStatus.MISSING, null);
     private static final RawLookup UNKNOWN =
@@ -434,15 +491,19 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
 
     private final RawStatus status;
     private final byte[] value;
-    private Object decoded;
 
     private RawLookup(RawStatus status, byte[] value) {
+      this(status, value, true);
+    }
+
+    private RawLookup(RawStatus status, byte[] value, boolean copyValue) {
       this.status = status;
-      this.value = value == null ? null : Arrays.copyOf(value, value.length);
+      this.value = value == null || !copyValue ? value : Arrays.copyOf(value, value.length);
     }
 
     private static RawLookup from(DomainValue value) {
-      return value.isDeleted() ? TOMBSTONE : new RawLookup(RawStatus.PRESENT, value.getValue());
+      return value.isDeleted()
+          ? TOMBSTONE : new RawLookup(RawStatus.PRESENT, value.getValue(), false);
     }
 
     private static RawLookup missing() {
@@ -461,31 +522,13 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
       return status == RawStatus.PRESENT;
     }
 
-    private <T> T decode(Class<T> type, Parser<T> parser)
+    private <T> T decode(Parser<T> parser)
         throws InvalidProtocolBufferException {
-      if (decoded == null) {
-        decoded = parser.parseFrom(value);
-      }
-      if (!type.isInstance(decoded)) {
-        throw new ArchiveException("archive decoded memo type mismatch");
-      }
-      return type.cast(decoded);
+      return parser.parseFrom(value);
     }
 
-    private long estimatedBytes(ArchiveDomain domain) {
-      long bytes = 24L + (value == null ? 0L : value.length);
-      if (value != null && isDecodedProtoDomain(domain)) {
-        long decodedAllowance = addSaturated(
-            DECODED_PROTO_OVERHEAD_BYTES, multiplySaturated(value.length, 2L));
-        bytes = addSaturated(bytes, decodedAllowance);
-      }
-      return bytes;
-    }
-
-    private static boolean isDecodedProtoDomain(ArchiveDomain domain) {
-      return domain == ArchiveDomain.ACCOUNT
-          || domain == ArchiveDomain.CONTRACT
-          || domain == ArchiveDomain.CONTRACT_STATE;
+    private long estimatedBytes() {
+      return 24L + (value == null ? 0L : value.length);
     }
   }
 
@@ -527,9 +570,5 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
 
   private static long addSaturated(long left, long right) {
     return left > Long.MAX_VALUE - right ? Long.MAX_VALUE : left + right;
-  }
-
-  private static long multiplySaturated(long left, long right) {
-    return left != 0L && right > Long.MAX_VALUE / left ? Long.MAX_VALUE : left * right;
   }
 }

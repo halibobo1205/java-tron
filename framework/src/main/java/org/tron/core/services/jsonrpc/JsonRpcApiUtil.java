@@ -528,12 +528,31 @@ public class JsonRpcApiUtil {
             "invalid hex string for \"" + fieldName + "\"");
       }
     }
-    try {
-      ByteArray.fromHexString(value);
-    } catch (Exception e) {
+    int start = value.startsWith("0x") ? 2 : 0;
+    int hexDigits = 0;
+    for (int i = start; i < value.length(); i++) {
+      char c = value.charAt(i);
+      boolean hex = c >= '0' && c <= '9'
+          || c >= 'a' && c <= 'f'
+          || c >= 'A' && c <= 'F';
+      if (hex) {
+        hexDigits++;
+      } else if (mode != HexMode.LENIENT || !isLegacyHexWhitespace(c)) {
+        throw new JsonRpcInvalidParamsException(
+            "invalid hex string for \"" + fieldName + "\"");
+      }
+    }
+    // ByteArray.fromHexString prepends one zero nibble when the raw body length is odd,
+    // before Bouncy Castle ignores legacy whitespace. Mirror that parity without decoding.
+    int prependedNibbles = (value.length() - start) & 1;
+    if (((hexDigits + prependedNibbles) & 1) != 0) {
       throw new JsonRpcInvalidParamsException(
           "invalid hex string for \"" + fieldName + "\"");
     }
+  }
+
+  private static boolean isLegacyHexWhitespace(char value) {
+    return value == ' ' || value == '\n' || value == '\r' || value == '\t';
   }
 
   public static long parseQuantityValue(String value) throws JsonRpcInvalidParamsException {

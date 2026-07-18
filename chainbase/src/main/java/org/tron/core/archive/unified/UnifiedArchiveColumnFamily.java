@@ -11,6 +11,7 @@ public enum UnifiedArchiveColumnFamily {
   LATEST("latest"),
   HISTORY("history"),
   CHANGESET("changeset"),
+  TEMPORAL_PAYLOAD("temporal-payload"),
   BLOCK_MARKER("block-marker"),
   COMMITMENT("commitment");
 

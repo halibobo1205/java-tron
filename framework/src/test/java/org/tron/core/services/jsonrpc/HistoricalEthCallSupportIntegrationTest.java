@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -157,7 +158,8 @@ public class HistoricalEthCallSupportIntegrationTest extends BaseMethodTest {
 
     Wallet wallet = mock(Wallet.class);
     BlockCapsule block = blockCapsule(1);
-    when(wallet.getBlockByNum(1L)).thenReturn(block.getInstance());
+    when(wallet.getBlockByNumWithoutCache(1L)).thenReturn(block.getInstance());
+    when(wallet.getBlockIdByNumWithoutCache(1L)).thenReturn(block.getBlockId().getBytes());
 
     HistoricalEthCallSupport support = new HistoricalEthCallSupport(wallet, svc);
 
@@ -168,26 +170,28 @@ public class HistoricalEthCallSupportIntegrationTest extends BaseMethodTest {
     // executor -> hex render all served the ARCHIVED value.
     assertEquals(
         "0x000000000000000000000000000000000000000000000000000000000000002a", hex);
+    verify(wallet).getBlockByNumWithoutCache(1L);
+    verify(wallet, times(2)).getBlockIdByNumWithoutCache(1L);
     verify(wallet, never()).createTransactionCapsule(any(), eq(ContractType.TriggerSmartContract));
   }
 
   @Test
   public void historicalEthCallRejectsBlockHashChangedAfterResolution() throws Exception {
     DefaultArchiveService svc = new DefaultArchiveService(true, new InMemoryArchiveTemporalStore());
-    svc.getTxNumIndex().beginBlock(1, ArchiveSource.NORMAL);
-    svc.getTxNumIndex().allocateSystemTx(1, ArchivePhase.BLOCK_PREPARE);
-    svc.getTxNumIndex().allocateSystemTx(1, ArchivePhase.BLOCK_FINALIZE);
-    svc.getTxNumIndex().commitBlock(1, blockHash(1), 0);
+    svc.getTxNumIndex().beginBlock(0, ArchiveSource.NORMAL);
+    svc.getTxNumIndex().allocateSystemTx(0, ArchivePhase.BLOCK_PREPARE);
+    svc.getTxNumIndex().allocateSystemTx(0, ArchivePhase.BLOCK_FINALIZE);
+    svc.getTxNumIndex().commitBlock(0, blockHash(0), 0);
 
     Wallet wallet = mock(Wallet.class);
-    when(wallet.getBlockByNum(1L)).thenReturn(
-        blockCapsule(1).getInstance(),
-        blockCapsuleWithParentSeed(1, (byte) 9).getInstance());
+    when(wallet.getBlockByNumWithoutCache(0L)).thenReturn(blockCapsule(0).getInstance());
+    when(wallet.getBlockIdByNumWithoutCache(0L)).thenReturn(
+        blockCapsuleWithParentSeed(0, (byte) 9).getBlockId().getBytes());
 
     HistoricalEthCallSupport support = new HistoricalEthCallSupport(wallet, svc);
 
     JsonRpcInternalException ex = assertThrows(JsonRpcInternalException.class,
-        () -> support.call(addr(0x22), addr(0x11), 0L, new byte[0], "0x1"));
+        () -> support.call(addr(0x22), addr(0x11), 0L, new byte[0], "0x0"));
 
     assertTrue(ex.getMessage().contains("hash mismatch"));
   }

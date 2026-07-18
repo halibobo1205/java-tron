@@ -6,7 +6,8 @@ public final class QueryLease implements AutoCloseable {
   private final ArchiveQueryCoordinator coordinator;
   private final QueryContext context;
   private boolean closeRequested;
-  private boolean released;
+  private boolean releaseInProgress;
+  private volatile boolean released;
   private long activeSnapshots;
 
   QueryLease(ArchiveQueryCoordinator coordinator, QueryContext context) {
@@ -30,47 +31,80 @@ public final class QueryLease implements AutoCloseable {
     return coordinator == expected;
   }
 
-  synchronized boolean reserveSnapshot() {
+  synchronized boolean reserveSnapshot(ArchiveSnapshotPermit permit) {
     if (closeRequested || released || activeSnapshots == Long.MAX_VALUE) {
+      return false;
+    }
+    if (!context.reserveSnapshotPermit(permit)) {
       return false;
     }
     activeSnapshots++;
     return true;
   }
 
-  boolean releaseSnapshotOwnership() {
+  boolean releaseSnapshotOwnership(ArchiveSnapshotPermit permit) {
     synchronized (this) {
       if (activeSnapshots <= 0) {
         throw new IllegalStateException("query snapshot ownership underflow");
       }
+      context.releaseSnapshotPermit(permit);
       activeSnapshots--;
       if (!closeRequested || activeSnapshots != 0 || released) {
         return false;
       }
       released = true;
+      notifyAll();
     }
     return true;
   }
 
+  void markReleaseCommitted() {
+    released = true;
+  }
+
   @Override
   public void close() {
+    boolean interrupted = false;
     boolean releaseNow;
     synchronized (this) {
-      if (closeRequested) {
+      closeRequested = true;
+      while (releaseInProgress) {
+        try {
+          wait();
+        } catch (InterruptedException e) {
+          interrupted = true;
+        }
+      }
+      if (released) {
+        if (interrupted) {
+          Thread.currentThread().interrupt();
+        }
         return;
       }
-      closeRequested = true;
       releaseNow = activeSnapshots == 0;
       if (releaseNow) {
-        released = true;
+        releaseInProgress = true;
       }
     }
     if (releaseNow) {
-      coordinator.releaseLease(context);
+      boolean releaseSucceeded = false;
+      try {
+        coordinator.releaseLease(this);
+        releaseSucceeded = true;
+      } finally {
+        synchronized (this) {
+          releaseInProgress = false;
+          released |= releaseSucceeded;
+          notifyAll();
+        }
+        if (interrupted) {
+          Thread.currentThread().interrupt();
+        }
+      }
+      return;
     }
-  }
-
-  void releaseAfterLastSnapshot() {
-    coordinator.releaseLease(context);
+    if (interrupted) {
+      Thread.currentThread().interrupt();
+    }
   }
 }

@@ -1,6 +1,7 @@
 package org.tron.core.archive.txnum;
 
 import java.util.Optional;
+import org.tron.core.archive.ArchiveRepairClearPermit;
 import java.util.OptionalLong;
 import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveSource;
@@ -45,6 +46,12 @@ public interface ArchiveTxNumIndex {
 
   OptionalLong findTxNumByTxId(byte[] txId);
 
+  /**
+   * Resolves and cross-validates the txId row, transaction position, and committed block range,
+   * reading each logical row at most once.
+   */
+  Optional<ArchiveTransactionLocation> findTransactionByTxId(byte[] txId);
+
   /** Next txNum after the highest committed range currently published by this index. */
   long getNextTxNum();
 
@@ -54,7 +61,7 @@ public interface ArchiveTxNumIndex {
   default void markRepairRequired(String reason) {
   }
 
-  default void clearRepairRequired() {
+  default void clearRepairRequired(ArchiveRepairClearPermit permit) {
   }
 
   default boolean hasRepairRequired() {

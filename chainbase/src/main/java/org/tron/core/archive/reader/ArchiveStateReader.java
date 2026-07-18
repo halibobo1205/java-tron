@@ -26,6 +26,12 @@ public interface ArchiveStateReader extends AutoCloseable {
     return false;
   }
 
+  /** Reads a canonical block hash from the same archive snapshot as this state reader. */
+  default byte[] getBlockHash(long blockNum) throws ArchiveReaderException {
+    throw new ArchiveReaderException(ArchiveReaderException.Reason.DOMAIN_UNSUPPORTED,
+        "archive block-hash lookup is not available");
+  }
+
   ArchiveReadResult<AccountCapsule> getAccount(byte[] address) throws ArchiveReaderException;
 
   ArchiveReadResult<byte[]> getAccountAsset(byte[] address, byte[] assetId)

@@ -3,16 +3,20 @@ package org.tron.core.vm.archive;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.google.protobuf.ByteString;
 import org.junit.Test;
 import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.archive.query.ArchiveQueryLimits;
+import org.tron.core.archive.query.HistoricalQueryLimitException;
 import org.tron.core.archive.query.QueryContext;
 import org.tron.core.archive.query.QueryContextHolder;
 import org.tron.core.archive.reader.ArchiveReadResult;
@@ -53,6 +57,8 @@ public class ArchiveRepositoryAdapterTest {
     ArchiveReadResult<byte[]> code = ArchiveReadResult.missing();
     ArchiveReadResult<byte[]> storage = ArchiveReadResult.missing();
     ArchiveReaderException accountError;
+    byte[] blockHash = new byte[32];
+    int blockHashReads;
 
     public ArchiveStatePoint getPoint() {
       return null;
@@ -89,6 +95,16 @@ public class ArchiveRepositoryAdapterTest {
       return ArchiveReadResult.missing();
     }
 
+    public byte[] getBlockHash(long blockNum) {
+      blockHashReads++;
+      QueryContext context = QueryContextHolder.current();
+      if (context != null) {
+        context.recordLogicalRead();
+        context.recordBackendRead();
+      }
+      return blockHash.clone();
+    }
+
     public void close() {
     }
   }
@@ -119,16 +135,32 @@ public class ArchiveRepositoryAdapterTest {
   public void codePresentAndMissing() {
     byte[] code = {1, 2, 3};
     reader.code = ArchiveReadResult.present(code);
-    assertSame(code, adapter.getCode(ADDR));
+    byte[] returned = adapter.getCode(ADDR);
+    assertArrayEquals(code, returned);
+    assertNotSame(code, returned);
+    returned[0] = 9;
+    assertArrayEquals(code, adapter.getCode(ADDR));
     reader.code = ArchiveReadResult.missing();
     assertNull(adapter.getCode(ADDR));
+  }
+
+  @Test
+  public void saveCodeCopiesCallerBytesIntoRequestOverlay() {
+    byte[] code = {1, 2, 3};
+
+    adapter.saveCode(ADDR, code);
+    code[0] = 9;
+    byte[] returned = adapter.getCode(ADDR);
+    assertArrayEquals(new byte[] {1, 2, 3}, returned);
+    returned[1] = 9;
+    assertArrayEquals(new byte[] {1, 2, 3}, adapter.getCode(ADDR));
   }
 
   @Test
   public void contractPresentAndMissing() {
     ContractCapsule contract = new ContractCapsule(new byte[] {9});
     reader.contract = ArchiveReadResult.present(contract);
-    assertSame(contract, adapter.getContract(ADDR));
+    assertNotSame(contract, adapter.getContract(ADDR));
     reader.contract = ArchiveReadResult.missing();
     assertNull(adapter.getContract(ADDR));
   }
@@ -140,15 +172,61 @@ public class ArchiveRepositoryAdapterTest {
     // route to parent.deleteContract -- never resurrect the archived contract or NPE.
     ContractCapsule archived = new ContractCapsule(new byte[] {9});
     reader.contract = ArchiveReadResult.present(archived);
+    reader.account = ArchiveReadResult.present(account(12L));
+    reader.code = ArchiveReadResult.present(new byte[] {1, 2, 3});
     assertNotNull("root reads the archived contract", adapter.getContract(ADDR));
 
     ArchiveRepositoryAdapter child = (ArchiveRepositoryAdapter) adapter.newRepositoryChild();
+    DataWord slot = new DataWord(new byte[] {5});
+    child.putStorageValue(ADDR, slot, new DataWord(new byte[] {7}));
+    child.addTokenBalance(ADDR, new byte[] {'1'}, 9L);
     child.deleteContract(ADDR);
     assertNull("child sees its own tombstone, not the archived contract", child.getContract(ADDR));
+    assertNull("SELFDESTRUCT shadows the archived account", child.getAccount(ADDR));
+    assertNull("SELFDESTRUCT shadows the archived code", child.getCode(ADDR));
+    assertNull("SELFDESTRUCT makes prior overlay storage unreachable",
+        child.getStorageValue(ADDR, slot));
+    assertEquals("SELFDESTRUCT makes prior overlay assets unreachable", 0L,
+        child.getTokenBalance(ADDR, new byte[] {'1'}));
     assertNotNull("parent still archived before commit", adapter.getContract(ADDR));
 
     child.commit();
     assertNull("commit routed the tombstone to parent.deleteContract", adapter.getContract(ADDR));
+    assertNull(adapter.getAccount(ADDR));
+    assertNull(adapter.getCode(ADDR));
+    assertNull(adapter.getStorageValue(ADDR, slot));
+    assertEquals(0L, adapter.getTokenBalance(ADDR, new byte[] {'1'}));
+  }
+
+  @Test
+  public void createContractMarksAddressAsNewAcrossChildCommit() {
+    ArchiveRepositoryAdapter child = (ArchiveRepositoryAdapter) adapter.newRepositoryChild();
+
+    child.createContract(ADDR, new ContractCapsule(new byte[] {9}));
+
+    assertTrue(child.isNewContract(ADDR));
+    child.commit();
+    assertTrue(adapter.isNewContract(ADDR));
+  }
+
+  @Test
+  public void capsuleWritesDoNotRetainCallerMutableWrappers() {
+    AccountCapsule suppliedAccount = account(11L);
+    adapter.updateAccount(ADDR, suppliedAccount);
+    suppliedAccount.setBalance(99L);
+    assertEquals(11L, adapter.getAccount(ADDR).getBalance());
+
+    byte[] otherAddress = ADDR.clone();
+    otherAddress[20] = 1;
+    AccountCapsule created = adapter.createNormalAccount(otherAddress);
+    created.setBalance(77L);
+    assertEquals(0L, adapter.getAccount(otherAddress).getBalance());
+
+    ContractStateCapsule suppliedState = new ContractStateCapsule(1L);
+    suppliedState.setEnergyFactor(3L);
+    adapter.updateContractState(ADDR, suppliedState);
+    suppliedState.setEnergyFactor(8L);
+    assertEquals(3L, adapter.getContractState(ADDR).getEnergyFactor());
   }
 
   @Test
@@ -239,6 +317,119 @@ public class ArchiveRepositoryAdapterTest {
   }
 
   @Test
+  public void overlayAllocationIsRejectedBeforeStorageMapGrowth() {
+    QueryContext context = new QueryContext(ArchiveQueryLimits.builder()
+        .maxVmOverlayBytes(276L)
+        .build());
+    HistoricalQueryLimitException failure;
+
+    try (QueryContextHolder.Scope ignored = QueryContextHolder.attach(context)) {
+      failure = assertThrows(HistoricalQueryLimitException.class,
+          () -> adapter.putStorageValue(
+              ADDR, new DataWord(new byte[] {1}), new DataWord(new byte[] {2})));
+    }
+
+    assertEquals(HistoricalQueryLimitException.Limit.VM_OVERLAY_BYTES, failure.getLimit());
+    assertEquals(277L, context.getVmOverlayBytes());
+    assertSame(failure, context.getRecordedExecutionTerminalFailure());
+  }
+
+  @Test
+  public void accountPayloadIsReservedBeforeOverlayMapGrowth() {
+    AccountCapsule account = new AccountCapsule(Protocol.Account.newBuilder()
+        .setAddress(ByteString.copyFrom(ADDR))
+        .setAccountName(ByteString.copyFrom(new byte[1024]))
+        .build());
+    long expectedBytes = 192L + ADDR.length + account.getInstance().getSerializedSize();
+    QueryContext context = new QueryContext(ArchiveQueryLimits.builder()
+        .maxVmOverlayBytes(expectedBytes - 1L)
+        .build());
+    HistoricalQueryLimitException failure;
+
+    try (QueryContextHolder.Scope ignored = QueryContextHolder.attach(context)) {
+      failure = assertThrows(HistoricalQueryLimitException.class,
+          () -> adapter.updateAccount(ADDR, account));
+    }
+
+    assertEquals(HistoricalQueryLimitException.Limit.VM_OVERLAY_BYTES, failure.getLimit());
+    assertEquals(expectedBytes, context.getVmOverlayBytes());
+    assertNull(adapter.getAccount(ADDR));
+  }
+
+  @Test
+  public void blockHashUsesReaderSnapshotAndSharedDefensiveCache() {
+    reader.blockHash[31] = 0x2a;
+    QueryContext context = new QueryContext(ArchiveQueryLimits.unlimited());
+    byte[] first;
+    byte[] second;
+
+    try (QueryContextHolder.Scope ignored = QueryContextHolder.attach(context)) {
+      first = adapter.getBlockHashByNum(0L);
+      first[31] = 0;
+      ArchiveRepositoryAdapter child =
+          (ArchiveRepositoryAdapter) adapter.newRepositoryChild();
+      second = child.getBlockHashByNum(0L);
+    }
+
+    assertEquals(0x2a, second[31]);
+    assertEquals(1, reader.blockHashReads);
+    assertEquals(2L, context.getLogicalReads());
+    assertEquals(1L, context.getBackendReads());
+    assertEquals(1L, context.getCacheHits());
+  }
+
+  @Test
+  public void blockHashCacheEntryIsReservedBeforeRetention() {
+    QueryContext bounded = new QueryContext(ArchiveQueryLimits.builder()
+        .maxVmOverlayBytes(223L)
+        .build());
+
+    try (QueryContextHolder.Scope ignored = QueryContextHolder.attach(bounded)) {
+      HistoricalQueryLimitException failure = assertThrows(
+          HistoricalQueryLimitException.class, () -> adapter.getBlockHashByNum(0L));
+      assertEquals(HistoricalQueryLimitException.Limit.VM_OVERLAY_BYTES, failure.getLimit());
+      assertEquals(224L, bounded.getVmOverlayBytes());
+    }
+    try (QueryContextHolder.Scope ignored = QueryContextHolder.attach(
+        new QueryContext(ArchiveQueryLimits.unlimited()))) {
+      adapter.getBlockHashByNum(0L);
+    }
+
+    assertEquals(2, reader.blockHashReads);
+  }
+
+  @Test
+  public void fullBlockReadCannotFallBackToLiveStore() {
+    QueryContext context = new QueryContext(ArchiveQueryLimits.unlimited());
+
+    try (QueryContextHolder.Scope ignored = QueryContextHolder.attach(context)) {
+      UnsupportedHistoricalStateException failure = assertThrows(
+          UnsupportedHistoricalStateException.class, () -> adapter.getBlockByNum(0L));
+
+      assertSame(failure, context.getRecordedVmTerminalFailure());
+    }
+  }
+
+  @Test
+  public void blockHashCacheHoldsChainIdAndAllReachableAncestors() {
+    QueryContext context = new QueryContext(ArchiveQueryLimits.unlimited());
+
+    try (QueryContextHolder.Scope ignored = QueryContextHolder.attach(context)) {
+      for (int round = 0; round < 2; round++) {
+        adapter.getBlockHashByNum(0L);
+        for (long blockNum = 1_000L; blockNum > 744L; blockNum--) {
+          adapter.getBlockHashByNum(blockNum);
+        }
+      }
+    }
+
+    assertEquals(257, reader.blockHashReads);
+    assertEquals(514L, context.getLogicalReads());
+    assertEquals(257L, context.getBackendReads());
+    assertEquals(257L, context.getCacheHits());
+  }
+
+  @Test
   public void contractStateReadsArchiveAndMissingFallsBackToNeutralCapsule() {
     ContractStateCapsule archived = new ContractStateCapsule(1L);
     archived.setEnergyFactor(123L);
@@ -326,6 +517,7 @@ public class ArchiveRepositoryAdapterTest {
 
   @Test
   public void storageWriteThenReadIsVisibleInOverlay() {
+    reader.account = ArchiveReadResult.present(account(1L));
     DataWord key = new DataWord(new byte[] {7});
     DataWord value = new DataWord(new byte[] {0, 9});
     adapter.putStorageValue(ADDR, key, value);

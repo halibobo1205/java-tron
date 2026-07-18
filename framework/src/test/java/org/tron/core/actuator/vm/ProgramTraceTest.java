@@ -11,10 +11,6 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.tron.common.TestConstants;
 import org.tron.common.runtime.vm.DataWord;
-import org.tron.core.archive.query.ArchiveQueryLimits;
-import org.tron.core.archive.query.HistoricalQueryLimitException;
-import org.tron.core.archive.query.QueryContext;
-import org.tron.core.archive.query.QueryContextHolder;
 import org.tron.core.config.args.Args;
 import org.tron.core.vm.trace.Op;
 import org.tron.core.vm.trace.OpActions;
@@ -68,39 +64,6 @@ public class ProgramTraceTest {
         Assert.fail("Invalid op code");
       }
     }
-  }
-
-  @Test
-  public void historicalTraceBudgetRejectsBeforeAddingAnOp() {
-    QueryContext context = new QueryContext(ArchiveQueryLimits.builder()
-        .maxTraceBytes(0)
-        .build());
-    ProgramTrace trace = new ProgramTrace();
-
-    HistoricalQueryLimitException failure;
-    try (QueryContextHolder.Scope ignored = QueryContextHolder.attach(context)) {
-      failure = Assert.assertThrows(HistoricalQueryLimitException.class,
-          () -> trace.addOp((byte) org.tron.core.vm.Op.ADD, 0, 0, new DataWord(1),
-              new OpActions()));
-    }
-
-    Assert.assertEquals(HistoricalQueryLimitException.Limit.TRACE_BYTES, failure.getLimit());
-    Assert.assertTrue(trace.getOps().isEmpty());
-    Assert.assertTrue(context.getTraceBytes() > 0);
-  }
-
-  @Test
-  public void liveTraceWithoutHistoricalContextRemainsUnmetered() {
-    QueryContext unrelated = new QueryContext(ArchiveQueryLimits.builder()
-        .maxTraceBytes(0)
-        .build());
-    ProgramTrace trace = new ProgramTrace();
-
-    trace.addOp((byte) org.tron.core.vm.Op.ADD, 0, 0, new DataWord(1), new OpActions());
-
-    Assert.assertEquals(1, trace.getOps().size());
-    Assert.assertEquals(0, unrelated.getTraceBytes());
-    Assert.assertFalse(unrelated.isTerminated());
   }
 
 }

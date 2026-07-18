@@ -40,6 +40,31 @@ public class QueryContextHolderTest {
   }
 
   @Test
+  public void suspendedScopeHidesAndRestoresOuterContext() {
+    QueryContext outer = new QueryContext(ArchiveQueryLimits.unlimited());
+    QueryContext inner = new QueryContext(ArchiveQueryLimits.unlimited());
+
+    try (QueryContextHolder.Scope outerScope = QueryContextHolder.attach(outer)) {
+      try (QueryContextHolder.Scope suspended = QueryContextHolder.suspend()) {
+        assertNull(QueryContextHolder.current());
+        assertFalse(QueryContextHolder.isActive());
+        assertSame(outer, QueryContextHolder.currentStorageContext());
+        try (QueryContextHolder.Scope innerScope = QueryContextHolder.attach(inner)) {
+          assertSame(inner, QueryContextHolder.current());
+          assertSame(inner, QueryContextHolder.currentStorageContext());
+        }
+        assertNull(QueryContextHolder.current());
+        assertSame(outer, QueryContextHolder.currentStorageContext());
+      }
+      assertSame(outer, QueryContextHolder.current());
+      assertSame(outer, QueryContextHolder.currentStorageContext());
+    }
+
+    assertNull(QueryContextHolder.current());
+    assertNull(QueryContextHolder.currentStorageContext());
+  }
+
+  @Test
   public void contextIsNotInheritedByAnotherThread() throws Exception {
     QueryContext context = new QueryContext(ArchiveQueryLimits.unlimited());
     FutureTask<QueryContext> otherThreadContext =

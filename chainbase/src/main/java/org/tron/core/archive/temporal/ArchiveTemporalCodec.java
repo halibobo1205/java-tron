@@ -24,6 +24,8 @@ import org.tron.core.archive.txnum.ArchiveCoordinates;
  *       -&gt; value(before the change)</li>
  *   <li>changeset: {@code 0x22 || txNum(8) || domainId(2) || keyLen(4) || canonicalKey}
  *       -&gt; value(after), for unwind and validation</li>
+ *   <li>anchor: {@code 0x23 || domainId(2) || keyLen(4) || canonicalKey}
+ *       -&gt; immutable first observed pre-value, in the commitment column family</li>
  *   <li>block-commit: {@code 0x01 || "block-commit" || blockNum(8, BE)} -&gt; range
  *       marker, for startup validation</li>
  *   <li>latest-baseline: {@code 0x01 || "latest-baseline" || domainId(2) || keyLen(4)
@@ -39,6 +41,7 @@ public final class ArchiveTemporalCodec {
   static final byte HISTORY_PREFIX = 0x21;
   // changeset: 0x22 || txNum(8) || domainId(2) || keyLen(4) || canonicalKey.
   static final byte CHANGESET_PREFIX = 0x22;
+  static final byte ANCHOR_PREFIX = 0x23;
   private static final byte[] BLOCK_COMMIT_NAME =
       "block-commit".getBytes(StandardCharsets.US_ASCII);
   private static final byte[] LATEST_BASELINE_NAME =
@@ -79,10 +82,43 @@ public final class ArchiveTemporalCodec {
     return Bytes.concat(historyPrefix(domain, canonicalKey), Longs.toByteArray(txNum));
   }
 
+  static byte[] historyKeyOfPrefix(byte[] historyPrefix, long txNum) {
+    if (historyPrefix == null || historyPrefix.length < 7
+        || historyPrefix[0] != HISTORY_PREFIX) {
+      throw new ArchiveException("archive temporal history prefix is invalid");
+    }
+    requireNonNegativeTxNum(txNum);
+    return Bytes.concat(historyPrefix, Longs.toByteArray(txNum));
+  }
+
+  static byte[] anchorKeyOfHistoryPrefix(byte[] historyPrefix) {
+    if (historyPrefix == null || historyPrefix.length < 7
+        || historyPrefix[0] != HISTORY_PREFIX) {
+      throw new ArchiveException("archive temporal history prefix is invalid");
+    }
+    byte[] anchorKey = Arrays.copyOf(historyPrefix, historyPrefix.length);
+    anchorKey[0] = ANCHOR_PREFIX;
+    validateAnchorKey(anchorKey);
+    return anchorKey;
+  }
+
+  static byte[] historySeekBefore(byte[] historyPrefix, long exclusiveTxNum) {
+    if (historyPrefix == null || historyPrefix.length < 7
+        || historyPrefix[0] != HISTORY_PREFIX || exclusiveTxNum <= 0L) {
+      throw new ArchiveException("archive temporal history predecessor seek is invalid");
+    }
+    return Bytes.concat(historyPrefix, Longs.toByteArray(exclusiveTxNum - 1L));
+  }
+
   static byte[] changesetKey(long txNum, ArchiveDomain domain, byte[] canonicalKey) {
     ArchiveCoordinates.requireTxNum(txNum, "archive temporal changeset txNum");
     return Bytes.concat(new byte[] {CHANGESET_PREFIX}, Longs.toByteArray(txNum),
         domainId(domain), keyLength(canonicalKey), canonicalKey);
+  }
+
+  static byte[] anchorKey(ArchiveDomain domain, byte[] canonicalKey) {
+    return Bytes.concat(new byte[] {ANCHOR_PREFIX}, domainId(domain), keyLength(canonicalKey),
+        canonicalKey);
   }
 
   /** Seek target for unwind: the first changeset entry at txNum == fromTxNum. */
@@ -167,6 +203,25 @@ public final class ArchiveTemporalCodec {
 
   static boolean blockCommitMatches(byte[] encoded, ArchiveBlockRange range, int rowCount,
       byte[] rowDigest) {
+    if (!blockCommitRangeMatches(encoded, range)) {
+      return false;
+    }
+    if (rowCount < 0 || rowDigest == null || rowDigest.length != BLOCK_COMMIT_DIGEST_LENGTH) {
+      return false;
+    }
+    int rowCountOffset = 36 + ArchiveBlockRange.BLOCK_HASH_LENGTH
+        + ArchiveBlockRange.SCHEMA_CHECKSUM_LENGTH;
+    int encodedRowCount = Ints.fromBytes(encoded[rowCountOffset], encoded[rowCountOffset + 1],
+        encoded[rowCountOffset + 2], encoded[rowCountOffset + 3]);
+    if (encodedRowCount != rowCount) {
+      return false;
+    }
+    byte[] encodedDigest = Arrays.copyOfRange(encoded, rowCountOffset + Integer.BYTES,
+        rowCountOffset + Integer.BYTES + BLOCK_COMMIT_DIGEST_LENGTH);
+    return Arrays.equals(encodedDigest, rowDigest);
+  }
+
+  static boolean blockCommitRangeMatches(byte[] encoded, ArchiveBlockRange range) {
     if (encoded == null || encoded.length != BLOCK_COMMIT_VALUE_LENGTH) {
       return false;
     }
@@ -189,24 +244,10 @@ public final class ArchiveTemporalCodec {
     if (!Arrays.equals(Arrays.copyOfRange(encoded, 36, 36 + blockHashLen), blockHash)) {
       return false;
     }
-    if (rowCount < 0 || rowDigest == null || rowDigest.length != BLOCK_COMMIT_DIGEST_LENGTH) {
-      return false;
-    }
     int schemaOffset = 36 + blockHashLen;
     byte[] schemaChecksum = markerSchemaChecksum(range);
-    if (!Arrays.equals(Arrays.copyOfRange(encoded, schemaOffset,
-            schemaOffset + ArchiveBlockRange.SCHEMA_CHECKSUM_LENGTH), schemaChecksum)) {
-      return false;
-    }
-    int rowCountOffset = schemaOffset + ArchiveBlockRange.SCHEMA_CHECKSUM_LENGTH;
-    int encodedRowCount = Ints.fromBytes(encoded[rowCountOffset], encoded[rowCountOffset + 1],
-        encoded[rowCountOffset + 2], encoded[rowCountOffset + 3]);
-    if (encodedRowCount != rowCount) {
-      return false;
-    }
-    byte[] encodedDigest = Arrays.copyOfRange(encoded, rowCountOffset + Integer.BYTES,
-        rowCountOffset + Integer.BYTES + BLOCK_COMMIT_DIGEST_LENGTH);
-    return Arrays.equals(encodedDigest, rowDigest);
+    return Arrays.equals(Arrays.copyOfRange(encoded, schemaOffset,
+        schemaOffset + ArchiveBlockRange.SCHEMA_CHECKSUM_LENGTH), schemaChecksum);
   }
 
   static void validateBlockCommitValue(byte[] encoded, long expectedBlockNum) {
@@ -232,6 +273,10 @@ public final class ArchiveTemporalCodec {
 
   static int blockCommitDigestLength() {
     return BLOCK_COMMIT_DIGEST_LENGTH;
+  }
+
+  static int blockCommitValueLength() {
+    return BLOCK_COMMIT_VALUE_LENGTH;
   }
 
   private static byte[] markerSchemaChecksum(ArchiveBlockRange range) {
@@ -331,6 +376,24 @@ public final class ArchiveTemporalCodec {
     return Bytes.concat(new byte[] {LATEST_PREFIX}, domainAndKeyOfHistory(historyKey));
   }
 
+  static byte[] anchorKeyOfHistory(byte[] historyKey) {
+    return Bytes.concat(new byte[] {ANCHOR_PREFIX}, domainAndKeyOfHistory(historyKey));
+  }
+
+  static byte[] anchorKeyOfLatest(byte[] latestKey) {
+    validateLatestKey(latestKey);
+    byte[] anchorKey = Arrays.copyOf(latestKey, latestKey.length);
+    anchorKey[0] = ANCHOR_PREFIX;
+    return anchorKey;
+  }
+
+  static byte[] latestKeyOfAnchor(byte[] anchorKey) {
+    validateAnchorKey(anchorKey);
+    byte[] latestKey = Arrays.copyOf(anchorKey, anchorKey.length);
+    latestKey[0] = LATEST_PREFIX;
+    return latestKey;
+  }
+
   static byte[] historyPrefixOfChangeset(byte[] changesetKey) {
     return Bytes.concat(new byte[] {HISTORY_PREFIX}, domainAndKeyOfChangeset(changesetKey));
   }
@@ -387,6 +450,17 @@ public final class ArchiveTemporalCodec {
     }
   }
 
+  private static void validateAnchorKey(byte[] key) {
+    if (key == null || key.length < 7 || key[0] != ANCHOR_PREFIX) {
+      throw new ArchiveException("archive temporal anchor key is invalid");
+    }
+    domainAt(key, 1, "archive temporal anchor");
+    int keyLen = intAt(key, 3);
+    if (key.length != 7 + keyLen) {
+      throw new ArchiveException("archive temporal anchor key length is invalid");
+    }
+  }
+
   private static void validateLatestBaselineKey(byte[] key) {
     byte[] prefix = latestBaselinePrefix();
     if (!startsWith(key, prefix) || key.length < prefix.length + 6) {
@@ -425,23 +499,56 @@ public final class ArchiveTemporalCodec {
   }
 
   static byte[] encodeValue(DomainValue value) {
-    byte[] bytes = value.getValue();
-    return Bytes.concat(new byte[] {(byte) (value.isDeleted() ? 1 : 0)}, bytes);
+    return encodeValue(value, ArchiveTemporalIntegrityCodec.MAX_PAYLOAD_BYTES);
+  }
+
+  static byte[] encodeValue(DomainValue value, int maxPayloadBytes) {
+    if (value == null) {
+      throw new NullPointerException("value");
+    }
+    if (maxPayloadBytes <= 0) {
+      throw new IllegalArgumentException("maximum temporal payload bytes must be positive");
+    }
+    long encodedBytes = (long) value.size() + 1L;
+    if (encodedBytes > maxPayloadBytes) {
+      throw new ArchiveException("archive temporal payload exceeds format limit "
+          + maxPayloadBytes + ": payloadBytes=" + encodedBytes);
+    }
+    byte[] encoded = new byte[(int) encodedBytes];
+    encoded[0] = (byte) (value.isDeleted() ? 1 : 0);
+    value.copyValueTo(encoded, 1);
+    return encoded;
   }
 
   static DomainValue decodeValue(byte[] encoded) {
-    if (encoded == null || encoded.length == 0) {
-      throw new ArchiveException("archive temporal value is empty");
-    }
-    if (encoded[0] == 1) {
-      if (encoded.length != 1) {
-        throw new ArchiveException("archive temporal tombstone value must be empty");
-      }
+    return decodeValue(encoded, 0, encoded == null ? 0 : encoded.length);
+  }
+
+  static void validateValueEncoding(byte[] encoded) {
+    validateValueEncoding(encoded, 0, encoded == null ? 0 : encoded.length);
+  }
+
+  static DomainValue decodeValue(byte[] encoded, int offset, int length) {
+    validateValueEncoding(encoded, offset, length);
+    if (encoded[offset] == 1) {
       return DomainValue.tombstone();
     }
-    if (encoded[0] != 0) {
-      throw new ArchiveException("archive temporal value has invalid flag " + encoded[0]);
+    return DomainValue.present(encoded, offset + 1, length - 1);
+  }
+
+  private static void validateValueEncoding(byte[] encoded, int offset, int length) {
+    if (encoded == null || offset < 0 || length <= 0
+        || offset > encoded.length - length) {
+      throw new ArchiveException("archive temporal value is empty");
     }
-    return DomainValue.present(Arrays.copyOfRange(encoded, 1, encoded.length));
+    if (encoded[offset] == 1) {
+      if (length != 1) {
+        throw new ArchiveException("archive temporal tombstone value must be empty");
+      }
+      return;
+    }
+    if (encoded[offset] != 0) {
+      throw new ArchiveException("archive temporal value has invalid flag " + encoded[offset]);
+    }
   }
 }

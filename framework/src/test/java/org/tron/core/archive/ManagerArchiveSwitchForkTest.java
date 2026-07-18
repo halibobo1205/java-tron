@@ -7,6 +7,9 @@ import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.spy;
 
 import com.google.protobuf.ByteString;
 import java.lang.reflect.InvocationTargetException;
@@ -30,13 +33,13 @@ import org.tron.common.utils.ReflectUtils;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.common.utils.Utils;
 import org.tron.consensus.dpos.DposSlot;
+import org.tron.core.ChainBaseManager;
 import org.tron.core.archive.domain.ArchiveDomainCatalog;
 import org.tron.core.archive.domain.ArchiveDomainRegistry;
 import org.tron.core.archive.domain.ArchiveSchemaChecksum;
 import org.tron.core.archive.domain.DefaultArchiveDomainCatalog;
 import org.tron.core.archive.domain.DefaultArchiveDomainRegistry;
 import org.tron.core.archive.query.ArchiveQueryLimits;
-import org.tron.core.archive.reader.ArchiveReadThrough;
 import org.tron.core.archive.temporal.UnifiedArchiveTemporalStore;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.archive.txnum.ArchiveTxNumIndex;
@@ -49,6 +52,7 @@ import org.tron.core.capsule.WitnessCapsule;
 import org.tron.core.config.args.Args;
 import org.tron.core.consensus.ConsensusService;
 import org.tron.core.db.BlockGenerate;
+import org.tron.core.exception.ItemNotFoundException;
 import org.tron.core.exception.TronError;
 import org.tron.core.exception.ValidateSignatureException;
 import org.tron.protos.Protocol;
@@ -107,7 +111,7 @@ public class ManagerArchiveSwitchForkTest extends BaseMethodTest {
         new UnifiedArchiveBackend(unifiedDb, txNumIndex, temporalStore);
     archiveService = new DefaultArchiveService(true, txNumIndex,
         ArchiveExecutionContextHolder.get(), temporalStore, recordingInFlightStore,
-        registry, catalog, ArchiveReadThrough.NONE, ArchiveLifecycle.Phase.RUNNING,
+        registry, catalog, ArchiveLifecycle.Phase.RUNNING,
         ArchiveQueryLimits.unlimited(), ArchivePublisherConfig.synchronous(), () -> { }, backend);
     ReflectUtils.setFieldValue(dbManager, "archiveService", archiveService);
   }
@@ -251,6 +255,44 @@ public class ManagerArchiveSwitchForkTest extends BaseMethodTest {
   }
 
   @Test
+  public void replayErrorAfterBeginRestoresOldCanonicalBranchAndAbortsArchiveBlock()
+      throws Exception {
+    ForkScenario scenario = prepareForkScenario(true);
+    AssertionError injected = new AssertionError("injected replay error after begin");
+    AtomicBoolean injectedOnce = new AtomicBoolean();
+    ArchiveService failingArchive = archiveServiceProxy((method, args) -> {
+      if ("beginBlock".equals(method.getName())
+          && args != null
+          && args.length == 2
+          && args[1] == ArchiveSource.REPLAY
+          && injectedOnce.compareAndSet(false, true)) {
+        invokeArchive(method, args);
+        throw injected;
+      }
+      return invokeArchive(method, args);
+    });
+    ReflectUtils.setFieldValue(dbManager, "archiveService", failingArchive);
+    try {
+      AssertionError failure = assertThrows(
+          AssertionError.class, () -> dbManager.pushBlock(scenario.forkHead));
+
+      assertSame(injected, failure);
+      assertTrue("the replay begin hook must be reached", injectedOnce.get());
+      assertEquals("a replay Error must restore the old canonical head",
+          scenario.oldTwo.getBlockId(),
+          chainBaseManager.getDynamicPropertiesStore().getLatestBlockHeaderHash());
+      assertFalse(ArchiveExecutionContextHolder.get().current().isPresent());
+      assertEquals(ArchiveSource.RECOVERY, journalFor(scenario.oldOne).getRange().getSource());
+      assertEquals(ArchiveSource.RECOVERY, journalFor(scenario.oldTwo).getRange().getSource());
+    } finally {
+      ReflectUtils.setFieldValue(dbManager, "archiveService", archiveService);
+    }
+
+    archiveService.beginBlock(scenario.forkHead, ArchiveSource.NORMAL);
+    archiveService.abortBlock(scenario.forkHead);
+  }
+
+  @Test
   public void recoveryBeginFailureFailsStopAndAbortsPartialArchiveBlock() throws Exception {
     ForkScenario scenario = prepareForkScenario(false);
     ArchiveException injected = new ArchiveException("injected partial recovery begin failure");
@@ -292,6 +334,265 @@ public class ManagerArchiveSwitchForkTest extends BaseMethodTest {
 
     archiveService.beginBlock(scenario.oldOne, ArchiveSource.RECOVERY);
     archiveService.abortBlock(scenario.oldOne);
+  }
+
+  @Test
+  public void recoveryErrorAfterBeginFailsStopAndAbortsPartialArchiveBlock() throws Exception {
+    ForkScenario scenario = prepareForkScenario(false);
+    AssertionError injected = new AssertionError("injected recovery error after begin");
+    AtomicBoolean injectedOnce = new AtomicBoolean();
+    ArchiveService failingArchive = archiveServiceProxy((method, args) -> {
+      if ("beginBlock".equals(method.getName())
+          && args != null
+          && args.length == 2
+          && args[1] == ArchiveSource.RECOVERY
+          && injectedOnce.compareAndSet(false, true)) {
+        invokeArchive(method, args);
+        throw injected;
+      }
+      return invokeArchive(method, args);
+    });
+    ReflectUtils.setFieldValue(dbManager, "archiveService", failingArchive);
+    try {
+      TronError failure = assertThrows(
+          TronError.class, () -> dbManager.pushBlock(scenario.forkHead));
+
+      assertEquals(TronError.ErrCode.ARCHIVE_RUNTIME, failure.getErrCode());
+      assertSame(injected, failure.getCause());
+      assertTrue("the recovery begin hook must be reached", injectedOnce.get());
+      assertFalse(ArchiveExecutionContextHolder.get().current().isPresent());
+    } finally {
+      ReflectUtils.setFieldValue(dbManager, "archiveService", archiveService);
+    }
+
+    archiveService.beginBlock(scenario.oldOne, ArchiveSource.RECOVERY);
+    archiveService.abortBlock(scenario.oldOne);
+  }
+
+  @Test
+  public void recoveryErrorAndSameAbortErrorStillFailsStop() throws Exception {
+    ForkScenario scenario = prepareForkScenario(false);
+    AssertionError injected = new AssertionError("shared recovery and abort error");
+    AtomicBoolean recoveryInjected = new AtomicBoolean();
+    AtomicBoolean abortInjected = new AtomicBoolean();
+    ArchiveService failingArchive = archiveServiceProxy((method, args) -> {
+      if ("beginBlock".equals(method.getName())
+          && args != null
+          && args.length == 2
+          && args[1] == ArchiveSource.RECOVERY
+          && recoveryInjected.compareAndSet(false, true)) {
+        invokeArchive(method, args);
+        throw injected;
+      }
+      if ("abortBlock".equals(method.getName())
+          && recoveryInjected.get()
+          && abortInjected.compareAndSet(false, true)) {
+        invokeArchive(method, args);
+        throw injected;
+      }
+      return invokeArchive(method, args);
+    });
+    ReflectUtils.setFieldValue(dbManager, "archiveService", failingArchive);
+    try {
+      TronError failure = assertThrows(
+          TronError.class, () -> dbManager.pushBlock(scenario.forkHead));
+
+      assertEquals(TronError.ErrCode.ARCHIVE_RUNTIME, failure.getErrCode());
+      assertSame(injected, failure.getCause());
+      assertTrue("the recovery begin hook must be reached", recoveryInjected.get());
+      assertTrue("the recovery abort hook must be reached", abortInjected.get());
+      assertFalse(ArchiveExecutionContextHolder.get().current().isPresent());
+    } finally {
+      ReflectUtils.setFieldValue(dbManager, "archiveService", archiveService);
+    }
+  }
+
+  @Test
+  public void replayErrorAndRecoveryPreludeErrorPreserveBothFailures() throws Exception {
+    ForkScenario scenario = prepareForkScenario(true);
+    AssertionError replayFailure = new AssertionError("injected second replay error");
+    AssertionError unwindFailure = new AssertionError("injected recovery unwind error");
+    AtomicInteger replayBegins = new AtomicInteger();
+    AtomicBoolean replayInjected = new AtomicBoolean();
+    AtomicBoolean unwindInjected = new AtomicBoolean();
+    ArchiveService failingArchive = archiveServiceProxy((method, args) -> {
+      if ("beginBlock".equals(method.getName())
+          && args != null
+          && args.length == 2
+          && args[1] == ArchiveSource.REPLAY
+          && replayBegins.incrementAndGet() == 2) {
+        invokeArchive(method, args);
+        replayInjected.set(true);
+        throw replayFailure;
+      }
+      if ("unwindBlock".equals(method.getName())
+          && replayInjected.get()
+          && unwindInjected.compareAndSet(false, true)) {
+        invokeArchive(method, args);
+        throw unwindFailure;
+      }
+      return invokeArchive(method, args);
+    });
+    ReflectUtils.setFieldValue(dbManager, "archiveService", failingArchive);
+    try {
+      TronError failure = assertThrows(
+          TronError.class, () -> dbManager.pushBlock(scenario.forkHead));
+
+      assertEquals(TronError.ErrCode.ARCHIVE_RUNTIME, failure.getErrCode());
+      assertSame(unwindFailure, failure.getCause());
+      assertTrue("the second replay begin hook must be reached", replayInjected.get());
+      assertTrue("the recovery unwind hook must be reached", unwindInjected.get());
+      assertTrue("the original replay failure must remain attached",
+          Arrays.stream(failure.getSuppressed()).anyMatch(candidate -> candidate == replayFailure));
+      assertFalse(ArchiveExecutionContextHolder.get().current().isPresent());
+    } finally {
+      ReflectUtils.setFieldValue(dbManager, "archiveService", archiveService);
+    }
+  }
+
+  @Test
+  public void recoveryErrorWithThrowingMessageStillAbortsAndPreservesPrimary() throws Exception {
+    ForkScenario scenario = prepareForkScenario(false);
+    AssertionError loggingFailure = new AssertionError("injected message rendering error");
+    Error injected = new Error("injected recovery error") {
+      @Override
+      public String getMessage() {
+        throw loggingFailure;
+      }
+    };
+    AtomicBoolean injectedOnce = new AtomicBoolean();
+    ArchiveService failingArchive = archiveServiceProxy((method, args) -> {
+      if ("beginBlock".equals(method.getName())
+          && args != null
+          && args.length == 2
+          && args[1] == ArchiveSource.RECOVERY
+          && injectedOnce.compareAndSet(false, true)) {
+        invokeArchive(method, args);
+        throw injected;
+      }
+      return invokeArchive(method, args);
+    });
+    ReflectUtils.setFieldValue(dbManager, "archiveService", failingArchive);
+    try {
+      TronError failure = assertThrows(
+          TronError.class, () -> dbManager.pushBlock(scenario.forkHead));
+
+      assertEquals(TronError.ErrCode.ARCHIVE_RUNTIME, failure.getErrCode());
+      assertSame(injected, failure.getCause());
+      assertTrue("the recovery begin hook must be reached", injectedOnce.get());
+      assertFalse(ArchiveExecutionContextHolder.get().current().isPresent());
+    } finally {
+      ReflectUtils.setFieldValue(dbManager, "archiveService", archiveService);
+    }
+
+    archiveService.beginBlock(scenario.oldOne, ArchiveSource.RECOVERY);
+    archiveService.abortBlock(scenario.oldOne);
+  }
+
+  @Test
+  public void recoveryArchiveHelperPreservesExistingTronError() throws Exception {
+    ForkScenario scenario = prepareForkScenario(false);
+    TronError injected = new TronError(
+        "injected recovery commit error", TronError.ErrCode.DB_FLUSH);
+    AtomicBoolean recoveryStarted = new AtomicBoolean();
+    AtomicBoolean injectedOnce = new AtomicBoolean();
+    ArchiveService failingArchive = archiveServiceProxy((method, args) -> {
+      if ("beginBlock".equals(method.getName())
+          && args != null
+          && args.length == 2
+          && args[1] == ArchiveSource.RECOVERY) {
+        recoveryStarted.set(true);
+      }
+      if ("commitBlockJournaled".equals(method.getName())
+          && recoveryStarted.get()
+          && injectedOnce.compareAndSet(false, true)) {
+        throw injected;
+      }
+      return invokeArchive(method, args);
+    });
+    ReflectUtils.setFieldValue(dbManager, "archiveService", failingArchive);
+    try {
+      TronError failure = assertThrows(
+          TronError.class, () -> dbManager.pushBlock(scenario.forkHead));
+
+      assertSame(injected, failure);
+      assertEquals(TronError.ErrCode.DB_FLUSH, failure.getErrCode());
+      assertTrue("the recovery commit hook must be reached", injectedOnce.get());
+      assertTrue("the original replay failure must remain attached",
+          failure.getSuppressed().length > 0);
+      assertFalse(ArchiveExecutionContextHolder.get().current().isPresent());
+    } finally {
+      ReflectUtils.setFieldValue(dbManager, "archiveService", archiveService);
+    }
+
+    archiveService.beginBlock(scenario.oldOne, ArchiveSource.RECOVERY);
+    archiveService.abortBlock(scenario.oldOne);
+  }
+
+  @Test
+  public void recoveryMissingCanonicalHeadFailsStopWithoutRetryingRewind() throws Exception {
+    ForkScenario scenario = prepareForkScenario(true);
+    AssertionError replayFailure = new AssertionError("injected second replay failure");
+    AtomicInteger replayBegins = new AtomicInteger();
+    AtomicBoolean replayFailureInjected = new AtomicBoolean();
+    AtomicBoolean lookupFailureInjected = new AtomicBoolean();
+    ArchiveService failingArchive = archiveServiceProxy((method, args) -> {
+      if ("beginBlock".equals(method.getName())
+          && args != null
+          && args.length == 2
+          && args[1] == ArchiveSource.REPLAY
+          && replayBegins.incrementAndGet() == 2) {
+        invokeArchive(method, args);
+        replayFailureInjected.set(true);
+        throw replayFailure;
+      }
+      return invokeArchive(method, args);
+    });
+    ChainBaseManager originalChainBase = chainBaseManager;
+    ChainBaseManager failingChainBase = spy(chainBaseManager);
+    doAnswer(invocation -> {
+      if (replayFailureInjected.get() && lookupFailureInjected.compareAndSet(false, true)) {
+        throw new ItemNotFoundException("injected missing recovery head");
+      }
+      return originalChainBase.getBlockById(invocation.getArgument(0));
+    }).when(failingChainBase).getBlockById(any(Sha256Hash.class));
+    ReflectUtils.setFieldValue(dbManager, "archiveService", failingArchive);
+    ReflectUtils.setFieldValue(dbManager, "chainBaseManager", failingChainBase);
+    try {
+      TronError failure = assertThrows(
+          TronError.class, () -> dbManager.pushBlock(scenario.forkHead));
+
+      assertEquals(TronError.ErrCode.ARCHIVE_RUNTIME, failure.getErrCode());
+      assertTrue(failure.getCause() instanceof ItemNotFoundException);
+      assertTrue("the recovery head lookup must be reached", lookupFailureInjected.get());
+      assertTrue("the original replay failure must remain attached",
+          Arrays.stream(failure.getSuppressed()).anyMatch(candidate -> candidate == replayFailure));
+      assertFalse(ArchiveExecutionContextHolder.get().current().isPresent());
+    } finally {
+      ReflectUtils.setFieldValue(dbManager, "chainBaseManager", originalChainBase);
+      ReflectUtils.setFieldValue(dbManager, "archiveService", archiveService);
+    }
+  }
+
+  private ArchiveService archiveServiceProxy(ArchiveInvocation invocation) {
+    return (ArchiveService) Proxy.newProxyInstance(
+        ArchiveService.class.getClassLoader(),
+        new Class<?>[] {ArchiveService.class},
+        (proxy, method, args) -> invocation.invoke(method, args));
+  }
+
+  private Object invokeArchive(java.lang.reflect.Method method, Object[] args) throws Throwable {
+    try {
+      return method.invoke(archiveService, args);
+    } catch (InvocationTargetException e) {
+      throw e.getCause();
+    }
+  }
+
+  @FunctionalInterface
+  private interface ArchiveInvocation {
+
+    Object invoke(java.lang.reflect.Method method, Object[] args) throws Throwable;
   }
 
   private ForkScenario prepareForkScenario(boolean validForkHead) throws Exception {

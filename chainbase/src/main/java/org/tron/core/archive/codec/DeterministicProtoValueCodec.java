@@ -62,6 +62,13 @@ public final class DeterministicProtoValueCodec implements CanonicalValueCodec {
     }
   }
 
+  @Override
+  public void validateProofBound(DomainValue value) {
+    if (value == null) {
+      throw new ArchiveException(codecId + ": DomainValue must not be null");
+    }
+  }
+
   private Message parse(byte[] bytes) {
     try {
       return parser.parseFrom(bytes);

@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Arrays;
 import org.tron.core.archive.ArchiveException;
+import org.tron.core.archive.ArchivePersistentStateCorruptionException;
 import org.tron.core.archive.UnifiedArchiveInFlightStore;
 import org.tron.core.archive.domain.ArchiveDomainCatalog;
 import org.tron.core.archive.txnum.UnifiedArchiveTxNumIndex;
@@ -51,8 +52,47 @@ public final class UnifiedArchiveIdentityPayload implements ArchiveIdentityPaylo
   }
 
   /** Reads persisted coverage without creating or upgrading the unified database. */
-  public static long inspectFloor(Path archiveRoot, ArchiveDomainCatalog catalog,
+  static long inspectFloor(Path archiveRoot, ArchiveDomainCatalog catalog,
       byte[] schemaChecksum) {
+    return inspectFloor(archiveRoot, catalog, schemaChecksum, Long.MAX_VALUE);
+  }
+
+  /** Reads persisted coverage while bounding any journal value materialized during inspection. */
+  static long inspectFloor(Path archiveRoot, ArchiveDomainCatalog catalog,
+      byte[] schemaChecksum, long maxEncodedBlockBytes) {
+    return inspectFloor(archiveRoot, catalog, schemaChecksum,
+        maxEncodedBlockBytes, Long.MAX_VALUE);
+  }
+
+  /** Reads persisted coverage while bounding journal byte and record materialization. */
+  static long inspectFloor(Path archiveRoot, ArchiveDomainCatalog catalog,
+      byte[] schemaChecksum, long maxEncodedBlockBytes, long maxRecordsPerBlock) {
+    return inspectFloor(archiveRoot, catalog, schemaChecksum,
+        maxEncodedBlockBytes, maxRecordsPerBlock, Integer.MAX_VALUE);
+  }
+
+  /** Reads persisted coverage while bounding aggregate journal materialization. */
+  public static long inspectFloor(Path archiveRoot, ArchiveDomainCatalog catalog,
+      byte[] schemaChecksum, long maxEncodedBlockBytes, long maxRecordsPerBlock,
+      int maxBlocks) {
+    return inspectFloor(archiveRoot, catalog, schemaChecksum,
+        maxEncodedBlockBytes, maxRecordsPerBlock, maxBlocks, false);
+  }
+
+  /**
+   * Inspects an already authenticated payload and marks persistent corruption on the same DB
+   * handle that detected it, before that handle is closed.
+   */
+  public static long inspectAuthenticatedFloor(Path archiveRoot, ArchiveDomainCatalog catalog,
+      byte[] schemaChecksum, long maxEncodedBlockBytes, long maxRecordsPerBlock,
+      int maxBlocks) {
+    return inspectFloor(archiveRoot, catalog, schemaChecksum,
+        maxEncodedBlockBytes, maxRecordsPerBlock, maxBlocks, true);
+  }
+
+  private static long inspectFloor(Path archiveRoot, ArchiveDomainCatalog catalog,
+      byte[] schemaChecksum, long maxEncodedBlockBytes, long maxRecordsPerBlock,
+      int maxBlocks, boolean markPersistentCorruption) {
     UnifiedArchiveDb db = UnifiedArchiveDb.open(databasePath(archiveRoot), schemaChecksum);
     UnifiedArchiveTxNumIndex index = null;
     Throwable bodyFailure = null;
@@ -62,18 +102,42 @@ public final class UnifiedArchiveIdentityPayload implements ArchiveIdentityPaylo
       if (persistedFloor >= 0) {
         return persistedFloor;
       }
-      UnifiedArchiveInFlightStore inFlight = new UnifiedArchiveInFlightStore(db, catalog);
+      UnifiedArchiveInFlightStore inFlight =
+          new UnifiedArchiveInFlightStore(
+              db, catalog, maxEncodedBlockBytes, maxRecordsPerBlock, maxBlocks);
       long[] firstJournal = {Long.MAX_VALUE};
       inFlight.forEachBlock(block -> firstJournal[0] = Math.min(
           firstJournal[0], block.getRange().getBlockNum()));
       return firstJournal[0] == Long.MAX_VALUE ? 0L : firstJournal[0];
     } catch (RuntimeException | Error e) {
       bodyFailure = e;
+      if (markPersistentCorruption
+          && e instanceof ArchivePersistentStateCorruptionException) {
+        markRepairRequired(db, (ArchivePersistentStateCorruptionException) e);
+      }
       throw e;
     } finally {
       Throwable closeFailure = close(index == null ? db : index, bodyFailure);
       if (bodyFailure == null && closeFailure != null) {
         rethrowCloseFailure(closeFailure);
+      }
+    }
+  }
+
+  private static void markRepairRequired(UnifiedArchiveDb db,
+      ArchivePersistentStateCorruptionException failure) {
+    try {
+      String reason = failure.getMessage() == null
+          ? failure.getClass().getSimpleName() : failure.getMessage();
+      reason = UnifiedArchiveTxNumIndex.boundRepairReason(reason);
+      UnifiedArchiveTxNumIndex.markRepairRequired(db, reason);
+    } catch (RuntimeException | Error markerFailure) {
+      if (markerFailure != failure) {
+        try {
+          failure.addSuppressed(markerFailure);
+        } catch (Throwable ignored) {
+          // Preserve the corruption as the primary startup failure.
+        }
       }
     }
   }
@@ -105,7 +169,11 @@ public final class UnifiedArchiveIdentityPayload implements ArchiveIdentityPaylo
         return closeFailure;
       }
       if (failure != closeFailure) {
-        failure.addSuppressed(closeFailure);
+        try {
+          failure.addSuppressed(closeFailure);
+        } catch (Throwable ignored) {
+          // Preserve the inspection failure even if suppression itself is unavailable.
+        }
       }
     }
     return failure;

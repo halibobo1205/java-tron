@@ -116,8 +116,8 @@ import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
 @Component
 public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
 
-  private static final long MAX_HISTORICAL_CALL_DATA_HEX_CHARS =
-      Constant.TRANSACTION_MAX_BYTE_SIZE * 2L + 2L;
+  private static final long MAX_HISTORICAL_CALL_DATA_HEX_BODY_CHARS =
+      Constant.TRANSACTION_MAX_BYTE_SIZE * 2L;
 
   public enum RequestSource {
     FULLNODE,
@@ -1033,17 +1033,19 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
       throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
       JsonRpcInternalException {
 
-    requireArchiveAvailableForCallObjectBlockParam(blockParamObj);
     ResolvedBlockParam blockParam = resolveBlockParam(blockParamObj);
     String blockNumOrTag = blockParam.getBlockNumOrTag();
 
     if (historicalEthCallSupport != null
         && historicalEthCallSupport.shouldUseArchive(blockNumOrTag)) {
-      String callData = transactionCall.resolveData();
-      if (callData != null && callData.length() > MAX_HISTORICAL_CALL_DATA_HEX_CHARS) {
-        throw new JsonRpcInvalidParamsException(
-            "historical call data exceeds maximum transaction size");
+      if (blockNumOrTag != null) {
+        HistoricalEthCallSupport.validateHistoricalSelectorSyntax(blockNumOrTag);
       }
+      historicalEthCallSupport.validateArchiveAvailable();
+      requireCallArguments(transactionCall);
+      requireHistoricalCallDataWithinLimit(transactionCall.getInput());
+      requireHistoricalCallDataWithinLimit(transactionCall.getData());
+      String callData = transactionCall.resolveData();
       return historicalEthCallSupport.call(
           addressCompatibleToByteArray(transactionCall.getFrom()),
           addressCompatibleToByteArray(transactionCall.getTo()),
@@ -1052,6 +1054,7 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
           blockNumOrTag,
           blockParam.getRequestedBlockHash());
     }
+    requireCallArguments(transactionCall);
     requireLatestBlockTag(blockNumOrTag);
 
     byte[] addressData = addressCompatibleToByteArray(transactionCall.getFrom());
@@ -1061,41 +1064,27 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
         ByteArray.fromHexString(transactionCall.resolveData()));
   }
 
+  private static void requireCallArguments(CallArguments transactionCall)
+      throws JsonRpcInvalidParamsException {
+    if (transactionCall == null) {
+      throw new JsonRpcInvalidParamsException(JSON_ERROR);
+    }
+  }
+
+  private static void requireHistoricalCallDataWithinLimit(String callData)
+      throws JsonRpcInvalidParamsException {
+    long prefixChars = callData != null && callData.startsWith("0x") ? 2L : 0L;
+    if (callData != null
+        && callData.length() > MAX_HISTORICAL_CALL_DATA_HEX_BODY_CHARS + prefixChars) {
+      throw new JsonRpcInvalidParamsException(
+          "historical call data exceeds maximum transaction size");
+    }
+  }
+
   /**
    * Normalises the JSON-RPC block parameter (string tag, or the object form with blockNumber /
    * blockHash) while preserving object-form blockHash binding for historical archive calls.
    */
-  private void requireArchiveAvailableForCallObjectBlockParam(Object blockParamObj)
-      throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
-      JsonRpcInternalException {
-    if (historicalEthCallSupport != null && isHistoricalObjectBlockParam(blockParamObj)) {
-      historicalEthCallSupport.validateArchiveAvailable();
-    }
-  }
-
-  private boolean isHistoricalObjectBlockParam(Object blockParamObj)
-      throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException {
-    if (!(blockParamObj instanceof Map)) {
-      return false;
-    }
-    Map<?, ?> paramMap = (Map<?, ?>) blockParamObj;
-    boolean hasBlockNumber = paramMap.containsKey("blockNumber");
-    boolean hasBlockHash = paramMap.containsKey("blockHash");
-    if (hasBlockNumber == hasBlockHash) {
-      throw new JsonRpcInvalidRequestException(JSON_ERROR);
-    }
-    if (hasBlockNumber) {
-      if (paramMap.containsKey("requireCanonical")) {
-        throw new JsonRpcInvalidParamsException(JSON_ERROR);
-      }
-      parseObjectBlockNumber(getObjectBlockParamString(paramMap, "blockNumber"));
-      return true;
-    }
-    validateRequireCanonical(paramMap);
-    hashToByteArray(getObjectBlockParamString(paramMap, "blockHash"));
-    return true;
-  }
-
   private ResolvedBlockParam resolveBlockParam(Object blockParamObj)
       throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
       JsonRpcInternalException {

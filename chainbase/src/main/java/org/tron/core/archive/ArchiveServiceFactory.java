@@ -22,7 +22,6 @@ import org.tron.core.archive.identity.ArchiveIdentityException;
 import org.tron.core.archive.identity.ArchiveIdentityProtocol;
 import org.tron.core.archive.identity.UnifiedArchiveIdentityPayload;
 import org.tron.core.archive.query.ArchiveQueryLimits;
-import org.tron.core.archive.reader.ArchiveReadThrough;
 import org.tron.core.archive.temporal.UnifiedArchiveTemporalStore;
 import org.tron.core.archive.txnum.UnifiedArchiveTxNumIndex;
 import org.tron.core.archive.unified.UnifiedArchiveDb;
@@ -40,21 +39,27 @@ public final class ArchiveServiceFactory {
 
   private static final String SUPPORTED_COVERAGE = "TVM_STATE_ONLY";
   private static final String UNIFIED_LAYOUT = "UNIFIED_V1";
+  private static final long MAX_FINITE_TIMEOUT_MS = Long.MAX_VALUE / 1_000_000L;
+
+  enum UnifiedOpenMode {
+    OPEN_EXISTING,
+    INITIALIZE_NEW
+  }
 
   private ArchiveServiceFactory() {
   }
 
   public static ArchiveService create(StorageConfig.ArchiveConfig config) {
-    return create(config, null, ArchiveReadThrough.NONE, null, null);
+    return createEnabled(config, null, null, null);
   }
 
-  public static ArchiveService create(StorageConfig.ArchiveConfig config, String archiveDir) {
-    return create(config, archiveDir, ArchiveReadThrough.NONE, null, null);
+  static ArchiveService create(StorageConfig.ArchiveConfig config, String archiveDir) {
+    return createEnabled(config, archiveDir, null, null);
   }
 
-  public static ArchiveService create(StorageConfig.ArchiveConfig config, String archiveDir,
+  static ArchiveService create(StorageConfig.ArchiveConfig config, String archiveDir,
       ChainBaseManager chainBaseManager) {
-    return create(config, archiveDir, ArchiveReadThrough.NONE, chainBaseManager, null);
+    return createEnabled(config, archiveDir, chainBaseManager, null);
   }
 
   /** Production entry point with an external identity anchor under the canonical output root. */
@@ -63,13 +68,12 @@ public final class ArchiveServiceFactory {
     if (identityAnchorDirectory == null) {
       throw new NullPointerException("identityAnchorDirectory");
     }
-    return create(config, archiveDir, ArchiveReadThrough.NONE, chainBaseManager,
+    return createEnabled(config, archiveDir, chainBaseManager,
         identityAnchorDirectory.toAbsolutePath().normalize());
   }
 
-  private static ArchiveService create(StorageConfig.ArchiveConfig config, String archiveDir,
-      ArchiveReadThrough readThrough, ChainBaseManager chainBaseManager,
-      Path identityAnchorDirectory) {
+  private static ArchiveService createEnabled(StorageConfig.ArchiveConfig config, String archiveDir,
+      ChainBaseManager chainBaseManager, Path identityAnchorDirectory) {
     if (config == null || !config.isEnable()) {
       return NoopArchiveService.INSTANCE;
     }
@@ -96,22 +100,29 @@ public final class ArchiveServiceFactory {
     }
     Path archivePath = Paths.get(archiveDir).toAbsolutePath().normalize();
     boolean canonicalHasBlocks = chainBaseManager != null && chainBaseManager.hasBlocks();
+    UnifiedOpenMode openMode;
     try {
       validateArchiveRootBeforeOpen(archivePath, canonicalHasBlocks);
       if (identityAnchorDirectory != null) {
         validateOrInitializeIdentity(config, archivePath, identityAnchorDirectory,
             canonicalHasBlocks, catalog, schemaChecksum);
+        // Identity binding creates the payload before activation. Every ACTIVE/resumed identity
+        // must therefore strict-open the registered DB and may never fall back to initialization.
+        openMode = UnifiedOpenMode.OPEN_EXISTING;
       } else {
-        validateUnanchoredUnifiedInitialization(config, archivePath, canonicalHasBlocks);
+        openMode = validateUnanchoredUnifiedInitialization(
+            config, archivePath, canonicalHasBlocks);
       }
-      Files.createDirectories(archivePath);
+      if (openMode == UnifiedOpenMode.INITIALIZE_NEW) {
+        Files.createDirectories(archivePath);
+      }
     } catch (ArchiveIdentityException e) {
       throw new ArchiveException("archive identity validation failed: " + e.getMessage(), e);
     } catch (IOException e) {
       throw new ArchiveException("failed to create archive directory " + archiveDir, e);
     }
-    return openUnifiedArchive(config, archivePath, readThrough, registry, catalog,
-        schemaChecksum, queryLimits, publisherConfig);
+    return openUnifiedArchive(config, archivePath, registry, catalog,
+        schemaChecksum, queryLimits, publisherConfig, openMode);
   }
 
   private static void validateOrInitializeIdentity(
@@ -135,10 +146,18 @@ public final class ArchiveServiceFactory {
             : "set storage.archive.identity.initialize=true only for a new empty archive";
         throw new ArchiveException("archive identity is missing; " + remedy);
       }
-      long actualFloor = UnifiedArchiveIdentityPayload.inspectFloor(
-          archivePath, catalog, schemaChecksum);
-      protocol.validateActive(
-          anchorDirectory, archivePath, chainId, schema, UNIFIED_LAYOUT, actualFloor);
+      protocol.withValidatedActive(
+          anchorDirectory, archivePath, chainId, schema, UNIFIED_LAYOUT, active -> {
+            long actualFloor = UnifiedArchiveIdentityPayload.inspectAuthenticatedFloor(
+                archivePath, catalog, schemaChecksum,
+                config.getPublisher().getHardInFlightBytes(),
+                config.getPublisher().getHardInFlightRecords(),
+                config.getPublisher().getHardInFlightBlocks());
+            if (active.getFloor() != actualFloor) {
+              throw new ArchiveIdentityException("archive identity active floor mismatch");
+            }
+            return null;
+          });
       return;
     }
 
@@ -152,11 +171,11 @@ public final class ArchiveServiceFactory {
     protocol.resume(anchorDirectory, claim);
   }
 
-  private static void validateUnanchoredUnifiedInitialization(
+  private static UnifiedOpenMode validateUnanchoredUnifiedInitialization(
       StorageConfig.ArchiveConfig config, Path archivePath, boolean canonicalHasBlocks) {
     Path databasePath = UnifiedArchiveIdentityPayload.databasePath(archivePath);
     if (Files.exists(databasePath, LinkOption.NOFOLLOW_LINKS)) {
-      return;
+      return UnifiedOpenMode.OPEN_EXISTING;
     }
     if (canonicalHasBlocks) {
       throw new ArchiveException(
@@ -166,35 +185,56 @@ public final class ArchiveServiceFactory {
       throw new ArchiveException("new UNIFIED_V1 archive requires explicit "
           + "storage.archive.identity.initialize=true");
     }
+    return UnifiedOpenMode.INITIALIZE_NEW;
   }
 
   private static ArchiveService openUnifiedArchive(StorageConfig.ArchiveConfig config,
-      Path archivePath, ArchiveReadThrough readThrough, ArchiveDomainRegistry registry,
+      Path archivePath, ArchiveDomainRegistry registry,
       ArchiveDomainCatalog catalog, byte[] schemaChecksum, ArchiveQueryLimits queryLimits,
-      ArchivePublisherConfig publisherConfig) {
+      ArchivePublisherConfig publisherConfig, UnifiedOpenMode openMode) {
     Path databasePath = UnifiedArchiveIdentityPayload.databasePath(archivePath);
     UnifiedArchiveDb db = null;
     UnifiedArchiveTxNumIndex txNumIndex = null;
+    UnifiedArchiveDb.ProductionWritePermit writePermit = null;
     try {
-      db = Files.exists(databasePath, LinkOption.NOFOLLOW_LINKS)
-          ? UnifiedArchiveDb.open(databasePath, schemaChecksum)
-          : UnifiedArchiveDb.initialize(databasePath, schemaChecksum);
+      db = openUnifiedDatabase(databasePath, schemaChecksum, openMode);
+      writePermit = db.claimProductionWritePermit();
       boolean fullStartupScrub = config.getDb().isFullScrubOnStartup();
       txNumIndex = new UnifiedArchiveTxNumIndex(
-          db, schemaChecksum, false, true);
+          db, schemaChecksum, false, true, writePermit);
       boolean recoveryScrub = fullStartupScrub || txNumIndex.hasRepairRequired();
       UnifiedArchiveTemporalStore temporalStore =
           new UnifiedArchiveTemporalStore(db, catalog);
       UnifiedArchiveInFlightStore inFlightStore =
-          new UnifiedArchiveInFlightStore(db, catalog);
+          new UnifiedArchiveInFlightStore(
+              db, catalog, publisherConfig.getHardInFlightBytes(),
+              publisherConfig.getHardInFlightRecords(),
+              publisherConfig.getHardInFlightBlocks(), writePermit);
       UnifiedArchiveBackend backend =
-          new UnifiedArchiveBackend(db, txNumIndex, temporalStore);
+          new UnifiedArchiveBackend(
+              db, txNumIndex, temporalStore, publisherConfig.getHardInFlightBytes(),
+              publisherConfig.getHardInFlightRecords(), writePermit);
       Runnable startupValidator = () -> backend.validateStartup(recoveryScrub, true);
+      db.sealForProduction();
       return new DefaultArchiveService(true, txNumIndex,
           ArchiveExecutionContextHolder.get(), temporalStore, inFlightStore, registry,
-          catalog, readThrough, ArchiveLifecycle.Phase.RECOVERING, queryLimits, publisherConfig,
+          catalog, ArchiveLifecycle.Phase.RECOVERING, queryLimits, publisherConfig,
           startupValidator, backend);
     } catch (RuntimeException | Error e) {
+      if (e instanceof ArchivePersistentStateCorruptionException && db != null) {
+        try {
+          String reason = e.getMessage() == null
+              ? e.getClass().getSimpleName() : e.getMessage();
+          reason = UnifiedArchiveTxNumIndex.boundRepairReason(reason);
+          if (txNumIndex == null) {
+            UnifiedArchiveTxNumIndex.markRepairRequired(db, reason, writePermit);
+          } else {
+            txNumIndex.markRepairRequired(reason);
+          }
+        } catch (RuntimeException | Error markerFailure) {
+          addSuppressedSafely(e, markerFailure);
+        }
+      }
       if (txNumIndex == null) {
         closeOnFailure(db, e);
       } else {
@@ -202,6 +242,16 @@ public final class ArchiveServiceFactory {
       }
       throw e;
     }
+  }
+
+  static UnifiedArchiveDb openUnifiedDatabase(Path databasePath, byte[] schemaChecksum,
+      UnifiedOpenMode openMode) {
+    if (openMode == null) {
+      throw new NullPointerException("openMode");
+    }
+    return openMode == UnifiedOpenMode.INITIALIZE_NEW
+        ? UnifiedArchiveDb.initialize(databasePath, schemaChecksum)
+        : UnifiedArchiveDb.open(databasePath, schemaChecksum);
   }
 
   /**
@@ -266,7 +316,8 @@ public final class ArchiveServiceFactory {
         config.getSoftInFlightBytes(), config.getHardInFlightBytes(),
         config.getSoftInFlightRecords(), config.getHardInFlightRecords(),
         config.getSoftMinFreeBytes(), config.getHardMinFreeBytes(),
-        config.getBackpressureTimeoutMs());
+        config.getBackpressureTimeoutMs(), config.getPublishTimeoutMs(),
+        config.getJournalTimeoutMs(), config.getRecoveryTimeoutMs());
   }
 
   private static ArchiveQueryLimits queryLimits(StorageConfig.ArchiveConfig.QueryConfig config) {
@@ -283,12 +334,13 @@ public final class ArchiveServiceFactory {
         .batchDeadlineMs(config.getBatchDeadlineMs())
         .maxLogicalReadsPerRequest(config.getMaxLogicalReadsPerRequest())
         .maxBackendReadsPerRequest(config.getMaxBackendReadsPerRequest())
+        .maxBackendValueBytes(config.getMaxBackendValueBytes())
+        .maxBackendReadBytesPerRequest(config.getMaxBackendReadBytesPerRequest())
         .maxCachedEntries(config.getMaxCachedEntries())
         .maxCachedBytes(config.getMaxCachedBytes())
-        .maxVmSteps(config.getMaxTraceSteps())
-        .maxTraceBytes(config.getMaxTraceBytes())
-        .maxRetainedTraceBytes(config.getMaxRetainedTraceBytes())
-        .maxResponseBytes(config.getMaxTraceResponseBytes())
+        .maxVmSteps(config.getMaxVmSteps())
+        .maxVmOverlayBytes(config.getMaxVmOverlayBytes())
+        .maxResponseBytes(config.getMaxResponseBytes())
         .build();
   }
 
@@ -308,6 +360,64 @@ public final class ArchiveServiceFactory {
       throw new ArchiveException(
           "storage.archive.commitment.persistTxRoots cannot be true in P0");
     }
+    if (config.getDebug() != null && config.getDebug().isEnable()) {
+      throw new ArchiveException("storage.archive.debug.enable is not supported in P0");
+    }
+    if (config.getQuery() == null
+        || ArchiveQueryLimits.isUnlimited(config.getQuery().getDeadlineMs())) {
+      throw new ArchiveException(
+          "storage.archive.query.deadlineMs must be finite when archive is enabled");
+    }
+    validateFiniteQueryLimits(config.getQuery());
+    if (config.getQuery().getMaxBackendValueBytes()
+        > UnifiedArchiveTemporalStore.maxStoredPayloadBytes()) {
+      throw new ArchiveException("storage.archive.query.maxBackendValueBytes exceeds the "
+          + "UNIFIED_V1 stored-value limit "
+          + UnifiedArchiveTemporalStore.maxStoredPayloadBytes());
+    }
+    if (config.getPublisher() == null) {
+      throw new ArchiveException("storage.archive.publisher must not be null");
+    }
+    long hardInFlightBytes = config.getPublisher().getHardInFlightBytes();
+    if (hardInFlightBytes > UnifiedArchiveTemporalStore.maxPayloadBytes()) {
+      throw new ArchiveException("storage.archive.publisher.hardInFlightBytes exceeds the "
+          + "UNIFIED_V1 single-value format limit "
+          + UnifiedArchiveTemporalStore.maxPayloadBytes());
+    }
+  }
+
+  private static void validateFiniteQueryLimits(StorageConfig.ArchiveConfig.QueryConfig query) {
+    requireFiniteQueryLimit("maxConcurrentQueries", query.getMaxConcurrentQueries());
+    requireFiniteQueryLimit("maxPendingQueries", query.getMaxPendingQueries());
+    requireFiniteQueryLimit("maxOpenSnapshots", query.getMaxOpenSnapshots());
+    requireFiniteDurationMs("acquireTimeoutMs", query.getAcquireTimeoutMs());
+    requireFiniteDurationMs("deadlineMs", query.getDeadlineMs());
+    requireFiniteQueryLimit("maxQueriesPerBatch", query.getMaxQueriesPerBatch());
+    requireFiniteDurationMs("batchDeadlineMs", query.getBatchDeadlineMs());
+    requireFiniteQueryLimit("maxLogicalReadsPerRequest", query.getMaxLogicalReadsPerRequest());
+    requireFiniteQueryLimit("maxBackendReadsPerRequest", query.getMaxBackendReadsPerRequest());
+    requireFiniteQueryLimit("maxBackendValueBytes", query.getMaxBackendValueBytes());
+    requireFiniteQueryLimit(
+        "maxBackendReadBytesPerRequest", query.getMaxBackendReadBytesPerRequest());
+    requireFiniteQueryLimit("maxVmSteps", query.getMaxVmSteps());
+    requireFiniteQueryLimit("maxVmOverlayBytes", query.getMaxVmOverlayBytes());
+    requireFiniteQueryLimit("maxResponseBytes", query.getMaxResponseBytes());
+  }
+
+  private static void requireFiniteQueryLimit(String name, long value) {
+    if (ArchiveQueryLimits.isUnlimited(value)) {
+      throw new ArchiveException(
+          "storage.archive.query." + name + " must be finite when archive is enabled");
+    }
+  }
+
+  private static void requireFiniteDurationMs(String name, long value) {
+    requireFiniteQueryLimit(name, value);
+    if (value > MAX_FINITE_TIMEOUT_MS) {
+      throw new ArchiveException(
+          "storage.archive.query." + name + " exceeds the finite nanosecond range "
+              + MAX_FINITE_TIMEOUT_MS);
+    }
   }
 
   private static void closeOnFailure(AutoCloseable resource, Throwable failure) {
@@ -317,9 +427,18 @@ public final class ArchiveServiceFactory {
     try {
       resource.close();
     } catch (Throwable closeFailure) {
-      if (failure != closeFailure) {
-        failure.addSuppressed(closeFailure);
-      }
+      addSuppressedSafely(failure, closeFailure);
+    }
+  }
+
+  private static void addSuppressedSafely(Throwable primary, Throwable candidate) {
+    if (primary == null || candidate == null || primary == candidate) {
+      return;
+    }
+    try {
+      primary.addSuppressed(candidate);
+    } catch (Throwable ignored) {
+      // Startup must preserve its primary failure even when suppression is unavailable.
     }
   }
 }

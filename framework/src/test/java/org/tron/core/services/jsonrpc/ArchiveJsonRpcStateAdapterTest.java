@@ -6,15 +6,14 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
-import java.util.function.LongFunction;
 import org.junit.After;
 import org.junit.Test;
 import org.tron.common.utils.ByteArray;
@@ -31,8 +30,6 @@ import org.tron.core.archive.query.ArchiveQueryLimits;
 import org.tron.core.archive.query.QueryContext;
 import org.tron.core.archive.reader.ArchiveStatePoint;
 import org.tron.core.archive.reader.ArchiveStateReader;
-import org.tron.core.archive.reader.JsonRpcArchiveStatePointResolver;
-import org.tron.core.archive.reader.ResolvedArchiveStatePoint;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.exception.jsonrpc.JsonRpcInternalException;
 import org.tron.core.exception.jsonrpc.JsonRpcInvalidParamsException;
@@ -75,34 +72,6 @@ public class ArchiveJsonRpcStateAdapterTest {
   }
 
   @Test
-  public void resolverLatestTagResolvesToLatestPointWithoutWallet()
-      throws JsonRpcInvalidParamsException, JsonRpcInternalException {
-    JsonRpcArchiveStatePointResolver resolver =
-        new JsonRpcArchiveStatePointResolver(null, new DefaultArchiveService(true));
-    ResolvedArchiveStatePoint resolved = resolver.resolveBlockEnd("latest");
-    assertTrue(resolved.isLatest());
-  }
-
-  @Test
-  public void resolverAcceptsDecimalHistoricalBlockNumber() throws Exception {
-    DefaultArchiveService svc = new DefaultArchiveService(true);
-    svc.getTxNumIndex().beginBlock(16, ArchiveSource.NORMAL);
-    svc.getTxNumIndex().allocateSystemTx(16, ArchivePhase.BLOCK_PREPARE);
-    svc.getTxNumIndex().allocateSystemTx(16, ArchivePhase.BLOCK_FINALIZE);
-    svc.getTxNumIndex().commitBlock(16, blockHash(16), 0);
-    Wallet wallet = mock(Wallet.class);
-    when(wallet.getBlockByNum(16)).thenReturn(block(16));
-    JsonRpcArchiveStatePointResolver resolver =
-        new JsonRpcArchiveStatePointResolver(wallet, svc);
-
-    ResolvedArchiveStatePoint resolved = resolver.resolveBlockEnd("16");
-
-    assertFalse(resolved.isLatest());
-    assertEquals(16L, resolved.getPoint().getBlockNum());
-    assertEquals(1L, resolved.getPoint().getTxNum());
-  }
-
-  @Test
   public void midChainArchiveRejectsMissingStateWithoutReadingLatest() throws Exception {
     DefaultArchiveService svc = new DefaultArchiveService(true);
     svc.getTxNumIndex().beginBlock(5, ArchiveSource.NORMAL);
@@ -118,41 +87,39 @@ public class ArchiveJsonRpcStateAdapterTest {
 
     JsonRpcInternalException balance = assertThrows(JsonRpcInternalException.class,
         () -> adapter.getBalance(addr, "0x5"));
-    assertEquals("archive account is unknown before mid-chain coverage", balance.getMessage());
+    assertEquals("archive public queries require complete from-genesis coverage",
+        balance.getMessage());
 
     JsonRpcInternalException code = assertThrows(JsonRpcInternalException.class,
         () -> adapter.getCode(addr, "0x5"));
-    assertEquals("archive code is unknown before mid-chain coverage", code.getMessage());
+    assertEquals("archive public queries require complete from-genesis coverage",
+        code.getMessage());
 
     verify(wallet, never()).getAccount(any(Account.class));
+    verifyNoInteractions(wallet);
   }
 
   @Test
-  public void midChainTombstoneRendersAsDefaultZeroNotError() throws Exception {
+  public void genesisCompleteTombstoneRendersAsDefaultZeroNotError() throws Exception {
     DefaultArchiveService svc = new DefaultArchiveService(true);
     byte[] addr = ByteArray.fromHexString("41abd4b9367799eaa3197fecb144eb71de1e049abc");
-    // Publish block 5 (mid-chain: first archived block = 5) carrying a captured account DELETE for
-    // addr, so the temporal store holds a TOMBSTONE (known-deleted) -- distinct from MISSING
-    // (never captured), which the coverage gate turns into an error.
-    BlockCapsule b5 = blockCapsule(5);
-    svc.beginBlock(b5, ArchiveSource.NORMAL);
-    svc.beginSystemTx(b5, ArchivePhase.BLOCK_PREPARE);
+    BlockCapsule b0 = blockCapsule(0);
+    svc.beginBlock(b0, ArchiveSource.NORMAL);
+    svc.beginSystemTx(b0, ArchivePhase.BLOCK_PREPARE);
     svc.endTx();
-    svc.beginSystemTx(b5, ArchivePhase.BLOCK_FINALIZE);
+    svc.beginSystemTx(b0, ArchivePhase.BLOCK_FINALIZE);
     svc.getCaptureEngine().captureDelete("account", addr,
         Account.newBuilder().setBalance(5L).build().toByteArray());
     svc.endTx();
-    svc.commitBlock(b5);
-    svc.publishSolidifiedBlocks(5);
+    svc.commitBlock(b0);
+    svc.publishSolidifiedBlocks(0);
 
     Wallet wallet = mock(Wallet.class);
-    when(wallet.getBlockByNum(5)).thenReturn(b5.getInstance());
+    when(wallet.getBlockByNum(0)).thenReturn(b0.getInstance());
     ArchiveJsonRpcStateAdapter adapter = new ArchiveJsonRpcStateAdapter(wallet, svc);
 
-    // A KNOWN-deleted account at a mid-chain block renders as 0x0, NOT the "unknown before
-    // mid-chain coverage" error that a MISSING (never-captured) account produces.
     assertEquals("0x0",
-        adapter.getBalance("0xabd4b9367799eaa3197fecb144eb71de1e049abc", "0x5"));
+        adapter.getBalance("0xabd4b9367799eaa3197fecb144eb71de1e049abc", "0x0"));
   }
 
   @Test
@@ -169,44 +136,40 @@ public class ArchiveJsonRpcStateAdapterTest {
 
     JsonRpcInternalException ex = assertThrows(JsonRpcInternalException.class,
         () -> adapter.getBalance(addr, "0x4"));
-    assertTrue(ex.getMessage().contains("lowest supported block is 5"));
+    assertTrue(ex.getMessage().contains("complete from-genesis"));
+    verifyNoInteractions(wallet);
   }
 
   @Test
-  public void historicalStateRejectsBlockHashChangedAfterResolution() {
+  public void historicalStateUsesPublishedRangeWithoutCanonicalBlockReads() throws Exception {
     DefaultArchiveService svc = new DefaultArchiveService(true);
-    svc.getTxNumIndex().beginBlock(5, ArchiveSource.NORMAL);
-    svc.getTxNumIndex().allocateSystemTx(5, ArchivePhase.BLOCK_PREPARE);
-    svc.getTxNumIndex().allocateSystemTx(5, ArchivePhase.BLOCK_FINALIZE);
-    svc.getTxNumIndex().commitBlock(5, blockHash(5, 1), 0);
+    commitGenesisRange(svc, 1L);
     Wallet wallet = mock(Wallet.class);
-    when(wallet.getBlockByNum(5)).thenReturn(block(5, 1), block(5, 2));
     ArchiveJsonRpcStateAdapter adapter = new ArchiveJsonRpcStateAdapter(wallet, svc);
 
-    JsonRpcInternalException ex = assertThrows(JsonRpcInternalException.class,
-        () -> adapter.getBalance("0xabd4b9367799eaa3197fecb144eb71de1e049abc", "0x5"));
+    assertEquals("0x0", adapter.getBalance(
+        "0xabd4b9367799eaa3197fecb144eb71de1e049abc", "0x0"));
 
-    assertEquals("archive history hash mismatch for block 5", ex.getMessage());
+    verifyNoInteractions(wallet);
   }
 
   @Test
-  public void postOpenHashMismatchIsRecordedBeforeReaderClose() throws Exception {
+  public void requestedHashMismatchIsRecordedBeforeReaderClose() throws Exception {
     ArchiveService archiveService = mock(ArchiveService.class);
     ArchiveStateReader reader = mock(ArchiveStateReader.class);
     QueryContext context = new QueryContext(ArchiveQueryLimits.unlimited());
     when(archiveService.isEnabled()).thenReturn(true);
-    when(archiveService.openBlockEndReader(eq(5L),
-        org.mockito.ArgumentMatchers.<LongFunction<byte[]>>any())).thenReturn(reader);
+    when(archiveService.openBlockEndReader(5L)).thenReturn(reader);
     when(reader.getPoint()).thenReturn(
         ArchiveStatePoint.blockEnd(5L, blockHash(5L, 1L), 0L));
     when(reader.getQueryContext()).thenReturn(context);
-    Wallet wallet = mock(Wallet.class);
-    when(wallet.getBlockByNum(5L)).thenReturn(block(5L, 2L));
-    ArchiveJsonRpcStateAdapter adapter = new ArchiveJsonRpcStateAdapter(wallet, archiveService);
+    ArchiveJsonRpcStateAdapter adapter =
+        new ArchiveJsonRpcStateAdapter(mock(Wallet.class), archiveService);
 
     JsonRpcInternalException failure = assertThrows(JsonRpcInternalException.class,
         () -> adapter.getBalance(
-            "0xabd4b9367799eaa3197fecb144eb71de1e049abc", "0x5"));
+            "0xabd4b9367799eaa3197fecb144eb71de1e049abc", "0x5",
+            blockHash(5L, 2L)));
 
     assertSame(failure, context.getRecordedFailure());
     verify(reader).close();
@@ -220,8 +183,7 @@ public class ArchiveJsonRpcStateAdapterTest {
     AssertionError contextFailure = new AssertionError("context failed");
     AssertionError closeFailure = new AssertionError("close failed");
     when(archiveService.isEnabled()).thenReturn(true);
-    when(archiveService.openBlockEndReader(eq(5L),
-        org.mockito.ArgumentMatchers.<LongFunction<byte[]>>any())).thenReturn(reader);
+    when(archiveService.openBlockEndReader(5L)).thenReturn(reader);
     when(reader.getPoint()).thenThrow(originalFailure);
     when(reader.getQueryContext()).thenThrow(contextFailure);
     doThrow(closeFailure).when(reader).close();
@@ -242,19 +204,16 @@ public class ArchiveJsonRpcStateAdapterTest {
   @Test
   public void historicalGetterRejectsRequestedBlockHashMismatch() {
     DefaultArchiveService svc = new DefaultArchiveService(true);
-    svc.getTxNumIndex().beginBlock(5, ArchiveSource.NORMAL);
-    svc.getTxNumIndex().allocateSystemTx(5, ArchivePhase.BLOCK_PREPARE);
-    svc.getTxNumIndex().allocateSystemTx(5, ArchivePhase.BLOCK_FINALIZE);
-    svc.getTxNumIndex().commitBlock(5, blockHash(5, 1), 0);
+    commitGenesisRange(svc, 1L);
     Wallet wallet = mock(Wallet.class);
-    when(wallet.getBlockByNum(5)).thenReturn(block(5, 1));
     ArchiveJsonRpcStateAdapter adapter = new ArchiveJsonRpcStateAdapter(wallet, svc);
 
     JsonRpcInternalException ex = assertThrows(JsonRpcInternalException.class,
-        () -> adapter.getBalance("0xabd4b9367799eaa3197fecb144eb71de1e049abc", "0x5",
-            blockHash(5, 2)));
+        () -> adapter.getBalance("0xabd4b9367799eaa3197fecb144eb71de1e049abc", "0x0",
+            blockHash(0, 2)));
 
-    assertEquals("archive history hash mismatch for block 5", ex.getMessage());
+    assertEquals("archive history hash mismatch for block 0", ex.getMessage());
+    verifyNoInteractions(wallet);
   }
 
   @Test
@@ -307,5 +266,12 @@ public class ArchiveJsonRpcStateAdapterTest {
 
   private static BlockCapsule blockCapsule(long num, long timestamp) {
     return new BlockCapsule(num, Sha256Hash.ZERO_HASH, timestamp, ByteString.EMPTY);
+  }
+
+  private static void commitGenesisRange(DefaultArchiveService svc, long timestamp) {
+    svc.getTxNumIndex().beginBlock(0, ArchiveSource.NORMAL);
+    svc.getTxNumIndex().allocateSystemTx(0, ArchivePhase.BLOCK_PREPARE);
+    svc.getTxNumIndex().allocateSystemTx(0, ArchivePhase.BLOCK_FINALIZE);
+    svc.getTxNumIndex().commitBlock(0, blockHash(0, timestamp), 0);
   }
 }

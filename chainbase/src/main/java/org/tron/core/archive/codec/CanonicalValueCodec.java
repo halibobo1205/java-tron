@@ -18,4 +18,14 @@ public interface CanonicalValueCodec {
   DomainValue normalizeDelete();
 
   void validate(DomainValue value);
+
+  /**
+   * Validates a value whose exact journal payload is already bound by a current-schema durable
+   * proof created after {@link #validate(DomainValue)} succeeded. Protobuf codecs override this to
+   * avoid rebuilding an unbounded object graph during startup; fixed-shape codecs retain their
+   * ordinary validation by default.
+   */
+  default void validateProofBound(DomainValue value) {
+    validate(value);
+  }
 }

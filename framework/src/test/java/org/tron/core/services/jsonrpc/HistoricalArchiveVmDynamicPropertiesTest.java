@@ -4,10 +4,13 @@ import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
 
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import org.junit.Test;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.ByteArray;
@@ -242,6 +245,29 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
     }
     for (String key : HistoricalArchiveVmDynamicProperties.STRICT_GENESIS_PRESENT_KEYS) {
       assertHistoricalReaderKey(policy, key);
+    }
+  }
+
+  @Test
+  public void everyStaticHistoricalVmPolicyKeyIsGenesisValidated() {
+    Set<String> validated = new HashSet<>();
+    java.util.Collections.addAll(
+        validated, HistoricalArchiveVmDynamicProperties.STRICT_GENESIS_LONG_KEYS);
+    java.util.Collections.addAll(
+        validated, HistoricalArchiveVmDynamicProperties.STRICT_GENESIS_PRESENT_KEYS);
+    DynamicKeyPolicy policy = new DynamicKeyPolicy();
+
+    for (DynamicKeyDecision decision : policy.allDecisions()) {
+      if (decision.getReaderPolicy() != ReaderPolicy.HISTORICAL_VM) {
+        continue;
+      }
+      // Policy keeps the spelling without the historical leading-space typo as a lookup alias;
+      // only the physical key is required from genesis storage.
+      if ("ALLOW_SAME_TOKEN_NAME".equals(decision.getKey())) {
+        continue;
+      }
+      assertTrue("historical VM key must be covered by genesis validation: " + decision.getKey(),
+          validated.contains(decision.getKey()));
     }
   }
 

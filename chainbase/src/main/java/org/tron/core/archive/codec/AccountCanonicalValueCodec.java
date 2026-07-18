@@ -64,6 +64,17 @@ public final class AccountCanonicalValueCodec implements CanonicalValueCodec {
     }
   }
 
+  @Override
+  public void validateProofBound(DomainValue value) {
+    requireDomainValue(value);
+  }
+
+  private void requireDomainValue(DomainValue value) {
+    if (value == null) {
+      throw new ArchiveException(codecId() + ": DomainValue must not be null");
+    }
+  }
+
   private Account parse(byte[] bytes) {
     try {
       return Account.parseFrom(bytes);

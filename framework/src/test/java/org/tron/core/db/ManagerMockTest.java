@@ -675,6 +675,10 @@ public class ManagerMockTest {
 
     KhaosDatabase khaosDb = mock(KhaosDatabase.class);
     setField(dbManager, "khaosDb", khaosDb);
+    KhaosDatabase.KhaosStore miniStore = mock(KhaosDatabase.KhaosStore.class);
+    KhaosDatabase.KhaosBlock recoveryHead = mock(KhaosDatabase.KhaosBlock.class);
+    when(khaosDb.getMiniStore()).thenReturn(miniStore);
+    when(miniStore.getByHash(sharedHash)).thenReturn(recoveryHead);
 
     BlockCapsule goodBlock = mock(BlockCapsule.class);
     BlockCapsule.BlockId goodBlockId = mock(BlockCapsule.BlockId.class);

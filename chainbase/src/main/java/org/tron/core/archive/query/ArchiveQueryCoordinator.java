@@ -3,9 +3,12 @@ package org.tron.core.archive.query;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.LongConsumer;
 import org.tron.core.archive.ArchiveMetrics;
 
 /**
@@ -14,9 +17,6 @@ import org.tron.core.archive.ArchiveMetrics;
  */
 public final class ArchiveQueryCoordinator implements AutoCloseable {
 
-  private static final long RETAINED_TRACE_METRIC_BUCKETS = 256L;
-  private static final long MAX_RETAINED_TRACE_METRIC_STEP_BYTES = 1024L * 1024L;
-
   public enum State {
     RUNNING,
     DRAINING,
@@ -24,16 +24,20 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
   }
 
   private final ArchiveQueryLimits limits;
-  private final ReentrantLock lock = new ReentrantLock(true);
-  private final Condition drained = lock.newCondition();
+  private final ReentrantLock lock;
+  private final Condition drained;
   private final Deque<Waiter> waiters = new ArrayDeque<>();
-  private final AtomicLong retainedTraceBytes = new AtomicLong();
-  private final long retainedTraceMetricStepBytes;
-  private final Object retainedTraceMetricMonitor = new Object();
+  private final LongConsumer snapshotMetric;
+  private final AtomicInteger snapshotMetricWork = new AtomicInteger();
+  private final AtomicBoolean drainRequested = new AtomicBoolean();
 
-  private State state = State.RUNNING;
+  private volatile State state = State.RUNNING;
   private long activeLeases;
   private long activeSnapshots;
+  private long snapshotMetricVersion;
+  private volatile long latestSnapshotMetricCount;
+  private volatile long latestSnapshotMetricVersion;
+  private long reportedSnapshotMetricVersion;
   private boolean closeRequested;
 
   public ArchiveQueryCoordinator() {
@@ -41,14 +45,29 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
   }
 
   public ArchiveQueryCoordinator(ArchiveQueryLimits limits) {
+    this(limits, ArchiveMetrics::setActiveSnapshots);
+  }
+
+  ArchiveQueryCoordinator(ArchiveQueryLimits limits, LongConsumer snapshotMetric) {
+    this(limits, snapshotMetric, new ReentrantLock(true));
+  }
+
+  ArchiveQueryCoordinator(ArchiveQueryLimits limits, LongConsumer snapshotMetric,
+      ReentrantLock lock) {
     if (limits == null) {
       throw new NullPointerException("limits");
     }
+    if (snapshotMetric == null) {
+      throw new NullPointerException("snapshotMetric");
+    }
+    if (lock == null) {
+      throw new NullPointerException("lock");
+    }
     this.limits = limits;
-    retainedTraceMetricStepBytes =
-        retainedTraceMetricStep(limits.getMaxRetainedTraceBytes());
-    ArchiveMetrics.setQueryAdmission(0L, 0L);
-    ArchiveMetrics.setRetainedTraceBytes(0L);
+    this.snapshotMetric = snapshotMetric;
+    this.lock = lock;
+    drained = lock.newCondition();
+    reportQueryAdmission(0L, 0L);
   }
 
   public ArchiveQueryLimits getLimits() {
@@ -92,8 +111,33 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
         ? ArchiveQueryLimits.UNLIMITED
         : unit.toNanos(timeout);
 
-    lock.lockInterruptibly();
+    ArchiveQueryRequestScope.DeadlineConstraint initialBatchDeadline =
+        ArchiveQueryRequestScope.deadlineConstraint(limits);
+    long initialLockTimeout = initialBatchDeadline == null
+        ? timeoutNanos : minimumTimeout(timeoutNanos, initialBatchDeadline.remainingNanos);
+    long lockStartedNanos = System.nanoTime();
+    boolean lockAcquired;
+    if (initialLockTimeout == ArchiveQueryLimits.UNLIMITED) {
+      lock.lockInterruptibly();
+      lockAcquired = true;
+    } else {
+      lockAcquired = lock.tryLock(initialLockTimeout, TimeUnit.NANOSECONDS);
+    }
+    if (!lockAcquired) {
+      ArchiveQueryRequestScope.checkCurrentDeadline();
+      throw HistoricalQueryLimitException.acquireTimedOut(timeoutNanos);
+    }
     try {
+      ArchiveQueryRequestScope.checkCurrentDeadline();
+      long remainingAcquireNanos = timeoutNanos;
+      if (remainingAcquireNanos != ArchiveQueryLimits.UNLIMITED) {
+        long elapsed = Math.max(0L, System.nanoTime() - lockStartedNanos);
+        remainingAcquireNanos = elapsed >= remainingAcquireNanos
+            ? 0L : remainingAcquireNanos - elapsed;
+        if (timeoutNanos != 0L && remainingAcquireNanos == 0L) {
+          throw HistoricalQueryLimitException.acquireTimedOut(timeoutNanos);
+        }
+      }
       ensureRunning();
       if (waiters.isEmpty() && hasCapacity()) {
         return grantLease();
@@ -109,10 +153,10 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
 
       Waiter waiter = new Waiter(lock.newCondition());
       waiters.addLast(waiter);
-      ArchiveMetrics.setQueryAdmission(activeLeases, waiters.size());
-      long remainingAcquireNanos = timeoutNanos;
+      reportQueryAdmission(activeLeases, waiters.size());
       try {
         while (true) {
+          applyDrainLocked();
           if (state != State.RUNNING) {
             removeWaiter(waiter);
             throw HistoricalQueryLimitException.admissionClosed(state.name());
@@ -158,41 +202,70 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
 
   /** Atomically closes admission and wakes every pending acquirer. */
   public void beginDrain() {
-    lock.lock();
-    try {
-      transitionToDraining();
-    } finally {
-      lock.unlock();
+    drainRequested.set(true);
+    if (lock.tryLock()) {
+      try {
+        transitionToDraining();
+      } finally {
+        lock.unlock();
+      }
     }
   }
 
   /** Acquires a native snapshot slot without waiting and before the archive consistency lock. */
   public ArchiveSnapshotPermit acquireSnapshot(QueryLease owner) {
-    lock.lock();
+    if (owner == null || !owner.isOwnedBy(this)) {
+      throw new IllegalArgumentException("snapshot permit requires an active query lease");
+    }
+    QueryContext context = owner.getContext();
+    context.checkDeadline();
+    long remainingNanos = context.getRemainingNanos();
+    boolean acquired;
     try {
-      ensureRunning();
-      if (owner == null || !owner.isOwnedBy(this)) {
-        throw new IllegalArgumentException("snapshot permit requires an active query lease");
+      if (remainingNanos == Long.MAX_VALUE) {
+        lock.lock();
+        acquired = true;
+      } else {
+        acquired = lock.tryLock(remainingNanos, TimeUnit.NANOSECONDS);
       }
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw HistoricalQueryLimitException.interrupted(e);
+    }
+    if (!acquired) {
+      throw context.deadlineExceeded();
+    }
+    ArchiveSnapshotPermit permit;
+    long snapshotCount;
+    long metricVersion;
+    try {
+      context.checkDeadline();
+      ensureRunning();
       long maximum = limits.getMaxOpenSnapshots();
+      long observed = activeSnapshots == Long.MAX_VALUE
+          ? Long.MAX_VALUE : activeSnapshots + 1L;
       if (!ArchiveQueryLimits.isUnlimited(maximum) && activeSnapshots >= maximum) {
         throw HistoricalQueryLimitException.openSnapshotsExceeded(
-            maximum, activeSnapshots + 1L);
+            maximum, observed);
       }
       if (activeSnapshots == Long.MAX_VALUE) {
         throw HistoricalQueryLimitException.openSnapshotsExceeded(
             Long.MAX_VALUE, Long.MAX_VALUE);
       }
-      ArchiveSnapshotPermit permit = new ArchiveSnapshotPermit(this, owner);
-      if (!owner.reserveSnapshot()) {
+      permit = new ArchiveSnapshotPermit(this, owner);
+      if (!owner.reserveSnapshot(permit)) {
         throw new IllegalArgumentException("snapshot permit requires an active query lease");
       }
       activeSnapshots++;
-      ArchiveMetrics.setActiveSnapshots(activeSnapshots);
-      return permit;
+      snapshotCount = activeSnapshots;
+      metricVersion = ++snapshotMetricVersion;
+      latestSnapshotMetricCount = snapshotCount;
+      latestSnapshotMetricVersion = metricVersion;
     } finally {
       lock.unlock();
     }
+    reportSnapshotMetric();
+    return permit;
   }
 
   public boolean beginDrain(long timeout, TimeUnit unit) throws InterruptedException {
@@ -213,8 +286,19 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
       throw new IllegalArgumentException("timeout must be non-negative");
     }
     long remainingNanos = unit.toNanos(timeout);
-    lock.lockInterruptibly();
+    long lockStartedNanos = System.nanoTime();
+    boolean acquired = remainingNanos == Long.MAX_VALUE
+        ? acquireLockInterruptibly()
+        : lock.tryLock(remainingNanos, TimeUnit.NANOSECONDS);
+    if (!acquired) {
+      return false;
+    }
     try {
+      if (remainingNanos != Long.MAX_VALUE) {
+        long elapsed = Math.max(0L, System.nanoTime() - lockStartedNanos);
+        remainingNanos = elapsed >= remainingNanos ? 0L : remainingNanos - elapsed;
+      }
+      transitionToDraining();
       while (activeLeases != 0) {
         if (remainingNanos == 0) {
           return false;
@@ -231,6 +315,12 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
   }
 
   public State getState() {
+    if (drainRequested.get()) {
+      State current = state;
+      if (current != State.CLOSED) {
+        return State.DRAINING;
+      }
+    }
     lock.lock();
     try {
       return state;
@@ -278,10 +368,6 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
     return getPendingQueryCount();
   }
 
-  public long getRetainedTraceBytes() {
-    return retainedTraceBytes.get();
-  }
-
   public boolean isFair() {
     return lock.isFair();
   }
@@ -305,48 +391,222 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
     }
   }
 
-  void releaseLease(QueryContext context) {
-    long releasedTraceBytes = context.drainRetainedTraceBytes();
-    lock.lock();
+  /** Publishes the final close transition without waiting indefinitely for the coordinator lock. */
+  public boolean close(long timeout, TimeUnit unit) throws InterruptedException {
+    if (unit == null) {
+      throw new NullPointerException("unit");
+    }
+    if (timeout < 0L) {
+      throw new IllegalArgumentException("timeout must be non-negative");
+    }
+    drainRequested.set(true);
+    long timeoutNanos = unit.toNanos(timeout);
+    boolean acquired = timeoutNanos == Long.MAX_VALUE
+        ? acquireLockInterruptibly()
+        : lock.tryLock(timeoutNanos, TimeUnit.NANOSECONDS);
+    if (!acquired) {
+      return false;
+    }
     try {
-      if (activeLeases <= 0) {
-        throw new IllegalStateException("query lease count underflow");
+      if (state == State.CLOSED) {
+        return true;
       }
-      activeLeases--;
-      if (activeLeases == 0) {
-        drained.signalAll();
-      }
-      if (state == State.RUNNING) {
-        signalNextWaiter();
-      }
+      closeRequested = true;
+      transitionToDraining();
       finishCloseIfDrained();
-      ArchiveMetrics.setQueryAdmission(activeLeases, waiters.size());
+      return state == State.CLOSED;
     } finally {
       lock.unlock();
     }
-    releaseTraceBytes(releasedTraceBytes);
-    ArchiveMetrics.queryFinished(context);
   }
 
-  void releaseSnapshot(QueryLease owner) {
+  void releaseLease(QueryLease owner) {
+    Throwable mutationFailure = null;
+    Throwable unlockFailure = null;
+    int previousHoldCount = lock.getHoldCount();
+    OutOfMemoryError entryFailure = acquireMutationLock(previousHoldCount);
+    try {
+      releaseLeaseLocked();
+      owner.markReleaseCommitted();
+      reportQueryAdmission(activeLeases, waiters.size());
+    } catch (RuntimeException | Error e) {
+      mutationFailure = e;
+      if (entryFailure != null) {
+        addSuppressedSafely(e, entryFailure);
+      }
+      throw e;
+    } finally {
+      Throwable failure = unlockAfterMutation(previousHoldCount);
+      if (mutationFailure == null) {
+        unlockFailure = failure;
+      } else if (failure != null) {
+        addSuppressedSafely(mutationFailure, failure);
+      }
+    }
+    reportQueryFinished(owner.getContext());
+    rethrowReleaseFailure(entryFailure, unlockFailure);
+  }
+
+  void releaseSnapshot(ArchiveSnapshotPermit permit, QueryLease owner) {
+    Throwable mutationFailure = null;
+    Throwable unlockFailure = null;
     boolean releaseOwner;
-    lock.lock();
+    QueryContext finishedContext = null;
+    long snapshotCount;
+    long metricVersion;
+    int previousHoldCount = lock.getHoldCount();
+    OutOfMemoryError entryFailure = acquireMutationLock(previousHoldCount);
     try {
       if (activeSnapshots <= 0) {
         throw new IllegalStateException("archive snapshot count underflow");
       }
+      if (activeLeases <= 0) {
+        throw new IllegalStateException("query lease count underflow");
+      }
+      releaseOwner = owner.releaseSnapshotOwnership(permit);
       activeSnapshots--;
-      ArchiveMetrics.setActiveSnapshots(activeSnapshots);
-      releaseOwner = owner.releaseSnapshotOwnership();
+      if (releaseOwner) {
+        releaseLeaseLocked();
+        finishedContext = owner.getContext();
+        reportQueryAdmission(activeLeases, waiters.size());
+      }
+      snapshotCount = activeSnapshots;
+      metricVersion = ++snapshotMetricVersion;
+      latestSnapshotMetricCount = snapshotCount;
+      latestSnapshotMetricVersion = metricVersion;
+      permit.markReleaseCommitted();
+    } catch (RuntimeException | Error e) {
+      mutationFailure = e;
+      if (entryFailure != null) {
+        addSuppressedSafely(e, entryFailure);
+      }
+      throw e;
     } finally {
-      lock.unlock();
+      Throwable failure = unlockAfterMutation(previousHoldCount);
+      if (mutationFailure == null) {
+        unlockFailure = failure;
+      } else if (failure != null) {
+        addSuppressedSafely(mutationFailure, failure);
+      }
     }
-    if (releaseOwner) {
-      owner.releaseAfterLastSnapshot();
+    if (finishedContext != null) {
+      reportQueryFinished(finishedContext);
+    }
+    reportSnapshotMetric();
+    rethrowReleaseFailure(entryFailure, unlockFailure);
+  }
+
+  private void reportSnapshotMetric() {
+    if (snapshotMetricWork.getAndIncrement() != 0) {
+      return;
+    }
+    int missed = 1;
+    do {
+      long metricVersion = latestSnapshotMetricVersion;
+      long snapshotCount = latestSnapshotMetricCount;
+      if (metricVersion > reportedSnapshotMetricVersion) {
+        try {
+          snapshotMetric.accept(snapshotCount);
+        } catch (Throwable ignored) {
+          // Metrics are observational and must never retain a permit or query lease.
+        }
+        reportedSnapshotMetricVersion = metricVersion;
+      }
+      missed = snapshotMetricWork.addAndGet(-missed);
+    } while (missed != 0);
+  }
+
+  private Throwable unlockAfterMutation(int previousHoldCount) {
+    Throwable failure = null;
+    for (int attempt = 0; attempt < 2 && lock.getHoldCount() > previousHoldCount; attempt++) {
+      try {
+        lock.unlock();
+      } catch (RuntimeException | Error e) {
+        if (failure == null) {
+          failure = e;
+        } else {
+          addSuppressedSafely(failure, e);
+        }
+      }
+    }
+    return failure;
+  }
+
+  private OutOfMemoryError acquireMutationLock(int previousHoldCount) {
+    try {
+      lock.lock();
+      return null;
+    } catch (OutOfMemoryError failure) {
+      long backoffNanos = 1_000L;
+      while (lock.getHoldCount() == previousHoldCount && !lock.tryLock()) {
+        LockSupport.parkNanos(backoffNanos);
+        backoffNanos = Math.min(TimeUnit.MILLISECONDS.toNanos(1L), backoffNanos * 2L);
+      }
+      return failure;
+    }
+  }
+
+  private static void addSuppressedSafely(Throwable primary, Throwable suppressed) {
+    try {
+      primary.addSuppressed(suppressed);
+    } catch (Throwable ignored) {
+      // Preserve the first release failure even if suppression itself cannot allocate.
+    }
+  }
+
+  private static void rethrowUnchecked(Throwable failure) {
+    if (failure instanceof RuntimeException) {
+      throw (RuntimeException) failure;
+    }
+    if (failure instanceof Error) {
+      throw (Error) failure;
+    }
+  }
+
+  private static void rethrowReleaseFailure(Throwable entryFailure, Throwable unlockFailure) {
+    if (entryFailure != null) {
+      if (unlockFailure != null) {
+        addSuppressedSafely(entryFailure, unlockFailure);
+      }
+      rethrowUnchecked(entryFailure);
+    }
+    rethrowUnchecked(unlockFailure);
+  }
+
+  private void releaseLeaseLocked() {
+    applyDrainLocked();
+    if (activeLeases <= 0) {
+      throw new IllegalStateException("query lease count underflow");
+    }
+    activeLeases--;
+    if (activeLeases == 0) {
+      drained.signalAll();
+    }
+    if (state == State.RUNNING) {
+      signalNextWaiter();
+    }
+    finishCloseIfDrained();
+  }
+
+  private static void reportQueryAdmission(long active, long pending) {
+    try {
+      ArchiveMetrics.setQueryAdmission(active, pending);
+    } catch (Throwable ignored) {
+      // Metrics are observational and must not alter admission ownership.
+    }
+  }
+
+  private static void reportQueryFinished(QueryContext context) {
+    try {
+      ArchiveMetrics.queryFinished(context);
+    } catch (Throwable ignored) {
+      // Metrics are observational and must not alter admission ownership.
     }
   }
 
   private QueryLease grantLease() {
+    applyDrainLocked();
+    ensureRunning();
     if (activeLeases == Long.MAX_VALUE) {
       throw HistoricalQueryLimitException.concurrentQueriesExceeded(Long.MAX_VALUE);
     }
@@ -355,8 +615,8 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
     activeLeases++;
     try {
       QueryLease lease = new QueryLease(
-          this, new QueryContext(limits, batchDeadline, this::reserveTraceBytes));
-      ArchiveMetrics.setQueryAdmission(activeLeases, waiters.size());
+          this, new QueryContext(limits, batchDeadline));
+      reportQueryAdmission(activeLeases, waiters.size());
       return lease;
     } catch (RuntimeException | Error e) {
       activeLeases--;
@@ -368,6 +628,7 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
   }
 
   private void ensureRunning() {
+    applyDrainLocked();
     if (state != State.RUNNING) {
       throw HistoricalQueryLimitException.admissionClosed(state.name());
     }
@@ -406,64 +667,10 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
     return remainingNanos >= requestedNanos ? 0L : requestedNanos - remainingNanos;
   }
 
-  private void reserveTraceBytes(long bytes) {
-    if (bytes == 0L) {
-      return;
-    }
-    while (true) {
-      long current = retainedTraceBytes.get();
-      long updated = current > Long.MAX_VALUE - bytes ? Long.MAX_VALUE : current + bytes;
-      long maximum = limits.getMaxRetainedTraceBytes();
-      if (!ArchiveQueryLimits.isUnlimited(maximum) && updated > maximum) {
-        publishRetainedTraceMetric();
-        throw HistoricalQueryLimitException.budgetExceeded(
-            HistoricalQueryLimitException.Limit.RETAINED_TRACE_BYTES, maximum, updated);
-      }
-      if (retainedTraceBytes.compareAndSet(current, updated)) {
-        if (current / retainedTraceMetricStepBytes
-            != updated / retainedTraceMetricStepBytes) {
-          publishRetainedTraceMetric();
-        }
-        return;
-      }
-    }
-  }
-
-  private void releaseTraceBytes(long bytes) {
-    if (bytes == 0L) {
-      return;
-    }
-    while (true) {
-      long current = retainedTraceBytes.get();
-      if (bytes > current) {
-        throw new IllegalStateException("retained trace byte accounting underflow");
-      }
-      long updated = current - bytes;
-      if (retainedTraceBytes.compareAndSet(current, updated)) {
-        publishRetainedTraceMetric();
-        return;
-      }
-    }
-  }
-
-  static long retainedTraceMetricStep(long maximum) {
-    if (ArchiveQueryLimits.isUnlimited(maximum)) {
-      return MAX_RETAINED_TRACE_METRIC_STEP_BYTES;
-    }
-    long proportional = Math.max(1L, maximum / RETAINED_TRACE_METRIC_BUCKETS);
-    return Math.min(MAX_RETAINED_TRACE_METRIC_STEP_BYTES, proportional);
-  }
-
-  private void publishRetainedTraceMetric() {
-    synchronized (retainedTraceMetricMonitor) {
-      ArchiveMetrics.setRetainedTraceBytes(retainedTraceBytes.get());
-    }
-  }
-
   private void removeWaiter(Waiter waiter) {
     boolean wasHead = waiters.peekFirst() == waiter;
     if (waiters.remove(waiter)) {
-      ArchiveMetrics.setQueryAdmission(activeLeases, waiters.size());
+      reportQueryAdmission(activeLeases, waiters.size());
       if (wasHead) {
         signalNextWaiter();
       }
@@ -478,6 +685,7 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
   }
 
   private void transitionToDraining() {
+    drainRequested.set(true);
     if (state == State.RUNNING) {
       state = State.DRAINING;
     }
@@ -496,6 +704,17 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
       state = State.CLOSED;
       drained.signalAll();
     }
+  }
+
+  private void applyDrainLocked() {
+    if (drainRequested.get()) {
+      transitionToDraining();
+    }
+  }
+
+  private boolean acquireLockInterruptibly() throws InterruptedException {
+    lock.lockInterruptibly();
+    return true;
   }
 
   private static final class Waiter {

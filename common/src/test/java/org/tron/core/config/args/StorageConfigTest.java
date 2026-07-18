@@ -164,6 +164,9 @@ public class StorageConfigTest {
     assertEquals(5L * 1024 * 1024 * 1024, publisher.getSoftMinFreeBytes());
     assertEquals(1L * 1024 * 1024 * 1024, publisher.getHardMinFreeBytes());
     assertEquals(30_000, publisher.getBackpressureTimeoutMs());
+    assertEquals(120_000, publisher.getPublishTimeoutMs());
+    assertEquals(120_000, publisher.getJournalTimeoutMs());
+    assertEquals(86_400_000, publisher.getRecoveryTimeoutMs());
     StorageConfig.ArchiveConfig.QueryConfig query = a.getQuery();
     assertEquals(8, query.getMaxConcurrentQueries());
     assertEquals(16, query.getMaxPendingQueries());
@@ -174,10 +177,9 @@ public class StorageConfigTest {
     assertEquals(100_000, query.getMaxBackendReadsPerRequest());
     assertEquals(4_096, query.getMaxCachedEntries());
     assertEquals(4L * 1024 * 1024, query.getMaxCachedBytes());
-    assertEquals(1_000_000, query.getMaxTraceSteps());
-    assertEquals(64L * 1024 * 1024, query.getMaxTraceBytes());
-    assertEquals(256L * 1024 * 1024, query.getMaxRetainedTraceBytes());
-    assertEquals(24L * 1024 * 1024, query.getMaxTraceResponseBytes());
+    assertEquals(1_000_000, query.getMaxVmSteps());
+    assertEquals(32L * 1024 * 1024, query.getMaxVmOverlayBytes());
+    assertEquals(24L * 1024 * 1024, query.getMaxResponseBytes());
     assertFalse(a.getIdentity().isInitialize());
     assertFalse(a.getCommitment().isEnable());
     assertFalse(a.getCommitment().isPersistTxRoots());
@@ -215,9 +217,9 @@ public class StorageConfigTest {
             + " maxOpenSnapshots = 12,"
             + " acquireTimeoutMs = 3, deadlineMs = 4, maxQueriesPerBatch = 13,"
             + " batchDeadlineMs = 14, maxLogicalReadsPerRequest = 5,"
-            + " maxBackendReadsPerRequest = 6, maxCachedEntries = 7, maxCachedBytes = 8,"
-            + " maxTraceSteps = 9, maxTraceBytes = 10, maxRetainedTraceBytes = 11,"
-            + " maxTraceResponseBytes = 12 }"))
+            + " maxBackendReadsPerRequest = 6, maxBackendValueBytes = 15,"
+            + " maxBackendReadBytesPerRequest = 16, maxCachedEntries = 7, maxCachedBytes = 8,"
+            + " maxVmSteps = 9, maxVmOverlayBytes = 17, maxResponseBytes = 12 }"))
         .getArchive().getQuery();
 
     assertEquals(1, query.getMaxConcurrentQueries());
@@ -229,12 +231,13 @@ public class StorageConfigTest {
     assertEquals(14, query.getBatchDeadlineMs());
     assertEquals(5, query.getMaxLogicalReadsPerRequest());
     assertEquals(6, query.getMaxBackendReadsPerRequest());
+    assertEquals(15, query.getMaxBackendValueBytes());
+    assertEquals(16, query.getMaxBackendReadBytesPerRequest());
     assertEquals(7, query.getMaxCachedEntries());
     assertEquals(8, query.getMaxCachedBytes());
-    assertEquals(9, query.getMaxTraceSteps());
-    assertEquals(10, query.getMaxTraceBytes());
-    assertEquals(11, query.getMaxRetainedTraceBytes());
-    assertEquals(12, query.getMaxTraceResponseBytes());
+    assertEquals(9, query.getMaxVmSteps());
+    assertEquals(17, query.getMaxVmOverlayBytes());
+    assertEquals(12, query.getMaxResponseBytes());
   }
 
   @Test
@@ -245,7 +248,8 @@ public class StorageConfigTest {
             + " softInFlightBytes = 4, hardInFlightBytes = 5,"
             + " softInFlightRecords = 6, hardInFlightRecords = 7,"
             + " softMinFreeBytes = 9, hardMinFreeBytes = 8,"
-            + " backpressureTimeoutMs = 10 }"))
+            + " backpressureTimeoutMs = 10, publishTimeoutMs = 11, journalTimeoutMs = 12,"
+            + " recoveryTimeoutMs = 13 }"))
         .getArchive().getPublisher();
 
     assertTrue(publisher.isAsync());
@@ -259,6 +263,9 @@ public class StorageConfigTest {
     assertEquals(9, publisher.getSoftMinFreeBytes());
     assertEquals(8, publisher.getHardMinFreeBytes());
     assertEquals(10, publisher.getBackpressureTimeoutMs());
+    assertEquals(11, publisher.getPublishTimeoutMs());
+    assertEquals(12, publisher.getJournalTimeoutMs());
+    assertEquals(13, publisher.getRecoveryTimeoutMs());
   }
 
   @Test
@@ -290,6 +297,27 @@ public class StorageConfigTest {
     assertThrows(IllegalArgumentException.class,
         () -> StorageConfig.fromConfig(withRef(
             "storage.archive.publisher.backpressureTimeoutMs = -1")));
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef(
+            "storage.archive.publisher.publishTimeoutMs = 0")));
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef(
+            "storage.archive.publisher.journalTimeoutMs = 0")));
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef(
+            "storage.archive.publisher.recoveryTimeoutMs = 0")));
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef(
+            "storage.archive.publisher.backpressureTimeoutMs = 9223372036854775807")));
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef(
+            "storage.archive.publisher.publishTimeoutMs = 9223372036854775807")));
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef(
+            "storage.archive.publisher.journalTimeoutMs = 9223372036854775807")));
+    assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef(
+            "storage.archive.publisher.recoveryTimeoutMs = 9223372036854775807")));
   }
 
   @Test
@@ -299,8 +327,7 @@ public class StorageConfigTest {
             + " maxOpenSnapshots = 1,"
             + " acquireTimeoutMs = 0, deadlineMs = 1, maxLogicalReadsPerRequest = 1,"
             + " maxBackendReadsPerRequest = 1, maxCachedEntries = 0, maxCachedBytes = 0,"
-            + " maxTraceSteps = 0, maxTraceBytes = 0, maxRetainedTraceBytes = 0,"
-            + " maxTraceResponseBytes = 0 }"))
+            + " maxVmSteps = 0, maxVmOverlayBytes = 0, maxResponseBytes = 0 }"))
         .getArchive().getQuery();
 
     assertEquals(1, query.getMaxConcurrentQueries());
@@ -308,8 +335,9 @@ public class StorageConfigTest {
     assertEquals(0, query.getAcquireTimeoutMs());
     assertEquals(0, query.getMaxCachedEntries());
     assertEquals(0, query.getMaxCachedBytes());
-    assertEquals(0, query.getMaxRetainedTraceBytes());
-    assertEquals(0, query.getMaxTraceResponseBytes());
+    assertEquals(0, query.getMaxVmSteps());
+    assertEquals(0, query.getMaxVmOverlayBytes());
+    assertEquals(0, query.getMaxResponseBytes());
   }
 
   @Test
@@ -325,7 +353,9 @@ public class StorageConfigTest {
         "deadlineMs",
         "batchDeadlineMs",
         "maxLogicalReadsPerRequest",
-        "maxBackendReadsPerRequest"}) {
+        "maxBackendReadsPerRequest",
+        "maxBackendValueBytes",
+        "maxBackendReadBytesPerRequest"}) {
       assertArchiveQueryRejected(key, 0);
     }
   }
@@ -340,10 +370,11 @@ public class StorageConfigTest {
         "batchDeadlineMs",
         "maxLogicalReadsPerRequest",
         "maxBackendReadsPerRequest",
-        "maxTraceSteps",
-        "maxTraceBytes",
-        "maxRetainedTraceBytes",
-        "maxTraceResponseBytes"
+        "maxBackendValueBytes",
+        "maxBackendReadBytesPerRequest",
+        "maxVmSteps",
+        "maxVmOverlayBytes",
+        "maxResponseBytes"
     };
     for (String key : keys) {
       assertArchiveQueryRejected(key, -2);
@@ -352,6 +383,14 @@ public class StorageConfigTest {
     assertArchiveQueryRejected("maxCachedBytes", -1);
     assertArchiveQueryRejected("maxQueriesPerBatch", 0);
     assertArchiveQueryRejected("maxQueriesPerBatch", -2);
+  }
+
+  @Test
+  public void testArchiveQueryRejectsRemovedTraceLimits() {
+    for (String key : new String[] {
+        "maxTraceSteps", "maxTraceBytes", "maxRetainedTraceBytes", "maxTraceResponseBytes"}) {
+      assertArchiveQueryRejected(key, 1);
+    }
   }
 
   @Test

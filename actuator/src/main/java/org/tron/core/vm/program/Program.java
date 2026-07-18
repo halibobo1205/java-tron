@@ -44,6 +44,7 @@ import org.tron.common.utils.Utils;
 import org.tron.common.utils.WalletUtil;
 import org.tron.core.ChainBaseManager;
 import org.tron.core.Constant;
+import org.tron.core.archive.query.QueryContextHolder;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.ContractCapsule;
 import org.tron.core.capsule.ContractStateCapsule;
@@ -122,6 +123,7 @@ public class Program {
   private ProgramInvoke invoke;
   private ProgramOutListener listener;
   private ProgramTraceListener traceListener;
+  private final boolean vmTraceEnabled;
   private ProgramStorageChangeListener storageDiffListener = new ProgramStorageChangeListener();
   private CompositeProgramListener programListener = new CompositeProgramListener();
   private Stack stack;
@@ -129,7 +131,7 @@ public class Program {
   private ContractState contractState;
   private byte[] returnDataBuffer;
   private ProgramResult result = new ProgramResult();
-  private ProgramTrace trace = new ProgramTrace();
+  private final ProgramTrace trace;
   private byte[] ops;
   private byte[] codeAddress;
   private int pc;
@@ -153,11 +155,12 @@ public class Program {
     this.ops = nullToEmpty(ops);
     this.codeAddress = codeAddress;
 
-    traceListener = new ProgramTraceListener(VMConfig.vmTrace());
+    vmTraceEnabled = VMConfig.vmTrace() && QueryContextHolder.current() == null;
+    traceListener = new ProgramTraceListener(vmTraceEnabled);
     this.memory = setupProgramListener(new Memory());
     this.stack = setupProgramListener(new Stack());
     this.contractState = setupProgramListener(new ContractState(programInvoke));
-    this.trace = new ProgramTrace(programInvoke);
+    this.trace = new ProgramTrace(programInvoke, vmTraceEnabled);
     this.nonce = internalTransaction.getNonce();
   }
 
@@ -1610,6 +1613,10 @@ public class Program {
           traceListener.resetActions());
     }
     return null;
+  }
+
+  public boolean isVmTraceEnabled() {
+    return vmTraceEnabled;
   }
 
   public ProgramTrace getTrace() {

@@ -264,6 +264,8 @@ public class StorageConfig {
     @Setter
     public static class PublisherConfig {
 
+      private static final long MAX_OPERATION_TIMEOUT_MS = 24L * 60L * 60L * 1_000L;
+
       private boolean async;
       private boolean backpressure = true;
       private int softInFlightBlocks = 32_768;
@@ -275,6 +277,9 @@ public class StorageConfig {
       private long softMinFreeBytes = 5L * 1024 * 1024 * 1024;
       private long hardMinFreeBytes = 1L * 1024 * 1024 * 1024;
       private long backpressureTimeoutMs = 30_000L;
+      private long publishTimeoutMs = 120_000L;
+      private long journalTimeoutMs = 120_000L;
+      private long recoveryTimeoutMs = MAX_OPERATION_TIMEOUT_MS;
 
       void postProcess() {
         if (softInFlightBlocks <= 0) {
@@ -317,6 +322,34 @@ public class StorageConfig {
           throw new IllegalArgumentException(
               "storage.archive.publisher.backpressureTimeoutMs must be non-negative");
         }
+        if (backpressureTimeoutMs > MAX_OPERATION_TIMEOUT_MS) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.backpressureTimeoutMs exceeds 24 hours");
+        }
+        if (publishTimeoutMs <= 0) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.publishTimeoutMs must be positive");
+        }
+        if (publishTimeoutMs > MAX_OPERATION_TIMEOUT_MS) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.publishTimeoutMs exceeds 24 hours");
+        }
+        if (journalTimeoutMs <= 0) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.journalTimeoutMs must be positive");
+        }
+        if (journalTimeoutMs > MAX_OPERATION_TIMEOUT_MS) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.journalTimeoutMs exceeds 24 hours");
+        }
+        if (recoveryTimeoutMs <= 0) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.recoveryTimeoutMs must be positive");
+        }
+        if (recoveryTimeoutMs > MAX_OPERATION_TIMEOUT_MS) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.recoveryTimeoutMs exceeds 24 hours");
+        }
       }
     }
 
@@ -335,10 +368,11 @@ public class StorageConfig {
       private static final long DEFAULT_BATCH_DEADLINE_MS = 30_000L;
       private static final long DEFAULT_MAX_LOGICAL_READS = 1_000_000L;
       private static final long DEFAULT_MAX_BACKEND_READS = 100_000L;
-      private static final long DEFAULT_MAX_TRACE_STEPS = 1_000_000L;
-      private static final long DEFAULT_MAX_TRACE_BYTES = 64L * 1024 * 1024;
-      private static final long DEFAULT_MAX_RETAINED_TRACE_BYTES = 256L * 1024 * 1024;
-      private static final long DEFAULT_MAX_TRACE_RESPONSE_BYTES = 24L * 1024 * 1024;
+      private static final long DEFAULT_MAX_BACKEND_VALUE_BYTES = 4L * 1024 * 1024;
+      private static final long DEFAULT_MAX_BACKEND_READ_BYTES = 32L * 1024 * 1024;
+      private static final long DEFAULT_MAX_VM_STEPS = 1_000_000L;
+      private static final long DEFAULT_MAX_VM_OVERLAY_BYTES = 32L * 1024 * 1024;
+      private static final long DEFAULT_MAX_RESPONSE_BYTES = 24L * 1024 * 1024;
 
       private long maxConcurrentQueries = DEFAULT_MAX_CONCURRENT_QUERIES;
       private long maxPendingQueries = DEFAULT_MAX_PENDING_QUERIES;
@@ -349,12 +383,13 @@ public class StorageConfig {
       private long batchDeadlineMs = DEFAULT_BATCH_DEADLINE_MS;
       private long maxLogicalReadsPerRequest = DEFAULT_MAX_LOGICAL_READS;
       private long maxBackendReadsPerRequest = DEFAULT_MAX_BACKEND_READS;
+      private long maxBackendValueBytes = DEFAULT_MAX_BACKEND_VALUE_BYTES;
+      private long maxBackendReadBytesPerRequest = DEFAULT_MAX_BACKEND_READ_BYTES;
       private int maxCachedEntries = 4_096;
       private long maxCachedBytes = 4L * 1024 * 1024;
-      private long maxTraceSteps = DEFAULT_MAX_TRACE_STEPS;
-      private long maxTraceBytes = DEFAULT_MAX_TRACE_BYTES;
-      private long maxRetainedTraceBytes = DEFAULT_MAX_RETAINED_TRACE_BYTES;
-      private long maxTraceResponseBytes = DEFAULT_MAX_TRACE_RESPONSE_BYTES;
+      private long maxVmSteps = DEFAULT_MAX_VM_STEPS;
+      private long maxVmOverlayBytes = DEFAULT_MAX_VM_OVERLAY_BYTES;
+      private long maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES;
 
       void postProcess() {
         requirePositiveOrUnlimited("maxConcurrentQueries", maxConcurrentQueries);
@@ -368,12 +403,14 @@ public class StorageConfig {
             "maxLogicalReadsPerRequest", maxLogicalReadsPerRequest);
         requirePositiveOrUnlimited(
             "maxBackendReadsPerRequest", maxBackendReadsPerRequest);
+        requirePositiveOrUnlimited("maxBackendValueBytes", maxBackendValueBytes);
+        requirePositiveOrUnlimited(
+            "maxBackendReadBytesPerRequest", maxBackendReadBytesPerRequest);
         requireNonNegative("maxCachedEntries", maxCachedEntries);
         requireNonNegative("maxCachedBytes", maxCachedBytes);
-        requireNonNegativeOrUnlimited("maxTraceSteps", maxTraceSteps);
-        requireNonNegativeOrUnlimited("maxTraceBytes", maxTraceBytes);
-        requireNonNegativeOrUnlimited("maxRetainedTraceBytes", maxRetainedTraceBytes);
-        requireNonNegativeOrUnlimited("maxTraceResponseBytes", maxTraceResponseBytes);
+        requireNonNegativeOrUnlimited("maxVmSteps", maxVmSteps);
+        requireNonNegativeOrUnlimited("maxVmOverlayBytes", maxVmOverlayBytes);
+        requireNonNegativeOrUnlimited("maxResponseBytes", maxResponseBytes);
       }
 
       private static void requirePositiveOrUnlimited(String key, long value) {
@@ -471,15 +508,17 @@ public class StorageConfig {
           "async", "backpressure", "softInFlightBlocks", "hardInFlightBlocks",
           "softInFlightBytes", "hardInFlightBytes", "softInFlightRecords",
           "hardInFlightRecords", "softMinFreeBytes", "hardMinFreeBytes",
-          "backpressureTimeoutMs");
+          "backpressureTimeoutMs", "publishTimeoutMs", "journalTimeoutMs",
+          "recoveryTimeoutMs");
     }
     if (archive.hasPath("query")) {
       requireOnlyKeys("storage.archive.query", archive.getConfig("query").root(),
           "maxConcurrentQueries", "maxPendingQueries", "acquireTimeoutMs", "deadlineMs",
           "maxQueriesPerBatch", "batchDeadlineMs",
           "maxOpenSnapshots", "maxLogicalReadsPerRequest", "maxBackendReadsPerRequest",
-          "maxCachedEntries", "maxCachedBytes", "maxTraceSteps", "maxTraceBytes",
-          "maxRetainedTraceBytes", "maxTraceResponseBytes");
+          "maxBackendValueBytes", "maxBackendReadBytesPerRequest",
+          "maxCachedEntries", "maxCachedBytes", "maxVmSteps", "maxVmOverlayBytes",
+          "maxResponseBytes");
     }
     if (archive.hasPath("identity")) {
       requireOnlyKeys("storage.archive.identity", archive.getConfig("identity").root(),

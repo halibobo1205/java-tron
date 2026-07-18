@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 import java.lang.reflect.Field;
 import org.junit.Test;
 import org.tron.common.runtime.ProgramResult;
+import org.tron.core.archive.query.HistoricalQueryLimitException;
 import org.tron.core.db.TransactionContext;
 import org.tron.core.vm.archive.UnsupportedHistoricalStateException;
 import org.tron.core.vm.repository.Repository;
@@ -45,6 +46,26 @@ public class VMActuatorTest {
 
     UnsupportedHistoricalStateException thrown = assertThrows(
         UnsupportedHistoricalStateException.class, () -> actuator.execute(context));
+
+    assertSame(failure, thrown);
+  }
+
+  @Test
+  public void archiveQueryLimitEscapesRuntimeCatch() throws Exception {
+    VMActuator actuator = new VMActuator(true);
+    Repository archiveRepository = mock(Repository.class);
+    HistoricalQueryLimitException failure = new HistoricalQueryLimitException(
+        HistoricalQueryLimitException.Reason.RESOURCE_EXHAUSTED,
+        HistoricalQueryLimitException.Limit.QUERY_ADMISSION,
+        "archive query limit");
+    doThrow(failure).when(archiveRepository).commit();
+    setField(actuator, "injectedRootRepository", archiveRepository);
+    setField(actuator, "rootRepository", archiveRepository);
+    TransactionContext context = mock(TransactionContext.class);
+    when(context.getProgramResult()).thenReturn(new ProgramResult());
+
+    HistoricalQueryLimitException thrown = assertThrows(
+        HistoricalQueryLimitException.class, () -> actuator.execute(context));
 
     assertSame(failure, thrown);
   }
