@@ -23,6 +23,7 @@ import javax.servlet.ServletConfig;
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
+import javax.servlet.http.HttpServletResponseWrapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -83,6 +84,9 @@ public class JsonRpcServlet extends RateLimiterServlet {
 
   @Autowired
   private JsonRpcInterceptor interceptor;
+
+  @Autowired
+  private ArchiveJsonRpcExecutor archiveJsonRpcExecutor = ArchiveJsonRpcExecutor.disabled();
 
   @Override
   public void init(ServletConfig config) throws ServletException {
@@ -158,11 +162,46 @@ public class JsonRpcServlet extends RateLimiterServlet {
 
     int maxResponseSize = parameter.getJsonRpcMaxResponseSize();
     long maxPendingResponseBytes = parameter.getJsonRpcMaxPendingResponseBytes();
-    if (isBatch) {
-      handleBatch(resp, rootNode, maxResponseSize, maxPendingResponseBytes);
-    } else {
-      handleSingle(resp, rootNode, body, maxResponseSize, maxPendingResponseBytes);
+    DeferredJsonRpcResponse deferredResponse =
+        ArchiveJsonRpcExecutor.containsHistoricalRequest(rootNode)
+            ? new DeferredJsonRpcResponse(resp) : null;
+    HttpServletResponse executionResponse = deferredResponse == null
+        ? resp : deferredResponse;
+    try {
+      archiveJsonRpcExecutor.executeIfHistorical(rootNode,
+          () -> executeWithStateCursor(() -> {
+            if (isBatch) {
+              handleBatch(executionResponse, rootNode,
+                  maxResponseSize, maxPendingResponseBytes);
+            } else {
+              handleSingle(executionResponse, rootNode, body,
+                  maxResponseSize, maxPendingResponseBytes);
+            }
+          }));
+      if (deferredResponse != null) {
+        deferredResponse.commitToResponse();
+      }
+    } catch (HistoricalQueryLimitException admissionFailure) {
+      if (deferredResponse != null) {
+        deferredResponse.close();
+      }
+      if (!containsResponseRequest(rootNode)) {
+        writeEmptyResponse(resp);
+        return;
+      }
+      writeJsonRpcError(resp, JsonRpcError.EXCEED_LIMIT,
+          admissionFailure.getMessage(), isBatch ? null : rootNode.get("id"), isBatch);
+    } finally {
+      if (deferredResponse != null) {
+        deferredResponse.close();
+      }
     }
+  }
+
+  /** Binds PBFT/Solidity state cursors on the thread that executes the JSON-RPC request. */
+  protected void executeWithStateCursor(ArchiveJsonRpcExecutor.RequestTask task)
+      throws IOException {
+    task.run();
   }
 
   private void handleSingle(HttpServletResponse resp,
@@ -447,6 +486,18 @@ public class JsonRpcServlet extends RateLimiterServlet {
     return request != null && request.isObject() && !request.has("id");
   }
 
+  private static boolean containsResponseRequest(JsonNode request) {
+    if (request != null && request.isArray()) {
+      for (JsonNode element : request) {
+        if (!isNotification(element)) {
+          return true;
+        }
+      }
+      return false;
+    }
+    return !isNotification(request);
+  }
+
   private static boolean terminatesBatch(RuntimeException failure) {
     if (!(failure instanceof HistoricalQueryLimitException)) {
       return false;
@@ -549,6 +600,10 @@ public class JsonRpcServlet extends RateLimiterServlet {
 
   private static void writeRetainedResponse(HttpServletResponse resp,
       BoundedByteArrayOutputStream output) throws IOException {
+    if (resp instanceof DeferredJsonRpcResponse) {
+      ((DeferredJsonRpcResponse) resp).retain(output);
+      return;
+    }
     resp.setContentType("application/json-rpc");
     resp.setStatus(HttpServletResponse.SC_OK);
     resp.setContentLength(output.size());
@@ -558,6 +613,10 @@ public class JsonRpcServlet extends RateLimiterServlet {
   }
 
   private static void writeEmptyResponse(HttpServletResponse resp) {
+    if (resp instanceof DeferredJsonRpcResponse) {
+      ((DeferredJsonRpcResponse) resp).retainEmpty();
+      return;
+    }
     resp.setContentType("application/json-rpc");
     resp.setStatus(HttpServletResponse.SC_OK);
     resp.setContentLength(0);
@@ -571,6 +630,10 @@ public class JsonRpcServlet extends RateLimiterServlet {
         : MAX_DIRECT_ERROR_BYTES;
     if (bytes.length > maxBytes) {
       writeEmptyResponse(resp);
+      return;
+    }
+    if (resp instanceof DeferredJsonRpcResponse) {
+      ((DeferredJsonRpcResponse) resp).retain(bytes);
       return;
     }
     resp.setContentType("application/json-rpc");
@@ -708,12 +771,101 @@ public class JsonRpcServlet extends RateLimiterServlet {
       reservation.close();
     }
 
+    private void transferOwnership() {
+      reservation.transferOwnership();
+    }
+
+    private void closeTransferred() {
+      reservation.closeTransferred();
+    }
+
     private static void checkBounds(byte[] value, int offset, int length) {
       if (value == null) {
         throw new NullPointerException("value");
       }
       if ((offset | length) < 0 || length > value.length - offset) {
         throw new IndexOutOfBoundsException();
+      }
+    }
+  }
+
+  /** Holds a bounded serialized response while the Servlet thread performs the network write. */
+  private static final class DeferredJsonRpcResponse extends HttpServletResponseWrapper
+      implements AutoCloseable {
+
+    private final HttpServletResponse actual;
+    private BoundedByteArrayOutputStream retainedOutput;
+    private byte[] directOutput;
+    private boolean assigned;
+    private boolean committed;
+    private boolean closed;
+
+    private DeferredJsonRpcResponse(HttpServletResponse actual) {
+      super(actual);
+      this.actual = actual;
+    }
+
+    private void retain(BoundedByteArrayOutputStream output) {
+      requireAssignable();
+      output.transferOwnership();
+      retainedOutput = output;
+      assigned = true;
+    }
+
+    private void retain(byte[] output) {
+      requireAssignable();
+      directOutput = output;
+      assigned = true;
+    }
+
+    private void retainEmpty() {
+      retain(new byte[0]);
+    }
+
+    private void commitToResponse() throws IOException {
+      if (closed) {
+        throw new IllegalStateException("deferred JSON-RPC response is closed");
+      }
+      if (!assigned) {
+        throw new IllegalStateException("deferred JSON-RPC response is missing");
+      }
+      if (committed) {
+        throw new IllegalStateException("deferred JSON-RPC response is already committed");
+      }
+      committed = true;
+      int size = retainedOutput == null ? directOutput.length : retainedOutput.size();
+      actual.setContentType("application/json-rpc");
+      actual.setStatus(HttpServletResponse.SC_OK);
+      actual.setContentLength(size);
+      if (size == 0) {
+        return;
+      }
+      OutputStream network = actual.getOutputStream();
+      if (retainedOutput == null) {
+        network.write(directOutput);
+      } else {
+        retainedOutput.writeTo(network);
+      }
+      network.flush();
+    }
+
+    @Override
+    public void close() {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      if (retainedOutput != null) {
+        retainedOutput.closeTransferred();
+      }
+    }
+
+    private void requireAssignable() {
+      if (closed) {
+        throw new IllegalStateException("deferred JSON-RPC response is closed");
+      }
+      if (assigned) {
+        throw new IllegalStateException("deferred JSON-RPC response is already assigned");
       }
     }
   }
@@ -803,6 +955,7 @@ public class JsonRpcServlet extends RateLimiterServlet {
       private final long globalCapacity;
       private long bytes;
       private boolean closed;
+      private boolean ownershipTransferred;
 
       private Reservation(PendingResponseLimiter owner, long globalCapacity) {
         this.owner = owner;
@@ -821,6 +974,23 @@ public class JsonRpcServlet extends RateLimiterServlet {
 
       @Override
       public void close() {
+        if (!ownershipTransferred) {
+          owner.close(this);
+        }
+      }
+
+      private void transferOwnership() {
+        if (closed || ownershipTransferred) {
+          throw new IllegalStateException("JSON-RPC response reservation cannot transfer");
+        }
+        ownershipTransferred = true;
+      }
+
+      private void closeTransferred() {
+        if (!ownershipTransferred) {
+          throw new IllegalStateException("JSON-RPC response reservation was not transferred");
+        }
+        ownershipTransferred = false;
         owner.close(this);
       }
     }

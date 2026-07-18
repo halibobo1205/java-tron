@@ -71,20 +71,6 @@ public class ArchiveTemporalCodecTest {
   }
 
   @Test
-  public void latestBaselineKeyRoundTripsWithLatestKey() {
-    byte[] key = {1, 2, 3, 4};
-    byte[] latest = ArchiveTemporalCodec.latestKey(ArchiveDomain.CONTRACT_STATE, key);
-    byte[] baseline = ArchiveTemporalCodec.latestBaselineKey(
-        ArchiveDomain.CONTRACT_STATE, key);
-
-    assertEquals(0x01, baseline[0]);
-    assertTrue(ArchiveTemporalCodec.startsWith(
-        baseline, ArchiveTemporalCodec.latestBaselinePrefix()));
-    assertArrayEquals(baseline, ArchiveTemporalCodec.latestBaselineKeyOfLatest(latest));
-    assertArrayEquals(latest, ArchiveTemporalCodec.latestKeyOfBaseline(baseline));
-  }
-
-  @Test
   public void anchorKeyRoundTripsAcrossLatestAndHistoryPrefixes() {
     byte[] key = {1, 2, 3, 4};
     byte[] latest = ArchiveTemporalCodec.latestKey(ArchiveDomain.CONTRACT_STATE, key);
@@ -174,8 +160,6 @@ public class ArchiveTemporalCodecTest {
         () -> ArchiveTemporalCodec.txNumOfHistory(rawHistoryKey(8, 0x7fff)));
     assertThrows(ArchiveException.class,
         () -> ArchiveTemporalCodec.txNumOfChangeset(rawChangesetKey(8, 0x7fff)));
-    assertThrows(ArchiveException.class,
-        () -> ArchiveTemporalCodec.latestKeyOfBaseline(rawBaselineKey(0x7fff)));
   }
 
   @Test
@@ -276,15 +260,6 @@ public class ArchiveTemporalCodecTest {
     putDomainId(key, 1, domainId);
     key[6] = 1;
     key[7] = 7;
-    return key;
-  }
-
-  private static byte[] rawBaselineKey(int domainId) {
-    byte[] prefix = ArchiveTemporalCodec.latestBaselinePrefix();
-    byte[] key = Arrays.copyOf(prefix, prefix.length + 7);
-    putDomainId(key, prefix.length, domainId);
-    key[prefix.length + 5] = 1;
-    key[prefix.length + 6] = 7;
     return key;
   }
 

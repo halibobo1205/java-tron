@@ -95,7 +95,7 @@ public class UnifiedArchiveTemporalStoreOracleTest {
     write(db, store.prepareMaintenanceBatch(null, Collections.singletonList(record)));
   }
 
-  private void overwriteIntegrityRow(UnifiedArchiveColumnFamily columnFamily,
+  private void overwritePayloadRow(UnifiedArchiveColumnFamily columnFamily,
       byte[] key, byte[] payload, long linkedTxNum) {
     write(db, new UnifiedArchiveMaintenanceBatch()
         .put(columnFamily, key,
@@ -103,6 +103,41 @@ public class UnifiedArchiveTemporalStoreOracleTest {
                 columnFamily, key, payload, linkedTxNum))
         .put(UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD,
             ArchiveTemporalIntegrityCodec.payloadKey(columnFamily, key), payload));
+  }
+
+  private void overwriteReferenceRow(UnifiedArchiveColumnFamily columnFamily,
+      byte[] key, long linkedTxNum) {
+    UnifiedArchiveColumnFamily targetColumnFamily;
+    byte[] targetKey;
+    if (columnFamily == UnifiedArchiveColumnFamily.HISTORY
+        && linkedTxNum == ArchiveTemporalIntegrityCodec.NO_HISTORY_TX_NUM) {
+      targetColumnFamily = UnifiedArchiveColumnFamily.COMMITMENT;
+      targetKey = ArchiveTemporalCodec.anchorKeyOfHistory(key);
+    } else {
+      targetColumnFamily = UnifiedArchiveColumnFamily.CHANGESET;
+      ArchiveDomain domain = columnFamily == UnifiedArchiveColumnFamily.HISTORY
+          ? ArchiveTemporalCodec.domainOfHistoryKey(key)
+          : ArchiveTemporalCodec.domainOfLatestKey(key);
+      byte[] canonicalKey = columnFamily == UnifiedArchiveColumnFamily.HISTORY
+          ? ArchiveTemporalCodec.canonicalKeyOfHistoryKey(key)
+          : ArchiveTemporalCodec.canonicalKeyOfLatestKey(key);
+      targetKey = ArchiveTemporalCodec.changesetKey(linkedTxNum, domain, canonicalKey);
+    }
+    byte[] targetLocator = db.get(targetColumnFamily, targetKey);
+    assertTrue(targetLocator != null);
+    write(db, new UnifiedArchiveMaintenanceBatch().put(
+        columnFamily, key, ArchiveTemporalIntegrityCodec.encodeReference(
+            columnFamily, key, linkedTxNum, targetColumnFamily, targetKey, targetLocator)));
+  }
+
+  private void corruptReferenceLink(UnifiedArchiveColumnFamily columnFamily,
+      byte[] key, long linkedTxNum) {
+    byte[] reference = db.get(columnFamily, key);
+    assertTrue(reference != null);
+    for (int i = 0; i < Long.BYTES; i++) {
+      reference[1 + i] = (byte) (linkedTxNum >>> (56 - i * 8));
+    }
+    write(db, new UnifiedArchiveMaintenanceBatch().put(columnFamily, key, reference));
   }
 
   private long persistedPayloadBytes(UnifiedArchiveColumnFamily columnFamily, byte[] key) {
@@ -124,23 +159,58 @@ public class UnifiedArchiveTemporalStoreOracleTest {
   }
 
   @Test
-  public void temporalRowsUseFixedLocatorsAndOutOfLinePayloads() {
+  public void temporalRowsStoreOnePayloadAndAuthenticatedReferences() {
     DomainValue previous = DomainValue.tombstone();
     DomainValue current = val(0x0A);
     put(5L, K1, previous, current);
 
-    assertOutOfLineRow(UnifiedArchiveColumnFamily.HISTORY,
+    assertReferenceRow(UnifiedArchiveColumnFamily.HISTORY,
         ArchiveTemporalCodec.historyKey(DOMAIN, K1, 5L),
-        ArchiveTemporalCodec.encodeValue(previous));
+        ArchiveTemporalIntegrityCodec.NO_HISTORY_TX_NUM);
     assertOutOfLineRow(UnifiedArchiveColumnFamily.CHANGESET,
         ArchiveTemporalCodec.changesetKey(5L, DOMAIN, K1),
         ArchiveTemporalCodec.encodeValue(current));
-    assertOutOfLineRow(UnifiedArchiveColumnFamily.LATEST,
+    assertReferenceRow(UnifiedArchiveColumnFamily.LATEST,
         ArchiveTemporalCodec.latestKey(DOMAIN, K1),
-        ArchiveTemporalCodec.encodeValue(current));
+        5L);
     assertOutOfLineRow(UnifiedArchiveColumnFamily.COMMITMENT,
         ArchiveTemporalCodec.anchorKey(DOMAIN, K1),
         ArchiveTemporalCodec.encodeValue(previous));
+    assertThrows(ArchiveException.class, () -> ArchiveTemporalIntegrityCodec.payloadKey(
+        UnifiedArchiveColumnFamily.HISTORY,
+        ArchiveTemporalCodec.historyKey(DOMAIN, K1, 5L)));
+    assertThrows(ArchiveException.class, () -> ArchiveTemporalIntegrityCodec.payloadKey(
+        UnifiedArchiveColumnFamily.LATEST,
+        ArchiveTemporalCodec.latestKey(DOMAIN, K1)));
+  }
+
+  @Test
+  public void sameBlockRepeatedKeyBuildsReferenceChainWithoutPayloadCopies() {
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        3L, 5L, 7L, 5L, 7L, new byte[32], 0, ArchiveSource.NORMAL);
+    putBlock(range, List.of(
+        rec(5L, 3L, K1, DomainValue.tombstone(), val(0x0A)),
+        rec(6L, 3L, K1, val(0x0A), val(0x0B))));
+
+    assertReferenceRow(UnifiedArchiveColumnFamily.HISTORY,
+        ArchiveTemporalCodec.historyKey(DOMAIN, K1, 5L),
+        ArchiveTemporalIntegrityCodec.NO_HISTORY_TX_NUM);
+    assertReferenceRow(UnifiedArchiveColumnFamily.HISTORY,
+        ArchiveTemporalCodec.historyKey(DOMAIN, K1, 6L), 5L);
+    assertReferenceRow(UnifiedArchiveColumnFamily.LATEST,
+        ArchiveTemporalCodec.latestKey(DOMAIN, K1), 6L);
+    assertOutOfLineRow(UnifiedArchiveColumnFamily.COMMITMENT,
+        ArchiveTemporalCodec.anchorKey(DOMAIN, K1),
+        ArchiveTemporalCodec.encodeValue(DomainValue.tombstone()));
+    assertOutOfLineRow(UnifiedArchiveColumnFamily.CHANGESET,
+        ArchiveTemporalCodec.changesetKey(5L, DOMAIN, K1),
+        ArchiveTemporalCodec.encodeValue(val(0x0A)));
+    assertOutOfLineRow(UnifiedArchiveColumnFamily.CHANGESET,
+        ArchiveTemporalCodec.changesetKey(6L, DOMAIN, K1),
+        ArchiveTemporalCodec.encodeValue(val(0x0B)));
+    assertParity(K1, 7L);
+    unified.validateCommittedBlock(range);
+    unified.validateDomainRows();
   }
 
   @Test
@@ -154,19 +224,11 @@ public class UnifiedArchiveTemporalStoreOracleTest {
     long anchorBytes = persistedPayloadBytes(
         UnifiedArchiveColumnFamily.COMMITMENT,
         ArchiveTemporalCodec.anchorKey(DOMAIN, K1));
-    long latestBytes = persistedPayloadBytes(
-        UnifiedArchiveColumnFamily.LATEST,
-        ArchiveTemporalCodec.latestKey(DOMAIN, K1));
-    long historyBytes = persistedPayloadBytes(
-        UnifiedArchiveColumnFamily.HISTORY,
-        ArchiveTemporalCodec.historyKey(DOMAIN, K1, 5L));
     long changesetBytes = persistedPayloadBytes(
         UnifiedArchiveColumnFamily.CHANGESET,
         ArchiveTemporalCodec.changesetKey(5L, DOMAIN, K1));
-    long largestNativeRead = Math.max(
-        Math.max(anchorBytes, latestBytes), Math.max(historyBytes, changesetBytes));
-    long expectedBytes = anchorBytes + latestBytes + historyBytes + changesetBytes
-        + latestBytes + largestNativeRead;
+    long largestNativeRead = Math.max(anchorBytes, changesetBytes);
+    long expectedBytes = anchorBytes + changesetBytes + changesetBytes + largestNativeRead;
     ArchiveChangeRecord next = rec(6L, 2L, K1, current, val(0x0B));
 
     try (UnifiedArchiveTemporalStore.PublicationPreflight preflight =
@@ -176,13 +238,26 @@ public class UnifiedArchiveTemporalStoreOracleTest {
   }
 
   @Test
+  public void publicationEstimateUsesSchemaSixMutationBound() {
+    ArchiveChangeRecord first = rec(
+        5L, 2L, K1, DomainValue.tombstone(), val(0x0A));
+    ArchiveChangeRecord second = rec(
+        6L, 2L, K1, val(0x0A), val(0x0B));
+
+    assertEquals(7L, unified.estimatePublicationPreparation(
+        Collections.singletonList(first)).getMutations());
+    assertEquals(13L, unified.estimatePublicationPreparation(
+        List.of(first, second)).getMutations());
+  }
+
+  @Test
   public void pointReadRejectsMissingOutOfLinePayload() {
     put(5L, K1, DomainValue.tombstone(), val(0x0A));
-    byte[] historyKey = ArchiveTemporalCodec.historyKey(DOMAIN, K1, 5L);
+    byte[] anchorKey = ArchiveTemporalCodec.anchorKey(DOMAIN, K1);
     write(db, new UnifiedArchiveMaintenanceBatch().delete(
         UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD,
         ArchiveTemporalIntegrityCodec.payloadKey(
-            UnifiedArchiveColumnFamily.HISTORY, historyKey)));
+            UnifiedArchiveColumnFamily.COMMITMENT, anchorKey)));
 
     ArchiveException failure = assertThrows(
         ArchiveException.class, () -> unified.getAsOf(DOMAIN, K1, 4L));
@@ -194,9 +269,9 @@ public class UnifiedArchiveTemporalStoreOracleTest {
   @Test
   public void pointReadRejectsModifiedOutOfLinePayload() {
     put(5L, K1, DomainValue.tombstone(), val(0x0A));
-    byte[] historyKey = ArchiveTemporalCodec.historyKey(DOMAIN, K1, 5L);
+    byte[] anchorKey = ArchiveTemporalCodec.anchorKey(DOMAIN, K1);
     byte[] payloadKey = ArchiveTemporalIntegrityCodec.payloadKey(
-        UnifiedArchiveColumnFamily.HISTORY, historyKey);
+        UnifiedArchiveColumnFamily.COMMITMENT, anchorKey);
     byte[] payload = db.get(UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD, payloadKey);
     payload[payload.length - 1] ^= 0x01;
     write(db, new UnifiedArchiveMaintenanceBatch().put(
@@ -211,9 +286,9 @@ public class UnifiedArchiveTemporalStoreOracleTest {
   @Test
   public void pointReadRejectsOutOfLinePayloadLengthMismatch() {
     put(5L, K1, DomainValue.tombstone(), val(0x0A));
-    byte[] historyKey = ArchiveTemporalCodec.historyKey(DOMAIN, K1, 5L);
+    byte[] anchorKey = ArchiveTemporalCodec.anchorKey(DOMAIN, K1);
     byte[] payloadKey = ArchiveTemporalIntegrityCodec.payloadKey(
-        UnifiedArchiveColumnFamily.HISTORY, historyKey);
+        UnifiedArchiveColumnFamily.COMMITMENT, anchorKey);
     byte[] payload = db.get(UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD, payloadKey);
     write(db, new UnifiedArchiveMaintenanceBatch().put(
         UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD, payloadKey,
@@ -227,11 +302,11 @@ public class UnifiedArchiveTemporalStoreOracleTest {
 
   @Test
   public void fullScrubRejectsOrphanAndUnknownPayloadKeys() {
-    byte[] orphanLogicalKey = ArchiveTemporalCodec.historyKey(DOMAIN, K1, 5L);
+    byte[] orphanLogicalKey = ArchiveTemporalCodec.changesetKey(5L, DOMAIN, K1);
     write(db, new UnifiedArchiveMaintenanceBatch().put(
         UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD,
         ArchiveTemporalIntegrityCodec.payloadKey(
-            UnifiedArchiveColumnFamily.HISTORY, orphanLogicalKey),
+            UnifiedArchiveColumnFamily.CHANGESET, orphanLogicalKey),
         ArchiveTemporalCodec.encodeValue(val(0x0A))));
 
     ArchiveException orphan = assertThrows(
@@ -241,7 +316,7 @@ public class UnifiedArchiveTemporalStoreOracleTest {
     write(db, new UnifiedArchiveMaintenanceBatch()
         .delete(UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD,
             ArchiveTemporalIntegrityCodec.payloadKey(
-                UnifiedArchiveColumnFamily.HISTORY, orphanLogicalKey))
+                UnifiedArchiveColumnFamily.CHANGESET, orphanLogicalKey))
         .put(UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD,
             new byte[] {(byte) 0x7f, 0x01}, new byte[] {0x01}));
     ArchiveException unknown = assertThrows(
@@ -267,9 +342,10 @@ public class UnifiedArchiveTemporalStoreOracleTest {
 
     assertTrue(failure.getMessage().contains("atomic backend transaction"));
     assertTrue(directFailure.getMessage().contains("atomic backend transaction"));
-    assertRowAndPayloadPresent(UnifiedArchiveColumnFamily.HISTORY, historyKey);
+    assertReferenceRow(UnifiedArchiveColumnFamily.HISTORY, historyKey,
+        ArchiveTemporalIntegrityCodec.NO_HISTORY_TX_NUM);
     assertRowAndPayloadPresent(UnifiedArchiveColumnFamily.CHANGESET, changesetKey);
-    assertRowAndPayloadPresent(UnifiedArchiveColumnFamily.LATEST, latestKey);
+    assertReferenceRow(UnifiedArchiveColumnFamily.LATEST, latestKey, 0L);
     assertRowAndPayloadPresent(UnifiedArchiveColumnFamily.COMMITMENT, anchorKey);
     unified.validateCommittedBlock(range);
   }
@@ -295,16 +371,15 @@ public class UnifiedArchiveTemporalStoreOracleTest {
         ArchiveException.class, () -> unified.unwindBlock(second));
 
     assertTrue(failure.getMessage().contains("atomic backend transaction"));
-    assertRowAndPayloadPresent(UnifiedArchiveColumnFamily.HISTORY, k1History);
+    assertReferenceRow(UnifiedArchiveColumnFamily.HISTORY, k1History, 0L);
     assertRowAndPayloadPresent(UnifiedArchiveColumnFamily.CHANGESET, k1Changeset);
-    assertRowAndPayloadPresent(UnifiedArchiveColumnFamily.HISTORY, k2History);
+    assertReferenceRow(UnifiedArchiveColumnFamily.HISTORY, k2History,
+        ArchiveTemporalIntegrityCodec.NO_HISTORY_TX_NUM);
     assertRowAndPayloadPresent(UnifiedArchiveColumnFamily.CHANGESET, k2Changeset);
-    assertOutOfLineRow(UnifiedArchiveColumnFamily.LATEST,
-        ArchiveTemporalCodec.latestKey(DOMAIN, K1),
-        ArchiveTemporalCodec.encodeValue(val(0x0B)));
-    assertOutOfLineRow(UnifiedArchiveColumnFamily.LATEST,
-        ArchiveTemporalCodec.latestKey(DOMAIN, K2),
-        ArchiveTemporalCodec.encodeValue(val(0x20)));
+    assertReferenceRow(UnifiedArchiveColumnFamily.LATEST,
+        ArchiveTemporalCodec.latestKey(DOMAIN, K1), 2L);
+    assertReferenceRow(UnifiedArchiveColumnFamily.LATEST,
+        ArchiveTemporalCodec.latestKey(DOMAIN, K2), 3L);
     unified.validateCommittedBlock(first);
     unified.validateCommittedBlock(second);
     unified.validateDomainRows();
@@ -319,11 +394,34 @@ public class UnifiedArchiveTemporalStoreOracleTest {
             ArchiveTemporalIntegrityCodec.payloadKey(columnFamily, key))));
   }
 
-  private void assertRowAndPayloadMissing(UnifiedArchiveColumnFamily columnFamily,
-      byte[] key) {
-    assertTrue(db.get(columnFamily, key) == null);
-    assertTrue(db.get(UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD,
-        ArchiveTemporalIntegrityCodec.payloadKey(columnFamily, key)) == null);
+  private void assertReferenceRow(UnifiedArchiveColumnFamily columnFamily,
+      byte[] key, long expectedLinkedTxNum) {
+    byte[] reference = db.get(columnFamily, key);
+    assertEquals(ArchiveTemporalIntegrityCodec.REFERENCE_BYTES, reference.length);
+    assertEquals(expectedLinkedTxNum, ArchiveTemporalIntegrityCodec.decodeReferenceLink(
+        columnFamily, key, reference, "test reference"));
+    UnifiedArchiveColumnFamily targetColumnFamily;
+    byte[] targetKey;
+    if (columnFamily == UnifiedArchiveColumnFamily.HISTORY
+        && expectedLinkedTxNum == ArchiveTemporalIntegrityCodec.NO_HISTORY_TX_NUM) {
+      targetColumnFamily = UnifiedArchiveColumnFamily.COMMITMENT;
+      targetKey = ArchiveTemporalCodec.anchorKeyOfHistory(key);
+    } else {
+      targetColumnFamily = UnifiedArchiveColumnFamily.CHANGESET;
+      ArchiveDomain domain = columnFamily == UnifiedArchiveColumnFamily.HISTORY
+          ? ArchiveTemporalCodec.domainOfHistoryKey(key)
+          : ArchiveTemporalCodec.domainOfLatestKey(key);
+      byte[] canonicalKey = columnFamily == UnifiedArchiveColumnFamily.HISTORY
+          ? ArchiveTemporalCodec.canonicalKeyOfHistoryKey(key)
+          : ArchiveTemporalCodec.canonicalKeyOfLatestKey(key);
+      targetKey = ArchiveTemporalCodec.changesetKey(
+          expectedLinkedTxNum, domain, canonicalKey);
+    }
+    byte[] targetLocator = db.get(targetColumnFamily, targetKey);
+    assertTrue(targetLocator != null);
+    ArchiveTemporalIntegrityCodec.decodeReference(
+        columnFamily, key, reference, targetColumnFamily, targetKey,
+        targetLocator, "test reference");
   }
 
   private void assertRowAndPayloadPresent(UnifiedArchiveColumnFamily columnFamily,
@@ -407,7 +505,7 @@ public class UnifiedArchiveTemporalStoreOracleTest {
     ArchiveException failure = assertThrows(ArchiveException.class,
         () -> unified.getAsOf(DOMAIN, K1, 7L));
 
-    assertTrue(failure.getMessage().contains("payload digest mismatch"));
+    assertTrue(failure.getMessage().contains("reference digest mismatch"));
   }
 
   @Test
@@ -432,15 +530,13 @@ public class UnifiedArchiveTemporalStoreOracleTest {
     put(5L, K1, val(0x0B), val(0x0C));
     put(9L, K1, val(0x0C), val(0x0D));
     byte[] historyKey = ArchiveTemporalCodec.historyKey(DOMAIN, K1, 5L);
-    overwriteIntegrityRow(
-        UnifiedArchiveColumnFamily.HISTORY, historyKey,
-        ArchiveTemporalCodec.encodeValue(val(0x0A)),
+    overwriteReferenceRow(UnifiedArchiveColumnFamily.HISTORY, historyKey,
         ArchiveTemporalIntegrityCodec.NO_HISTORY_TX_NUM);
 
     ArchiveException failure = assertThrows(ArchiveException.class,
         () -> unified.getAsOf(DOMAIN, K1, 3L));
 
-    assertTrue(failure.getMessage().contains("physical predecessor"));
+    assertTrue(failure.getMessage().contains("first history reference target"));
   }
 
   @Test
@@ -449,8 +545,7 @@ public class UnifiedArchiveTemporalStoreOracleTest {
     put(5L, K1, val(0x0B), val(0x0C));
     put(9L, K1, val(0x0C), val(0x0D));
     byte[] historyKey = ArchiveTemporalCodec.historyKey(DOMAIN, K1, 9L);
-    overwriteIntegrityRow(UnifiedArchiveColumnFamily.HISTORY, historyKey,
-        ArchiveTemporalCodec.encodeValue(val(0x0C)), 2L);
+    overwriteReferenceRow(UnifiedArchiveColumnFamily.HISTORY, historyKey, 2L);
 
     ArchiveException failure = assertThrows(ArchiveException.class,
         () -> putUnifiedChange(
@@ -484,30 +579,28 @@ public class UnifiedArchiveTemporalStoreOracleTest {
     put(5L, K1, DomainValue.tombstone(), val(0x0A));
     put(9L, K1, val(0x0A), val(0x0B));
     byte[] changesetKey = ArchiveTemporalCodec.changesetKey(9L, DOMAIN, K1);
-    overwriteIntegrityRow(
+    overwritePayloadRow(
         UnifiedArchiveColumnFamily.CHANGESET, changesetKey,
         ArchiveTemporalCodec.encodeValue(val(0x7F)), 9L);
 
     ArchiveException pointFailure = assertThrows(ArchiveException.class,
         () -> unified.getAsOf(DOMAIN, K1, Long.MAX_VALUE));
 
-    assertTrue(pointFailure.getMessage().contains("latest value"));
+    assertTrue(pointFailure.getMessage().contains("reference digest mismatch"));
     assertThrows(ArchiveException.class, () -> unified.validateTxNumsCovered(txNum -> true));
   }
 
   @Test
-  public void pointReadAndScrubRejectRawLatestBaselinePairWithoutEnvelopes() {
+  public void pointReadAndScrubRejectRawLatestValueWithoutReference() {
     byte[] value = ArchiveTemporalCodec.encodeValue(val(0x7F));
-    write(db, new UnifiedArchiveMaintenanceBatch()
-        .put(UnifiedArchiveColumnFamily.LATEST,
-            ArchiveTemporalCodec.latestKey(DOMAIN, K3), value)
-        .put(UnifiedArchiveColumnFamily.LATEST,
-            ArchiveTemporalCodec.latestBaselineKey(DOMAIN, K3), value));
+    write(db, new UnifiedArchiveMaintenanceBatch().put(
+        UnifiedArchiveColumnFamily.LATEST,
+        ArchiveTemporalCodec.latestKey(DOMAIN, K3), value));
 
     ArchiveException pointFailure = assertThrows(ArchiveException.class,
         () -> unified.getAsOf(DOMAIN, K3, Long.MAX_VALUE));
 
-    assertTrue(pointFailure.getMessage().contains("locator length mismatch"));
+    assertTrue(pointFailure.getMessage().contains("reference length mismatch"));
     assertThrows(ArchiveException.class, unified::validateDomainRows);
   }
 
@@ -543,55 +636,6 @@ public class UnifiedArchiveTemporalStoreOracleTest {
   }
 
   @Test
-  public void pointReadRejectsDeletingLatestAndBaselineForAnchoredKey() {
-    put(5L, K1, DomainValue.tombstone(), val(0x0A));
-    write(db, new UnifiedArchiveMaintenanceBatch()
-        .delete(UnifiedArchiveColumnFamily.HISTORY,
-            ArchiveTemporalCodec.historyKey(DOMAIN, K1, 5L))
-        .delete(UnifiedArchiveColumnFamily.CHANGESET,
-            ArchiveTemporalCodec.changesetKey(5L, DOMAIN, K1))
-        .delete(UnifiedArchiveColumnFamily.LATEST,
-            ArchiveTemporalCodec.latestKey(DOMAIN, K1))
-        .delete(UnifiedArchiveColumnFamily.LATEST,
-            ArchiveTemporalCodec.latestBaselineKey(DOMAIN, K1)));
-
-    ArchiveException failure = assertThrows(ArchiveException.class,
-        () -> unified.getAsOf(DOMAIN, K1, Long.MAX_VALUE));
-
-    assertTrue(failure.getMessage().contains("anchor"));
-    assertThrows(ArchiveException.class, unified::validateDomainRows);
-  }
-
-  @Test
-  public void pointReadRejectsEitherHalfOfLatestBaselinePairMissing() {
-    put(5L, K1, DomainValue.tombstone(), val(0x0A));
-    byte[] latestKey = ArchiveTemporalCodec.latestKey(DOMAIN, K1);
-    byte[] baselineKey = ArchiveTemporalCodec.latestBaselineKey(DOMAIN, K1);
-    byte[] restoredPayload = ArchiveTemporalCodec.encodeValue(DomainValue.tombstone());
-    write(db, new UnifiedArchiveMaintenanceBatch()
-        .delete(UnifiedArchiveColumnFamily.HISTORY,
-            ArchiveTemporalCodec.historyKey(DOMAIN, K1, 5L))
-        .delete(UnifiedArchiveColumnFamily.CHANGESET,
-            ArchiveTemporalCodec.changesetKey(5L, DOMAIN, K1)));
-    overwriteIntegrityRow(UnifiedArchiveColumnFamily.LATEST, latestKey,
-        restoredPayload, ArchiveTemporalIntegrityCodec.NO_HISTORY_TX_NUM);
-    overwriteIntegrityRow(UnifiedArchiveColumnFamily.LATEST, baselineKey,
-        restoredPayload, ArchiveTemporalIntegrityCodec.NO_HISTORY_TX_NUM);
-    byte[] baselineValue = db.get(UnifiedArchiveColumnFamily.LATEST, baselineKey);
-
-    write(db, new UnifiedArchiveMaintenanceBatch().delete(
-        UnifiedArchiveColumnFamily.LATEST, baselineKey));
-    assertThrows(ArchiveException.class,
-        () -> unified.getAsOf(DOMAIN, K1, Long.MAX_VALUE));
-
-    write(db, new UnifiedArchiveMaintenanceBatch()
-        .put(UnifiedArchiveColumnFamily.LATEST, baselineKey, baselineValue)
-        .delete(UnifiedArchiveColumnFamily.LATEST, latestKey));
-    assertThrows(ArchiveException.class,
-        () -> unified.getAsOf(DOMAIN, K1, Long.MAX_VALUE));
-  }
-
-  @Test
   public void pointReadAndScrubRejectDeletedAnchor() {
     put(5L, K1, DomainValue.tombstone(), val(0x0A));
     write(db, new UnifiedArchiveMaintenanceBatch().delete(
@@ -615,7 +659,7 @@ public class UnifiedArchiveTemporalStoreOracleTest {
     ArchiveException failure = assertThrows(ArchiveException.class,
         () -> unified.latest(DOMAIN, K1));
 
-    assertTrue(failure.getMessage().contains("changeset"));
+    assertTrue(failure.getMessage().contains("reference target"));
   }
 
   @Test
@@ -625,9 +669,7 @@ public class UnifiedArchiveTemporalStoreOracleTest {
     putBlock(range,
         List.of(rec(5L, 3L, K1, DomainValue.tombstone(), val(0x0A))));
     byte[] historyKey = ArchiveTemporalCodec.historyKey(DOMAIN, K1, 5L);
-    overwriteIntegrityRow(
-        UnifiedArchiveColumnFamily.HISTORY, historyKey,
-        ArchiveTemporalCodec.encodeValue(DomainValue.tombstone()), 4L);
+    corruptReferenceLink(UnifiedArchiveColumnFamily.HISTORY, historyKey, 4L);
 
     assertThrows(ArchiveException.class, () -> unified.validateCommittedBlock(range));
   }
@@ -700,7 +742,7 @@ public class UnifiedArchiveTemporalStoreOracleTest {
     assertTrue(!unified.latest(DOMAIN, K1).isPresent());
 
     UnifiedArchiveTemporalStore mutationBounded = new UnifiedArchiveTemporalStore(
-        db, new DefaultArchiveDomainCatalog(), 1_000_000L, 9L);
+        db, new DefaultArchiveDomainCatalog(), 1_000_000L, 5L);
     ArchiveException mutationFailure = assertThrows(
         ArchiveException.class, () -> putUnifiedChange(mutationBounded, record));
 
@@ -743,6 +785,25 @@ public class UnifiedArchiveTemporalStoreOracleTest {
   }
 
   @Test
+  public void latestDoesNotMaterializeUnrelatedAnchorPayload() {
+    DomainValue largeAnchor = DomainValue.present(new byte[1_024]);
+    DomainValue current = val(0x0A);
+    put(5L, K1, largeAnchor, current);
+    QueryContext context = new QueryContext(ArchiveQueryLimits.builder()
+        .maxBackendValueBytes(64L)
+        .build());
+
+    Optional<DomainValue> result;
+    try (QueryContextHolder.Scope ignored = QueryContextHolder.attach(context)) {
+      result = unified.latest(DOMAIN, K1);
+    }
+
+    assertTrue(result.isPresent());
+    assertTrue(result.get().contentEquals(current));
+    assertEquals(5L, context.getBackendReads());
+  }
+
+  @Test
   public void backendReadCostDelegatesToPhysicalOperationAccounting() {
     assertEquals(0L, unified.getAsOfBackendReadCost());
     try (ArchiveTemporalReadView view = unified.openReadView()) {
@@ -753,8 +814,8 @@ public class UnifiedArchiveTemporalStoreOracleTest {
     try (QueryContextHolder.Scope ignored = QueryContextHolder.attach(context)) {
       assertEquals(Optional.empty(), unified.latest(DOMAIN, K1));
     }
-    // Anchor, latest, history seek and baseline are four actual native operations.
-    assertEquals(4L, context.getBackendReads());
+    // Anchor, latest reference and history seek are three actual native operations.
+    assertEquals(3L, context.getBackendReads());
   }
 
   /** Assert the two stores return identical getAsOf for a key over a txNum window, plus latest. */

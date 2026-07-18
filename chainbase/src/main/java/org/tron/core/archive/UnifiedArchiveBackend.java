@@ -61,7 +61,7 @@ final class UnifiedArchiveBackend {
     this.writePermit = writePermit;
     this.maxPublishRetainedBytes = maxPublishRetainedBytes;
     this.maxPublishMutations = addSaturated(
-        multiplySaturated(maxPublishRecords, 10L), SYSTEM_MUTATION_ALLOWANCE);
+        multiplySaturated(maxPublishRecords, 6L), SYSTEM_MUTATION_ALLOWANCE);
   }
 
   /** Publishes index, temporal rows, marker, cursor and journal delete in one RocksDB batch. */

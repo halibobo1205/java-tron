@@ -1,5 +1,6 @@
 package org.tron.core.services;
 
+import java.io.IOException;
 import java.util.concurrent.Callable;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,9 +32,25 @@ public abstract class WalletOnCursor {
     }
   }
 
+  /** Runs I/O work with this wallet's cursor on the thread that actually performs the work. */
+  public void futureGetWithIOException(IoRunnable runnable) throws IOException {
+    try {
+      dbManager.setCursor(cursor);
+      runnable.run();
+    } finally {
+      dbManager.resetCursor();
+    }
+  }
+
   public interface TronCallable<T> extends Callable<T> {
 
     @Override
     T call();
+  }
+
+  @FunctionalInterface
+  public interface IoRunnable {
+
+    void run() throws IOException;
   }
 }

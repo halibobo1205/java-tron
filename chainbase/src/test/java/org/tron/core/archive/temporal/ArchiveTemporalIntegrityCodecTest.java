@@ -18,14 +18,14 @@ public class ArchiveTemporalIntegrityCodecTest {
   @Test
   public void roundTripsFixedLocatorAndPayload() {
     byte[] locator = ArchiveTemporalIntegrityCodec.encode(
-        UnifiedArchiveColumnFamily.HISTORY, ROW_KEY, PAYLOAD, 7L);
+        UnifiedArchiveColumnFamily.CHANGESET, ROW_KEY, PAYLOAD, 7L);
 
     ArchiveTemporalIntegrityCodec.Locator decodedLocator =
         ArchiveTemporalIntegrityCodec.decodeLocator(
-            UnifiedArchiveColumnFamily.HISTORY, ROW_KEY, locator, "test");
+            UnifiedArchiveColumnFamily.CHANGESET, ROW_KEY, locator, "test");
     ArchiveTemporalIntegrityCodec.DecodedRow decoded =
         ArchiveTemporalIntegrityCodec.decode(
-            UnifiedArchiveColumnFamily.HISTORY, ROW_KEY, decodedLocator, PAYLOAD, "test");
+            UnifiedArchiveColumnFamily.CHANGESET, ROW_KEY, decodedLocator, PAYLOAD, "test");
 
     assertEquals(ArchiveTemporalIntegrityCodec.LOCATOR_BYTES, locator.length);
     assertEquals(7L, decoded.linkedTxNum());
@@ -35,38 +35,74 @@ public class ArchiveTemporalIntegrityCodecTest {
   @Test
   public void digestAndPayloadKeyAreBoundToTableAndLogicalKey() {
     byte[] locator = ArchiveTemporalIntegrityCodec.encode(
-        UnifiedArchiveColumnFamily.HISTORY, ROW_KEY, PAYLOAD, 7L);
+        UnifiedArchiveColumnFamily.CHANGESET, ROW_KEY, PAYLOAD, 7L);
     ArchiveTemporalIntegrityCodec.Locator decodedLocator =
         ArchiveTemporalIntegrityCodec.decodeLocator(
-            UnifiedArchiveColumnFamily.HISTORY, ROW_KEY, locator, "test");
+            UnifiedArchiveColumnFamily.CHANGESET, ROW_KEY, locator, "test");
 
     assertThrows(ArchiveException.class,
         () -> ArchiveTemporalIntegrityCodec.decode(
-            UnifiedArchiveColumnFamily.LATEST, ROW_KEY, decodedLocator, PAYLOAD, "test"));
+            UnifiedArchiveColumnFamily.COMMITMENT, ROW_KEY, decodedLocator, PAYLOAD, "test"));
     assertThrows(ArchiveException.class,
         () -> ArchiveTemporalIntegrityCodec.decode(
-            UnifiedArchiveColumnFamily.HISTORY, new byte[] {0x01, 0x02},
+            UnifiedArchiveColumnFamily.CHANGESET, new byte[] {0x01, 0x02},
             decodedLocator, PAYLOAD, "test"));
     assertFalse(Arrays.equals(
         ArchiveTemporalIntegrityCodec.payloadKey(
-            UnifiedArchiveColumnFamily.HISTORY, ROW_KEY),
+            UnifiedArchiveColumnFamily.CHANGESET, ROW_KEY),
         ArchiveTemporalIntegrityCodec.payloadKey(
-            UnifiedArchiveColumnFamily.LATEST, ROW_KEY)));
+            UnifiedArchiveColumnFamily.COMMITMENT, ROW_KEY)));
     byte[] payloadKey = ArchiveTemporalIntegrityCodec.payloadKey(
-        UnifiedArchiveColumnFamily.HISTORY, ROW_KEY);
-    assertEquals(UnifiedArchiveColumnFamily.HISTORY,
+        UnifiedArchiveColumnFamily.CHANGESET, ROW_KEY);
+    assertEquals(UnifiedArchiveColumnFamily.CHANGESET,
         ArchiveTemporalIntegrityCodec.columnFamilyOfPayloadKey(payloadKey, "test"));
     assertArrayEquals(ROW_KEY,
         ArchiveTemporalIntegrityCodec.logicalKeyOfPayloadKey(payloadKey, "test"));
   }
 
   @Test
+  public void referenceBindsSourceTargetAndTargetLocator() {
+    byte[] sourceKey = new byte[] {0x21, 0x01};
+    byte[] targetKey = new byte[] {0x22, 0x02};
+    byte[] targetLocator = ArchiveTemporalIntegrityCodec.encode(
+        UnifiedArchiveColumnFamily.CHANGESET, targetKey, PAYLOAD, 7L);
+    byte[] reference = ArchiveTemporalIntegrityCodec.encodeReference(
+        UnifiedArchiveColumnFamily.HISTORY, sourceKey, 7L,
+        UnifiedArchiveColumnFamily.CHANGESET, targetKey, targetLocator);
+
+    assertEquals(ArchiveTemporalIntegrityCodec.REFERENCE_BYTES, reference.length);
+    assertEquals(7L, ArchiveTemporalIntegrityCodec.decodeReference(
+        UnifiedArchiveColumnFamily.HISTORY, sourceKey, reference,
+        UnifiedArchiveColumnFamily.CHANGESET, targetKey, targetLocator, "test"));
+    assertThrows(ArchiveException.class, () -> ArchiveTemporalIntegrityCodec.decodeReference(
+        UnifiedArchiveColumnFamily.LATEST, sourceKey, reference,
+        UnifiedArchiveColumnFamily.CHANGESET, targetKey, targetLocator, "test"));
+    assertThrows(ArchiveException.class, () -> ArchiveTemporalIntegrityCodec.decodeReference(
+        UnifiedArchiveColumnFamily.HISTORY, sourceKey, reference,
+        UnifiedArchiveColumnFamily.CHANGESET, new byte[] {0x22, 0x03},
+        targetLocator, "test"));
+    byte[] modifiedLocator = targetLocator.clone();
+    modifiedLocator[modifiedLocator.length - 1] ^= 0x01;
+    assertThrows(ArchiveException.class, () -> ArchiveTemporalIntegrityCodec.decodeReference(
+        UnifiedArchiveColumnFamily.HISTORY, sourceKey, reference,
+        UnifiedArchiveColumnFamily.CHANGESET, targetKey, modifiedLocator, "test"));
+  }
+
+  @Test
+  public void historyAndLatestCannotOwnPayloads() {
+    assertThrows(ArchiveException.class, () -> ArchiveTemporalIntegrityCodec.encode(
+        UnifiedArchiveColumnFamily.HISTORY, ROW_KEY, PAYLOAD, 7L));
+    assertThrows(ArchiveException.class, () -> ArchiveTemporalIntegrityCodec.payloadKey(
+        UnifiedArchiveColumnFamily.LATEST, ROW_KEY));
+  }
+
+  @Test
   public void rejectsMalformedLocatorAndPayloadLengthBeforeDecode() {
     byte[] locator = ArchiveTemporalIntegrityCodec.encode(
-        UnifiedArchiveColumnFamily.HISTORY, ROW_KEY, PAYLOAD, 7L);
+        UnifiedArchiveColumnFamily.CHANGESET, ROW_KEY, PAYLOAD, 7L);
     assertThrows(ArchiveException.class,
         () -> ArchiveTemporalIntegrityCodec.decodeLocator(
-            UnifiedArchiveColumnFamily.HISTORY, ROW_KEY,
+            UnifiedArchiveColumnFamily.CHANGESET, ROW_KEY,
             Arrays.copyOf(locator, locator.length - 1), "test"));
 
     int oversized = ArchiveTemporalIntegrityCodec.MAX_STORED_PAYLOAD_BYTES + 1;
@@ -76,6 +112,6 @@ public class ArchiveTemporalIntegrityCodecTest {
     locator[12] = (byte) oversized;
     assertThrows(ArchiveException.class,
         () -> ArchiveTemporalIntegrityCodec.decodeLocator(
-            UnifiedArchiveColumnFamily.HISTORY, ROW_KEY, locator, "test"));
+            UnifiedArchiveColumnFamily.CHANGESET, ROW_KEY, locator, "test"));
   }
 }
