@@ -1,0 +1,229 @@
+[
+ {
+  "tag": "bob-balance-pre-exist",
+  "height": 77,
+  "method": "eth_getBalance",
+  "params": [
+   "0x81e52d8878caf14052bb2df2f11917564d239f44"
+  ],
+  "expected": "0x0",
+  "captured": null
+ },
+ {
+  "tag": "bob-balance-after-T1",
+  "height": 78,
+  "method": "eth_getBalance",
+  "params": [
+   "0x81e52d8878caf14052bb2df2f11917564d239f44"
+  ],
+  "expected": "0x989680",
+  "captured": null
+ },
+ {
+  "tag": "bob-balance-at-T1-frozen",
+  "height": 78,
+  "method": "eth_getBalance",
+  "params": [
+   "0x81e52d8878caf14052bb2df2f11917564d239f44"
+  ],
+  "expected": "0x989680",
+  "captured": null
+ },
+ {
+  "tag": "bob-balance-after-T2",
+  "height": 79,
+  "method": "eth_getBalance",
+  "params": [
+   "0x81e52d8878caf14052bb2df2f11917564d239f44"
+  ],
+  "expected": "0x2160ec0",
+  "captured": null
+ },
+ {
+  "tag": "alice-balance-after-freeze",
+  "height": 80,
+  "method": "eth_getBalance",
+  "params": [
+   "0x06e442b3af2a0c3398aea6986f66d6ae1e764d4e"
+  ],
+  "expected": null,
+  "captured": "0xb1a2bbd28170f8"
+ },
+ {
+  "tag": "stor2-code-pre-deploy",
+  "height": 83,
+  "method": "eth_getCode",
+  "params": [
+   "0x957639c74f874593409377dc321de9311103ba45"
+  ],
+  "expected": "0x",
+  "captured": null
+ },
+ {
+  "tag": "stor2-code-after-deploy",
+  "height": 84,
+  "method": "eth_getCode",
+  "params": [
+   "0x957639c74f874593409377dc321de9311103ba45"
+  ],
+  "expected": "0x3615600c57600035600055005b60005460005260206000f3",
+  "captured": null
+ },
+ {
+  "tag": "stor2-slot0-initial",
+  "height": 84,
+  "method": "eth_getStorageAt",
+  "params": [
+   "0x957639c74f874593409377dc321de9311103ba45",
+   "0x0"
+  ],
+  "expected": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "captured": null
+ },
+ {
+  "tag": "stor2-slot0-set111",
+  "height": 85,
+  "method": "eth_getStorageAt",
+  "params": [
+   "0x957639c74f874593409377dc321de9311103ba45",
+   "0x0"
+  ],
+  "expected": "0x000000000000000000000000000000000000000000000000000000000000006f",
+  "captured": null
+ },
+ {
+  "tag": "stor2-ethcall-set111",
+  "height": 85,
+  "method": "eth_call",
+  "params": [
+   {
+    "to": "0x957639c74f874593409377dc321de9311103ba45",
+    "data": "0x"
+   }
+  ],
+  "expected": "0x000000000000000000000000000000000000000000000000000000000000006f",
+  "captured": null
+ },
+ {
+  "tag": "stor2-slot0-set222",
+  "height": 86,
+  "method": "eth_getStorageAt",
+  "params": [
+   "0x957639c74f874593409377dc321de9311103ba45",
+   "0x0"
+  ],
+  "expected": "0x00000000000000000000000000000000000000000000000000000000000000de",
+  "captured": null
+ },
+ {
+  "tag": "stor2-ethcall-set222",
+  "height": 86,
+  "method": "eth_call",
+  "params": [
+   {
+    "to": "0x957639c74f874593409377dc321de9311103ba45",
+    "data": "0x"
+   }
+  ],
+  "expected": "0x00000000000000000000000000000000000000000000000000000000000000de",
+  "captured": null
+ },
+ {
+  "tag": "stor2-slot0-set0",
+  "height": 87,
+  "method": "eth_getStorageAt",
+  "params": [
+   "0x957639c74f874593409377dc321de9311103ba45",
+   "0x0"
+  ],
+  "expected": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "captured": null
+ },
+ {
+  "tag": "stor2-ethcall-set0",
+  "height": 87,
+  "method": "eth_call",
+  "params": [
+   {
+    "to": "0x957639c74f874593409377dc321de9311103ba45",
+    "data": "0x"
+   }
+  ],
+  "expected": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "captured": null
+ },
+ {
+  "tag": "stor2-slot0-at-set111-frozen",
+  "height": 85,
+  "method": "eth_getStorageAt",
+  "params": [
+   "0x957639c74f874593409377dc321de9311103ba45",
+   "0x0"
+  ],
+  "expected": "0x000000000000000000000000000000000000000000000000000000000000006f",
+  "captured": null
+ },
+ {
+  "tag": "stor2-ethcall-at-set222-frozen",
+  "height": 86,
+  "method": "eth_call",
+  "params": [
+   {
+    "to": "0x957639c74f874593409377dc321de9311103ba45",
+    "data": "0x"
+   }
+  ],
+  "expected": "0x00000000000000000000000000000000000000000000000000000000000000de",
+  "captured": null
+ },
+ {
+  "tag": "sd-code-after-deploy",
+  "height": 88,
+  "method": "eth_getCode",
+  "params": [
+   "0xe16176a093f0e3deb5d97357105cb7e60a1dc534"
+  ],
+  "expected": "0x7306e442b3af2a0c3398aea6986f66d6ae1e764d4eff",
+  "captured": null
+ },
+ {
+  "tag": "sd-code-pre-destroy-frozen",
+  "height": 88,
+  "method": "eth_getCode",
+  "params": [
+   "0xe16176a093f0e3deb5d97357105cb7e60a1dc534"
+  ],
+  "expected": "0x7306e442b3af2a0c3398aea6986f66d6ae1e764d4eff",
+  "captured": null
+ },
+ {
+  "tag": "sd-code-after-destroy",
+  "height": 89,
+  "method": "eth_getCode",
+  "params": [
+   "0xe16176a093f0e3deb5d97357105cb7e60a1dc534"
+  ],
+  "expected": "0x",
+  "captured": null
+ },
+ {
+  "tag": "bob-balance-final",
+  "height": 90,
+  "method": "eth_getBalance",
+  "params": [
+   "0x81e52d8878caf14052bb2df2f11917564d239f44"
+  ],
+  "expected": "0x2255100",
+  "captured": null
+ },
+ {
+  "tag": "bob-balance-T2-refrozen",
+  "height": 79,
+  "method": "eth_getBalance",
+  "params": [
+   "0x81e52d8878caf14052bb2df2f11917564d239f44"
+  ],
+  "expected": "0x2160ec0",
+  "captured": null
+ }
+]

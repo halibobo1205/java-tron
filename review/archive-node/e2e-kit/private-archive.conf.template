@@ -1,0 +1,145 @@
+
+net { type = mainnet }
+
+storage {
+  db.engine = "ROCKSDB"
+  db.sync = false
+  db.directory = "database"
+  index.directory = "index"
+  transHistory.switch = "on"
+  snapshot.maxFlushCount = 1
+
+  archive {
+    enable = true
+    db {
+      directory = "archive"
+      fullScrubOnStartup = false
+    }
+    identity.initialize = true
+    txnum.enable = true
+    temporal.enable = true
+    publisher {
+      async = true
+      backpressure = true
+    }
+    commitment.enable = false
+    debug.enable = false
+    coverage = "TVM_STATE_ONLY"
+    warnUnclassifiedStoreWrites = true
+  }
+}
+
+node.discovery = {
+  enable = false
+  persist = false
+}
+
+node {
+  trustNode = "127.0.0.1:50051"
+  walletExtensionApi = true
+  listen.port = 18888
+  connectFactor = 0.3
+  activeConnectFactor = 0.1
+  maxHttpConnectNumber = 50
+
+  p2p {
+    version = 20260719
+  }
+
+  active = []
+  passive = []
+  fastForward = []
+
+  http {
+    fullNodeEnable = true
+    fullNodePort = 8090
+    solidityEnable = false
+    PBFTEnable = false
+  }
+
+  rpc {
+    enable = true
+    port = 50051
+    solidityEnable = false
+    PBFTEnable = false
+    minEffectiveConnection = 0
+  }
+
+  jsonrpc {
+    httpFullNodeEnable = true
+    httpFullNodePort = 8545
+  }
+}
+
+seed.node = {
+  ip.list = []
+}
+
+genesis.block = {
+  assets = [
+    {
+      accountName = "Zion"
+      accountType = "AssetIssue"
+      address = "{witness_b58}"
+      balance = "50000000000000000"
+    },
+    {
+      accountName = "Sun"
+      accountType = "AssetIssue"
+      address = "{alice_b58}"
+      balance = "50000000000000000"
+    },
+    {
+      accountName = "Blackhole"
+      accountType = "AssetIssue"
+      address = "TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy"
+      balance = "-9223372036854775808"
+    }
+  ]
+
+  witnesses = [
+    {
+      address: {witness_b58},
+      url = "http://localhost",
+      voteCount = 10000
+    }
+  ]
+
+  timestamp = "0"
+  parentHash = "0xe58f33f9baf9305dc6f82b9f1934ea8f0ade2defb951258d50167028c780351f"
+}
+
+localwitness = [
+  "{witness_priv}"
+]
+
+block = {
+  needSyncCheck = false
+  maintenanceTimeInterval = 21600000
+  proposalExpireTime = 259200000
+}
+
+committee = {
+  allowCreationOfContracts = 1
+  allowMultiSign = 1
+  allowAdaptiveEnergy = 0
+  allowDelegateResource = 1
+  allowSameTokenName = 1
+  allowTvmTransferTrc10 = 1
+  allowTvmConstantinople = 1
+  allowTvmSolidity059 = 1
+  allowTvmIstanbul = 1
+  allowAssetOptimization = 1
+  allowNewResourceModel = 1
+  unfreezeDelayDays = 14
+}
+
+vm = {
+  supportConstant = true
+  maxEnergyLimitForConstant = 100000000
+  minTimeRatio = 0.0
+  maxTimeRatio = 5.0
+  saveInternalTx = false
+}
+
+committee.changedDelegation = 1
