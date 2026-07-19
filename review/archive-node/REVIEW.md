@@ -72,3 +72,40 @@ fail-stop），证实 arm64 门控为保守限制而非技术边界，且 5.15/9
 
 静态评审 + 单机 E2E；未跑该分支自带测试套件（本环境 Gradle/平台限制，仅构建了主 jar）；
 未做网络同步、长稳与容量压测。上线前仍需真机（arm64/Java17）soak 与大网同步验证。
+
+---
+
+# 附:对抗审查裁决（severity 订正）
+
+对上述清单做了三路对抗反证（攻主要项 / 攻次要项 / 攻"干净"结论）+ 人工亲验。结论：
+
+## 核心正确性五项"干净"结论全部 HOLD（逐行取证）
+无 live 回落 / 单原子 WriteBatch 发布 / 无死锁-丢唤醒-泄漏 / 三态保持 / native 句柄无泄漏——均经独立反证未被推翻。
+
+## 新发现（不在原清单，最有价值）
+- **[minor·新] fatal 修复路径自身可被它要响应的 hang 拖垮** — `DefaultArchiveService.java:3510`
+  `txNumIndex.markRepairRequired` 对可能已卡死的 DB 再写一次，且无自己的超时（外层 try/catch 只接抛异常、不接阻塞）。
+  正确性不受影响（进程仍由 30s `Runtime.halt(70)` 兜底终止；块未原子发布，reconcile 安全恢复），
+  但 durable repair reason 可能丢失。建议给该写一个有界 deadline。
+
+## 原清单 severity 订正
+- #1 MAX_OPEN_FILES：主要→**minor**（canonical LevelDB 100/库，archive 512=5×；admission 封顶；index/filter 常驻 block cache）。残留=暴露为配置。
+- #2 God-class：主要→**minor**（子系统已拆分为 ~40 类，留主类的是互锁，需放一处看清锁序；127 测试钉着，发版前重构高风险零收益）。
+- #3 openResolvedReader：**反驳**（非 LIFO 条件释放有意为之，acquire-stack 会破坏 snapshot 许可记账；无泄漏由 5 具名测试证明）。
+- #4 fatal-halt gate：**反驳，且原修复有害**（gate 有意+有测试；无条件 halt 会炸测试 JVM、篡夺应用关停策略）。
+- #5 eager canonical 化：主要→**minor/measure**，且原修复有害（`ArchiveInFlightValidator:220-222`+`AccountCanonicalValueCodec.validate` 强制 canonical journal 契约；raw-at-capture 会 brick）。
+- #6 docs：主要→**上游 PR checklist 项**（工作 fork；AUTHORITY 文档被 `ArchiveDomain.java` 规范引用）。
+- #7 reserveOverlay×3：**反驳**（3 调用=3 条 null 标记条目，非 bug）。
+- #8 decodeProof：**反驳**（逐字段校验在 `ArchiveJournalToken` 构造器 requireLength）。
+- #10 record*/consume*：**确认**（6 个 consume* 死代码，删）。
+- #11/#15/#16：**反驳**（分别被 oracle 差分测试 / ThreadLocal 判别+串行化 / 现有异常文案挡掉）。
+
+## 对抗后真正存活的行动项
+1. [minor·新] 给 fatal repair-marker 写（:3510）自己的有界超时。
+2. [minor] 暴露 maxOpenFiles + block-cache 为 archive 配置。
+3. [minor] 删死代码：QueryContext 6 个 consume* + ArchiveMetrics.safely()。
+4. [nit] 统一 async 默认（代码 true 权威，订正 javadoc + config.conf 模板）。
+5. [measure] 勿改 canonical 化（破坏 journal 契约）；仅在全历史 resync 吞吐点上先量再说。
+6. [doc] 记不变量：fatal halt 依赖 Manager 安装 handler。
+
+净结论：**无正确性缺陷**；原 6 个"主要"按原severity 0 个存活；真正改进项小且多为配置/文档/删死代码级。
