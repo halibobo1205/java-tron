@@ -79,15 +79,6 @@ public final class ArchiveTemporalCodec {
     return Bytes.concat(historyPrefix(domain, canonicalKey), Longs.toByteArray(txNum));
   }
 
-  static byte[] historyKeyOfPrefix(byte[] historyPrefix, long txNum) {
-    if (historyPrefix == null || historyPrefix.length < 7
-        || historyPrefix[0] != HISTORY_PREFIX) {
-      throw new ArchiveException("archive temporal history prefix is invalid");
-    }
-    requireNonNegativeTxNum(txNum);
-    return Bytes.concat(historyPrefix, Longs.toByteArray(txNum));
-  }
-
   static byte[] anchorKeyOfHistoryPrefix(byte[] historyPrefix) {
     if (historyPrefix == null || historyPrefix.length < 7
         || historyPrefix[0] != HISTORY_PREFIX) {
@@ -97,14 +88,6 @@ public final class ArchiveTemporalCodec {
     anchorKey[0] = ANCHOR_PREFIX;
     validateAnchorKey(anchorKey);
     return anchorKey;
-  }
-
-  static byte[] historySeekBefore(byte[] historyPrefix, long exclusiveTxNum) {
-    if (historyPrefix == null || historyPrefix.length < 7
-        || historyPrefix[0] != HISTORY_PREFIX || exclusiveTxNum <= 0L) {
-      throw new ArchiveException("archive temporal history predecessor seek is invalid");
-    }
-    return Bytes.concat(historyPrefix, Longs.toByteArray(exclusiveTxNum - 1L));
   }
 
   static byte[] changesetKey(long txNum, ArchiveDomain domain, byte[] canonicalKey) {
