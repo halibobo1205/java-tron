@@ -15,6 +15,9 @@ final class ArchiveTemporalRowValidator {
 
   static void validate(ArchiveDomainCatalog catalog, byte[] key, byte[] value,
       boolean validateValue, DynamicKeyPolicy dynamicKeyPolicy) {
+    if (key == null || key.length == 0) {
+      throw new ArchiveException("archive temporal row key is null or empty");
+    }
     ArchiveDomain domain;
     byte[] canonicalKey;
     switch (key[0]) {
