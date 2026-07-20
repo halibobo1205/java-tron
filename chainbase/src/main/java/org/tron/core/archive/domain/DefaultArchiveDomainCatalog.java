@@ -171,12 +171,18 @@ public final class DefaultArchiveDomainCatalog implements ArchiveDomainCatalog {
           .append(d.getReaderPolicy()).append('\n');
     }
     // The DYNAMIC_PROPERTIES key-level policy is part of the schema.
-    for (DynamicKeyDecision dec : dynamicKeyPolicy.allDecisions()) {
+    List<DynamicKeyDecision> dynamicDecisions =
+        new ArrayList<>(dynamicKeyPolicy.allDecisions());
+    dynamicDecisions.sort(Comparator.comparing(DynamicKeyDecision::getKey));
+    for (DynamicKeyDecision dec : dynamicDecisions) {
       sb.append("dyn|").append(dec.getKey()).append('|').append(dec.getKeyClass()).append('|')
           .append(dec.getRootPolicy()).append('|').append(dec.getHistoryPolicy()).append('|')
           .append(dec.getReaderPolicy()).append('\n');
     }
-    for (DynamicKeyDecision dec : dynamicKeyPolicy.patternDecisionsForChecksum()) {
+    List<DynamicKeyDecision> patternDecisions =
+        new ArrayList<>(dynamicKeyPolicy.patternDecisionsForChecksum());
+    patternDecisions.sort(Comparator.comparing(DynamicKeyDecision::getKey));
+    for (DynamicKeyDecision dec : patternDecisions) {
       sb.append("dyn-pattern|").append(dec.getKey()).append('|').append(dec.getKeyClass())
           .append('|').append(dec.getRootPolicy()).append('|').append(dec.getHistoryPolicy())
           .append('|').append(dec.getReaderPolicy()).append('\n');
