@@ -367,7 +367,7 @@ public final class ArchiveCaptureEngine {
         return true;
       case GENERIC_TRON_STORE_ALLOWLIST:
         // DYNAMIC_PROPERTIES: archive every key that keeps history; skip only NO_ARCHIVE keys
-        // (migration markers / aggregate statistics). Unknown keys keep history by policy.
+        // (markers / operational cursors / aggregate statistics). Unknown keys keep history.
         DynamicKeyDecision decision = dynamicKeyPolicy.decision(key);
         return decision.getHistoryPolicy() != HistoryPolicy.NO_ARCHIVE;
       default:

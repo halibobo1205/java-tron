@@ -15,6 +15,14 @@ public class DynamicKeyPolicyTest {
     return policy.decision(key.getBytes(StandardCharsets.US_ASCII));
   }
 
+  private void assertExcluded(String key, DynamicKeyClass keyClass) {
+    DynamicKeyDecision decision = decide(key);
+    assertEquals(keyClass, decision.getKeyClass());
+    assertEquals(RootPolicy.EXCLUDED, decision.getRootPolicy());
+    assertEquals(HistoryPolicy.NO_ARCHIVE, decision.getHistoryPolicy());
+    assertEquals(ReaderPolicy.INTERNAL_ONLY, decision.getReaderPolicy());
+  }
+
   @Test
   public void vmAndFeeConfigKeysAreRooted() {
     assertEquals(RootPolicy.IN_GLOBAL_ROOT, decide("ENERGY_FEE").getRootPolicy());
@@ -246,6 +254,15 @@ public class DynamicKeyPolicyTest {
     assertEquals(RootPolicy.EXCLUDED, stateFlag.getRootPolicy());
     assertEquals(HistoryPolicy.NO_ARCHIVE, stateFlag.getHistoryPolicy());
     assertEquals(RootPolicy.EXCLUDED, decide("TOTAL_STORAGE_POOL").getRootPolicy());
+  }
+
+  @Test
+  public void knownOperationalAndLegacyKeysDoNotFallBackToUnknownHistory() {
+    assertExcluded("BLOCK_FILLED_SLOTS", DynamicKeyClass.STATISTIC);
+    assertExcluded("BLOCK_FILLED_SLOTS_INDEX", DynamicKeyClass.INDEX_CURSOR);
+    assertExcluded("BURN_TRX_AMOUNT", DynamicKeyClass.STATISTIC);
+    assertExcluded("SET_BLACKHOLE_ACCOUNT_PERMISSION", DynamicKeyClass.MIGRATION_MARKER);
+    assertExcluded("STORAGE_EXCHANGE_TAX_RATE", DynamicKeyClass.FEE_PARAMETER);
   }
 
   @Test

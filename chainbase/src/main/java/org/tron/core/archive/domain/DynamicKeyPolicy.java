@@ -10,9 +10,10 @@ import java.util.Map;
 /**
  * Key-level policy for the DYNAMIC_PROPERTIES domain. VM, fee, resource, validation and governance
  * parameters that can change historical execution or transaction validity enter the global root;
- * header cursors and price history are kept history-only; one-time migration markers and aggregate
- * statistics are excluded. Unknown keys keep diagnostic history but are excluded from the root; a
- * future execution-affecting key must be promoted explicitly so root coverage stays reviewable.
+ * header cursors and price history are kept history-only; one-time markers, operational cursors,
+ * legacy settings and aggregate statistics are excluded. Unknown keys keep diagnostic history but
+ * are excluded from the root; a future execution-affecting key must be promoted explicitly so root
+ * coverage stays reviewable.
  */
 public final class DynamicKeyPolicy {
 
@@ -154,13 +155,17 @@ public final class DynamicKeyPolicy {
     historyOnly("BANDWIDTH_PRICE_HISTORY", DynamicKeyClass.PRICE_HISTORY);
     historyOnly("MEMO_FEE_HISTORY", DynamicKeyClass.PRICE_HISTORY);
 
-    // --- EXCLUDED: one-time migration markers + aggregate statistics ---
+    // --- EXCLUDED: one-time markers, operational cursors and aggregate statistics ---
     excluded("ABI_MOVE_DONE", DynamicKeyClass.MIGRATION_MARKER);
     excluded("TOKEN_UPDATE_DONE", DynamicKeyClass.MIGRATION_MARKER);
     excluded("ENERGY_PRICE_HISTORY_DONE", DynamicKeyClass.MIGRATION_MARKER);
     excluded("BANDWIDTH_PRICE_HISTORY_DONE", DynamicKeyClass.MIGRATION_MARKER);
     excluded("TURKISH_KEY_MIGRATION_DONE", DynamicKeyClass.MIGRATION_MARKER);
+    excluded("SET_BLACKHOLE_ACCOUNT_PERMISSION", DynamicKeyClass.MIGRATION_MARKER);
     excluded("state_flag", DynamicKeyClass.INDEX_CURSOR);
+    excluded("BLOCK_FILLED_SLOTS_INDEX", DynamicKeyClass.INDEX_CURSOR);
+    excluded("BLOCK_FILLED_SLOTS", DynamicKeyClass.STATISTIC);
+    excluded("BURN_TRX_AMOUNT", DynamicKeyClass.STATISTIC);
     excluded("TOTAL_TRANSACTION_COST", DynamicKeyClass.STATISTIC);
     excluded("TOTAL_CREATE_ACCOUNT_COST", DynamicKeyClass.STATISTIC);
     excluded("TOTAL_CREATE_WITNESS_FEE", DynamicKeyClass.STATISTIC);
@@ -168,6 +173,8 @@ public final class DynamicKeyPolicy {
     excluded("TOTAL_STORAGE_TAX", DynamicKeyClass.STATISTIC);
     excluded("TOTAL_STORAGE_RESERVED", DynamicKeyClass.STATISTIC);
     excluded("TRANSACTION_FEE_POOL", DynamicKeyClass.STATISTIC);
+    // Legacy storage-market setting with no production reader beyond store initialization.
+    excluded("STORAGE_EXCHANGE_TAX_RATE", DynamicKeyClass.FEE_PARAMETER);
   }
 
   private void root(String key, DynamicKeyClass keyClass) {
