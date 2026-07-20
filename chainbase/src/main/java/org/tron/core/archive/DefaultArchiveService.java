@@ -1634,12 +1634,6 @@ public final class DefaultArchiveService implements ArchiveService {
     inFlightBlocks.put(token.getBlockNum(), acknowledged);
   }
 
-  private Optional<DomainValue> latestInFlight(WrappedByteArray key) {
-    Deque<InFlightVersion> versions = inFlightVersions.get(key);
-    return versions == null || versions.isEmpty()
-        ? Optional.empty() : Optional.of(versions.peekLast().value);
-  }
-
   private Optional<DomainValue> latestWithInFlight(ArchiveTemporalReadView startupView,
       ArchiveDomain domain, byte[] canonicalKey) {
     Deque<InFlightVersion> versions = inFlightVersions.get(latestKey(domain, canonicalKey));

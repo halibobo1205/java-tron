@@ -2,7 +2,6 @@ package org.tron.core.archive.txnum;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertThrows;
 
 import java.util.Arrays;
@@ -248,11 +247,10 @@ public class ArchiveBlockRangeCodecTest {
   }
 
   @Test
-  public void rangeKeyIsPrefixedAndDistinctFromCursor() {
+  public void rangeKeyUsesDedicatedPrefix() {
     assertEquals(ArchiveBlockRangeCodec.TXNUM_BLOCK_PREFIX,
         ArchiveBlockRangeCodec.rangeKey(1)[0]);
     assertEquals(9, ArchiveBlockRangeCodec.rangeKey(1).length); // prefix(1) + blockNum(8)
-    assertNotEquals(ArchiveBlockRangeCodec.rangeKey(1)[0], ArchiveBlockRangeCodec.CURSOR_KEY[0]);
   }
 
   @Test

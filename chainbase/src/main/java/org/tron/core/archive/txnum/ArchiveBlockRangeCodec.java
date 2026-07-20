@@ -40,11 +40,8 @@ public final class ArchiveBlockRangeCodec {
   static final int POSITION_VALUE_MAX_LENGTH = 1 + Long.BYTES * 2 + 2 + Integer.BYTES * 3
       + TX_ID_LENGTH + ArchiveBlockRange.BLOCK_HASH_LENGTH;
 
-  // The lowest block currently committed to this index -- written for the first committed range and
-  // cleared if the archive is unwound back to empty. The historical-read coverage gate uses it to
-  // tell a genesis-complete archive
-  // (where a MISSING dynamic-property is unambiguously the in-memory default) from a mid-chain one.
-  static final byte[] CURSOR_KEY = metaKey("cursor");
+  // The lowest block currently committed to this index. The historical-read coverage gate uses it
+  // to distinguish genesis-complete archives from mid-chain archives.
   static final byte[] FIRST_BLOCK_KEY = metaKey("first-block");
   static final byte[] REPAIR_REQUIRED_KEY = metaKey("repair-required");
 
