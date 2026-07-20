@@ -1,7 +1,7 @@
 # feat/archive-node 深度逐模块 · 对抗式复核报告（Workflow）
 
 - 方法：Workflow 编排 23 个 agent —— 11 个模块各一个深度审查 agent（产结构化发现）→ 各模块一个对抗 agent（逐条尝试证伪）→ 1 个综合 agent。REFUTED 的发现自动剔除。
-- 输入上下文：三轮前序审查 + 对抗�reconciliation 的全部已知结论已喂给审查 agent，只找**新**问题（全部 11 条 isNovel=true）。
+- 输入上下文：三轮前序审查 + 对抗式 reconciliation 的全部已知结论已喂给审查 agent，只找**新**问题（全部 11 条 isNovel=true）。
 - 结果：**11 模块，11 条存活，15 条被对抗证伪。0 blocker / 0 major / 1 minor / 10 nit，无正确性或并发缺陷。**
 - 人工复核：唯一 minor 项（AccountStore.java:76 SHA-256）已由 Opus 亲验 `AccountStore.get():74-76`、`Sha256Hash.java:146/168/182`、`AccountCapsule.java:724/741` 属实。
 
