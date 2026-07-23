@@ -59,10 +59,14 @@ public final class UnifiedArchiveManifest {
     if (startsWith(persisted, LAYOUT_SCHEMA_PREFIX)
         && !startsWith(persisted, CURRENT_LAYOUT_SCHEMA_PREFIX)) {
       throw new ArchiveException(
-          "UNIFIED_V1 archive layout schema mismatch; expected layout-schema=6");
+          "UNIFIED_V1 archive layout schema mismatch; expected layout-schema=6; "
+              + "restore a canonical/archive backup compatible with this build, or rebuild "
+              + "canonical and archive together from empty directories");
     }
     if (hasValidShape(persisted)) {
-      throw new ArchiveException("UNIFIED_V1 archive schema checksum mismatch");
+      throw new ArchiveException("UNIFIED_V1 archive schema checksum mismatch; "
+          + "restore a canonical/archive backup compatible with this build, or rebuild canonical "
+          + "and archive together from empty directories");
     }
     throw new ArchiveException("UNIFIED_V1 archive manifest mismatch");
   }

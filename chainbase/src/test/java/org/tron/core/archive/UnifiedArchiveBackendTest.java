@@ -19,6 +19,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.tron.core.archive.unified.UnifiedArchiveTestMaintenance.openWithBeforeBatchWrite;
+import static org.tron.core.archive.unified.UnifiedArchiveTestMaintenance.openWithStatistics;
 import static org.tron.core.archive.unified.UnifiedArchiveTestMaintenance.write;
 
 import com.google.protobuf.ByteString;
@@ -2881,7 +2882,9 @@ public class UnifiedArchiveBackendTest {
       db = null;
     }
     CommonParameter.getInstance().setMetricsPrometheusEnable(enabled);
-    db = UnifiedArchiveDb.open(dbPath, schemaChecksum);
+    db = enabled
+        ? openWithStatistics(dbPath, schemaChecksum)
+        : UnifiedArchiveDb.open(dbPath, schemaChecksum);
     wire(false);
   }
 

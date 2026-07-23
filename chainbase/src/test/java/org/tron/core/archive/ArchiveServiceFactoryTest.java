@@ -132,6 +132,8 @@ public class ArchiveServiceFactoryTest {
 
       assertTrue(failure.getMessage().contains("archive identity validation failed"));
       assertTrue(failure.getMessage().contains("invalid size"));
+      assertTrue(failure.getMessage().contains("backup compatible with this build"));
+      assertTrue(failure.getMessage().contains("rebuild canonical and archive together"));
     }
   }
 

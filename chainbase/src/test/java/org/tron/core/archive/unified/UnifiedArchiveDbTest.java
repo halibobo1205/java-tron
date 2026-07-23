@@ -53,7 +53,6 @@ import org.rocksdb.Statistics;
 import org.rocksdb.StatsLevel;
 import org.rocksdb.TickerType;
 import org.rocksdb.WriteOptions;
-import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.ReflectUtils;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchiveNativeResourceReleaseException;
@@ -1095,13 +1094,10 @@ public class UnifiedArchiveDbTest {
     db.writeMaintenanceAtomically(new UnifiedArchiveMaintenanceBatch()
         .put(UnifiedArchiveColumnFamily.LATEST, key, value));
 
-    boolean previouslyEnabled =
-        CommonParameter.getInstance().isMetricsPrometheusEnable();
     db.close();
     db = null;
     try {
-      CommonParameter.getInstance().setMetricsPrometheusEnable(true);
-      db = UnifiedArchiveDb.open(dbPath, SCHEMA_CHECKSUM);
+      db = UnifiedArchiveDb.openWithStatisticsForTesting(dbPath, SCHEMA_CHECKSUM);
       Statistics statistics = ReflectUtils.getFieldValue(db, "statistics");
       try (UnifiedArchiveReadView query = db.openQueryReadView()) {
         long before = statistics.getTickerCount(TickerType.NUMBER_KEYS_READ);
@@ -1115,7 +1111,6 @@ public class UnifiedArchiveDbTest {
         db.close();
         db = null;
       }
-      CommonParameter.getInstance().setMetricsPrometheusEnable(previouslyEnabled);
       db = UnifiedArchiveDb.open(dbPath, SCHEMA_CHECKSUM);
     }
   }
@@ -1123,13 +1118,10 @@ public class UnifiedArchiveDbTest {
   @Test
   public void journalPublicationCompareDoesNotPopulateDataBlockCache() {
     putJournalBundle();
-    boolean previouslyEnabled =
-        CommonParameter.getInstance().isMetricsPrometheusEnable();
     db.close();
     db = null;
     try {
-      CommonParameter.getInstance().setMetricsPrometheusEnable(true);
-      db = UnifiedArchiveDb.open(dbPath, SCHEMA_CHECKSUM);
+      db = UnifiedArchiveDb.openWithStatisticsForTesting(dbPath, SCHEMA_CHECKSUM);
       Statistics statistics = ReflectUtils.getFieldValue(db, "statistics");
       long before = statistics.getTickerCount(TickerType.BLOCK_CACHE_DATA_BYTES_INSERT);
 
@@ -1142,7 +1134,6 @@ public class UnifiedArchiveDbTest {
         db.close();
         db = null;
       }
-      CommonParameter.getInstance().setMetricsPrometheusEnable(previouslyEnabled);
       db = UnifiedArchiveDb.open(dbPath, SCHEMA_CHECKSUM);
     }
   }
@@ -1659,6 +1650,7 @@ public class UnifiedArchiveDbTest {
     assertTrue(db.temporalPayloadMetadataUsesEvictableCache());
     assertTrue(db.temporalPayloadOptimizesFiltersForHits());
     assertTrue(db.usesStableSstTableFormat());
+    assertTrue(db.usesDynamicLevelCompaction());
   }
 
   @Test
@@ -1746,26 +1738,21 @@ public class UnifiedArchiveDbTest {
   }
 
   @Test
-  public void statisticsAreOptionalAndUseLowOverheadLevel() {
-    boolean previouslyEnabled =
-        CommonParameter.getInstance().isMetricsPrometheusEnable();
+  public void productionOpenAvoidsUnusedNativeStatistics() {
     db.close();
     db = null;
     try {
-      CommonParameter.getInstance().setMetricsPrometheusEnable(false);
       try (UnifiedArchiveDb withoutStatistics =
                UnifiedArchiveDb.open(dbPath, SCHEMA_CHECKSUM)) {
         assertFalse(withoutStatistics.hasStatistics());
       }
-      CommonParameter.getInstance().setMetricsPrometheusEnable(true);
       try (UnifiedArchiveDb withStatistics =
-               UnifiedArchiveDb.open(dbPath, SCHEMA_CHECKSUM)) {
+               UnifiedArchiveDb.openWithStatisticsForTesting(dbPath, SCHEMA_CHECKSUM)) {
         assertTrue(withStatistics.hasStatistics());
         assertEquals(StatsLevel.EXCEPT_DETAILED_TIMERS,
             withStatistics.statisticsLevel());
       }
     } finally {
-      CommonParameter.getInstance().setMetricsPrometheusEnable(previouslyEnabled);
       db = UnifiedArchiveDb.open(dbPath, SCHEMA_CHECKSUM);
     }
   }
@@ -1792,6 +1779,7 @@ public class UnifiedArchiveDbTest {
     ArchiveException failure = assertThrows(ArchiveException.class,
         () -> UnifiedArchiveDb.open(dbPath, repeated(0x6b)));
     assertTrue(failure.getMessage().contains("schema checksum mismatch"));
+    assertTrue(failure.getMessage().contains("rebuild"));
   }
 
   @Test
@@ -1845,6 +1833,7 @@ public class UnifiedArchiveDbTest {
     ArchiveException failure = assertThrows(ArchiveException.class,
         () -> UnifiedArchiveDb.open(dbPath, SCHEMA_CHECKSUM));
     assertTrue(failure.getMessage().contains("layout schema mismatch"));
+    assertTrue(failure.getMessage().contains("rebuild"));
   }
 
   @Test

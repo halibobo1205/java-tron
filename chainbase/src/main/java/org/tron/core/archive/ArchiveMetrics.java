@@ -20,6 +20,10 @@ public final class ArchiveMetrics {
   private static final double NANOS_PER_SECOND = 1_000_000_000D;
   private static final int MAX_PENDING_REPORTS = 1_024;
   private static final int MAX_PENDING_STATE_TYPES = 64;
+  private static final int IN_FLIGHT_STATE = 0;
+  private static final int QUERY_ADMISSION_STATE = 1;
+  private static final int SCALAR_STATE = 2;
+  private static final int STATE_KIND_COUNT = 3;
   private static final Logger logger = LoggerFactory.getLogger("archive");
   private static final AtomicBoolean metricFailureReported = new AtomicBoolean();
 
@@ -168,20 +172,6 @@ public final class ArchiveMetrics {
 
   public static void setActiveSnapshots(long active) {
     setState("active_snapshots", active);
-  }
-
-  public static void addRocksDbCounter(String type, long amount) {
-    try {
-      if (enabled()) {
-        dispatcher().submit(() -> incrementWork(type, amount));
-      }
-    } catch (Throwable failure) {
-      reportFailureBestEffort(failure);
-    }
-  }
-
-  public static void setRocksDbState(String type, long value) {
-    setState(type, value);
   }
 
   public static void queryRejected(HistoricalQueryLimitException failure) {
@@ -354,6 +344,8 @@ public final class ArchiveMetrics {
     private final Thread worker;
     private InFlightState pendingInFlight;
     private QueryAdmissionState pendingQueryAdmission;
+    private boolean preferState;
+    private int nextStateKind;
     private boolean reporting;
     private long droppedReports;
 
@@ -371,8 +363,7 @@ public final class ArchiveMetrics {
       failIfInjected();
       synchronized (monitor) {
         if (pending.size() >= maximumPending) {
-          droppedReports = droppedReports == Long.MAX_VALUE
-              ? Long.MAX_VALUE : droppedReports + 1L;
+          recordDroppedReport();
           return;
         }
         pending.addLast(report);
@@ -385,13 +376,19 @@ public final class ArchiveMetrics {
       synchronized (monitor) {
         if (!pendingStates.containsKey(type)
             && pendingStates.size() >= MAX_PENDING_STATE_TYPES) {
-          droppedReports = droppedReports == Long.MAX_VALUE
-              ? Long.MAX_VALUE : droppedReports + 1L;
+          recordDroppedReport();
           return;
         }
         pendingStates.put(type, value);
         monitor.notifyAll();
       }
+    }
+
+    private void recordDroppedReport() {
+      droppedReports = droppedReports == Long.MAX_VALUE
+          ? Long.MAX_VALUE : droppedReports + 1L;
+      pendingStates.put("metrics_dropped_reports", droppedReports);
+      monitor.notifyAll();
     }
 
     private void setInFlight(long blocks, long records, long bytes, long resourceBytes) {
@@ -480,19 +477,26 @@ public final class ArchiveMetrics {
               return;
             }
           }
-          if (!pending.isEmpty()) {
+          boolean hasState = pendingInFlight != null
+              || pendingQueryAdmission != null || !pendingStates.isEmpty();
+          if (!pending.isEmpty() && (!preferState || !hasState)) {
             report = pending.removeFirst();
-          } else if (pendingInFlight != null) {
-            inFlight = pendingInFlight;
-            pendingInFlight = null;
-          } else if (pendingQueryAdmission != null) {
-            queryAdmission = pendingQueryAdmission;
-            pendingQueryAdmission = null;
+            preferState = hasState;
           } else {
-            Map.Entry<String, Long> state = pendingStates.entrySet().iterator().next();
-            stateType = state.getKey();
-            stateValue = state.getValue();
-            pendingStates.remove(stateType);
+            int stateKind = nextPendingStateKind();
+            if (stateKind == IN_FLIGHT_STATE) {
+              inFlight = pendingInFlight;
+              pendingInFlight = null;
+            } else if (stateKind == QUERY_ADMISSION_STATE) {
+              queryAdmission = pendingQueryAdmission;
+              pendingQueryAdmission = null;
+            } else {
+              Map.Entry<String, Long> state = pendingStates.entrySet().iterator().next();
+              stateType = state.getKey();
+              stateValue = state.getValue();
+              pendingStates.remove(stateType);
+            }
+            preferState = false;
           }
           reporting = true;
         }
@@ -518,6 +522,19 @@ public final class ArchiveMetrics {
           monitor.notifyAll();
         }
       }
+    }
+
+    private int nextPendingStateKind() {
+      for (int offset = 0; offset < STATE_KIND_COUNT; offset++) {
+        int candidate = (nextStateKind + offset) % STATE_KIND_COUNT;
+        if ((candidate == IN_FLIGHT_STATE && pendingInFlight != null)
+            || (candidate == QUERY_ADMISSION_STATE && pendingQueryAdmission != null)
+            || (candidate == SCALAR_STATE && !pendingStates.isEmpty())) {
+          nextStateKind = (candidate + 1) % STATE_KIND_COUNT;
+          return candidate;
+        }
+      }
+      throw new IllegalStateException("archive metric state queue is empty");
     }
   }
 
