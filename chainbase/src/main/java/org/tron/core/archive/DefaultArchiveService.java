@@ -2175,14 +2175,21 @@ public final class DefaultArchiveService implements ArchiveService {
   }
 
   private long applyDiskSample(ArchiveDiskSpaceSampler.Sample sample) {
+    boolean accepted = false;
+    long usableSpace;
     synchronized (diskSampleMonitor) {
       if (sample.getGeneration() > lastDiskSampleGeneration) {
         lastUsableSpaceBytes = sample.getUsableBytes();
         lastDiskSampleNanos = sample.getSampledAtNanos();
         lastDiskSampleGeneration = sample.getGeneration();
+        accepted = true;
       }
-      return lastUsableSpaceBytes;
+      usableSpace = lastUsableSpaceBytes;
     }
+    if (accepted) {
+      ArchiveMetrics.setDiskFree(usableSpace);
+    }
+    return usableSpace;
   }
 
   private static long multiplySaturated(long left, long right) {

@@ -272,6 +272,9 @@ The current source passed the archive-focused tests across `common`, `chainbase`
 BUILD SUCCESSFUL in 2m 2s
 ```
 
+`*StructLogReconstructorTest` matched no test at this commit and must not be counted as coverage;
+the command still succeeded because the other selected suites matched tests.
+
 The repository's actual framework checkstyle tasks also passed:
 
 ```text

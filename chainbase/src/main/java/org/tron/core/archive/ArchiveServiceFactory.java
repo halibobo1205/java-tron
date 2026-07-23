@@ -117,7 +117,9 @@ public final class ArchiveServiceFactory {
         Files.createDirectories(archivePath);
       }
     } catch (ArchiveIdentityException e) {
-      throw new ArchiveException("archive identity validation failed: " + e.getMessage(), e);
+      throw new ArchiveException("archive identity validation failed: " + e.getMessage()
+          + "; restore a canonical/archive backup compatible with this build, or rebuild "
+          + "canonical and archive together from empty directories", e);
     } catch (IOException e) {
       throw new ArchiveException("failed to create archive directory " + archiveDir, e);
     }

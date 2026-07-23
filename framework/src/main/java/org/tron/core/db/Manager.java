@@ -1340,7 +1340,7 @@ public class Manager {
     } catch (TronError e) {
       throw e;
     } catch (RuntimeException | Error e) {
-      throw archiveRuntimeError(action, block, e);
+      throw archivePreCommitError(action, block, e);
     }
   }
 
@@ -1432,14 +1432,6 @@ public class Manager {
     }
   }
 
-  void abortArchiveBlockAndFailStop(BlockCapsule block, String action, Throwable primary) {
-    abortArchiveBlockBestEffort(block, action, primary);
-    if (primary instanceof TronError) {
-      throw (TronError) primary;
-    }
-    throw archiveRuntimeError(action, block, primary);
-  }
-
   private TronError archiveRuntimeError(String action, BlockCapsule block, Throwable e) {
     logArchiveErrorBestEffort(
         "Archive " + action + " failed after canonical state changed for block "
@@ -1447,6 +1439,17 @@ public class Manager {
         e, e);
     return new TronError(
         "archive " + action + " failed after canonical state changed for block " + block.getNum(),
+        e, TronError.ErrCode.ARCHIVE_RUNTIME);
+  }
+
+  private TronError archivePreCommitError(String action, BlockCapsule block, Throwable e) {
+    logArchiveErrorBestEffort(
+        "Archive " + action + " journal failed before canonical commit for block "
+            + block.getNum() + ".",
+        e, e);
+    return new TronError(
+        "archive " + action + " journal failed before canonical commit for block "
+            + block.getNum(),
         e, TronError.ErrCode.ARCHIVE_RUNTIME);
   }
 
@@ -1631,9 +1634,6 @@ public class Manager {
             abortArchiveBlockBestEffort(item.getBlk(), "switch fork replay", e);
           }
           logArchiveWarningBestEffort("Switch fork replay failed.", e, e);
-          if (e.getErrCode() != TronError.ErrCode.ARCHIVE_RUNTIME) {
-            throw e;
-          }
           throw e;
         } catch (Error e) {
           exception = e;
@@ -1729,7 +1729,7 @@ public class Manager {
   private void logArchiveWarningBestEffort(
       String message, Throwable failure, Throwable primary) {
     try {
-      logger.warn("{} ({})", message, safeFailureType(failure));
+      logger.warn(message, failure);
     } catch (Throwable loggingFailure) {
       addSuppressedSafely(primary, loggingFailure);
     }
@@ -1738,17 +1738,9 @@ public class Manager {
   private void logArchiveErrorBestEffort(
       String message, Throwable failure, Throwable primary) {
     try {
-      logger.error("{} ({})", message, safeFailureType(failure));
+      logger.error(message, failure);
     } catch (Throwable loggingFailure) {
       addSuppressedSafely(primary, loggingFailure);
-    }
-  }
-
-  private static String safeFailureType(Throwable failure) {
-    try {
-      return failure == null ? "unknown" : failure.getClass().getName();
-    } catch (Throwable ignored) {
-      return "unknown";
     }
   }
 

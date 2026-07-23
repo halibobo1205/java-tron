@@ -1,6 +1,6 @@
 package org.tron.core.archive.query;
 
-/** Thread-local bridge for carrying one historical-query budget through VM and trace code. */
+/** Thread-local bridge for carrying one historical-query budget through VM execution. */
 public final class QueryContextHolder {
 
   private static final ThreadLocal<Entry> CURRENT = new ThreadLocal<>();

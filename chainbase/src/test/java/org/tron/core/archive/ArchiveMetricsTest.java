@@ -9,6 +9,7 @@ import io.prometheus.client.CollectorRegistry;
 import java.lang.reflect.Method;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -66,19 +67,15 @@ public class ArchiveMetricsTest {
 
   @Test
   public void operationalGaugesAndThirtySecondQueryBucketAreScrapable() throws Exception {
-    double bloomUsefulBefore = workCounter("rocksdb_bloom_filter_useful");
     ArchiveMetrics.setRepairRequired(true);
     ArchiveMetrics.setOldestInFlightBlock(123L);
-    ArchiveMetrics.setRocksDbState("rocksdb_pending_compaction_bytes", 789L);
-    ArchiveMetrics.addRocksDbCounter("rocksdb_bloom_filter_useful", 3L);
+    ArchiveMetrics.setDiskFree(456L);
     ArchiveMetrics.queryFinished(new QueryContext(ArchiveQueryLimits.unlimited()));
     assertTrue(ArchiveMetrics.awaitIdleForTesting(1L, TimeUnit.SECONDS));
 
     assertEquals(1D, gauge("repair_required"), 0D);
     assertEquals(123D, gauge("oldest_inflight_block"), 0D);
-    assertEquals(789D, gauge("rocksdb_pending_compaction_bytes"), 0D);
-    assertEquals(bloomUsefulBefore + 3D,
-        workCounter("rocksdb_bloom_filter_useful"), 0D);
+    assertEquals(456D, gauge("disk_free_bytes"), 0D);
     assertNotNull(CollectorRegistry.defaultRegistry.getSampleValue(
         MetricKeys.Histogram.ARCHIVE_QUERY_LATENCY + "_bucket",
         new String[] {"result", "le"}, new String[] {"completed", "30.0"}));
@@ -165,6 +162,41 @@ public class ArchiveMetricsTest {
     assertEquals(0D, gauge("active_queries"), 0D);
     assertEquals(0D, gauge("pending_queries"), 0D);
     assertEquals(0D, gauge("repair_required"), 0D);
+    assertEquals(ArchiveMetrics.droppedReportsForTesting(),
+        gauge("metrics_dropped_reports"), 0D);
+  }
+
+  @Test
+  public void scalarStateIsNotStarvedByRepeatedInFlightUpdates() throws Exception {
+    ArchiveMetrics.setRepairRequired(false);
+    ArchiveMetrics.setInFlight(0L, 0L, 0L, 0L);
+    assertTrue(ArchiveMetrics.awaitIdleForTesting(1L, TimeUnit.SECONDS));
+    CountDownLatch reporterEntered = new CountDownLatch(1);
+    CountDownLatch releaseReporter = new CountDownLatch(1);
+    CountDownLatch observed = new CountDownLatch(1);
+    AtomicReference<Double> observedRepair = new AtomicReference<>();
+    ArchiveMetrics.submitForTesting(() -> {
+      reporterEntered.countDown();
+      await(releaseReporter);
+    });
+    try {
+      assertTrue(reporterEntered.await(1L, TimeUnit.SECONDS));
+      ArchiveMetrics.submitForTesting(() -> { });
+      ArchiveMetrics.submitForTesting(
+          () -> ArchiveMetrics.setInFlight(2L, 3L, 4L, 5L));
+      ArchiveMetrics.submitForTesting(() -> {
+        observedRepair.set(gauge("repair_required"));
+        observed.countDown();
+      });
+      ArchiveMetrics.setInFlight(1L, 1L, 1L, 1L);
+      ArchiveMetrics.setRepairRequired(true);
+    } finally {
+      releaseReporter.countDown();
+    }
+
+    assertTrue(observed.await(1L, TimeUnit.SECONDS));
+    assertEquals(1D, observedRepair.get(), 0D);
+    assertTrue(ArchiveMetrics.awaitIdleForTesting(1L, TimeUnit.SECONDS));
   }
 
   @Test
@@ -205,13 +237,6 @@ public class ArchiveMetricsTest {
   private static double gauge(String type) {
     Double value = CollectorRegistry.defaultRegistry.getSampleValue(
         MetricKeys.Gauge.ARCHIVE_STATE,
-        new String[] {"type"}, new String[] {type});
-    return value == null ? 0D : value;
-  }
-
-  private static double workCounter(String type) {
-    Double value = CollectorRegistry.defaultRegistry.getSampleValue(
-        MetricKeys.Counter.ARCHIVE_WORK + "_total",
         new String[] {"type"}, new String[] {type});
     return value == null ? 0D : value;
   }

@@ -3,7 +3,10 @@ package org.tron.core.config;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
 
+import com.typesafe.config.Config;
+import com.typesafe.config.ConfigFactory;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -59,6 +62,14 @@ public class DefaultConfigArchiveServiceTest {
     parameter.outputDirectory = null;
 
     assertSame(NoopArchiveService.INSTANCE, new DefaultConfig().archiveService(null));
+  }
+
+  @Test
+  public void shippedConfigKeepsArchiveWorkOffTheJsonRpcAndBlockThreads() {
+    Config config = ConfigFactory.parseResources("config.conf");
+
+    assertTrue(config.getBoolean("storage.archive.publisher.async"));
+    assertEquals(2, config.getInt("storage.archive.query.jsonRpcWorkerThreads"));
   }
 
   private void setArchiveEnabled(boolean enabled) {

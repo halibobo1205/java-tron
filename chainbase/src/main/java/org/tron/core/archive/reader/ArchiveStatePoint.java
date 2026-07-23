@@ -5,20 +5,15 @@ import java.util.Arrays;
 /**
  * The exact temporal coordinate a historical read resolves to, centralizing the txNum semantics so
  * RPC callers never compute {@code +1} / before-after themselves (decision 3: getAsOf is
- * inclusive-after). L6 historical getters only create {@link Kind#BLOCK_END}; the other kinds are
- * reserved for finer-grained (per-tx) reads in a later layer.
+ * inclusive-after).
  */
 public final class ArchiveStatePoint {
 
   public enum Kind {
     /** State after a block's finalize completed: {@code getAsOf(..., finalizeTxNum)}. */
     BLOCK_END,
-    /** Reserved: state just before a user tx executed. */
-    TX_BEFORE,
-    /** Reserved: state just after a user tx executed. */
-    TX_AFTER,
-    /** Reserved: state after a block system/finalize tx. */
-    SYSTEM_AFTER
+    /** State just before a user tx executed. */
+    TX_BEFORE
   }
 
   private final Kind kind;

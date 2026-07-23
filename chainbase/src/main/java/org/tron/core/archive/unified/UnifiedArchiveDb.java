@@ -43,7 +43,6 @@ import org.rocksdb.WriteOptions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.tron.core.archive.ArchiveException;
-import org.tron.core.archive.ArchiveMetrics;
 import org.tron.core.archive.ArchiveNativeResourceReleaseException;
 import org.tron.core.archive.ArchiveRepairClearPermit;
 import org.tron.core.archive.ArchiveRocksIterators;
@@ -96,8 +95,7 @@ public final class UnifiedArchiveDb implements AutoCloseable {
   private final EnumMap<UnifiedArchiveColumnFamily, ColumnFamilyHandle> handles;
   private final RocksDB db;
   private final BatchWriter batchWriter;
-  // Native counters remain available to diagnostics, but are never polled from block, publisher,
-  // query, or close paths because RocksDB property JNI calls have no enforceable deadline.
+  // Enabled only by test bridges that assert native I/O behavior.
   private final Statistics statistics;
   private final ReentrantReadWriteLock lifecycleLock = new ReentrantReadWriteLock(true);
   private final ReentrantLock mutationLock = new ReentrantLock(true);
@@ -175,6 +173,16 @@ public final class UnifiedArchiveDb implements AutoCloseable {
 
   static UnifiedArchiveDb open(Path path, byte[] expectedSchemaChecksum,
       BatchWriter batchWriter) {
+    return open(path, expectedSchemaChecksum, batchWriter, false);
+  }
+
+  static UnifiedArchiveDb openWithStatisticsForTesting(
+      Path path, byte[] expectedSchemaChecksum) {
+    return open(path, expectedSchemaChecksum, ROCKS_BATCH_WRITER, true);
+  }
+
+  private static UnifiedArchiveDb open(Path path, byte[] expectedSchemaChecksum,
+      BatchWriter batchWriter, boolean collectStatistics) {
     Path target = normalizePath(path);
     UnifiedArchiveManifest.requireSchemaChecksum(expectedSchemaChecksum);
     byte[] immutableSchemaChecksum =
@@ -186,7 +194,8 @@ public final class UnifiedArchiveDb implements AutoCloseable {
       throw new ArchiveException("UNIFIED_V1 archive is not initialized at " + target);
     }
     validateColumnFamiliesOnDisk(target);
-    return openDatabase(target, immutableSchemaChecksum, false, batchWriter);
+    return openDatabase(
+        target, immutableSchemaChecksum, false, batchWriter, false, collectStatistics);
   }
 
   /** Forced-sync journal write; the WAL is always enabled. */
@@ -914,6 +923,15 @@ public final class UnifiedArchiveDb implements AutoCloseable {
     return true;
   }
 
+  boolean usesDynamicLevelCompaction() {
+    for (ColumnFamilyOptions options : columnFamilyOptions) {
+      if (!options.levelCompactionDynamicLevelBytes()) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   boolean temporalPayloadOptimizesFiltersForHits() {
     int optionsIndex = UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD.ordinal() + 1;
     return columnFamilyOptions.get(optionsIndex).optimizeFiltersForHits();
@@ -995,11 +1013,18 @@ public final class UnifiedArchiveDb implements AutoCloseable {
 
   private static UnifiedArchiveDb openDatabase(Path target, byte[] schemaChecksum,
       boolean initialize, BatchWriter batchWriter) {
-    return openDatabase(target, schemaChecksum, initialize, batchWriter, false);
+    return openDatabase(target, schemaChecksum, initialize, batchWriter, false, false);
   }
 
   private static UnifiedArchiveDb openDatabase(Path target, byte[] schemaChecksum,
       boolean initialize, BatchWriter batchWriter, boolean resumeEmptyInitialization) {
+    return openDatabase(
+        target, schemaChecksum, initialize, batchWriter, resumeEmptyInitialization, false);
+  }
+
+  private static UnifiedArchiveDb openDatabase(Path target, byte[] schemaChecksum,
+      boolean initialize, BatchWriter batchWriter, boolean resumeEmptyInitialization,
+      boolean collectStatistics) {
     Statistics statistics = null;
     DBOptions dbOptions = null;
     Cache blockCache = null;
@@ -1008,7 +1033,7 @@ public final class UnifiedArchiveDb implements AutoCloseable {
     List<ColumnFamilyHandle> openedHandles = new ArrayList<>(COLUMN_FAMILY_COUNT);
     RocksDB openedDb = null;
     try {
-      statistics = ArchiveMetrics.enabled() ? new Statistics() : null;
+      statistics = collectStatistics ? new Statistics() : null;
       if (statistics != null) {
         statistics.setStatsLevel(StatsLevel.EXCEPT_DETAILED_TIMERS);
       }
@@ -1086,6 +1111,7 @@ public final class UnifiedArchiveDb implements AutoCloseable {
       tableConfig.setFilter(bloomFilter);
       ColumnFamilyOptions options = new ColumnFamilyOptions();
       optionsOwner.add(options);
+      options.setLevelCompactionDynamicLevelBytes(true);
       if (Arrays.equals(name, UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD.nameBytes())) {
         options.setOptimizeFiltersForHits(true);
       }
