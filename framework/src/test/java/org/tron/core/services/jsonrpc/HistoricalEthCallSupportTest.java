@@ -23,6 +23,7 @@ import org.tron.common.parameter.CommonParameter;
 import org.tron.common.prometheus.MetricKeys;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.Wallet;
+import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveService;
 import org.tron.core.archive.ArchiveSource;
@@ -30,6 +31,9 @@ import org.tron.core.archive.DefaultArchiveService;
 import org.tron.core.archive.NoopArchiveService;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.archive.query.ArchiveQueryLimits;
+import org.tron.core.archive.query.HistoricalQueryLimitException;
+import org.tron.core.archive.query.HistoricalQueryLimitException.Limit;
+import org.tron.core.archive.query.HistoricalQueryLimitException.Reason;
 import org.tron.core.archive.query.QueryContext;
 import org.tron.core.archive.reader.ArchiveReadResult;
 import org.tron.core.archive.reader.ArchiveReaderException;
@@ -161,6 +165,70 @@ public class HistoricalEthCallSupportTest {
       verify(wallet, never()).getBlockByNum(0L);
     } finally {
       CommonParameter.getInstance().setSupportConstant(previouslySupported);
+      svc.close();
+    }
+  }
+
+  @Test
+  public void canonicalIndexFailureBeforeReaderRetainsItsCause() {
+    DefaultArchiveService svc = genesisCompleteArchiveService();
+    Wallet wallet = mock(Wallet.class);
+    Block canonical = block(0L);
+    byte[] hash = new BlockCapsule(canonical).getBlockId().getBytes();
+    ByteString hashBytes = ByteString.copyFrom(hash);
+    ArchiveException original =
+        new ArchiveException("injected canonical index failure before reader");
+    when(wallet.getBlockByIdWithoutCache(hashBytes)).thenReturn(canonical);
+    when(wallet.getBlockIdByNumWithoutCache(0L)).thenThrow(original);
+    try {
+      JsonRpcInternalException failure = assertThrows(
+          JsonRpcInternalException.class,
+          () -> new HistoricalEthCallSupport(wallet, svc)
+              .call(null, null, 0L, null, null, hash));
+
+      assertSame(original, failure.getCause());
+    } finally {
+      svc.close();
+    }
+  }
+
+  @Test
+  public void canonicalIndexFailureDuringRecheckRetainsItsCause() {
+    DefaultArchiveService svc = genesisCompleteArchiveService();
+    Wallet wallet = mock(Wallet.class);
+    Block canonical = block(0L);
+    ArchiveException original =
+        new ArchiveException("injected canonical index failure during recheck");
+    when(wallet.getBlockByNumWithoutCache(0L)).thenReturn(canonical);
+    when(wallet.getBlockIdByNumWithoutCache(0L)).thenThrow(original);
+    try {
+      JsonRpcInternalException failure = assertThrows(
+          JsonRpcInternalException.class,
+          () -> new HistoricalEthCallSupport(wallet, svc)
+              .call(null, null, 0L, null, "0x0"));
+
+      assertSame(original, failure.getCause());
+    } finally {
+      svc.close();
+    }
+  }
+
+  @Test
+  public void canonicalLookupLimitRemainsTypedForResourceLimitMapping() {
+    DefaultArchiveService svc = genesisCompleteArchiveService();
+    Wallet wallet = mock(Wallet.class);
+    HistoricalQueryLimitException limit = new HistoricalQueryLimitException(
+        Reason.RESOURCE_EXHAUSTED, Limit.BACKEND_READS,
+        "injected canonical backend-read limit");
+    when(wallet.getBlockByNumWithoutCache(0L)).thenThrow(limit);
+    try {
+      HistoricalQueryLimitException failure = assertThrows(
+          HistoricalQueryLimitException.class,
+          () -> new HistoricalEthCallSupport(wallet, svc)
+              .call(null, null, 0L, null, "0x0"));
+
+      assertSame(limit, failure);
+    } finally {
       svc.close();
     }
   }
