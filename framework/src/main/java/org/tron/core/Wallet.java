@@ -134,6 +134,7 @@ import org.tron.core.actuator.ActuatorConstant;
 import org.tron.core.actuator.ActuatorFactory;
 import org.tron.core.actuator.UnfreezeBalanceV2Actuator;
 import org.tron.core.actuator.VMActuator;
+import org.tron.core.archive.ArchiveException;
 import org.tron.core.capsule.AbiCapsule;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.AssetIssueCapsule;
@@ -723,9 +724,12 @@ public class Wallet {
   public Block getBlockByNumWithoutCache(long blockNum) {
     try {
       return chainBaseManager.getBlockByNumWithoutCache(blockNum).getInstance();
-    } catch (StoreException e) {
+    } catch (ItemNotFoundException e) {
       logger.info(e.getMessage());
       return null;
+    } catch (StoreException e) {
+      throw new ArchiveException(
+          "failed to read canonical block " + blockNum, e);
     }
   }
 
@@ -733,7 +737,7 @@ public class Wallet {
   public byte[] getBlockIdByNumWithoutCache(long blockNum) {
     try {
       return chainBaseManager.getBlockIdByNumWithoutCache(blockNum).getBytes();
-    } catch (StoreException e) {
+    } catch (ItemNotFoundException e) {
       logger.info(e.getMessage());
       return null;
     }
@@ -1863,9 +1867,11 @@ public class Wallet {
     try {
       return chainBaseManager.getBlockByIdWithoutCache(
           Sha256Hash.wrap(blockId.toByteArray())).getInstance();
-    } catch (StoreException e) {
+    } catch (ItemNotFoundException e) {
       logger.warn(e.getMessage());
       return null;
+    } catch (StoreException e) {
+      throw new ArchiveException("failed to read canonical block by id", e);
     }
   }
 

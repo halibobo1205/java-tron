@@ -282,36 +282,29 @@ public final class UnifiedArchiveDb implements AutoCloseable {
     }
   }
 
-  /** WAL-only compact acknowledgement; the forced-sync immutable payload remains untouched. */
+  /**
+   * WAL-only compact acknowledgement. The forced-sync immutable payload remains untouched and is
+   * revalidated before publication or during startup recovery.
+   */
   public void acknowledgeJournalWalOnly(byte[] journalKey,
-      UnifiedArchiveJournalVerifier journalVerifier, long maxPayloadBytes,
       byte[] tokenKey, byte[] expectedTokenValue, byte[] acknowledgementKey,
       byte[] acknowledgementValue) {
     runJournalMutation(journalKey, () -> {
       requireProductionWriteAccess();
       acknowledgeJournalWalOnlyLocked(
-          journalKey, journalVerifier, maxPayloadBytes, tokenKey, expectedTokenValue,
-          acknowledgementKey, acknowledgementValue);
+          journalKey, tokenKey, expectedTokenValue, acknowledgementKey, acknowledgementValue);
     });
   }
 
   private void acknowledgeJournalWalOnlyLocked(byte[] journalKey,
-      UnifiedArchiveJournalVerifier journalVerifier,
-      long maxPayloadBytes, byte[] tokenKey, byte[] expectedTokenValue,
+      byte[] tokenKey, byte[] expectedTokenValue,
       byte[] acknowledgementKey, byte[] acknowledgementValue) {
     requireDistinctKeys(journalKey, tokenKey, acknowledgementKey);
-    if (journalVerifier == null) {
-      throw new ArchiveException("UNIFIED_V1 journal payload verifier is missing");
-    }
     requireValue(expectedTokenValue, "journal token");
     requireValue(acknowledgementValue, "journal acknowledgement");
     requireSameToken(expectedTokenValue, acknowledgementValue);
-    int admittedPayloadBytes = admitJournalPayloadBytes(
-        journalVerifier, maxPayloadBytes);
     try (ReadOptions journalReads = journalReadOptions()) {
       requireJournalValue(journalReads, tokenKey, expectedTokenValue);
-      requireJournalPayload(
-          journalReads, journalKey, journalVerifier, admittedPayloadBytes);
       byte[] current = readExpectedJournalValue(
           journalReads, acknowledgementKey, acknowledgementValue, false,
           "journal acknowledgement");

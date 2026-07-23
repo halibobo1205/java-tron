@@ -28,6 +28,7 @@ import org.tron.core.archive.NoopArchiveService;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.archive.query.ArchiveQueryLimits;
 import org.tron.core.archive.query.QueryContext;
+import org.tron.core.archive.reader.ArchiveReaderException;
 import org.tron.core.archive.reader.ArchiveStatePoint;
 import org.tron.core.archive.reader.ArchiveStateReader;
 import org.tron.core.capsule.BlockCapsule;
@@ -173,6 +174,24 @@ public class ArchiveJsonRpcStateAdapterTest {
 
     assertSame(failure, context.getRecordedFailure());
     verify(reader).close();
+  }
+
+  @Test
+  public void archiveReaderFailureRetainsItsCauseInTheJsonRpcError() throws Exception {
+    ArchiveService archiveService = mock(ArchiveService.class);
+    ArchiveReaderException original = new ArchiveReaderException(
+        ArchiveReaderException.Reason.INTERNAL_IO, "injected archive read failure");
+    when(archiveService.isEnabled()).thenReturn(true);
+    when(archiveService.openBlockEndReader(5L)).thenThrow(original);
+    ArchiveJsonRpcStateAdapter adapter =
+        new ArchiveJsonRpcStateAdapter(mock(Wallet.class), archiveService);
+
+    JsonRpcInternalException failure = assertThrows(JsonRpcInternalException.class,
+        () -> adapter.getBalance(
+            "0xabd4b9367799eaa3197fecb144eb71de1e049abc", "0x5"));
+
+    assertEquals(original.getMessage(), failure.getMessage());
+    assertSame(original, failure.getCause());
   }
 
   @Test

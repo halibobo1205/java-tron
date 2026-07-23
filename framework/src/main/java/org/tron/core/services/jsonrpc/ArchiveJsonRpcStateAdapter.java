@@ -65,7 +65,7 @@ public final class ArchiveJsonRpcStateAdapter {
     } catch (ArchiveReaderException e) {
       throw toInternal(e);
     } catch (ArchiveSnapshotInvalidatedException e) {
-      throw new JsonRpcInternalException(e.getMessage());
+      throw new JsonRpcInternalException(e.getMessage(), e);
     }
   }
 
@@ -90,7 +90,7 @@ public final class ArchiveJsonRpcStateAdapter {
     } catch (ArchiveReaderException e) {
       throw toInternal(e);
     } catch (ArchiveSnapshotInvalidatedException e) {
-      throw new JsonRpcInternalException(e.getMessage());
+      throw new JsonRpcInternalException(e.getMessage(), e);
     }
   }
 
@@ -116,7 +116,7 @@ public final class ArchiveJsonRpcStateAdapter {
     } catch (ArchiveReaderException e) {
       throw toInternal(e);
     } catch (ArchiveSnapshotInvalidatedException e) {
-      throw new JsonRpcInternalException(e.getMessage());
+      throw new JsonRpcInternalException(e.getMessage(), e);
     }
   }
 
@@ -238,7 +238,7 @@ public final class ArchiveJsonRpcStateAdapter {
   }
 
   private static JsonRpcInternalException toInternal(ArchiveReaderException e) {
-    return new JsonRpcInternalException(e.getMessage());
+    return new JsonRpcInternalException(e.getMessage(), e);
   }
 
 }

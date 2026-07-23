@@ -335,29 +335,6 @@ public class UnifiedArchiveDbTest {
   }
 
   @Test
-  public void acknowledgementFreezesAndBoundsAdmittedVerifierLength() {
-    db.putJournalBlockDurably(
-        JOURNAL_KEY, JOURNAL_VALUE, TOKEN_KEY, TOKEN_VALUE, ACKNOWLEDGEMENT_KEY, null);
-    AtomicInteger lengthReads = new AtomicInteger();
-    UnifiedArchiveJournalVerifier changingVerifier = changingLengthVerifier(lengthReads);
-
-    assertThrows(ArchiveException.class, () -> db.acknowledgeJournalWalOnly(
-        JOURNAL_KEY, changingVerifier, JOURNAL_VALUE.length - 1L,
-        TOKEN_KEY, TOKEN_VALUE, ACKNOWLEDGEMENT_KEY, ACKNOWLEDGEMENT_VALUE));
-    assertEquals(1, lengthReads.get());
-    assertNull(db.get(UnifiedArchiveColumnFamily.INFLIGHT, ACKNOWLEDGEMENT_KEY));
-
-    lengthReads.set(0);
-    db.acknowledgeJournalWalOnly(
-        JOURNAL_KEY, changingVerifier, JOURNAL_VALUE.length,
-        TOKEN_KEY, TOKEN_VALUE, ACKNOWLEDGEMENT_KEY, ACKNOWLEDGEMENT_VALUE);
-
-    assertEquals(1, lengthReads.get());
-    assertArrayEquals(ACKNOWLEDGEMENT_VALUE,
-        db.get(UnifiedArchiveColumnFamily.INFLIGHT, ACKNOWLEDGEMENT_KEY));
-  }
-
-  @Test
   public void acknowledgementMustMatchTokenHeaderAtEveryWriteBoundary() {
     assertThrows(ArchiveException.class, () -> db.putJournalBlockDurably(
         JOURNAL_KEY, JOURNAL_VALUE, TOKEN_KEY, TOKEN_VALUE,
@@ -366,8 +343,7 @@ public class UnifiedArchiveDbTest {
     db.putJournalBlockDurably(
         JOURNAL_KEY, JOURNAL_VALUE, TOKEN_KEY, TOKEN_VALUE, ACKNOWLEDGEMENT_KEY, null);
     assertThrows(ArchiveException.class, () -> db.acknowledgeJournalWalOnly(
-        JOURNAL_KEY, journalVerifier(JOURNAL_VALUE), JOURNAL_VALUE.length,
-        TOKEN_KEY, TOKEN_VALUE,
+        JOURNAL_KEY, TOKEN_KEY, TOKEN_VALUE,
         ACKNOWLEDGEMENT_KEY, ascii("different-token")));
     assertNull(db.get(UnifiedArchiveColumnFamily.INFLIGHT, ACKNOWLEDGEMENT_KEY));
 
@@ -382,7 +358,7 @@ public class UnifiedArchiveDbTest {
   }
 
   @Test
-  public void acknowledgementRequiresUnchangedJournalPayload() {
+  public void acknowledgementDefersPayloadValidationUntilPublication() {
     db.putJournalBlockDurably(
         JOURNAL_KEY, JOURNAL_VALUE, TOKEN_KEY, TOKEN_VALUE, ACKNOWLEDGEMENT_KEY, null);
     db.deleteJournalBlockDurably(
@@ -391,12 +367,16 @@ public class UnifiedArchiveDbTest {
         JOURNAL_KEY, ascii("tampered-journal"), TOKEN_KEY, TOKEN_VALUE,
         ACKNOWLEDGEMENT_KEY, null);
 
-    assertThrows(ArchiveException.class, () -> db.acknowledgeJournalWalOnly(
-        JOURNAL_KEY, journalVerifier(JOURNAL_VALUE), JOURNAL_VALUE.length,
-        TOKEN_KEY, TOKEN_VALUE,
-        ACKNOWLEDGEMENT_KEY, ACKNOWLEDGEMENT_VALUE));
+    db.acknowledgeJournalWalOnly(
+        JOURNAL_KEY, TOKEN_KEY, TOKEN_VALUE,
+        ACKNOWLEDGEMENT_KEY, ACKNOWLEDGEMENT_VALUE);
 
-    assertNull(db.get(UnifiedArchiveColumnFamily.INFLIGHT, ACKNOWLEDGEMENT_KEY));
+    assertArrayEquals(ACKNOWLEDGEMENT_VALUE,
+        db.get(UnifiedArchiveColumnFamily.INFLIGHT, ACKNOWLEDGEMENT_KEY));
+    assertThrows(ArchiveException.class, () -> db.publishBlockAtomically(publish(), false));
+    assertArrayEquals(ascii("tampered-journal"),
+        db.get(UnifiedArchiveColumnFamily.INFLIGHT, JOURNAL_KEY));
+    assertNull(db.get(UnifiedArchiveColumnFamily.INDEX, INDEX_KEY));
   }
 
   @Test

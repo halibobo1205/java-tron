@@ -216,7 +216,8 @@ public final class ArchiveServiceFactory {
           new UnifiedArchiveBackend(
               db, txNumIndex, temporalStore, publisherConfig.getHardInFlightBytes(),
               publisherConfig.getHardInFlightRecords(), writePermit);
-      Runnable startupValidator = () -> backend.validateStartup(recoveryScrub, true);
+      Runnable startupValidator =
+          () -> backend.validatePostReconcileStartup(recoveryScrub, true);
       db.sealForProduction();
       return new DefaultArchiveService(true, txNumIndex,
           ArchiveExecutionContextHolder.get(), temporalStore, inFlightStore, registry,

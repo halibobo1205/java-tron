@@ -1682,7 +1682,7 @@ public final class DefaultArchiveService implements ArchiveService {
       runJournalWrite(operation, () -> inFlightStore.acknowledgeBlock(block));
       return;
     }
-    long workspaceBytes = estimatedJournalAcknowledgementWorkspace(block);
+    long workspaceBytes = estimatedJournalAcknowledgementWorkspace();
     beginActiveJournalMutation(block, workspaceBytes, "acknowledgement");
     try {
       runJournalWrite(operation, () -> inFlightStore.acknowledgeLoadedBlock(block));
@@ -1733,10 +1733,9 @@ public final class DefaultArchiveService implements ArchiveService {
         multiplySaturated(block.encodedBlockBytes(), 2L));
   }
 
-  private static long estimatedJournalAcknowledgementWorkspace(ArchiveInFlightBlock block) {
-    // Proof verification uses one Java payload plus RocksDB JNI's native PinnableSlice.
-    return addSaturated(JOURNAL_MUTATION_BASE_ALLOWANCE_BYTES,
-        multiplySaturated(block.encodedBlockBytes(), 2L));
+  private static long estimatedJournalAcknowledgementWorkspace() {
+    // ACK reads and writes only compact proof rows; payload verification occurs before visibility.
+    return JOURNAL_MUTATION_BASE_ALLOWANCE_BYTES;
   }
 
   // Test-only: shrink the in-flight cap so the fail-stop can be exercised without 65k real blocks.
@@ -2142,36 +2141,63 @@ public final class DefaultArchiveService implements ArchiveService {
   }
 
   private long cachedUsableSpaceForJournal() {
-    long usableSpace = lastUsableSpaceBytes;
-    if (lastDiskSampleNanos == Long.MIN_VALUE) {
+    DiskSampleSnapshot sample = currentDiskSample();
+    if (sample.sampledAtNanos == Long.MIN_VALUE) {
       throw new ArchiveException("archive filesystem capacity has not been sampled");
     }
-    return usableSpace;
+    return sample.usableBytes;
   }
 
-  /** Refreshes outside the consistency lock when the cached capacity is stale or near any cap. */
+  /**
+   * Refreshes outside the consistency lock. Healthy writes use a stale high-water sample for at
+   * most the bounded probe interval while a single-flight probe runs off-thread; pressure-zone
+   * writes wait for the fresh sample before reserving another durable journal.
+   */
   private void refreshDiskSampleBeforeJournal() {
+    long generationBeforeRefresh = currentDiskSample().generation;
     long usableSpace = sampleUsableSpaceBytes();
-    long maximumJournalHeadroom = Math.max(
-        MIN_JOURNAL_DISK_HEADROOM_BYTES,
-        multiplySaturated(publisherConfig.getHardInFlightBytes(), 2L));
-    long refreshThreshold = addSaturated(
-        publisherConfig.getHardMinFreeBytes(), maximumJournalHeadroom);
-    if (usableSpace <= refreshThreshold) {
-      sampleUsableSpaceBytes(true);
+    if (usableSpace <= diskRefreshThresholdBytes()
+        && lastDiskSampleGeneration == generationBeforeRefresh) {
+      applyDiskSample(diskSpaceSampler.sampleAfter(
+          generationBeforeRefresh, DISK_SAMPLE_TIMEOUT_NANOS));
     }
   }
 
   private long sampleUsableSpaceBytes(boolean force) {
-    long now = System.nanoTime();
-    long sampledAt = lastDiskSampleNanos;
-    if (!force && sampledAt != Long.MIN_VALUE
-        && now - sampledAt < DISK_SAMPLE_INTERVAL_NANOS) {
-      return lastUsableSpaceBytes;
+    if (force) {
+      return applyDiskSample(
+          diskSpaceSampler.sample(DISK_SAMPLE_TIMEOUT_NANOS));
     }
-    ArchiveDiskSpaceSampler.Sample sample =
-        diskSpaceSampler.sample(DISK_SAMPLE_TIMEOUT_NANOS);
-    return applyDiskSample(sample);
+    ArchiveDiskSpaceSampler.Sample completed =
+        diskSpaceSampler.latestCompletedSample();
+    if (completed != null) {
+      applyDiskSample(completed);
+    }
+    long now = System.nanoTime();
+    DiskSampleSnapshot cached = currentDiskSample();
+    if (cached.sampledAtNanos != Long.MIN_VALUE
+        && now - cached.sampledAtNanos < DISK_SAMPLE_INTERVAL_NANOS) {
+      return cached.usableBytes;
+    }
+    if (cached.sampledAtNanos == Long.MIN_VALUE) {
+      throw new ArchiveException("archive filesystem capacity has not been sampled");
+    }
+    if (cached.usableBytes <= diskRefreshThresholdBytes()) {
+      return applyDiskSample(
+          diskSpaceSampler.sampleAfter(cached.generation, DISK_SAMPLE_TIMEOUT_NANOS));
+    }
+    diskSpaceSampler.requestSample(DISK_SAMPLE_TIMEOUT_NANOS);
+    return cached.usableBytes;
+  }
+
+  private long diskRefreshThresholdBytes() {
+    long maximumJournalHeadroom = Math.max(
+        MIN_JOURNAL_DISK_HEADROOM_BYTES,
+        multiplySaturated(publisherConfig.getHardInFlightBytes(), 2L));
+    long configuredFreeSpaceWatermark = Math.max(
+        publisherConfig.getSoftMinFreeBytes(),
+        publisherConfig.getHardMinFreeBytes());
+    return addSaturated(configuredFreeSpaceWatermark, maximumJournalHeadroom);
   }
 
   private long applyDiskSample(ArchiveDiskSpaceSampler.Sample sample) {
@@ -2192,8 +2218,28 @@ public final class DefaultArchiveService implements ArchiveService {
     return usableSpace;
   }
 
+  private DiskSampleSnapshot currentDiskSample() {
+    synchronized (diskSampleMonitor) {
+      return new DiskSampleSnapshot(
+          lastDiskSampleGeneration, lastUsableSpaceBytes, lastDiskSampleNanos);
+    }
+  }
+
   private static long multiplySaturated(long left, long right) {
     return left != 0L && right > Long.MAX_VALUE / left ? Long.MAX_VALUE : left * right;
+  }
+
+  private static final class DiskSampleSnapshot {
+
+    private final long generation;
+    private final long usableBytes;
+    private final long sampledAtNanos;
+
+    private DiskSampleSnapshot(long generation, long usableBytes, long sampledAtNanos) {
+      this.generation = generation;
+      this.usableBytes = usableBytes;
+      this.sampledAtNanos = sampledAtNanos;
+    }
   }
 
   private void appendInFlightVersions(ArchiveInFlightBlock block) {
