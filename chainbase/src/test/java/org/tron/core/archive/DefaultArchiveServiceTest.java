@@ -532,6 +532,57 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
+  public void staleHighDiskSampleRefreshDoesNotBlockJournal() throws Exception {
+    BlockingCapacityInFlightStore inFlightStore = new BlockingCapacityInFlightStore();
+    DefaultArchiveService service = serviceWithPublisherConfig(
+        new InMemoryArchiveTxNumIndex(), new ArchiveExecutionContext(),
+        new InMemoryArchiveTemporalStore(), inFlightStore,
+        startupByteBudget(1024L * 1024L));
+    ReflectUtils.setFieldValue(service, "lastDiskSampleNanos", 0L);
+    FutureTask<ArchiveJournalToken> journal = new FutureTask<>(
+        () -> journalEmptyBlock(service, blockWithParentSeed(5L, (byte) 5)));
+    Thread journalThread = new Thread(journal, "nonblocking-disk-sample-journal");
+    try {
+      journalThread.start();
+      assertTrue(inFlightStore.blockedProbeEntered.await(1L, TimeUnit.SECONDS));
+
+      assertNotNull(journal.get(1L, TimeUnit.SECONDS));
+      assertEquals(2, inFlightStore.capacityReads);
+    } finally {
+      inFlightStore.releaseBlockedProbe.countDown();
+      journalThread.join(1_000L);
+      service.close();
+    }
+  }
+
+  @Test
+  public void stalePressureSampleBlocksJournalUntilRefreshCompletes() throws Exception {
+    BlockingCapacityInFlightStore inFlightStore = new BlockingCapacityInFlightStore();
+    DefaultArchiveService service = serviceWithPublisherConfig(
+        new InMemoryArchiveTxNumIndex(), new ArchiveExecutionContext(),
+        new InMemoryArchiveTemporalStore(), inFlightStore,
+        startupByteBudget(1024L * 1024L));
+    ReflectUtils.setFieldValue(service, "lastUsableSpaceBytes", 1L);
+    ReflectUtils.setFieldValue(service, "lastDiskSampleNanos", 0L);
+    FutureTask<ArchiveJournalToken> journal = new FutureTask<>(
+        () -> journalEmptyBlock(service, blockWithParentSeed(5L, (byte) 5)));
+    Thread journalThread = new Thread(journal, "pressure-disk-sample-journal");
+    try {
+      journalThread.start();
+      assertTrue(inFlightStore.blockedProbeEntered.await(1L, TimeUnit.SECONDS));
+      assertFalse(journal.isDone());
+
+      inFlightStore.releaseBlockedProbe.countDown();
+      assertNotNull(journal.get(1L, TimeUnit.SECONDS));
+      assertEquals(2, inFlightStore.capacityReads);
+    } finally {
+      inFlightStore.releaseBlockedProbe.countDown();
+      journalThread.join(1_000L);
+      service.close();
+    }
+  }
+
+  @Test
   public void nearThresholdDiskSampleIsRefreshedBeforeJournalWrite() {
     TrackingArchiveTxNumIndex index = new TrackingArchiveTxNumIndex();
     CountingCapacityInFlightStore inFlightStore = new CountingCapacityInFlightStore();
@@ -561,7 +612,7 @@ public class DefaultArchiveServiceTest {
         new InMemoryArchiveTxNumIndex(), new ArchiveExecutionContext(),
         new InMemoryArchiveTemporalStore(), inFlightStore,
         startupByteBudget(1024L * 1024L));
-    ReflectUtils.setFieldValue(service, "lastDiskSampleNanos", Long.MIN_VALUE);
+    ReflectUtils.setFieldValue(service, "lastDiskSampleNanos", 0L);
     FutureTask<Void> capacity = new FutureTask<>(() -> {
       service.awaitWriterCapacity();
       return null;
@@ -626,13 +677,14 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
-  public void normalCloseWaitsForDiskProbeWorkerWithoutMarkingRepairRequired() throws Exception {
+  public void normalCloseWaitsForAsyncDiskProbeWorkerWithoutMarkingRepairRequired()
+      throws Exception {
     TrackingArchiveTxNumIndex index = new TrackingArchiveTxNumIndex();
     BlockingCapacityInFlightStore inFlightStore = new BlockingCapacityInFlightStore();
     DefaultArchiveService service = serviceWithPublisherConfig(
         index, new ArchiveExecutionContext(), new InMemoryArchiveTemporalStore(),
         inFlightStore, startupByteBudget(1024L * 1024L));
-    ReflectUtils.setFieldValue(service, "lastDiskSampleNanos", Long.MIN_VALUE);
+    ReflectUtils.setFieldValue(service, "lastDiskSampleNanos", 0L);
     FutureTask<Void> capacity = new FutureTask<>(() -> {
       service.awaitWriterCapacity();
       return null;
@@ -648,9 +700,7 @@ public class DefaultArchiveServiceTest {
       assertTrue(inFlightStore.blockedProbeEntered.await(1L, TimeUnit.SECONDS));
 
       closeThread.start();
-      ExecutionException failure = assertThrows(
-          ExecutionException.class, () -> capacity.get(1L, TimeUnit.SECONDS));
-      assertTrue(failure.getCause() instanceof ArchiveException);
+      capacity.get(1L, TimeUnit.SECONDS);
       assertFalse(close.isDone());
 
       inFlightStore.releaseBlockedProbe.countDown();
@@ -665,13 +715,13 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
-  public void admittedWriterFinishesDiskProbeBeforeSamplerCloses() throws Exception {
+  public void admittedWriterDoesNotWaitForHighSpaceProbeButCloseStillDoes() throws Exception {
     TrackingArchiveTxNumIndex index = new TrackingArchiveTxNumIndex();
     BlockingCapacityInFlightStore inFlightStore = new BlockingCapacityInFlightStore();
     DefaultArchiveService service = serviceWithPublisherConfig(
         index, new ArchiveExecutionContext(), new InMemoryArchiveTemporalStore(),
         inFlightStore, startupByteBudget(1024L * 1024L));
-    ReflectUtils.setFieldValue(service, "lastDiskSampleNanos", Long.MIN_VALUE);
+    ReflectUtils.setFieldValue(service, "lastDiskSampleNanos", 0L);
     FutureTask<Void> writer = new FutureTask<>(() -> {
       try (ArchiveWorkLease lease = service.acquireWriterLease()) {
         lease.start();
@@ -689,12 +739,10 @@ public class DefaultArchiveServiceTest {
       writerThread.start();
       assertTrue(inFlightStore.blockedProbeEntered.await(1L, TimeUnit.SECONDS));
       closeThread.start();
-      Thread.sleep(50L);
-      assertFalse(writer.isDone());
+      writer.get(1L, TimeUnit.SECONDS);
       assertFalse(close.isDone());
 
       inFlightStore.releaseBlockedProbe.countDown();
-      writer.get(1L, TimeUnit.SECONDS);
       close.get(1L, TimeUnit.SECONDS);
       assertTrue(index.repairReason.isEmpty());
     } finally {
@@ -713,7 +761,7 @@ public class DefaultArchiveServiceTest {
         index, new ArchiveExecutionContext(), new InMemoryArchiveTemporalStore(),
         inFlightStore, startupByteBudget(1024L * 1024L));
     service.setCloseDrainTimeoutForTest(30L, TimeUnit.MILLISECONDS);
-    ReflectUtils.setFieldValue(service, "lastDiskSampleNanos", Long.MIN_VALUE);
+    ReflectUtils.setFieldValue(service, "lastDiskSampleNanos", 0L);
     FutureTask<Void> capacity = new FutureTask<>(() -> {
       service.awaitWriterCapacity();
       return null;
@@ -779,6 +827,56 @@ public class DefaultArchiveServiceTest {
       assertEquals(1, inFlightStore.capacityReads);
       assertTrue(index.repairReason.contains("injected journal disk failure"));
     } finally {
+      service.close();
+    }
+  }
+
+  @Test
+  public void asynchronousDiskProbeFailureFailsTheNextWriterAdmission() throws Exception {
+    TrackingArchiveTxNumIndex index = new TrackingArchiveTxNumIndex();
+    FailingRefreshCapacityInFlightStore inFlightStore =
+        new FailingRefreshCapacityInFlightStore();
+    DefaultArchiveService service = serviceWithPublisherConfig(
+        index, new ArchiveExecutionContext(), new InMemoryArchiveTemporalStore(),
+        inFlightStore, startupByteBudget(1024L * 1024L));
+    try {
+      ReflectUtils.setFieldValue(service, "lastDiskSampleNanos", 0L);
+      assertNotNull(journalEmptyBlock(service, blockWithParentSeed(5L, (byte) 5)));
+      assertTrue(inFlightStore.failedProbe.await(1L, TimeUnit.SECONDS));
+
+      ArchiveException failure =
+          assertThrows(ArchiveException.class, service::awaitWriterCapacity);
+
+      assertTrue(failure.getMessage().contains("injected capacity probe failure"));
+      assertTrue(index.repairReason.contains("injected capacity probe failure"));
+    } finally {
+      service.close();
+    }
+  }
+
+  @Test
+  public void stalledAsynchronousDiskProbeFailsTheNextWriterAfterItsDeadline()
+      throws Exception {
+    TrackingArchiveTxNumIndex index = new TrackingArchiveTxNumIndex();
+    BlockingCapacityInFlightStore inFlightStore = new BlockingCapacityInFlightStore();
+    DefaultArchiveService service = serviceWithPublisherConfig(
+        index, new ArchiveExecutionContext(), new InMemoryArchiveTemporalStore(),
+        inFlightStore, startupByteBudget(1024L * 1024L));
+    try {
+      ReflectUtils.setFieldValue(service, "lastDiskSampleNanos", 0L);
+      assertNotNull(journalEmptyBlock(service, blockWithParentSeed(5L, (byte) 5)));
+      assertTrue(inFlightStore.blockedProbeEntered.await(1L, TimeUnit.SECONDS));
+      ArchiveDiskSpaceSampler sampler =
+          ReflectUtils.getFieldValue(service, "diskSpaceSampler");
+      ReflectUtils.setFieldValue(sampler, "requestedAtNanos", 0L);
+
+      ArchiveException failure =
+          assertThrows(ArchiveException.class, service::awaitWriterCapacity);
+
+      assertTrue(failure.getMessage().contains("probe timed out"));
+      assertTrue(index.repairReason.contains("probe timed out"));
+    } finally {
+      inFlightStore.releaseBlockedProbe.countDown();
       service.close();
     }
   }
@@ -4471,6 +4569,22 @@ public class DefaultArchiveServiceTest {
         if (interrupted) {
           Thread.currentThread().interrupt();
         }
+      }
+      return usableSpace;
+    }
+  }
+
+  private static final class FailingRefreshCapacityInFlightStore
+      extends CountingCapacityInFlightStore {
+
+    private final CountDownLatch failedProbe = new CountDownLatch(1);
+
+    @Override
+    public long usableSpaceBytes() {
+      capacityReads++;
+      if (capacityReads > 1) {
+        failedProbe.countDown();
+        throw new ArchiveException("injected capacity probe failure");
       }
       return usableSpace;
     }

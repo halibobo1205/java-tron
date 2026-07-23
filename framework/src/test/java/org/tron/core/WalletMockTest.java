@@ -3,6 +3,7 @@ package org.tron.core;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -43,6 +44,7 @@ import org.tron.common.utils.ByteUtil;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.common.utils.client.WalletClient;
 import org.tron.common.zksnark.JLibrustzcash;
+import org.tron.core.archive.ArchiveException;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.ContractCapsule;
@@ -97,6 +99,36 @@ public class WalletMockTest {
   @After
   public void  clearMocks() {
     Mockito.clearAllCaches();
+  }
+
+  @Test
+  public void corruptCachelessCanonicalBlockIsNotReportedAsMissing() throws Exception {
+    Wallet wallet = new Wallet();
+    ChainBaseManager chainBaseManager = mock(ChainBaseManager.class);
+    BadItemException corruption = new BadItemException("corrupt canonical block");
+    Field field = Wallet.class.getDeclaredField("chainBaseManager");
+    field.setAccessible(true);
+    field.set(wallet, chainBaseManager);
+    when(chainBaseManager.getBlockByNumWithoutCache(7L)).thenThrow(corruption);
+
+    ArchiveException failure = assertThrows(
+        ArchiveException.class, () -> wallet.getBlockByNumWithoutCache(7L));
+
+    assertTrue(failure.getMessage().contains("canonical block 7"));
+    assertSame(corruption, failure.getCause());
+  }
+
+  @Test
+  public void missingCachelessCanonicalBlockStillReturnsNull() throws Exception {
+    Wallet wallet = new Wallet();
+    ChainBaseManager chainBaseManager = mock(ChainBaseManager.class);
+    Field field = Wallet.class.getDeclaredField("chainBaseManager");
+    field.setAccessible(true);
+    field.set(wallet, chainBaseManager);
+    when(chainBaseManager.getBlockByNumWithoutCache(7L))
+        .thenThrow(new ItemNotFoundException("missing canonical block"));
+
+    assertNull(wallet.getBlockByNumWithoutCache(7L));
   }
 
   @Test

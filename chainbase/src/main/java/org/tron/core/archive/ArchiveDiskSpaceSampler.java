@@ -12,6 +12,7 @@ final class ArchiveDiskSpaceSampler implements AutoCloseable {
   private final LongSupplier probe;
   private final Thread worker;
   private long requestedGeneration;
+  private long requestedAtNanos = Long.MIN_VALUE;
   private long completedGeneration;
   private long sampledBytes = Long.MAX_VALUE;
   private long sampledAtNanos = Long.MIN_VALUE;
@@ -32,34 +33,93 @@ final class ArchiveDiskSpaceSampler implements AutoCloseable {
   }
 
   Sample sample(long timeoutNanos) {
+    return awaitSample(requestSample(), timeoutNanos);
+  }
+
+  Sample sampleAfter(long completedGenerationSeen, long timeoutNanos) {
+    if (completedGenerationSeen < 0L) {
+      throw new IllegalArgumentException("completed disk sample generation must be non-negative");
+    }
+    if (timeoutNanos < 0L) {
+      throw new IllegalArgumentException("disk sample timeout must be non-negative");
+    }
+    long targetGeneration;
+    synchronized (monitor) {
+      requireOpen();
+      if (completedGeneration > completedGenerationSeen) {
+        if (sampleFailure != null) {
+          throw sampleFailure(sampleFailure);
+        }
+        return completedSample();
+      }
+      targetGeneration = requestSampleLocked(timeoutNanos);
+    }
+    return awaitSample(targetGeneration, timeoutNanos);
+  }
+
+  long requestSample() {
+    return requestSample(Long.MAX_VALUE);
+  }
+
+  long requestSample(long pendingTimeoutNanos) {
+    if (pendingTimeoutNanos < 0L) {
+      throw new IllegalArgumentException("disk sample pending timeout must be non-negative");
+    }
+    synchronized (monitor) {
+      requireOpen();
+      return requestSampleLocked(pendingTimeoutNanos);
+    }
+  }
+
+  Sample latestCompletedSample() {
+    synchronized (monitor) {
+      requireOpen();
+      if (completedGeneration == 0L) {
+        return null;
+      }
+      if (sampleFailure != null) {
+        throw sampleFailure(sampleFailure);
+      }
+      return completedSample();
+    }
+  }
+
+  Sample awaitSample(long targetGeneration, long timeoutNanos) {
+    if (targetGeneration <= 0L) {
+      throw new IllegalArgumentException("disk sample generation must be positive");
+    }
     if (timeoutNanos < 0L) {
       throw new IllegalArgumentException("disk sample timeout must be non-negative");
     }
     boolean interrupted = false;
     synchronized (monitor) {
       requireOpen();
-      long targetGeneration;
-      if (requestedGeneration > completedGeneration) {
-        targetGeneration = requestedGeneration;
-      } else {
-        if (requestedGeneration == Long.MAX_VALUE) {
-          throw new ArchiveException("archive filesystem capacity sample generation overflow");
-        }
-        targetGeneration = ++requestedGeneration;
+      if (targetGeneration > requestedGeneration) {
+        throw new IllegalArgumentException(
+            "disk sample generation has not been requested: " + targetGeneration);
       }
-      monitor.notifyAll();
-      long deadline = System.nanoTime() + timeoutNanos;
+      long remainingNanos = timeoutNanos;
+      if (requestedGeneration == targetGeneration
+          && requestedGeneration > completedGeneration
+          && requestedAtNanos != Long.MIN_VALUE) {
+        long pendingNanos = Math.max(0L, System.nanoTime() - requestedAtNanos);
+        remainingNanos = pendingNanos >= remainingNanos
+            ? 0L : remainingNanos - pendingNanos;
+      }
       while (!closed && completedGeneration < targetGeneration) {
-        long remaining = deadline - System.nanoTime();
-        if (timeoutNanos == 0L || remaining <= 0L) {
+        if (remainingNanos <= 0L) {
           throw new ArchiveException("archive filesystem capacity probe timed out");
         }
+        long startedNanos = System.nanoTime();
         try {
-          TimeUnit.NANOSECONDS.timedWait(monitor, remaining);
+          TimeUnit.NANOSECONDS.timedWait(monitor, remainingNanos);
         } catch (InterruptedException e) {
           interrupted = true;
           break;
         }
+        long elapsedNanos = Math.max(0L, System.nanoTime() - startedNanos);
+        remainingNanos = elapsedNanos >= remainingNanos
+            ? 0L : remainingNanos - elapsedNanos;
       }
       if (interrupted) {
         Thread.currentThread().interrupt();
@@ -69,8 +129,27 @@ final class ArchiveDiskSpaceSampler implements AutoCloseable {
       if (sampleFailure != null) {
         throw sampleFailure(sampleFailure);
       }
-      return new Sample(completedGeneration, sampledBytes, sampledAtNanos);
+      return completedSample();
     }
+  }
+
+  private Sample completedSample() {
+    return new Sample(completedGeneration, sampledBytes, sampledAtNanos);
+  }
+
+  private long requestSampleLocked(long pendingTimeoutNanos) {
+    if (requestedGeneration <= completedGeneration) {
+      if (requestedGeneration == Long.MAX_VALUE) {
+        throw new ArchiveException("archive filesystem capacity sample generation overflow");
+      }
+      requestedGeneration++;
+      requestedAtNanos = System.nanoTime();
+    } else if (pendingTimeoutNanos != Long.MAX_VALUE
+        && System.nanoTime() - requestedAtNanos >= pendingTimeoutNanos) {
+      throw new ArchiveException("archive filesystem capacity probe timed out");
+    }
+    monitor.notifyAll();
+    return requestedGeneration;
   }
 
   @Override

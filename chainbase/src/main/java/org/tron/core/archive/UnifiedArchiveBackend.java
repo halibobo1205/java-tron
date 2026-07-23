@@ -186,9 +186,26 @@ final class UnifiedArchiveBackend {
   }
 
   public void validateStartup(boolean fullScrub, boolean deferRepairValidation) {
+    validateStartup(fullScrub, deferRepairValidation, false);
+  }
+
+  /**
+   * Revalidates storage after factory construction already completed the full range-chain pass.
+   */
+  void validatePostReconcileStartup(boolean fullScrub, boolean deferRepairValidation) {
+    validateStartup(fullScrub, deferRepairValidation, true);
+  }
+
+  private void validateStartup(boolean fullScrub, boolean deferRepairValidation,
+      boolean rangeChainAlreadyValidated) {
     try (UnifiedArchiveReadView view = db.openScanView();
         UnifiedArchiveTxNumIndex.ReadScope ignored = txNumIndex.bindReadView(view)) {
-      txNumIndex.validateStartup(fullScrub, deferRepairValidation);
+      if (!fullScrub && rangeChainAlreadyValidated) {
+        // Construction already validated every range. Reconcile mutates only the checked tail.
+        txNumIndex.validateStartupTail(deferRepairValidation);
+      } else {
+        txNumIndex.validateStartup(fullScrub, deferRepairValidation);
+      }
       temporalStore.validateStartupTail(view, txNumIndex.getLastRange());
       if (!fullScrub) {
         return;

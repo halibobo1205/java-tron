@@ -1,6 +1,7 @@
 package org.tron.core.archive;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
@@ -60,6 +61,82 @@ public class ArchiveDiskSpaceSamplerTest {
       assertEquals(2L, second.getGeneration());
       assertEquals(1L, first.getUsableBytes());
       assertEquals(2L, second.getUsableBytes());
+    }
+  }
+
+  @Test
+  public void conditionalSampleReusesANewerCompletionWithoutStartingAnotherProbe() {
+    AtomicInteger probes = new AtomicInteger();
+    try (ArchiveDiskSpaceSampler sampler = new ArchiveDiskSpaceSampler(
+        "disk-sampler-conditional", probes::incrementAndGet)) {
+      ArchiveDiskSpaceSampler.Sample first =
+          sampler.sample(TimeUnit.SECONDS.toNanos(1L));
+      ArchiveDiskSpaceSampler.Sample second =
+          sampler.sample(TimeUnit.SECONDS.toNanos(1L));
+
+      ArchiveDiskSpaceSampler.Sample reused =
+          sampler.sampleAfter(first.getGeneration(), TimeUnit.SECONDS.toNanos(1L));
+
+      assertEquals(second.getGeneration(), reused.getGeneration());
+      assertEquals(second.getUsableBytes(), reused.getUsableBytes());
+      assertEquals(2, probes.get());
+    }
+  }
+
+  @Test
+  public void asynchronousRequestsAreSingleFlightAndExposeTheCompletedSample() throws Exception {
+    CountDownLatch probeEntered = new CountDownLatch(1);
+    CountDownLatch releaseProbe = new CountDownLatch(1);
+    AtomicInteger probes = new AtomicInteger();
+    try (ArchiveDiskSpaceSampler sampler = new ArchiveDiskSpaceSampler(
+        "disk-sampler-async", () -> {
+          probes.incrementAndGet();
+          probeEntered.countDown();
+          await(releaseProbe);
+          return 84L;
+        })) {
+      long firstGeneration = sampler.requestSample();
+      long coalescedGeneration = sampler.requestSample();
+
+      assertEquals(firstGeneration, coalescedGeneration);
+      assertTrue(probeEntered.await(1L, TimeUnit.SECONDS));
+      assertEquals(1, probes.get());
+      assertNull(sampler.latestCompletedSample());
+
+      releaseProbe.countDown();
+      ArchiveDiskSpaceSampler.Sample completed = sampler.awaitSample(
+          firstGeneration, TimeUnit.SECONDS.toNanos(1L));
+      assertEquals(firstGeneration, completed.getGeneration());
+      assertEquals(84L, completed.getUsableBytes());
+      assertEquals(firstGeneration,
+          sampler.latestCompletedSample().getGeneration());
+    } finally {
+      releaseProbe.countDown();
+    }
+  }
+
+  @Test
+  public void stalledAsynchronousRequestIsRejectedAfterItsPendingTimeout() throws Exception {
+    CountDownLatch probeEntered = new CountDownLatch(1);
+    CountDownLatch releaseProbe = new CountDownLatch(1);
+    try (ArchiveDiskSpaceSampler sampler = new ArchiveDiskSpaceSampler(
+        "disk-sampler-async-timeout", () -> {
+          probeEntered.countDown();
+          await(releaseProbe);
+          return 84L;
+        })) {
+      long generation = sampler.requestSample(0L);
+      assertTrue(probeEntered.await(1L, TimeUnit.SECONDS));
+
+      ArchiveException failure = assertThrows(
+          ArchiveException.class, () -> sampler.requestSample(0L));
+
+      assertTrue(failure.getMessage().contains("probe timed out"));
+      releaseProbe.countDown();
+      assertEquals(generation, sampler.awaitSample(
+          generation, TimeUnit.SECONDS.toNanos(1L)).getGeneration());
+    } finally {
+      releaseProbe.countDown();
     }
   }
 

@@ -8,8 +8,8 @@ import java.util.Arrays;
 import java.util.Objects;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.Wallet;
+import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchiveService;
-import org.tron.core.archive.ArchiveSnapshotInvalidatedException;
 import org.tron.core.archive.query.QueryContext;
 import org.tron.core.archive.query.QueryContextHolder;
 import org.tron.core.archive.reader.ArchiveReaderException;
@@ -168,11 +168,10 @@ public final class HistoricalEthCallSupport {
       // Match the latest eth_call path, which maps a validate failure to an invalid-request error.
       throw new JsonRpcInvalidRequestException(
           e.getMessage() == null ? CONTRACT_VALIDATE_ERROR : e.getMessage());
-    } catch (ArchiveReaderException | ArchiveSnapshotInvalidatedException
-        | HistoricalVmExecutionException
+    } catch (ArchiveException | ArchiveReaderException | HistoricalVmExecutionException
         | UnsupportedHistoricalStateException | ContractExeException e) {
       throw new JsonRpcInternalException(
-          e.getMessage() == null ? "historical eth_call failed" : e.getMessage());
+          e.getMessage() == null ? "historical eth_call failed" : e.getMessage(), e);
     }
   }
 
@@ -233,7 +232,7 @@ public final class HistoricalEthCallSupport {
     try {
       archiveService.validateAvailable();
     } catch (RuntimeException e) {
-      throw new JsonRpcInternalException(e.getMessage());
+      throw new JsonRpcInternalException(e.getMessage(), e);
     }
   }
 
