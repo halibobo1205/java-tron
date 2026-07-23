@@ -606,6 +606,7 @@ public final class DefaultArchiveService implements ArchiveService {
         publisherConfig.getBackpressureTimeoutMs());
     long deadline = System.nanoTime() + timeoutNanos;
     while (true) {
+      validateAvailable();
       long usableSpace;
       try {
         usableSpace = sampleUsableSpaceBytes();
@@ -613,9 +614,9 @@ public final class DefaultArchiveService implements ArchiveService {
         markDiskSampleFailure(e);
         throw e;
       }
-      validateAvailable();
       ArchiveException fatalFailure = null;
       synchronized (backlogMonitor) {
+        validateAvailable();
         boolean hardLimitReached =
             inFlightBlockCount >= publisherConfig.getHardInFlightBlocks()
                 || inFlightRecordCount >= publisherConfig.getHardInFlightRecords()
@@ -628,11 +629,13 @@ public final class DefaultArchiveService implements ArchiveService {
                   + ", bytes=" + inFlightRetainedBytes
                   + ", resourceBytes=" + inFlightResourceBytes + ", diskFree=" + usableSpace);
         } else {
+          boolean diskSoftLimitReached =
+              usableSpace < publisherConfig.getSoftMinFreeBytes();
           boolean softLimitReached =
               inFlightBlockCount >= publisherConfig.getSoftInFlightBlocks()
                   || inFlightRecordCount >= publisherConfig.getSoftInFlightRecords()
                   || inFlightResourceBytes >= publisherConfig.getSoftInFlightBytes()
-                  || usableSpace < publisherConfig.getSoftMinFreeBytes();
+                  || diskSoftLimitReached;
           if (!softLimitReached || publisher == null || !publisherConfig.isBackpressure()) {
             return;
           }
@@ -644,7 +647,9 @@ public final class DefaultArchiveService implements ArchiveService {
                     + ", resourceBytes=" + inFlightResourceBytes + ", diskFree=" + usableSpace);
           } else {
             try {
-              TimeUnit.NANOSECONDS.timedWait(backlogMonitor, remaining);
+              long waitNanos = diskSoftLimitReached
+                  ? Math.min(remaining, DISK_SAMPLE_INTERVAL_NANOS) : remaining;
+              TimeUnit.NANOSECONDS.timedWait(backlogMonitor, waitNanos);
             } catch (InterruptedException e) {
               Thread.currentThread().interrupt();
               throw new ArchiveException("archive publisher backpressure interrupted", e);
@@ -2186,7 +2191,11 @@ public final class DefaultArchiveService implements ArchiveService {
       return applyDiskSample(
           diskSpaceSampler.sampleAfter(cached.generation, DISK_SAMPLE_TIMEOUT_NANOS));
     }
-    diskSpaceSampler.requestSample(DISK_SAMPLE_TIMEOUT_NANOS);
+    ArchiveDiskSpaceSampler.Sample newer = diskSpaceSampler.requestSampleAfter(
+        cached.generation, DISK_SAMPLE_TIMEOUT_NANOS);
+    if (newer != null) {
+      return applyDiskSample(newer);
+    }
     return cached.usableBytes;
   }
 

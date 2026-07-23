@@ -71,6 +71,31 @@ final class ArchiveDiskSpaceSampler implements AutoCloseable {
     }
   }
 
+  /**
+   * Returns a completion newer than the caller has seen, or atomically ensures that one probe is
+   * requested and returns {@code null}. A failed newer completion is delivered instead of being
+   * skipped by a subsequent request.
+   */
+  Sample requestSampleAfter(long completedGenerationSeen, long pendingTimeoutNanos) {
+    if (completedGenerationSeen < 0L) {
+      throw new IllegalArgumentException("completed disk sample generation must be non-negative");
+    }
+    if (pendingTimeoutNanos < 0L) {
+      throw new IllegalArgumentException("disk sample pending timeout must be non-negative");
+    }
+    synchronized (monitor) {
+      requireOpen();
+      if (completedGeneration > completedGenerationSeen) {
+        if (sampleFailure != null) {
+          throw sampleFailure(sampleFailure);
+        }
+        return completedSample();
+      }
+      requestSampleLocked(pendingTimeoutNanos);
+      return null;
+    }
+  }
+
   Sample latestCompletedSample() {
     synchronized (monitor) {
       requireOpen();

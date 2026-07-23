@@ -15,6 +15,8 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import com.google.protobuf.ByteString;
+import java.lang.management.ManagementFactory;
+import java.lang.management.ThreadInfo;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -638,6 +640,129 @@ public class DefaultArchiveServiceTest {
       inFlightStore.releaseBlockedProbe.countDown();
       capacityThread.join(1_000L);
       monitorThread.join(1_000L);
+      service.close();
+    }
+  }
+
+  @Test
+  public void diskSoftPressureRechecksBeforeFullBackpressureTimeout() throws Exception {
+    CountingCapacityInFlightStore inFlightStore = new CountingCapacityInFlightStore();
+    inFlightStore.usableSpace = 50L;
+    ArchivePublisherConfig publisherConfig = new ArchivePublisherConfig(
+        true, true, 8, 16, 1024L * 1024L, 2L * 1024L * 1024L,
+        100L, 200L, 100L, 0L, 4_000L);
+    DefaultArchiveService service = serviceWithPublisherConfig(
+        new InMemoryArchiveTxNumIndex(), new ArchiveExecutionContext(),
+        new InMemoryArchiveTemporalStore(), inFlightStore, publisherConfig);
+    ReflectUtils.setFieldValue(service, "lastDiskSampleNanos", System.nanoTime());
+    CountDownLatch waiterStarted = new CountDownLatch(1);
+    FutureTask<Void> capacity = new FutureTask<>(() -> {
+      waiterStarted.countDown();
+      service.awaitWriterCapacity();
+      return null;
+    });
+    Thread capacityThread = new Thread(capacity, "disk-soft-pressure-capacity");
+    try {
+      capacityThread.start();
+      assertTrue(waiterStarted.await(1L, TimeUnit.SECONDS));
+      Thread.sleep(100L);
+      assertFalse(capacity.isDone());
+
+      inFlightStore.usableSpace = 200L;
+
+      capacity.get(2L, TimeUnit.SECONDS);
+      assertEquals(2, inFlightStore.capacityReads);
+    } finally {
+      service.close();
+      capacityThread.join(1_000L);
+    }
+  }
+
+  @Test
+  public void knownFatalFailsBeforeStartingAStalePressureProbe() throws Exception {
+    BlockingCapacityInFlightStore inFlightStore = new BlockingCapacityInFlightStore();
+    DefaultArchiveService service = serviceWithPublisherConfig(
+        new InMemoryArchiveTxNumIndex(), new ArchiveExecutionContext(),
+        new InMemoryArchiveTemporalStore(), inFlightStore,
+        startupByteBudget(1024L * 1024L));
+    ReflectUtils.setFieldValue(service, "lastUsableSpaceBytes", 1L);
+    ReflectUtils.setFieldValue(service, "lastDiskSampleNanos", 0L);
+    invokeMarkFatal(service, new ArchiveException("known archive fatal"));
+    FutureTask<Throwable> capacity = new FutureTask<>(() -> {
+      try {
+        service.awaitWriterCapacity();
+        return null;
+      } catch (Throwable failure) {
+        return failure;
+      }
+    });
+    Thread capacityThread = new Thread(capacity, "known-fatal-capacity");
+    try {
+      capacityThread.start();
+
+      Throwable failure = capacity.get(500L, TimeUnit.MILLISECONDS);
+
+      assertTrue(failure instanceof ArchiveException);
+      assertNotNull(failure.getCause());
+      assertTrue(failure.getCause().getMessage().contains("known archive fatal"));
+      assertEquals(1L, inFlightStore.blockedProbeEntered.getCount());
+      assertEquals(1, inFlightStore.capacityReads);
+    } finally {
+      inFlightStore.releaseBlockedProbe.countDown();
+      capacityThread.join(1_000L);
+      service.close();
+    }
+  }
+
+  @Test
+  public void fatalBetweenValidationAndBacklogWaitCannotLoseWakeup() throws Exception {
+    ArchivePublisherConfig publisherConfig = new ArchivePublisherConfig(
+        true, true, 8, 16, 1024L * 1024L, 2L * 1024L * 1024L,
+        100L, 200L, 0L, 0L, 4_000L);
+    DefaultArchiveService service = serviceWithPublisherConfig(
+        new InMemoryArchiveTxNumIndex(), new ArchiveExecutionContext(),
+        new InMemoryArchiveTemporalStore(), new InMemoryArchiveInFlightStore(),
+        publisherConfig);
+    ReflectUtils.setFieldValue(service, "inFlightBlockCount", 8);
+    FutureTask<Throwable> capacity = new FutureTask<>(() -> {
+      try {
+        service.awaitWriterCapacity();
+        return null;
+      } catch (Throwable failure) {
+        return failure;
+      }
+    });
+    Thread capacityThread = new Thread(capacity, "fatal-backlog-wakeup-capacity");
+    Object backlogMonitor = ReflectUtils.getFieldValue(service, "backlogMonitor");
+    try {
+      synchronized (backlogMonitor) {
+        capacityThread.start();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1L);
+        ThreadInfo blocked = null;
+        while (System.nanoTime() < deadline) {
+          ThreadInfo candidate = ManagementFactory.getThreadMXBean()
+              .getThreadInfo(capacityThread.getId());
+          if (candidate != null && candidate.getThreadState() == Thread.State.BLOCKED
+              && candidate.getLockInfo() != null
+              && candidate.getLockInfo().getIdentityHashCode()
+                  == System.identityHashCode(backlogMonitor)) {
+            blocked = candidate;
+            break;
+          }
+          Thread.yield();
+        }
+        assertNotNull(blocked);
+
+        invokeMarkFatal(service, new ArchiveException("fatal before backlog wait"));
+      }
+
+      Throwable failure = capacity.get(500L, TimeUnit.MILLISECONDS);
+
+      assertTrue(failure instanceof ArchiveException);
+      assertNotNull(failure.getCause());
+      assertTrue(failure.getCause().getMessage().contains("fatal before backlog wait"));
+    } finally {
+      capacityThread.join(1_000L);
       service.close();
     }
   }
@@ -4507,8 +4632,8 @@ public class DefaultArchiveServiceTest {
   private static class CountingCapacityInFlightStore implements ArchiveInFlightStore {
 
     private final InMemoryArchiveInFlightStore delegate = new InMemoryArchiveInFlightStore();
-    protected long usableSpace = Long.MAX_VALUE;
-    protected int capacityReads;
+    protected volatile long usableSpace = Long.MAX_VALUE;
+    protected volatile int capacityReads;
     private boolean failWrites;
 
     @Override
