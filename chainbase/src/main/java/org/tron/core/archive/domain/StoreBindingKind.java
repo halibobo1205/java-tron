@@ -6,8 +6,6 @@ public enum StoreBindingKind {
   DOMAIN,
   /** Physical backing for a semantic domain (e.g. storage-row for CONTRACT_STORAGE). */
   SEMANTIC_BACKING,
-  /** Backs a P1/later domain (captured, not necessarily P0-rooted). */
-  P1_DOMAIN,
   /** Explicitly excluded from archive state, with a recorded reason. */
   EXCLUDED,
   /** dbName not recognised - must be surfaced as a warning, never silently treated as excluded. */

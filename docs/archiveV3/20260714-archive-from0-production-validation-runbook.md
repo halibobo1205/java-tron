@@ -100,13 +100,16 @@ Alert on:
   `tron:archive_state{type="oldest_inflight_block"}` remains fixed.
 - `tron:archive_state{type="disk_free_bytes"} < hardMinFreeBytes` or
   `tron:archive_state{type="active_snapshots"}` pinned at `maxOpenSnapshots`.
-- `tron:archive_state{type="rocksdb_pending_compaction_bytes"}` rising without recovery, or a
-  sustained increase in `tron:archive_work_total{type="rocksdb_stall_micros"}`.
+- `tron:archive_state{type="metrics_dropped_reports"} > 0`; this is a sticky
+  process-lifetime signal that archive metrics were dropped and may have been stale. Investigate
+  the reporter backlog; the signal clears only when the process restarts.
 - `tron:archive_queries_total` failure/rejection labels spiking.
 
-Track `rocksdb_bloom_filter_useful`, `rocksdb_block_cache_hit`, and
-`rocksdb_block_cache_miss` as rates over the same interval. They are measurement inputs for cache
-and compaction sizing, not pass criteria by themselves.
+Archive does not poll RocksDB property/statistics JNI at runtime because those calls have no
+enforceable deadline. During a validation run, inspect the archive database's RocksDB `LOG` and
+host disk-latency/throughput metrics for compaction backlog and write stalls. Use archive query
+latency and process RSS when evaluating the fixed archive cache budget. These are tuning inputs,
+not pass criteria by themselves.
 
 Derive catch-up from counters over the same window; do not compare cumulative totals:
 ```

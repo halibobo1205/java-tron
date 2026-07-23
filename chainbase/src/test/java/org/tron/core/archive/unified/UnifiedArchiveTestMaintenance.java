@@ -23,4 +23,9 @@ public final class UnifiedArchiveTestMaintenance {
       db.write(writeOptions, batch);
     });
   }
+
+  public static UnifiedArchiveDb openWithStatistics(
+      Path path, byte[] schemaChecksum) {
+    return UnifiedArchiveDb.openWithStatisticsForTesting(path, schemaChecksum);
+  }
 }
