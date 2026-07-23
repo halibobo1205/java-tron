@@ -135,6 +135,7 @@ import org.tron.core.actuator.ActuatorFactory;
 import org.tron.core.actuator.UnfreezeBalanceV2Actuator;
 import org.tron.core.actuator.VMActuator;
 import org.tron.core.archive.ArchiveException;
+import org.tron.core.archive.query.HistoricalQueryLimitException;
 import org.tron.core.capsule.AbiCapsule;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.AssetIssueCapsule;
@@ -727,7 +728,9 @@ public class Wallet {
     } catch (ItemNotFoundException e) {
       logger.info(e.getMessage());
       return null;
-    } catch (StoreException e) {
+    } catch (HistoricalQueryLimitException e) {
+      throw e;
+    } catch (StoreException | RuntimeException e) {
       throw new ArchiveException(
           "failed to read canonical block " + blockNum, e);
     }
@@ -740,6 +743,11 @@ public class Wallet {
     } catch (ItemNotFoundException e) {
       logger.info(e.getMessage());
       return null;
+    } catch (HistoricalQueryLimitException e) {
+      throw e;
+    } catch (RuntimeException e) {
+      throw new ArchiveException(
+          "failed to read canonical block id " + blockNum, e);
     }
   }
 
@@ -1870,7 +1878,9 @@ public class Wallet {
     } catch (ItemNotFoundException e) {
       logger.warn(e.getMessage());
       return null;
-    } catch (StoreException e) {
+    } catch (HistoricalQueryLimitException e) {
+      throw e;
+    } catch (StoreException | RuntimeException e) {
       throw new ArchiveException("failed to read canonical block by id", e);
     }
   }

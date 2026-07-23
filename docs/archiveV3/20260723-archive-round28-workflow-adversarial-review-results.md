@@ -108,6 +108,50 @@ Fix:
 - archive/VM JSON-RPC conversion retains the cause while preserving the client-facing error class
   and message.
 
+### R28-5 - disk completion and backlog wakeup races remained after the first fix
+
+Severity: Medium for the skipped completion; Low for bounded fatal-delivery latency.
+
+The post-fix adversarial pass found three related timing windows:
+
+- `latestCompletedSample()` and `requestSample()` used separate sampler monitor acquisitions. A
+  low-space or failed generation completing between them could be skipped when the request started
+  the next generation.
+- disk-only soft pressure waited for the complete backpressure timeout because filesystem recovery
+  does not notify the backlog monitor;
+- fatal notification could land after lifecycle validation but before the admission thread entered
+  `wait()`, delaying fail-stop by the remaining backlog timeout.
+
+Fix:
+
+- the sampler now atomically returns a completion newer than the service generation or coalesces
+  one pending request; a failed or low completion cannot be overwritten by the next generation;
+- disk soft pressure rechecks at the bounded one-second sampling interval while retaining the
+  original absolute backpressure deadline;
+- known fatal state is rejected before probing, and the final lifecycle check runs while holding
+  the same backlog monitor used by fatal notification.
+
+Healthy high-space admission remains nonblocking, pressure-zone admission still requires fresh
+capacity, and all callers still share one sampler probe.
+
+### R28-6 - corrupt canonical index rows escaped the historical error boundary
+
+Severity: Low; failure classification only.
+
+The cacheless canonical block-id path handled a genuinely missing index row but allowed unchecked
+storage/runtime failures, including a malformed hash length, to escape directly. The same unchecked
+boundary was possible while resolving a block body by number or id.
+
+Fix:
+
+- all three historical cacheless canonical entry points preserve `ItemNotFoundException` as
+  absence;
+- other checked and unchecked read failures become `ArchiveException` with their original cause;
+- `HistoricalQueryLimitException` is explicitly rethrown before the runtime catch, preserving the
+  typed resource-limit mapping instead of degrading `-32005` to `-32000`;
+- tests cover block body, block-id-by-height, block-by-id, both canonical-check stages, missing
+  values, and typed query-limit propagation.
+
 ## 3. Adversarially rejected or deferred candidates
 
 ### Async publication `sync=false`
@@ -133,6 +177,19 @@ construction state machine solely for this terminal path would increase lifecycl
 than it improves a recoverable production case. Normal construction, close, and factory failure
 paths remain owned and tested.
 
+### Ordinary startup versus arbitrary clean deletion
+
+Ordinary startup proves the complete published range chain once, then validates the journal and
+published tail. It does not claim to be a full corruption scrub of every historical position and
+temporal row. An operator or unknown defect that deletes a mutually consistent set of middle rows
+without the maintenance API's repair marker may therefore require `fullScrubOnStartup=true` to be
+detected.
+
+This is not reachable through the supported atomic publication, unwind, or maintenance APIs, and
+normal kill/WAL recovery cannot create it without violating RocksDB batch atomicity. Making every
+ordinary startup walk every historical row would undo the startup scaling fix. Full scrub remains
+the explicit physical/logical corruption gate.
+
 ### Other disproved candidates
 
 - archive-off performs no archive DB read, fsync, worker admission, or archive lock;
@@ -153,10 +210,14 @@ Focused red/green coverage includes:
 - pressure sample blocks for fresh capacity;
 - async probe failure and stall become repair-required fail-stop;
 - concurrent completed generation prevents a redundant pressure probe;
+- a completed low/failed generation cannot be skipped by a newer request;
+- disk-only soft-pressure recovery is rechecked before the full backpressure timeout;
+- fatal notification cannot be lost between validation and backlog wait;
 - compact ACK reads less than 4 KiB while the journal fixture exceeds 512 KiB;
 - payload corruption after compact ACK is rejected before publication;
 - normal post-reconcile startup does not walk every block range;
 - corrupt canonical protobuf is an internal error, while a genuinely missing block remains absent;
+- corrupt canonical index rows are internal errors while query-limit exceptions remain typed;
 - JSON-RPC archive errors retain their original cause.
 
 Completed repository regression:
@@ -166,15 +227,61 @@ Completed repository regression:
   -x generateGitProperties \
   --tests '*Archive*' --tests '*Historical*' --tests '*StorageConfigTest'
 
-BUILD SUCCESSFUL in 2m 2s
+BUILD SUCCESSFUL in 44s
+32 actionable tasks: 1 executed, 31 up-to-date
 ```
 
 The startup-validation boundary was also rechecked directly: ordinary post-reconcile validation
 uses the bounded tail path, while generic startup validation and factory startup still reject a
 missing middle published range.
 
-Exact-artifact private-chain and restart evidence remains a follow-up release-gate run; this review
-does not represent it as completed.
+Exact-artifact private-chain evidence:
+
+```text
+FullNode.jar SHA-256
+9b32248b61912137a0dfca0ecb98e154b5b390ab38e9cfd8ecb6a2ea82f62dd2
+
+evidence root
+/private/tmp/java-tron-archive-round28-postfix-e2e-20260723
+
+SCENARIO_OK transactions=20 oracles=15 finalHeight=48
+ORACLE_REPLAY_OK count=15
+```
+
+The scenario covered account creation/update and transfers, FreezeV2 freeze/unfreeze, voting,
+resource delegation/undelegation, TRC10 issue/transfer, contract deployment/call, three historical
+storage values including deletion to zero, and `SELFDESTRUCT`. HTTP, JSON-RPC, and gRPC were all
+exercised.
+
+Immediately before normal shutdown, the node intentionally had two unsolidified archive blocks
+with `repair_required=0` and `publisher_lag_blocks=0`. Restart on the same database replayed all 15
+oracles and settled to:
+
+```text
+repair_required=0
+inflight_blocks=0
+publisher_lag_blocks=0
+```
+
+The stopped-node Unified DB probe then validated every range, tx position, transaction id,
+changeset, commitment, marker, and typed domain:
+
+```text
+OFFLINE_PROBE_OK first=0 last=51 changesets=900 tombstones=7
+HISTORY=900 CHANGESET=900 LATEST=277 COMMITMENT=277 INFLIGHT=0
+```
+
+A real block-boundary `SIGKILL` against the same exact jar observed one durable
+`CANONICAL_COMMITTED` journal:
+
+```text
+publishedFirst=0 publishedLast=51 inFlight=1
+JOURNAL block=52 state=CANONICAL_COMMITTED records=17 txPositions=2
+```
+
+Restart recovered without repair mode, replayed all 15 historical oracles, settled in-flight and
+publisher lag to zero, and reproduced the same successful offline probe. This test used the normal
+artifact and process kill, not a fault-hook jar.
 
 ## 5. Remaining release gates
 

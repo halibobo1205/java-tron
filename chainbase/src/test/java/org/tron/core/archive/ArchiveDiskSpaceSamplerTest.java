@@ -84,6 +84,55 @@ public class ArchiveDiskSpaceSamplerTest {
   }
 
   @Test
+  public void conditionalRequestReturnsNewerLowSampleWithoutStartingAnotherProbe() {
+    AtomicInteger probes = new AtomicInteger();
+    try (ArchiveDiskSpaceSampler sampler = new ArchiveDiskSpaceSampler(
+        "disk-sampler-conditional-request", () -> {
+          int attempt = probes.incrementAndGet();
+          return attempt == 1 ? Long.MAX_VALUE : 7L;
+        })) {
+      ArchiveDiskSpaceSampler.Sample first =
+          sampler.sample(TimeUnit.SECONDS.toNanos(1L));
+      long lowGeneration = sampler.requestSample();
+      ArchiveDiskSpaceSampler.Sample low =
+          sampler.awaitSample(lowGeneration, TimeUnit.SECONDS.toNanos(1L));
+
+      ArchiveDiskSpaceSampler.Sample reused = sampler.requestSampleAfter(
+          first.getGeneration(), TimeUnit.SECONDS.toNanos(1L));
+
+      assertEquals(low.getGeneration(), reused.getGeneration());
+      assertEquals(7L, reused.getUsableBytes());
+      assertEquals(2, probes.get());
+    }
+  }
+
+  @Test
+  public void conditionalRequestDoesNotSkipNewerFailedCompletion() {
+    AtomicInteger probes = new AtomicInteger();
+    try (ArchiveDiskSpaceSampler sampler = new ArchiveDiskSpaceSampler(
+        "disk-sampler-conditional-failure", () -> {
+          int attempt = probes.incrementAndGet();
+          if (attempt == 2) {
+            throw new ArchiveException("injected conditional probe failure");
+          }
+          return attempt;
+        })) {
+      ArchiveDiskSpaceSampler.Sample first =
+          sampler.sample(TimeUnit.SECONDS.toNanos(1L));
+      long failedGeneration = sampler.requestSample();
+      assertThrows(ArchiveException.class, () -> sampler.awaitSample(
+          failedGeneration, TimeUnit.SECONDS.toNanos(1L)));
+
+      ArchiveException failure = assertThrows(ArchiveException.class,
+          () -> sampler.requestSampleAfter(
+              first.getGeneration(), TimeUnit.SECONDS.toNanos(1L)));
+
+      assertTrue(failure.getMessage().contains("injected conditional probe failure"));
+      assertEquals(2, probes.get());
+    }
+  }
+
+  @Test
   public void asynchronousRequestsAreSingleFlightAndExposeTheCompletedSample() throws Exception {
     CountDownLatch probeEntered = new CountDownLatch(1);
     CountDownLatch releaseProbe = new CountDownLatch(1);
