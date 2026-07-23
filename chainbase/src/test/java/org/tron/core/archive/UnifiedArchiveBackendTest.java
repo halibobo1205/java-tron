@@ -617,6 +617,31 @@ public class UnifiedArchiveBackendTest {
   }
 
   @Test
+  public void ordinaryPostReconcileValidationDoesNotRescanEveryPublishedRange() {
+    DomainValue previous = DomainValue.tombstone();
+    for (int blockNum = 0; blockNum < 32; blockNum++) {
+      DomainValue current = value(blockNum + 1);
+      publish(block(blockNum, previous, current));
+      previous = current;
+    }
+    boolean metricsPreviouslyEnabled =
+        CommonParameter.getInstance().isMetricsPrometheusEnable();
+    try {
+      reopenWithMetrics(true);
+      Statistics statistics = ReflectUtils.getFieldValue(db, "statistics");
+      long before = statistics.getTickerCount(TickerType.NUMBER_DB_NEXT);
+
+      backend.validatePostReconcileStartup(false, true);
+
+      long nextCalls = statistics.getTickerCount(TickerType.NUMBER_DB_NEXT) - before;
+      assertTrue("ordinary post-reconcile validation rescanned published ranges: nextCalls="
+          + nextCalls, nextCalls < 16L);
+    } finally {
+      reopenWithMetrics(metricsPreviouslyEnabled);
+    }
+  }
+
+  @Test
   public void largeTemporalPublicationReadsDoNotPopulatePayloadBlocks() {
     DomainValue first = largeValue(1, 128 * 1024);
     DomainValue second = largeValue(2, 128 * 1024);
@@ -825,7 +850,7 @@ public class UnifiedArchiveBackendTest {
   }
 
   @Test
-  public void acknowledgementRejectsJournalReadWorkspaceDuringStateAwarePublication() {
+  public void acknowledgementUsesCompactWorkspaceDuringStateAwarePublication() {
     ArchiveInFlightBlock head = block(0L, DomainValue.tombstone(), value(1));
     ArchiveInFlightBlock tail = block(1L, value(1), value(2));
     inFlight.putBlock(head);
@@ -838,7 +863,7 @@ public class UnifiedArchiveBackendTest {
             8L * 1024L + 3L * tail.encodedBlockBytes()));
     long stateAwarePublicationBytes = staticWorkspaceBytes + 1_024L;
     long hardBytes = head.estimatedRetainedBytes() + tail.estimatedRetainedBytes()
-        + stateAwarePublicationBytes;
+        + stateAwarePublicationBytes + 8L * 1024L;
     UnifiedArchiveBackend boundedBackend =
         new UnifiedArchiveBackend(db, index, temporal, hardBytes, 100L);
     ArchivePublisherConfig publisherConfig = new ArchivePublisherConfig(
@@ -858,16 +883,13 @@ public class UnifiedArchiveBackendTest {
         new Class<?>[]{ArchiveInFlightBlock.class, long.class, long.class},
         loadedHead, staticHeadBytes, stateAwarePublicationBytes);
     try {
-      ArchiveException failure = assertThrows(ArchiveException.class,
-          () -> service.acknowledgeCanonicalCommit(tail.getJournalToken()));
+      service.acknowledgeCanonicalCommit(tail.getJournalToken());
 
-      assertTrue(failure.getMessage().contains(
-          "journal acknowledgement would exceed hard resource watermark"));
       assertEquals(0L,
           (long) ReflectUtils.getFieldValue(service, "activeJournalMutationBytes"));
       assertNotNull(db.get(UnifiedArchiveColumnFamily.INFLIGHT,
           ArchiveInFlightCodec.blockKey(1L)));
-      assertNull(db.get(UnifiedArchiveColumnFamily.INFLIGHT,
+      assertNotNull(db.get(UnifiedArchiveColumnFamily.INFLIGHT,
           ArchiveInFlightCodec.acknowledgementKey(1L)));
     } finally {
       ReflectUtils.invokeMethod(service, "endActivePublication",
@@ -924,7 +946,7 @@ public class UnifiedArchiveBackendTest {
       publish(block(1L, first, value(2)));
 
       assertEquals("one metadata preflight plus one preparation pass must stay bounded",
-          20L, statistics.getTickerCount(TickerType.NUMBER_KEYS_READ) - before);
+          19L, statistics.getTickerCount(TickerType.NUMBER_KEYS_READ) - before);
     } finally {
       reopenWithMetrics(metricsPreviouslyEnabled);
     }
@@ -1107,7 +1129,7 @@ public class UnifiedArchiveBackendTest {
   }
 
   @Test
-  public void acknowledgementMaterializesOneFullJournalPayload() {
+  public void acknowledgementReadsOnlyCompactJournalLifecycleRows() {
     ArchiveInFlightBlock block = block(
         0L, DomainValue.tombstone(), largeValue(1, 512 * 1024));
     ArchiveJournalToken token = block.getJournalToken();
@@ -1125,9 +1147,9 @@ public class UnifiedArchiveBackendTest {
       inFlight.acknowledgeBlock(token);
 
       long bytesRead = statistics.getTickerCount(TickerType.BYTES_READ) - before;
-      assertTrue("ACK must read its journal payload", bytesRead >= journalBytes);
-      assertTrue("ACK must not materialize the full journal twice: bytesRead=" + bytesRead,
-          bytesRead < journalBytes * 2L);
+      assertTrue("ACK must not materialize its " + journalBytes
+              + "-byte journal payload: bytesRead=" + bytesRead,
+          bytesRead < 4L * 1024L);
     } finally {
       reopenWithMetrics(metricsPreviouslyEnabled);
     }
@@ -1148,7 +1170,7 @@ public class UnifiedArchiveBackendTest {
   }
 
   @Test
-  public void acknowledgementRejectsTamperedJournalPayload() {
+  public void acknowledgementDefersTamperedJournalPayloadDetectionToPublication() {
     ArchiveInFlightBlock block = block(0L, DomainValue.tombstone(), value(1));
     inFlight.putBlock(block);
     byte[] journalKey = ArchiveInFlightCodec.blockKey(0L);
@@ -1156,14 +1178,17 @@ public class UnifiedArchiveBackendTest {
     tampered[tampered.length - 1] ^= 1;
     replaceInflightValueUnchecked(journalKey, tampered);
 
-    assertThrows(ArchiveJournalCorruptionException.class,
-        () -> inFlight.acknowledgeBlock(block.getJournalToken()));
-    assertNull(db.get(UnifiedArchiveColumnFamily.INFLIGHT,
+    inFlight.acknowledgeBlock(block.getJournalToken());
+
+    assertNotNull(db.get(UnifiedArchiveColumnFamily.INFLIGHT,
         ArchiveInFlightCodec.acknowledgementKey(0L)));
+    assertThrows(ArchiveException.class, () -> backend.publishBlock(
+        block.withJournalState(ArchiveInFlightBlock.JournalState.CANONICAL_COMMITTED)));
+    assertFalse(index.getBlockRange(0L).isPresent());
   }
 
   @Test
-  public void acknowledgementCorruptionMarksServiceRepairRequired() {
+  public void publicationCorruptionAfterCompactAckMarksServiceRepairRequired() {
     service = unifiedService();
     BlockCapsule block = canonicalBlock(0L);
     service.beginBlock(block, ArchiveSource.NORMAL);
@@ -1177,11 +1202,11 @@ public class UnifiedArchiveBackendTest {
     tampered[tampered.length - 1] ^= 1;
     replaceInflightValueUnchecked(journalKey, tampered);
 
-    assertThrows(ArchiveJournalCorruptionException.class,
-        () -> service.acknowledgeCanonicalCommit(token));
+    service.acknowledgeCanonicalCommit(token);
+    assertThrows(ArchiveException.class, () -> service.publishSolidifiedBlocks(0L));
 
     assertTrue(index.hasRepairRequired());
-    assertNull(db.get(UnifiedArchiveColumnFamily.INFLIGHT,
+    assertNotNull(db.get(UnifiedArchiveColumnFamily.INFLIGHT,
         ArchiveInFlightCodec.acknowledgementKey(0L)));
   }
 

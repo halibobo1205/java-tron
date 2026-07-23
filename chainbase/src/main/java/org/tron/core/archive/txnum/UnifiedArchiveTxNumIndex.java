@@ -459,8 +459,19 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
   }
 
   public void validateStartup(boolean full, boolean deferRepairValidation) {
+    validatePersistentStartupState(
+        () -> validateStartupState(full, deferRepairValidation));
+  }
+
+  /** Revalidates only mutable cursor/tail state after startup reconcile has completed. */
+  public void validateStartupTail(boolean deferRepairValidation) {
+    validatePersistentStartupState(
+        () -> validateStartupTailState(deferRepairValidation));
+  }
+
+  private void validatePersistentStartupState(Runnable validator) {
     try {
-      validateStartupState(full, deferRepairValidation);
+      validator.run();
     } catch (ArchivePersistentStateCorruptionException e) {
       throw e;
     } catch (ArchiveException e) {
@@ -476,6 +487,14 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
   }
 
   private void validateStartupState(boolean full, boolean deferRepairValidation) {
+    validateStartupTailState(deferRepairValidation);
+    if (full) {
+      validateFullKeyspace();
+    }
+    validateRangeCoverage(full);
+  }
+
+  private void validateStartupTailState(boolean deferRepairValidation) {
     if (!deferRepairValidation) {
       byte[] repair = get(UnifiedArchiveColumnFamily.META,
           ArchiveBlockRangeCodec.REPAIR_REQUIRED_KEY);
@@ -499,10 +518,6 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
             "archive tx-position missing for committed txNum " + currentTxNum));
       }
     }
-    if (full) {
-      validateFullKeyspace();
-    }
-    validateRangeCoverage(full);
   }
 
   private static boolean hasCause(Throwable failure, Class<? extends Throwable> type) {

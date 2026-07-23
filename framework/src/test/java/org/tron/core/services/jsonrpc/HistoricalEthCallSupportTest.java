@@ -2,6 +2,7 @@ package org.tron.core.services.jsonrpc;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -31,6 +32,7 @@ import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.archive.query.ArchiveQueryLimits;
 import org.tron.core.archive.query.QueryContext;
 import org.tron.core.archive.reader.ArchiveReadResult;
+import org.tron.core.archive.reader.ArchiveReaderException;
 import org.tron.core.archive.reader.ArchiveStatePoint;
 import org.tron.core.archive.reader.ArchiveStateReader;
 import org.tron.core.capsule.BlockCapsule;
@@ -231,6 +233,27 @@ public class HistoricalEthCallSupportTest {
         () -> support.call(address, address, 0L, new byte[0], "0x5"));
 
     assertTrue(failure.getMessage(), failure.getMessage().contains("hash mismatch"));
+  }
+
+  @Test
+  public void archiveReaderFailureRetainsItsCauseInHistoricalEthCall() throws Exception {
+    ArchiveService archiveService = mock(ArchiveService.class);
+    ArchiveReaderException original = new ArchiveReaderException(
+        ArchiveReaderException.Reason.INTERNAL_IO, "injected historical call read failure");
+    when(archiveService.isEnabled()).thenReturn(true);
+    when(archiveService.openBlockEndReader(anyLong(),
+        org.mockito.ArgumentMatchers.<java.util.function.LongFunction<byte[]>>any()))
+        .thenThrow(original);
+    HistoricalEthCallSupport support =
+        new HistoricalEthCallSupport(mock(Wallet.class), archiveService);
+    byte[] address = new byte[21];
+    address[0] = 0x41;
+
+    JsonRpcInternalException failure = assertThrows(JsonRpcInternalException.class,
+        () -> support.call(address, address, 0L, new byte[0], "0x5"));
+
+    assertEquals(original.getMessage(), failure.getMessage());
+    assertSame(original, failure.getCause());
   }
 
   private DefaultArchiveService midChainArchiveService() {

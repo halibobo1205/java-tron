@@ -453,10 +453,8 @@ public final class UnifiedArchiveInFlightStore implements ArchiveInFlightStore {
     }
     byte[] proof = ArchiveInFlightCodec.encodeProof(validatedProof);
     long startedNanos = ArchiveMetrics.startTimer();
-    ArchiveJournalProof proofVerifier = validatedProof;
     runPersistentMutation(() -> db.acknowledgeJournalWalOnly(
-        journalKey, proofVerifier, maxEncodedBlockBytes,
-        ArchiveInFlightCodec.tokenKey(blockNum), proof,
+        journalKey, ArchiveInFlightCodec.tokenKey(blockNum), proof,
         ArchiveInFlightCodec.acknowledgementKey(blockNum), proof));
     ArchiveMetrics.journalAcknowledged(proof.length, startedNanos);
   }
