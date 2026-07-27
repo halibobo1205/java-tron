@@ -1480,15 +1480,16 @@ public class Manager {
       trxCap.setInBlock(true);
     }
 
-    validateTapos(trxCap);
-    validateCommon(trxCap);
+    if (Objects.isNull(blockCap) || !CommonParameter.getInstance().isSolidityNode()) {
+      validateTapos(trxCap);
+      validateCommon(trxCap);
 
-    validateDup(trxCap);
-
-    if (!trxCap.validateSignature(chainBaseManager.getAccountStore(),
-        chainBaseManager.getDynamicPropertiesStore())) {
-      throw new ValidateSignatureException(
-          String.format(" %s transaction signature validate failed", txId));
+      validateDup(trxCap);
+      if (!trxCap.validateSignature(chainBaseManager.getAccountStore(),
+          chainBaseManager.getDynamicPropertiesStore())) {
+        throw new ValidateSignatureException(
+            String.format(" %s transaction signature validate failed", txId));
+      }
     }
 
     if (!trxCap.isInBlock()) {
@@ -1503,14 +1504,18 @@ public class Manager {
     consumeMemoFee(trxCap, trace);
 
     trace.init(blockCap, eventPluginLoaded);
-    trace.checkIsConstant();
+    if (Objects.isNull(blockCap) || !CommonParameter.getInstance().isSolidityNode()) {
+      trace.checkIsConstant();
+    }
     trace.exec();
 
     if (Objects.nonNull(blockCap)) {
       trace.setResult();
       if (trace.checkNeedRetry()) {
         trace.init(blockCap, eventPluginLoaded);
-        trace.checkIsConstant();
+        if (!CommonParameter.getInstance().isSolidityNode()) {
+          trace.checkIsConstant();
+        }
         trace.exec();
         trace.setResult();
         logger.info("Retry result when push: {}, for tx id: {}, tx resultCode in receipt: {}.",
