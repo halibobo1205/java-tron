@@ -157,7 +157,10 @@
 2. **256-bit binary 稀疏 Merkle 树**，content-addressed branch；hash = **keccak（`org.tron.common.crypto.Hash.sha3`）**；自定义 empty-hash chain；algorithm 版本化（`tron-archive-smt-keccak-v1`，`algorithmId|treeKind|domainId`）；**globalRoot 绑 registry checksum**（schema 漂移即 proof 失效）。
 3. **二段式 native proof**（domain 树内 sibling path + 证明 `DomainRootRecord` 被 globalRoot 收录）+ **absence proof**；返回前自验；标 `ARCHIVE_SIDECAR`。
 4. **debug API**：`debug_getArchiveRoot / getArchiveProof / verifyArchiveProof`，**FullNode-only + default-off + `storage.archive.debug.enable`**，只读 archive root/node/value。
-5. **明确不做**：`eth_getProof`（method-not-found）、`debug_traceCall` / `vmTrace`、不写 header `txTrieRoot/accountStateRoot`、high-QPS 公共 proof 服务。
+5. **明确不做**：`eth_getProof`（method-not-found）、不写 header
+   `txTrieRoot/accountStateRoot`、high-QPS 公共 proof 服务。这里原先排除的历史
+   `debug_traceCall` 已被 2026-07-27 的决策 8 局部取代；全局落盘型 `vmTrace` 仍不属于
+   archive 实现。
 
 **域分类原则**：block-tx 驱动 + canonical + 共识有意义 → `IN_GLOBAL_ROOT`（见域注册表，**17 个**）；**ABI = 元数据例外** → `HISTORY_ONLY`；派生/索引/receipt/一次性/启动态（即便被区块写）→ `EXCLUDED`。→ **globalRoot 即近乎完整 TRON state root**，不只 ETH-compat 子集。
 
@@ -168,6 +171,27 @@
 - **下游改动**：L2 提交时机 每块 → solidified（capture 仍 per-tx）；L5 unwind 降级 + LATEST 范围=solidified + 新增 in-flight buffer 组件；§2/§6 相应注记。
 - **代价**：historical 查询到不可逆点（~19 块）才可见（可接受；最近 ~19 块 latest 走现有 store）；read-through 轻度耦合现有 store 编码。
 - **DECISION（2026-06-26 已拍板）：选 A — 见上三条。**
+
+---
+
+### 决策 8 — 按需历史 debug trace V1（2026-07-27 已拍板）
+
+1. 在 archive FullNode 上增加默认关闭的 `debug_traceCall` 和
+   `debug_traceTransaction`；只重放已提交的历史状态，不 fallback 到 live/latest。
+2. V1 支持默认 `structLogs` 和原生 `callTracer`；block trace、callMany、JavaScript
+   tracer、state/block override 留待后续。
+3. 不在同步/出块时持久化 opcode trace。请求到达后使用 block-end 或 transaction
+   pre-state reader 按需重放，`TVM_STATE_ONLY` coverage 不变。
+4. trace listener/collector 由单次 `Program` 显式持有并向子调用传递；禁止恢复全局
+   `VMConfig`/ThreadLocal trace override，禁止在 canonical opcode 热路径增加第二次配置
+   查询。
+5. 独立低优先级 worker，默认单并发、单排队；同时受 archive query deadline、VM
+   steps、overlay、backend reads、response bytes 和 debug materialization bytes 双重约束。
+6. API 仅面向可信调试网络，不宣称 high-QPS 公共服务。详细契约和验证门见
+   `20260727-archive-debug-trace-v1-plan.md`。
+
+**取代范围**：只取代决策 7 中“不做 `debug_traceCall`”这一项；root/proof、header、
+coverage 和域分类决策保持不变。
 
 ---
 

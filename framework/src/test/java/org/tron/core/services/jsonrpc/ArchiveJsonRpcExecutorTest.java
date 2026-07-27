@@ -38,6 +38,51 @@ public class ArchiveJsonRpcExecutorTest {
     assertTrue(ArchiveJsonRpcExecutor.containsHistoricalRequest(MAPPER.readTree("["
         + "{\"method\":\"eth_blockNumber\",\"params\":[]},"
         + "{\"method\":\"eth_getCode\",\"params\":[\"TAddress\",\"0x2\"]}]")));
+    assertTrue(ArchiveJsonRpcExecutor.containsHistoricalRequest(request(
+        "debug_traceCall", "[{},\"0x10\",{}]")));
+    assertTrue(ArchiveJsonRpcExecutor.containsHistoricalRequest(request(
+        "debug_traceTransaction", "[\"0x01\",{}]")));
+    assertTrue(ArchiveJsonRpcExecutor.containsDebugTraceRequest(request(
+        "debug_traceCall", "[{},\"0x10\",{}]")));
+  }
+
+  @Test
+  public void debugTracingUsesDedicatedLowPriorityWorker() throws Exception {
+    ArchiveJsonRpcExecutor executor = new ArchiveJsonRpcExecutor(1, 1_000L, 1, 1);
+    try {
+      AtomicReference<Thread> traceThread = new AtomicReference<>();
+      executor.executeIfHistorical(
+          request("debug_traceCall", "[{},\"0x10\",{}]"),
+          () -> traceThread.set(Thread.currentThread()));
+
+      assertTrue(traceThread.get().getName().startsWith("archive-debug-trace-"));
+      assertEquals(Thread.NORM_PRIORITY - 1, traceThread.get().getPriority());
+    } finally {
+      executor.close();
+    }
+  }
+
+  @Test
+  public void disabledDebugMethodDoesNotPullMixedBatchOntoServletThread() throws Exception {
+    ArchiveJsonRpcExecutor executor = new ArchiveJsonRpcExecutor(1, 1_000L);
+    try {
+      Thread caller = Thread.currentThread();
+      AtomicReference<Thread> debugOnlyThread = new AtomicReference<>();
+      executor.executeIfHistorical(
+          request("debug_traceTransaction", "[\"0x01\",{}]"),
+          () -> debugOnlyThread.set(Thread.currentThread()));
+      assertEquals(caller, debugOnlyThread.get());
+
+      JsonNode mixedBatch = MAPPER.readTree("["
+          + "{\"method\":\"debug_traceTransaction\",\"params\":[\"0x01\",{}]},"
+          + "{\"method\":\"eth_getBalance\",\"params\":[\"TAddress\",\"0x10\"]}]");
+      AtomicReference<Thread> batchThread = new AtomicReference<>();
+      executor.executeIfHistorical(
+          mixedBatch, () -> batchThread.set(Thread.currentThread()));
+      assertTrue(batchThread.get().getName().startsWith("archive-jsonrpc-"));
+    } finally {
+      executor.close();
+    }
   }
 
   @Test
@@ -102,6 +147,50 @@ public class ArchiveJsonRpcExecutorTest {
   }
 
   @Test
+  public void saturatedDebugWorkerDoesNotBlockOrdinaryHistoricalQueries() throws Exception {
+    ArchiveJsonRpcExecutor executor = new ArchiveJsonRpcExecutor(1, 1_000L, 1, 0);
+    ExecutorService caller = Executors.newSingleThreadExecutor();
+    CountDownLatch entered = new CountDownLatch(1);
+    CountDownLatch release = new CountDownLatch(1);
+    JsonNode debug = request("debug_traceTransaction", "[\"0x01\",{}]");
+    JsonNode historical = request("eth_getBalance", "[\"TAddress\",\"0x10\"]");
+    try {
+      Future<?> first = caller.submit(() -> {
+        try {
+          executor.executeIfHistorical(debug, () -> {
+            entered.countDown();
+            try {
+              release.await();
+            } catch (InterruptedException e) {
+              Thread.currentThread().interrupt();
+            }
+          });
+        } catch (Exception e) {
+          throw new IllegalStateException(e);
+        }
+      });
+      assertTrue(entered.await(5L, TimeUnit.SECONDS));
+
+      HistoricalQueryLimitException failure = assertThrows(
+          HistoricalQueryLimitException.class,
+          () -> executor.executeIfHistorical(debug, () -> { }));
+      assertEquals(HistoricalQueryLimitException.Limit.CONCURRENT_QUERIES,
+          failure.getLimit());
+
+      AtomicBoolean ordinaryExecuted = new AtomicBoolean();
+      executor.executeIfHistorical(historical, () -> ordinaryExecuted.set(true));
+      assertTrue(ordinaryExecuted.get());
+
+      release.countDown();
+      first.get(5L, TimeUnit.SECONDS);
+    } finally {
+      release.countDown();
+      caller.shutdownNow();
+      executor.close();
+    }
+  }
+
+  @Test
   public void interruptedCallerWaitsForAdmittedResponseSettlement() throws Exception {
     ArchiveJsonRpcExecutor executor = new ArchiveJsonRpcExecutor(1, 1_000L);
     CountDownLatch entered = new CountDownLatch(1);
@@ -147,6 +236,56 @@ public class ArchiveJsonRpcExecutorTest {
       release.countDown();
       caller.interrupt();
       caller.join(5_000L);
+      executor.close();
+    }
+  }
+
+  @Test
+  public void closeCancelsQueuedDebugRequestInsteadOfStrandingCaller() throws Exception {
+    ArchiveJsonRpcExecutor executor = new ArchiveJsonRpcExecutor(1, 50L, 1, 1);
+    ExecutorService callers = Executors.newFixedThreadPool(2);
+    CountDownLatch activeEntered = new CountDownLatch(1);
+    CountDownLatch queuedCallerStarted = new CountDownLatch(1);
+    CountDownLatch release = new CountDownLatch(1);
+    JsonNode debug = request("debug_traceTransaction", "[\"0x01\",{}]");
+    try {
+      Future<Throwable> active = callers.submit(() -> {
+        try {
+          executor.executeIfHistorical(debug, () -> {
+            activeEntered.countDown();
+            try {
+              release.await();
+            } catch (InterruptedException e) {
+              Thread.currentThread().interrupt();
+            }
+          });
+          return null;
+        } catch (Throwable failure) {
+          return failure;
+        }
+      });
+      assertTrue(activeEntered.await(5L, TimeUnit.SECONDS));
+
+      Future<Throwable> queued = callers.submit(() -> {
+        queuedCallerStarted.countDown();
+        try {
+          executor.executeIfHistorical(debug, () -> { });
+          return null;
+        } catch (Throwable failure) {
+          return failure;
+        }
+      });
+      assertTrue(queuedCallerStarted.await(5L, TimeUnit.SECONDS));
+      assertFalse(queued.isDone());
+
+      executor.close();
+
+      assertEquals(null, active.get(5L, TimeUnit.SECONDS));
+      assertTrue(queued.get(5L, TimeUnit.SECONDS)
+          instanceof HistoricalQueryLimitException);
+    } finally {
+      release.countDown();
+      callers.shutdownNow();
       executor.close();
     }
   }

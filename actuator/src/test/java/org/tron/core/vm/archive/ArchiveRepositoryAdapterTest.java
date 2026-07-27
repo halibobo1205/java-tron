@@ -26,9 +26,13 @@ import org.tron.core.archive.reader.ArchiveStateReader;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.ContractCapsule;
 import org.tron.core.capsule.ContractStateCapsule;
+import org.tron.core.db.EnergyProcessor;
+import org.tron.core.store.AccountStore;
+import org.tron.core.store.DynamicPropertiesStore;
 import org.tron.core.store.VmDynamicProperties;
 import org.tron.core.vm.ChainParameterEnum;
 import org.tron.protos.Protocol;
+import org.tron.protos.contract.Common.ResourceCode;
 
 /**
  * Slice 2 unit tests: the adapter serves reads from a fake {@link ArchiveStateReader}, maps the
@@ -300,6 +304,78 @@ public class ArchiveRepositoryAdapterTest {
   @Test
   public void dynamicPropertiesStoreIsUnsupported() {
     assertThrows(UnsupportedHistoricalStateException.class, adapter::getDynamicPropertiesStore);
+  }
+
+  @Test
+  public void replayEnergyUsageMatchesCanonicalFreezeV2Calculation() {
+    for (boolean cancelAllUnfreezeV2 : new boolean[] {false, true}) {
+      for (boolean harden : new boolean[] {false, true}) {
+        long now = 1_000L;
+        long lastTime = 900L;
+        long previousUsage = 987_654L;
+        long usage = 123_456L;
+        DynamicPropertiesStore dynamicProperties = mock(DynamicPropertiesStore.class);
+        when(dynamicProperties.supportUnfreezeDelay()).thenReturn(true);
+        when(dynamicProperties.supportAllowCancelAllUnfreezeV2())
+            .thenReturn(cancelAllUnfreezeV2);
+        when(dynamicProperties.allowHardenResourceCalculation()).thenReturn(harden);
+        when(vmProps.supportUnfreezeDelay()).thenReturn(true);
+        when(vmProps.supportAllowCancelAllUnfreezeV2()).thenReturn(cancelAllUnfreezeV2);
+        when(vmProps.getAllowHardenResourceCalculation()).thenReturn(harden ? 1L : 0L);
+
+        AccountCapsule expected = new AccountCapsule(Protocol.Account.newBuilder()
+            .setAddress(ByteString.copyFrom(ADDR))
+            .build());
+        expected.setEnergyUsage(previousUsage);
+        expected.setLatestConsumeTimeForEnergy(lastTime);
+        if (cancelAllUnfreezeV2) {
+          expected.setNewWindowSizeV2(ResourceCode.ENERGY, 20_000_000_000L);
+        } else {
+          expected.setNewWindowSize(ResourceCode.ENERGY, 20_000L);
+        }
+        AccountCapsule actual = new AccountCapsule(expected.getInstance());
+        EnergyProcessor canonical =
+            new EnergyProcessor(dynamicProperties, mock(AccountStore.class));
+        long recoveredUsage = canonical.increase(
+            expected, ResourceCode.ENERGY, previousUsage, 0L, lastTime, now);
+        expected.setEnergyUsage(recoveredUsage);
+        expected.setLatestConsumeTimeForEnergy(now);
+        expected.setEnergyUsage(canonical.increase(
+            expected, ResourceCode.ENERGY, recoveredUsage, usage, now, now));
+
+        adapter.updateEnergyUsageForReplay(actual, usage, now);
+
+        assertEquals(expected.getInstance(), actual.getInstance());
+      }
+    }
+  }
+
+  @Test
+  public void globalEnergyLimitMatchesCanonicalV1AndFreezeV2Formulas() {
+    for (boolean unfreezeDelay : new boolean[] {false, true}) {
+      for (boolean harden : new boolean[] {false, true}) {
+        DynamicPropertiesStore dynamicProperties = mock(DynamicPropertiesStore.class);
+        when(dynamicProperties.supportUnfreezeDelay()).thenReturn(unfreezeDelay);
+        when(dynamicProperties.getTotalEnergyCurrentLimit()).thenReturn(50_000_000_000L);
+        when(dynamicProperties.getTotalEnergyWeight()).thenReturn(10_000L);
+        when(dynamicProperties.allowHardenResourceCalculation()).thenReturn(harden);
+        when(vmProps.supportUnfreezeDelay()).thenReturn(unfreezeDelay);
+        when(vmProps.getTotalEnergyCurrentLimit()).thenReturn(50_000_000_000L);
+        when(vmProps.getTotalEnergyWeight()).thenReturn(10_000L);
+        when(vmProps.getAllowHardenResourceCalculation()).thenReturn(harden ? 1L : 0L);
+
+        AccountCapsule account = new AccountCapsule(Protocol.Account.newBuilder()
+            .setAddress(ByteString.copyFrom(ADDR))
+            .build());
+        account.setFrozenForEnergy(1_500_000L, 0L);
+        EnergyProcessor canonical =
+            new EnergyProcessor(dynamicProperties, mock(AccountStore.class));
+
+        assertEquals(
+            canonical.calculateGlobalEnergyLimit(account),
+            adapter.calculateGlobalEnergyLimit(account));
+      }
+    }
   }
 
   @Test

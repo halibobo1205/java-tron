@@ -45,6 +45,14 @@ public interface VmDynamicProperties {
 
   boolean supportAllowNewResourceModel();
 
+  default boolean supportAllowCancelAllUnfreezeV2() {
+    return false;
+  }
+
+  default long getAllowNewReward() {
+    return 0L;
+  }
+
   long getEnergyFee();
 
   long getMaxFeeLimit();

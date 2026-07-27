@@ -151,6 +151,7 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
     reader.put("CONSENSUS_LOGIC_OPTIMIZATION", 0L);
     reader.put("ALLOW_HARDEN_RESOURCE_CALCULATION", 0L);
     reader.put("ALLOW_NEW_RESOURCE_MODEL", 1L);
+    reader.put("ALLOW_NEW_REWARD", 1L);
     HistoricalArchiveVmDynamicProperties view =
         new HistoricalArchiveVmDynamicProperties(ENERGY_FEE, reader, true);
 
@@ -178,6 +179,7 @@ public class HistoricalArchiveVmDynamicPropertiesTest {
     assertEquals(0L, view.getAllowHardenResourceCalculation());
     assertEquals(1L, view.getAllowNewResourceModel());
     assertEquals(true, view.supportAllowNewResourceModel());
+    assertEquals(1L, view.getAllowNewReward());
   }
 
   @Test

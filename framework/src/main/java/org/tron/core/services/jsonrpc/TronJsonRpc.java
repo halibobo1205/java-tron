@@ -178,6 +178,54 @@ public interface TronJsonRpc {
       throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
       JsonRpcInternalException;
 
+  @JsonRpcMethod("debug_traceCall")
+  @JsonRpcErrors({
+      @JsonRpcError(exception = JsonRpcMethodNotFoundException.class, code = -32601, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInvalidRequestException.class, code = -32600, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
+      @JsonRpcError(exception = HistoricalQueryLimitException.class, code = -32005, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInternalException.class, code = -32000, data = "{}"),
+  })
+  Object debugTraceCall(CallArguments transactionCall, Object blockNumOrTag)
+      throws JsonRpcMethodNotFoundException, JsonRpcInvalidParamsException,
+      JsonRpcInvalidRequestException, JsonRpcInternalException;
+
+  @JsonRpcMethod("debug_traceCall")
+  @JsonRpcErrors({
+      @JsonRpcError(exception = JsonRpcMethodNotFoundException.class, code = -32601, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInvalidRequestException.class, code = -32600, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
+      @JsonRpcError(exception = HistoricalQueryLimitException.class, code = -32005, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInternalException.class, code = -32000, data = "{}"),
+  })
+  Object debugTraceCall(CallArguments transactionCall, Object blockNumOrTag, Object traceOptions)
+      throws JsonRpcMethodNotFoundException, JsonRpcInvalidParamsException,
+      JsonRpcInvalidRequestException, JsonRpcInternalException;
+
+  @JsonRpcMethod("debug_traceTransaction")
+  @JsonRpcErrors({
+      @JsonRpcError(exception = JsonRpcMethodNotFoundException.class, code = -32601, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInvalidRequestException.class, code = -32600, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
+      @JsonRpcError(exception = HistoricalQueryLimitException.class, code = -32005, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInternalException.class, code = -32000, data = "{}"),
+  })
+  Object debugTraceTransaction(String txHash)
+      throws JsonRpcMethodNotFoundException, JsonRpcInvalidParamsException,
+      JsonRpcInvalidRequestException, JsonRpcInternalException;
+
+  @JsonRpcMethod("debug_traceTransaction")
+  @JsonRpcErrors({
+      @JsonRpcError(exception = JsonRpcMethodNotFoundException.class, code = -32601, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInvalidRequestException.class, code = -32600, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
+      @JsonRpcError(exception = HistoricalQueryLimitException.class, code = -32005, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInternalException.class, code = -32000, data = "{}"),
+  })
+  Object debugTraceTransaction(String txHash, Object traceOptions)
+      throws JsonRpcMethodNotFoundException, JsonRpcInvalidParamsException,
+      JsonRpcInvalidRequestException, JsonRpcInternalException;
+
   @JsonRpcMethod("net_peerCount")
   String getPeerCount();
 

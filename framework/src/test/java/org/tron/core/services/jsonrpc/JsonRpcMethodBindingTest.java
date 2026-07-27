@@ -2,6 +2,7 @@ package org.tron.core.services.jsonrpc;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -19,19 +20,21 @@ public class JsonRpcMethodBindingTest {
   private static final ObjectMapper MAPPER = new ObjectMapper();
 
   @Test
-  public void tronJsonRpcInterfaceDoesNotExposeDebugTraceMethods() {
+  public void tronJsonRpcInterfaceExposesOnlyTheSupportedDebugTraceMethods() {
+    boolean traceCall = false;
+    boolean traceTransaction = false;
     for (Method method : TronJsonRpc.class.getMethods()) {
       JsonRpcMethod annotation = method.getAnnotation(JsonRpcMethod.class);
       if (annotation == null) {
         continue;
       }
-      assertFalse("debug_traceCall must remain unavailable",
-          "debug_traceCall".equals(annotation.value()));
-      assertFalse("debug_traceTransaction must remain unavailable",
-          "debug_traceTransaction".equals(annotation.value()));
+      traceCall |= "debug_traceCall".equals(annotation.value());
+      traceTransaction |= "debug_traceTransaction".equals(annotation.value());
       assertFalse("eth_getProof must remain unavailable",
           "eth_getProof".equals(annotation.value()));
     }
+    assertTrue(traceCall);
+    assertTrue(traceTransaction);
   }
 
   @Test
@@ -44,8 +47,12 @@ public class JsonRpcMethodBindingTest {
     JsonRpcServer server = new JsonRpcServer(compositeService);
     server.setErrorResolver(JsonRpcErrorResolver.INSTANCE);
 
-    assertMethodNotFound(server, "debug_traceCall");
-    assertMethodNotFound(server, "debug_traceTransaction");
+    assertMethodNotFound(server, "debug_traceCall", "[{},\"0x1\",{}]");
+    assertMethodNotFound(server, "debug_traceCall", "[{},\"0x1\"]");
+    assertMethodNotFound(server, "debug_traceTransaction",
+        "[\"0x0000000000000000000000000000000000000000000000000000000000000000\",{}]");
+    assertMethodNotFound(server, "debug_traceTransaction",
+        "[\"0x0000000000000000000000000000000000000000000000000000000000000000\"]");
     assertMethodNotFound(server, "traceCall");
     assertMethodNotFound(server, "traceTransaction");
     assertMethodNotFound(server, "eth_getProof");
@@ -53,7 +60,12 @@ public class JsonRpcMethodBindingTest {
   }
 
   private static void assertMethodNotFound(JsonRpcServer server, String method) throws Exception {
-    String request = "{\"jsonrpc\":\"2.0\",\"method\":\"" + method + "\",\"params\":[],"
+    assertMethodNotFound(server, method, "[]");
+  }
+
+  private static void assertMethodNotFound(JsonRpcServer server, String method, String params)
+      throws Exception {
+    String request = "{\"jsonrpc\":\"2.0\",\"method\":\"" + method + "\",\"params\":" + params + ","
         + "\"id\":1}";
     ByteArrayOutputStream output = new ByteArrayOutputStream();
     server.handleRequest(new ByteArrayInputStream(request.getBytes(StandardCharsets.UTF_8)),

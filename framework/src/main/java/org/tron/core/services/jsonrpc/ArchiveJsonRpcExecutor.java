@@ -2,6 +2,9 @@ package org.tron.core.services.jsonrpc;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import java.io.IOException;
+import java.util.List;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
@@ -23,19 +26,27 @@ import org.tron.core.archive.query.HistoricalQueryLimitException;
 public final class ArchiveJsonRpcExecutor implements AutoCloseable {
 
   private static final long MAX_SHUTDOWN_WAIT_MS = 30_000L;
+  private static final int DEBUG_REQUEST = 1;
+  private static final int HISTORICAL_DEBUG_REQUEST = 1 << 1;
+  private static final int ORDINARY_HISTORICAL_REQUEST = 1 << 2;
   private static final AtomicInteger THREAD_SEQUENCE = new AtomicInteger();
 
   private final boolean enabled;
-  private final int workerThreads;
   private final long shutdownWaitMs;
   private final AtomicBoolean closed = new AtomicBoolean();
   private final ThreadPoolExecutor executor;
+  private final ThreadPoolExecutor debugTraceExecutor;
 
   public static ArchiveJsonRpcExecutor disabled() {
     return new ArchiveJsonRpcExecutor();
   }
 
   public ArchiveJsonRpcExecutor(int workerThreads, long queryDeadlineMs) {
+    this(workerThreads, queryDeadlineMs, 0, 0);
+  }
+
+  public ArchiveJsonRpcExecutor(int workerThreads, long queryDeadlineMs,
+      int maxConcurrentTraces, int maxPendingTraces) {
     if (workerThreads <= 0) {
       throw new IllegalArgumentException("archive JSON-RPC worker count must be positive");
     }
@@ -43,22 +54,35 @@ public final class ArchiveJsonRpcExecutor implements AutoCloseable {
       throw new IllegalArgumentException(
           "archive JSON-RPC query deadline must be positive or unlimited");
     }
+    if (maxConcurrentTraces < 0) {
+      throw new IllegalArgumentException(
+          "archive debug trace worker count must be non-negative");
+    }
+    if (maxPendingTraces < 0) {
+      throw new IllegalArgumentException(
+          "archive debug trace pending count must be non-negative");
+    }
     this.enabled = true;
-    this.workerThreads = workerThreads;
     this.shutdownWaitMs = queryDeadlineMs == ArchiveQueryLimits.UNLIMITED
         ? MAX_SHUTDOWN_WAIT_MS
         : StrictMathWrapper.min(MAX_SHUTDOWN_WAIT_MS, StrictMathWrapper.max(1L, queryDeadlineMs));
     this.executor = new ThreadPoolExecutor(
         workerThreads, workerThreads, 0L, TimeUnit.MILLISECONDS,
-        new SynchronousQueue<>(), lowPriorityThreadFactory(),
+        new SynchronousQueue<>(), lowPriorityThreadFactory("archive-jsonrpc-"),
         new ThreadPoolExecutor.AbortPolicy());
+    this.debugTraceExecutor = maxConcurrentTraces == 0
+        ? null
+        : new ThreadPoolExecutor(
+            maxConcurrentTraces, maxConcurrentTraces, 0L, TimeUnit.MILLISECONDS,
+            traceQueue(maxPendingTraces), lowPriorityThreadFactory("archive-debug-trace-"),
+            new ThreadPoolExecutor.AbortPolicy());
   }
 
   private ArchiveJsonRpcExecutor() {
     this.enabled = false;
-    this.workerThreads = 0;
     this.shutdownWaitMs = 0L;
     this.executor = null;
+    this.debugTraceExecutor = null;
   }
 
   /** Executes inline unless the request contains an archive-backed historical method. */
@@ -66,7 +90,14 @@ public final class ArchiveJsonRpcExecutor implements AutoCloseable {
     if (task == null) {
       throw new NullPointerException("task");
     }
-    if (!enabled || !containsHistoricalRequest(request)) {
+    int classification = classifyRequests(request);
+    boolean debugTraceRequest = (classification & DEBUG_REQUEST) != 0;
+    boolean historicalRequest =
+        (classification & (HISTORICAL_DEBUG_REQUEST | ORDINARY_HISTORICAL_REQUEST)) != 0;
+    boolean ordinaryHistoricalRequest =
+        (classification & ORDINARY_HISTORICAL_REQUEST) != 0;
+    if (!enabled || !historicalRequest
+        || debugTraceRequest && debugTraceExecutor == null && !ordinaryHistoricalRequest) {
       task.run();
       return;
     }
@@ -74,13 +105,16 @@ public final class ArchiveJsonRpcExecutor implements AutoCloseable {
       throw rejection(admissionClosed(null));
     }
     Future<Void> future;
+    boolean useDebugExecutor = debugTraceRequest && debugTraceExecutor != null;
+    ThreadPoolExecutor selectedExecutor = useDebugExecutor ? debugTraceExecutor : executor;
     try {
-      future = executor.submit(() -> {
+      future = selectedExecutor.submit(() -> {
         task.run();
         return null;
       });
     } catch (RejectedExecutionException e) {
-      throw rejection(closed.get() ? admissionClosed(e) : concurrencyExceeded());
+      throw rejection(closed.get() ? admissionClosed(e)
+          : executionCapacityExceeded(useDebugExecutor, selectedExecutor));
     }
     boolean interrupted = false;
     try {
@@ -106,35 +140,57 @@ public final class ArchiveJsonRpcExecutor implements AutoCloseable {
   }
 
   static boolean containsHistoricalRequest(JsonNode request) {
+    int classification = classifyRequests(request);
+    return (classification
+        & (HISTORICAL_DEBUG_REQUEST | ORDINARY_HISTORICAL_REQUEST)) != 0;
+  }
+
+  static boolean containsDebugTraceRequest(JsonNode request) {
+    return (classifyRequests(request) & DEBUG_REQUEST) != 0;
+  }
+
+  private static int classifyRequests(JsonNode request) {
     if (request == null) {
-      return false;
+      return 0;
     }
     if (request.isArray()) {
+      int classification = 0;
       for (JsonNode element : request) {
-        if (containsHistoricalRequest(element)) {
-          return true;
-        }
+        classification |= classifyRequests(element);
       }
-      return false;
+      return classification;
     }
     if (!request.isObject()) {
-      return false;
+      return 0;
     }
     JsonNode methodNode = request.get("method");
     if (methodNode == null || !methodNode.isTextual()) {
-      return false;
+      return 0;
     }
-    int selectorIndex = historicalSelectorIndex(methodNode.asText());
+    String method = methodNode.asText();
+    boolean debugTrace = "debug_traceCall".equals(method)
+        || "debug_traceTransaction".equals(method);
+    int classification = debugTrace ? DEBUG_REQUEST : 0;
+    if ("debug_traceTransaction".equals(method)) {
+      return classification | HISTORICAL_DEBUG_REQUEST;
+    }
+    int selectorIndex = historicalSelectorIndex(method);
     if (selectorIndex < 0) {
-      return false;
+      return classification;
     }
     JsonNode params = request.get("params");
-    if (params == null || !params.isArray() || params.size() <= selectorIndex) {
-      return true;
+    boolean historical = params == null || !params.isArray()
+        || params.size() <= selectorIndex;
+    if (!historical) {
+      JsonNode selector = params.get(selectorIndex);
+      historical = selector == null || !selector.isTextual()
+          || !JsonRpcApiUtil.LATEST_STR.equalsIgnoreCase(selector.asText());
     }
-    JsonNode selector = params.get(selectorIndex);
-    return selector == null || !selector.isTextual()
-        || !JsonRpcApiUtil.LATEST_STR.equalsIgnoreCase(selector.asText());
+    if (!historical) {
+      return classification;
+    }
+    return classification | (debugTrace
+        ? HISTORICAL_DEBUG_REQUEST : ORDINARY_HISTORICAL_REQUEST);
   }
 
   @Override
@@ -143,26 +199,50 @@ public final class ArchiveJsonRpcExecutor implements AutoCloseable {
       return;
     }
     executor.shutdown();
+    if (debugTraceExecutor != null) {
+      debugTraceExecutor.shutdown();
+    }
     try {
-      if (executor.awaitTermination(shutdownWaitMs, TimeUnit.MILLISECONDS)) {
+      boolean queryStopped = executor.awaitTermination(shutdownWaitMs, TimeUnit.MILLISECONDS);
+      boolean traceStopped = debugTraceExecutor == null
+          || debugTraceExecutor.awaitTermination(shutdownWaitMs, TimeUnit.MILLISECONDS);
+      if (queryStopped && traceStopped) {
         return;
       }
-      executor.shutdownNow();
-      if (!executor.awaitTermination(1L, TimeUnit.SECONDS)) {
+      cancelQueued(executor.shutdownNow());
+      if (debugTraceExecutor != null) {
+        cancelQueued(debugTraceExecutor.shutdownNow());
+      }
+      queryStopped = executor.awaitTermination(1L, TimeUnit.SECONDS);
+      traceStopped = debugTraceExecutor == null
+          || debugTraceExecutor.awaitTermination(1L, TimeUnit.SECONDS);
+      if (!queryStopped || !traceStopped) {
         logger.warn("archive JSON-RPC workers did not terminate after interruption");
       }
     } catch (InterruptedException e) {
-      executor.shutdownNow();
+      cancelQueued(executor.shutdownNow());
+      if (debugTraceExecutor != null) {
+        cancelQueued(debugTraceExecutor.shutdownNow());
+      }
       Thread.currentThread().interrupt();
     }
   }
 
-  private HistoricalQueryLimitException concurrencyExceeded() {
+  private HistoricalQueryLimitException executionCapacityExceeded(boolean debugTrace,
+      ThreadPoolExecutor selectedExecutor) {
+    int active = selectedExecutor.getActiveCount();
+    int queued = selectedExecutor.getQueue().size();
+    int capacity = selectedExecutor.getMaximumPoolSize()
+        + queued + selectedExecutor.getQueue().remainingCapacity();
+    String work = debugTrace ? "archive debug trace" : "historical JSON-RPC";
     return new HistoricalQueryLimitException(
         HistoricalQueryLimitException.Reason.RESOURCE_EXHAUSTED,
-        HistoricalQueryLimitException.Limit.CONCURRENT_QUERIES,
-        workerThreads, workerThreads,
-        "historical JSON-RPC worker limit reached: limit=" + workerThreads);
+        queued > 0
+            ? HistoricalQueryLimitException.Limit.PENDING_QUERIES
+            : HistoricalQueryLimitException.Limit.CONCURRENT_QUERIES,
+        capacity,
+        active + queued + 1L,
+        work + " execution capacity reached: active=" + active + ", queued=" + queued);
   }
 
   private static HistoricalQueryLimitException admissionClosed(Throwable cause) {
@@ -197,6 +277,7 @@ public final class ArchiveJsonRpcExecutor implements AutoCloseable {
       case "eth_getBalance":
       case "eth_getCode":
       case "eth_call":
+      case "debug_traceCall":
         return 1;
       case "eth_getStorageAt":
         return 2;
@@ -205,10 +286,24 @@ public final class ArchiveJsonRpcExecutor implements AutoCloseable {
     }
   }
 
-  private static ThreadFactory lowPriorityThreadFactory() {
+  private static BlockingQueue<Runnable> traceQueue(int maxPendingTraces) {
+    return maxPendingTraces == 0
+        ? new SynchronousQueue<>()
+        : new ArrayBlockingQueue<>(maxPendingTraces);
+  }
+
+  private static void cancelQueued(List<Runnable> queuedTasks) {
+    for (Runnable task : queuedTasks) {
+      if (task instanceof Future<?>) {
+        ((Future<?>) task).cancel(false);
+      }
+    }
+  }
+
+  private static ThreadFactory lowPriorityThreadFactory(String prefix) {
     return task -> {
       Thread thread = new Thread(task,
-          "archive-jsonrpc-" + THREAD_SEQUENCE.getAndIncrement());
+          prefix + THREAD_SEQUENCE.getAndIncrement());
       thread.setDaemon(true);
       thread.setPriority(StrictMathWrapper.max(Thread.MIN_PRIORITY, Thread.NORM_PRIORITY - 1));
       return thread;

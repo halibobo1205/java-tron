@@ -1,15 +1,26 @@
 package org.tron.core.vm.archive;
 
 import static org.tron.common.math.Maths.addExact;
+import static org.tron.common.math.Maths.max;
+import static org.tron.common.math.Maths.min;
+import static org.tron.common.math.Maths.round;
+import static org.tron.core.config.Parameter.ChainConstant.BLOCK_PRODUCED_INTERVAL;
+import static org.tron.core.config.Parameter.ChainConstant.PRECISION;
+import static org.tron.core.config.Parameter.ChainConstant.TRX_PRECISION;
+import static org.tron.core.config.Parameter.ChainConstant.WINDOW_SIZE_MS;
+import static org.tron.core.config.Parameter.ChainConstant.WINDOW_SIZE_PRECISION;
 
 import com.google.protobuf.ByteString;
 import com.google.protobuf.MessageLite;
+import java.math.BigInteger;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import org.apache.commons.lang3.tuple.Pair;
+import org.tron.common.math.StrictMathWrapper;
+import org.tron.common.parameter.CommonParameter;
 import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.ByteUtil;
@@ -41,10 +52,11 @@ import org.tron.core.vm.repository.Key;
 import org.tron.core.vm.repository.Repository;
 import org.tron.core.vm.repository.Value;
 import org.tron.protos.Protocol;
+import org.tron.protos.contract.Common.ResourceCode;
 
 /**
- * {@link Repository} that replays a constant call against the archive state at a fixed historical
- * point. A root instance reads through an L6 {@link ArchiveStateReader}; the VM executes against a
+ * {@link Repository} that replays TVM execution against archive state at a fixed historical point.
+ * A root instance reads through an L6 {@link ArchiveStateReader}; the VM executes against a
  * {@link #newRepositoryChild() child} whose writes land in an in-memory copy-on-write overlay and
  * are discarded at the top (a constant call persists nothing). Reads resolve overlay first, then
  * the parent chain, then the archive root; a value absent from the archive is reported absent,
@@ -52,8 +64,8 @@ import org.tron.protos.Protocol;
  *
  * <p>Hard-fork / proposal flags are NOT read here: they come from the thread-local {@link VMConfig}
  * snapshot the executor installs (L8 Slice 3). Domains the archive does not cover in P0
- * (delegation, votes, witness, asset-issue, resource accounting, the live dynamic-properties store)
- * and account-creation paths that need block context throw
+ * (delegation, votes, witness, asset-issue, and the live dynamic-properties store) and
+ * account-creation paths that need unavailable block context throw
  * {@link UnsupportedHistoricalStateException} rather than fall back to latest.
  */
 public class ArchiveRepositoryAdapter implements Repository {
@@ -62,6 +74,7 @@ public class ArchiveRepositoryAdapter implements Repository {
   // BLOCKHASH exposes 256 ancestors and CHAINID additionally pins block zero at mature heights.
   private static final int MAX_BLOCK_HASH_CACHE_ENTRIES = 257;
   private static final long OVERLAY_ENTRY_OVERHEAD_BYTES = 192L;
+  private static final long ENERGY_WINDOW_SIZE = WINDOW_SIZE_MS / BLOCK_PRODUCED_INTERVAL;
 
   // Root: reader + vmProperties set, parent null. Child: parent set, reader/vmProperties null.
   private final ArchiveStateReader reader;
@@ -563,22 +576,52 @@ public class ArchiveRepositoryAdapter implements Repository {
 
   @Override
   public long getHeadSlot() {
-    throw unsupported("head-slot reads" + NEEDS_BLOCK_CTX);
+    return getSlotByTimestampMs(getVmDynamicProperties().getLatestBlockHeaderTimestamp());
   }
 
   @Override
   public long getSlotByTimestampMs(long timestamp) {
-    throw unsupported("slot-by-timestamp reads" + NEEDS_BLOCK_CTX);
+    return (timestamp - Long.parseLong(
+        CommonParameter.getInstance().getGenesisBlock().getTimestamp()))
+        / BLOCK_PRODUCED_INTERVAL;
   }
 
   @Override
   public long getAccountLeftEnergyFromFreeze(AccountCapsule accountCapsule) {
-    throw unsupported("energy-from-freeze accounting");
+    long now = getHeadSlot();
+    long energyUsage = accountCapsule.getEnergyUsage();
+    long latestConsumeTime =
+        accountCapsule.getAccountResource().getLatestConsumeTimeForEnergy();
+    long energyLimit = calculateGlobalEnergyLimit(accountCapsule);
+    long windowSize = accountCapsule.getWindowSize(ResourceCode.ENERGY);
+    long recoveredUsage =
+        recoverEnergyUsage(energyUsage, latestConsumeTime, now, windowSize);
+    return max(energyLimit - recoveredUsage, 0L, disableJavaLangMath());
   }
 
   @Override
   public long getAccountEnergyUsage(AccountCapsule accountCapsule) {
-    throw unsupported("energy-usage accounting");
+    return recoverEnergyUsage(
+        accountCapsule.getEnergyUsage(),
+        accountCapsule.getAccountResource().getLatestConsumeTimeForEnergy(),
+        getHeadSlot(),
+        accountCapsule.getWindowSize(ResourceCode.ENERGY));
+  }
+
+  /** Applies the same pre-execution energy-usage update as a canonical transaction. */
+  public void updateEnergyUsageForReplay(AccountCapsule accountCapsule, long usage, long now) {
+    if (usage < 0L) {
+      throw new IllegalArgumentException("energy usage must be non-negative");
+    }
+    long previousUsage = accountCapsule.getEnergyUsage();
+    long previousTime =
+        accountCapsule.getAccountResource().getLatestConsumeTimeForEnergy();
+    long recoveredUsage =
+        increaseEnergyUsage(accountCapsule, previousUsage, 0L, previousTime, now);
+    accountCapsule.setEnergyUsage(recoveredUsage);
+    accountCapsule.setLatestConsumeTimeForEnergy(now);
+    accountCapsule.setEnergyUsage(
+        increaseEnergyUsage(accountCapsule, recoveredUsage, usage, now, now));
   }
 
   @Override
@@ -593,7 +636,43 @@ public class ArchiveRepositoryAdapter implements Repository {
 
   @Override
   public long calculateGlobalEnergyLimit(AccountCapsule accountCapsule) {
-    throw unsupported("global-energy-limit accounting");
+    long frozenBalance = accountCapsule.getAllFrozenBalanceForEnergy();
+    long totalEnergyLimit = getVmDynamicProperties().getTotalEnergyCurrentLimit();
+    long totalEnergyWeight = getVmDynamicProperties().getTotalEnergyWeight();
+    if (getVmDynamicProperties().supportUnfreezeDelay()) {
+      if (totalEnergyWeight == 0L) {
+        return 0L;
+      }
+      if (totalEnergyWeight < 0L) {
+        throw unsupported("global-energy-limit accounting with negative total weight");
+      }
+      if (hardenResourceCalculation()) {
+        return BigInteger.valueOf(frozenBalance)
+            .multiply(BigInteger.valueOf(totalEnergyLimit))
+            .divide(BigInteger.valueOf(TRX_PRECISION)
+                .multiply(BigInteger.valueOf(totalEnergyWeight)))
+            .longValueExact();
+      }
+      double energyWeight = (double) frozenBalance / TRX_PRECISION;
+      return (long) (energyWeight * ((double) totalEnergyLimit / totalEnergyWeight));
+    }
+    if (frozenBalance < TRX_PRECISION) {
+      return 0L;
+    }
+    if (totalEnergyWeight <= 0L) {
+      if (getVmDynamicProperties().getAllowNewReward() == 1L) {
+        return 0L;
+      }
+      throw unsupported("global-energy-limit accounting with non-positive total weight");
+    }
+    long energyWeight = frozenBalance / TRX_PRECISION;
+    if (hardenResourceCalculation()) {
+      return BigInteger.valueOf(energyWeight)
+          .multiply(BigInteger.valueOf(totalEnergyLimit))
+          .divide(BigInteger.valueOf(totalEnergyWeight))
+          .longValueExact();
+    }
+    return (long) (energyWeight * ((double) totalEnergyLimit / totalEnergyWeight));
   }
 
   @Override
@@ -809,6 +888,204 @@ public class ArchiveRepositoryAdapter implements Repository {
   // ---------------------------------------------------------------------------------------------
   // Helpers.
   // ---------------------------------------------------------------------------------------------
+
+  private long recoverEnergyUsage(long lastUsage, long lastTime, long now, long windowSize) {
+    return increaseEnergyUsage(lastUsage, 0L, lastTime, now, windowSize);
+  }
+
+  private long increaseEnergyUsage(long lastUsage, long usage, long lastTime, long now,
+      long windowSize) {
+    requireValidUsageWindow(lastTime, now, windowSize);
+    long averageLastUsage;
+    long averageUsage;
+    if (hardenResourceCalculation()) {
+      BigInteger precision = BigInteger.valueOf(PRECISION);
+      BigInteger window = BigInteger.valueOf(windowSize);
+      averageLastUsage = divideCeilExact(
+          BigInteger.valueOf(lastUsage).multiply(precision), window);
+      averageUsage = divideCeilExact(
+          BigInteger.valueOf(usage).multiply(precision), window);
+    } else {
+      averageLastUsage = divideCeil(lastUsage * PRECISION, windowSize);
+      averageUsage = divideCeil(usage * PRECISION, windowSize);
+    }
+    if (lastTime != now) {
+      if (lastTime + windowSize > now) {
+        long delta = now - lastTime;
+        double decay = (windowSize - delta) / (double) windowSize;
+        averageLastUsage = round(averageLastUsage * decay, disableJavaLangMath());
+      } else {
+        averageLastUsage = 0L;
+      }
+    }
+    return energyUsageFromAverage(averageLastUsage + averageUsage, windowSize);
+  }
+
+  private long increaseEnergyUsage(AccountCapsule accountCapsule, long lastUsage,
+      long usage, long lastTime, long now) {
+    if (getVmDynamicProperties().supportAllowCancelAllUnfreezeV2()) {
+      return increaseEnergyUsageV2(accountCapsule, lastUsage, usage, lastTime, now);
+    }
+    long oldWindowSize = accountCapsule.getWindowSize(ResourceCode.ENERGY);
+    requireValidUsageWindow(lastTime, now, oldWindowSize);
+    long averageLastUsage;
+    long averageUsage;
+    if (hardenResourceCalculation()) {
+      BigInteger precision = BigInteger.valueOf(PRECISION);
+      averageLastUsage = divideCeilExact(
+          BigInteger.valueOf(lastUsage).multiply(precision),
+          BigInteger.valueOf(oldWindowSize));
+      averageUsage = divideCeilExact(
+          BigInteger.valueOf(usage).multiply(precision),
+          BigInteger.valueOf(ENERGY_WINDOW_SIZE));
+    } else {
+      averageLastUsage = divideCeil(lastUsage * PRECISION, oldWindowSize);
+      averageUsage = divideCeil(usage * PRECISION, ENERGY_WINDOW_SIZE);
+    }
+    if (lastTime != now) {
+      if (lastTime + oldWindowSize > now) {
+        long delta = now - lastTime;
+        double decay = (oldWindowSize - delta) / (double) oldWindowSize;
+        averageLastUsage = round(averageLastUsage * decay, disableJavaLangMath());
+      } else {
+        averageLastUsage = 0L;
+      }
+    }
+    long newUsage = combinedEnergyUsage(
+        averageLastUsage, oldWindowSize, averageUsage, ENERGY_WINDOW_SIZE);
+    if (getVmDynamicProperties().supportUnfreezeDelay()) {
+      long remainingUsage = energyUsageFromAverage(averageLastUsage, oldWindowSize);
+      if (remainingUsage == 0L) {
+        accountCapsule.setNewWindowSize(ResourceCode.ENERGY, ENERGY_WINDOW_SIZE);
+        return newUsage;
+      }
+      long remainingWindow = oldWindowSize - (now - lastTime);
+      long newWindow = weightedWindowSize(
+          remainingUsage, remainingWindow, usage, ENERGY_WINDOW_SIZE, newUsage);
+      accountCapsule.setNewWindowSize(ResourceCode.ENERGY, newWindow);
+    }
+    return newUsage;
+  }
+
+  private long increaseEnergyUsageV2(AccountCapsule accountCapsule, long lastUsage,
+      long usage, long lastTime, long now) {
+    long oldWindowSizeV2 = accountCapsule.getWindowSizeV2(ResourceCode.ENERGY);
+    long oldWindowSize = accountCapsule.getWindowSize(ResourceCode.ENERGY);
+    requireValidUsageWindow(lastTime, now, oldWindowSize);
+    long averageLastUsage;
+    long averageUsage;
+    if (hardenResourceCalculation()) {
+      BigInteger precision = BigInteger.valueOf(PRECISION);
+      averageLastUsage = divideCeilExact(
+          BigInteger.valueOf(lastUsage).multiply(precision),
+          BigInteger.valueOf(oldWindowSize));
+      averageUsage = divideCeilExact(
+          BigInteger.valueOf(usage).multiply(precision),
+          BigInteger.valueOf(ENERGY_WINDOW_SIZE));
+    } else {
+      averageLastUsage = divideCeil(lastUsage * PRECISION, oldWindowSize);
+      averageUsage = divideCeil(usage * PRECISION, ENERGY_WINDOW_SIZE);
+    }
+    if (lastTime != now) {
+      if (lastTime + oldWindowSize > now) {
+        long delta = now - lastTime;
+        double decay = (oldWindowSize - delta) / (double) oldWindowSize;
+        averageLastUsage = round(averageLastUsage * decay, disableJavaLangMath());
+      } else {
+        averageLastUsage = 0L;
+      }
+    }
+    long newUsage = combinedEnergyUsage(
+        averageLastUsage, oldWindowSize, averageUsage, ENERGY_WINDOW_SIZE);
+    long remainingUsage = energyUsageFromAverage(averageLastUsage, oldWindowSize);
+    if (remainingUsage == 0L) {
+      accountCapsule.setNewWindowSizeV2(
+          ResourceCode.ENERGY, ENERGY_WINDOW_SIZE * WINDOW_SIZE_PRECISION);
+      return newUsage;
+    }
+    long remainingWindowV2 =
+        oldWindowSizeV2 - (now - lastTime) * WINDOW_SIZE_PRECISION;
+    long newWindowV2;
+    if (hardenResourceCalculation()) {
+      BigInteger weightedWindow = BigInteger.valueOf(remainingUsage)
+          .multiply(BigInteger.valueOf(remainingWindowV2))
+          .add(BigInteger.valueOf(usage)
+              .multiply(BigInteger.valueOf(ENERGY_WINDOW_SIZE))
+              .multiply(BigInteger.valueOf(WINDOW_SIZE_PRECISION)));
+      newWindowV2 = divideCeilExact(weightedWindow, BigInteger.valueOf(newUsage));
+    } else {
+      newWindowV2 = divideCeil(
+          remainingUsage * remainingWindowV2
+              + usage * ENERGY_WINDOW_SIZE * WINDOW_SIZE_PRECISION,
+          newUsage);
+    }
+    newWindowV2 = min(
+        newWindowV2,
+        ENERGY_WINDOW_SIZE * WINDOW_SIZE_PRECISION,
+        disableJavaLangMath());
+    accountCapsule.setNewWindowSizeV2(ResourceCode.ENERGY, newWindowV2);
+    return newUsage;
+  }
+
+  private long combinedEnergyUsage(long averageLastUsage, long lastWindowSize,
+      long averageUsage, long usageWindowSize) {
+    if (hardenResourceCalculation()) {
+      BigInteger numerator = BigInteger.valueOf(averageLastUsage)
+          .multiply(BigInteger.valueOf(lastWindowSize))
+          .add(BigInteger.valueOf(averageUsage)
+              .multiply(BigInteger.valueOf(usageWindowSize)));
+      return numerator.divide(BigInteger.valueOf(PRECISION)).longValueExact();
+    }
+    return (averageLastUsage * lastWindowSize + averageUsage * usageWindowSize)
+        / PRECISION;
+  }
+
+  private long energyUsageFromAverage(long averageUsage, long windowSize) {
+    if (hardenResourceCalculation()) {
+      return BigInteger.valueOf(averageUsage)
+          .multiply(BigInteger.valueOf(windowSize))
+          .divide(BigInteger.valueOf(PRECISION))
+          .longValueExact();
+    }
+    return averageUsage * windowSize / PRECISION;
+  }
+
+  private long weightedWindowSize(long lastUsage, long lastWindowSize,
+      long usage, long usageWindowSize, long newUsage) {
+    if (hardenResourceCalculation()) {
+      BigInteger numerator = BigInteger.valueOf(lastUsage)
+          .multiply(BigInteger.valueOf(lastWindowSize))
+          .add(BigInteger.valueOf(usage).multiply(BigInteger.valueOf(usageWindowSize)));
+      return numerator.divide(BigInteger.valueOf(newUsage)).longValueExact();
+    }
+    return (lastUsage * lastWindowSize + usage * usageWindowSize) / newUsage;
+  }
+
+  private boolean hardenResourceCalculation() {
+    return getVmDynamicProperties().getAllowHardenResourceCalculation() == 1L;
+  }
+
+  private boolean disableJavaLangMath() {
+    return getVmDynamicProperties().getConsensusLogicOptimization() == 1L;
+  }
+
+  private static long divideCeil(long numerator, long denominator) {
+    return numerator / denominator + (numerator % denominator > 0L ? 1L : 0L);
+  }
+
+  private static long divideCeilExact(BigInteger numerator, BigInteger denominator) {
+    BigInteger[] quotientAndRemainder = numerator.divideAndRemainder(denominator);
+    long quotient = quotientAndRemainder[0].longValueExact();
+    return quotientAndRemainder[1].signum() > 0
+        ? StrictMathWrapper.addExact(quotient, 1L) : quotient;
+  }
+
+  private static void requireValidUsageWindow(long lastTime, long now, long windowSize) {
+    if (windowSize <= 0L || now < lastTime) {
+      throw unsupportedHistoricalOperation(
+          "invalid historical energy-usage window");
+    }
+  }
 
   private interface ReaderCall<T> {
     ArchiveReadResult<T> call() throws ArchiveReaderException;

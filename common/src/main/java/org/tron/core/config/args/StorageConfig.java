@@ -216,6 +216,14 @@ public class StorageConfig {
       if (identity == null) {
         throw new IllegalArgumentException("storage.archive.identity must not be null");
       }
+      if (debug == null) {
+        throw new IllegalArgumentException("storage.archive.debug must not be null");
+      }
+      debug.postProcess();
+      if (debug.isEnable() && !enable) {
+        throw new IllegalArgumentException(
+            "storage.archive.debug.enable requires storage.archive.enable");
+      }
       if (enable && commitment != null && commitment.isEnable()) {
         throw new IllegalArgumentException(
             "storage.archive.commitment.enable is not supported in P0");
@@ -223,9 +231,6 @@ public class StorageConfig {
       if (enable && commitment != null && commitment.isPersistTxRoots()) {
         throw new IllegalArgumentException(
             "storage.archive.commitment.persistTxRoots cannot be true in P0");
-      }
-      if (enable && debug != null && debug.isEnable()) {
-        throw new IllegalArgumentException("storage.archive.debug.enable is not supported in P0");
       }
     }
 
@@ -454,6 +459,30 @@ public class StorageConfig {
     public static class DebugConfig {
 
       private boolean enable = false;
+      private int maxConcurrentTraces = 1;
+      private int maxPendingTraces = 1;
+      private long maxTraceSteps = 250_000L;
+      private long maxTraceBytes = 16L * 1024 * 1024;
+
+      void postProcess() {
+        if (maxConcurrentTraces <= 0) {
+          throw invalidLimit("maxConcurrentTraces", "must be positive");
+        }
+        if (maxPendingTraces < 0) {
+          throw invalidLimit("maxPendingTraces", "must be non-negative");
+        }
+        if (maxTraceSteps <= 0L) {
+          throw invalidLimit("maxTraceSteps", "must be positive");
+        }
+        if (maxTraceBytes <= 0L) {
+          throw invalidLimit("maxTraceBytes", "must be positive");
+        }
+      }
+
+      private static IllegalArgumentException invalidLimit(String key, String requirement) {
+        return new IllegalArgumentException(
+            "storage.archive.debug." + key + " " + requirement);
+      }
     }
   }
 
@@ -534,7 +563,9 @@ public class StorageConfig {
           "enable", "persistTxRoots");
     }
     if (archive.hasPath("debug")) {
-      requireOnlyKeys("storage.archive.debug", archive.getConfig("debug").root(), "enable");
+      requireOnlyKeys("storage.archive.debug", archive.getConfig("debug").root(),
+          "enable", "maxConcurrentTraces", "maxPendingTraces", "maxTraceSteps",
+          "maxTraceBytes");
     }
   }
 
