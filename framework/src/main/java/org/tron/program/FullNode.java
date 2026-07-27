@@ -17,10 +17,14 @@ import org.tron.core.exception.TronError;
 @Slf4j(topic = "app")
 public class FullNode {
 
+  static final String NETTY_ALLOCATOR_TYPE_PROPERTY = "io.netty.allocator.type";
+  private static final String POOLED_NETTY_ALLOCATOR = "pooled";
+
   /**
    * Start the FullNode.
    */
   public static void main(String[] args) {
+    configureNettyAllocator();
     ExitManager.initExceptionHandler();
     Args.setParam(args, "config.conf");
     CommonParameter parameter = Args.getInstance();
@@ -63,5 +67,13 @@ public class FullNode {
       node.run();
     }
     appT.blockUntilShutdown();
+  }
+
+  static void configureNettyAllocator() {
+    // Netty 4.2 defaults to the adaptive allocator. Preserve the Netty 4.1 behavior while
+    // java-tron and its Netty 4.1-era dependencies are soak-tested; an explicit -D override wins.
+    if (System.getProperty(NETTY_ALLOCATOR_TYPE_PROPERTY) == null) {
+      System.setProperty(NETTY_ALLOCATOR_TYPE_PROPERTY, POOLED_NETTY_ALLOCATOR);
+    }
   }
 }

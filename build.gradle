@@ -12,6 +12,10 @@ allprojects {
         springVersion = "5.3.39"
         errorproneVersion = "2.42.0"
         lombokVersion = "1.18.42"
+        // Drives both the io.grpc runtime artifacts in protocol/build.gradle and the
+        // protoc-gen-grpc-java plugin selected in archInfo below. Keep them on one version:
+        // generating stubs with a different grpc version than the runtime is a silent skew.
+        grpcVersion = "1.83.0"
     }
 }
 def arch = System.getProperty("os.arch").toLowerCase(Locale.ROOT)
@@ -40,10 +44,11 @@ ext.archInfo = [
         requires: [
                 JavaVersion: isArm64 ? JavaVersion.VERSION_17 : JavaVersion.VERSION_1_8,
                 RocksdbVersion: isArm64 ? '9.7.4' : '5.15.10',
-                // https://github.com/grpc/grpc-java/issues/7690
-                // https://github.com/grpc/grpc-java/pull/12319, Add support for macOS aarch64 with universal binary
-                // https://github.com/grpc/grpc-java/pull/11371 , 1.64.x is not supported CentOS 7.
-                ProtocGenVersion: isArm64 || isMac ? '1.81.0' : '1.60.0'
+                // Keep Linux x86_64 on 1.60.0 for CentOS 7 compatibility:
+                // https://github.com/grpc/grpc-java/pull/11371
+                // ARM64 and macOS follow grpcVersion and get universal macOS binaries:
+                // https://github.com/grpc/grpc-java/pull/12319
+                ProtocGenVersion: isArm64 || isMac ? grpcVersion : '1.60.0'
         ],
         VMOptions: isCompatibleWith17 ? "${rootDir}/gradle/jdk17/java-tron.vmoptions" : "${rootDir}/gradle/java-tron.vmoptions"
 ]

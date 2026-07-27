@@ -207,6 +207,8 @@ public class NodeConfig {
   @Setter
   public static class RpcConfig {
 
+    public static final int DEFAULT_MAX_CONCURRENT_CALLS_PER_CONNECTION = 100;
+
     private boolean enable = true;
     private int port = 50051;
     private boolean solidityEnable = true;
@@ -215,7 +217,8 @@ public class NodeConfig {
     private int pBFTPort = 50071;
 
     private int thread = 0;
-    private int maxConcurrentCallsPerConnection = 0;
+    private int maxConcurrentCallsPerConnection =
+        DEFAULT_MAX_CONCURRENT_CALLS_PER_CONNECTION;
     private int flowControlWindow = 1048576;
     private long maxConnectionIdleInMillis = 0;
     private long maxConnectionAgeInMillis = 0;
@@ -359,7 +362,8 @@ public class NodeConfig {
     }
 
     if (rpc.maxConcurrentCallsPerConnection == 0) {
-      rpc.maxConcurrentCallsPerConnection = Integer.MAX_VALUE;
+      rpc.maxConcurrentCallsPerConnection =
+          RpcConfig.DEFAULT_MAX_CONCURRENT_CALLS_PER_CONNECTION;
     }
     if (rpc.maxConnectionIdleInMillis == 0) {
       rpc.maxConnectionIdleInMillis = Long.MAX_VALUE;

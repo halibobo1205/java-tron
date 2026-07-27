@@ -2,8 +2,10 @@ apply plugin: 'com.google.protobuf'
 apply from: 'protoLint.gradle'
 
 def protobufVersion = '3.25.8'
-// keep same version as protoc-gen-grpc-java for arm64 or macOS, see rootProject.archInfo.requires.ProtocGenVersion
-def grpcVersion = '1.81.0'
+// grpcVersion comes from the root build.gradle so the runtime artifacts below and the
+// protoc-gen-grpc-java plugin (rootProject.archInfo.requires.ProtocGenVersion) cannot drift.
+// ARM64/macOS generate stubs with that same version; Linux x86_64 stays on protoc-gen 1.60.0
+// for CentOS 7 compatibility, and those stubs remain runtime-compatible.
 
 dependencies {
     api group: 'com.google.protobuf', name: 'protobuf-java', version: protobufVersion

@@ -33,6 +33,16 @@ dependencies {
         exclude group: 'org.bouncycastle', module: 'bcprov-jdk18on'
         exclude group: 'org.bouncycastle', module: 'bcutil-jdk18on'
     }
+    // libp2p 2.2.8 was compiled against Netty 4.1.x and references
+    // io.netty.handler.codec.protobuf.ProtobufVarint32*. Netty 4.2 moved those classes
+    // out of netty-codec into netty-codec-protobuf, so add it explicitly to keep them on
+    // the runtime classpath (also covers framework's BackupServer at compile time via api).
+    // protobuf-javanano is a compile-scope dependency of netty-codec-protobuf, pinned by
+    // netty-parent to 3.0.0-alpha-7 (2016, discontinued, never patched). Nothing here uses the
+    // nano runtime, and without this exclude it is packaged into the released fat jars.
+    api(group: 'io.netty', name: 'netty-codec-protobuf', version: '4.2.15.Final') {
+        exclude group: 'com.google.protobuf.nano', module: 'protobuf-javanano'
+    }
     api project(":protocol")
     api project(":platform")
 }

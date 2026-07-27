@@ -54,8 +54,9 @@ node {
     # Number of gRPC thread, default availableProcessors / 2
     # thread = 16
 
-    # The maximum number of concurrent calls permitted for each incoming connection
-    # maxConcurrentCallsPerConnection =
+    # The maximum number of concurrent calls permitted for each incoming connection,
+    # default 100. Setting 0 also uses the secure default.
+    # maxConcurrentCallsPerConnection = 100
 
     # The HTTP/2 flow control window, default 1MB
     # flowControlWindow =
