@@ -1048,8 +1048,9 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
           blockNumOrTag,
           blockParam.getRequestedBlockHash());
     }
-    requireCallArguments(transactionCall);
+    blockNumOrTag = resolveLatestOnlyCallBlockParam(blockParamObj, blockParam);
     requireLatestBlockTag(blockNumOrTag);
+    requireCallArguments(transactionCall);
 
     byte[] addressData = addressCompatibleToByteArray(transactionCall.getFrom());
     byte[] contractAddressData = addressCompatibleToByteArray(transactionCall.getTo());
@@ -1105,6 +1106,29 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
       return ResolvedBlockParam.ofHash(hashToByteArray(blockHash));
     }
     throw new JsonRpcInvalidRequestException(JSON_ERROR);
+  }
+
+  private String resolveLatestOnlyCallBlockParam(Object blockParamObj,
+      ResolvedBlockParam blockParam) throws JsonRpcInvalidParamsException,
+      JsonRpcInternalException {
+    if (!(blockParamObj instanceof Map)) {
+      return blockParam.getBlockNumOrTag();
+    }
+
+    byte[] requestedBlockHash = blockParam.getRequestedBlockHash();
+    if (requestedBlockHash != null) {
+      Block block = wallet.getBlockById(ByteString.copyFrom(requestedBlockHash));
+      if (block == null || !isCanonicalBlock(block)) {
+        throw new JsonRpcInternalException(NO_BLOCK_HEADER_BY_HASH);
+      }
+      return ByteArray.toJsonHex(block.getBlockHeader().getRawData().getNumber());
+    }
+
+    String blockNumOrTag = blockParam.getBlockNumOrTag();
+    if (wallet.getBlockByNum(parseObjectBlockNumber(blockNumOrTag)) == null) {
+      throw new JsonRpcInternalException(NO_BLOCK_HEADER);
+    }
+    return blockNumOrTag;
   }
 
   private String resolveGetterBlockParam(Object blockParamObj)
@@ -1167,6 +1191,13 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
     if (paramMap.containsKey("requireCanonical")) {
       throw new JsonRpcInvalidParamsException(JSON_ERROR);
     }
+  }
+
+  private boolean isCanonicalBlock(Block block) {
+    long blockNumber = block.getBlockHeader().getRawData().getNumber();
+    Block canonicalBlock = wallet.getBlockByNum(blockNumber);
+    return canonicalBlock != null
+        && JsonRpcApiUtil.getBlockID(canonicalBlock).equals(JsonRpcApiUtil.getBlockID(block));
   }
 
   @Override
