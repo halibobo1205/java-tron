@@ -188,7 +188,9 @@ public class RocksDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
       }
 
       try {
-        logger.debug("Opening database {}.", dataBaseName);
+        if (!this.getDBName().startsWith("checkpoint")) {
+          logger.info("Init DB {} start.", dataBaseName);
+        }
         final Path dbPath = getDbPath();
 
         if (!Files.isSymbolicLink(dbPath.getParent())) {
@@ -219,8 +221,9 @@ public class RocksDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
         throw new RuntimeException(
             String.format("failed to init database: %s", dataBaseName), ioe);
       }
-
-      logger.debug("Init DB {} done.", dataBaseName);
+      if (!this.getDBName().startsWith("checkpoint")) {
+        logger.info("Init DB {} done.", dataBaseName);
+      }
     } finally {
       resetDbLock.writeLock().unlock();
     }

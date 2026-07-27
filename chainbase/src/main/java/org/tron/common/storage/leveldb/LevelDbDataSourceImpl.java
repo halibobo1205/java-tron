@@ -99,7 +99,9 @@ public class LevelDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
   private void initDB() {
     resetDbLock.writeLock().lock();
     try {
-      logger.debug("Init DB: {}.", dataBaseName);
+      if (!this.getDBName().startsWith("checkpoint")) {
+        logger.info("Init DB {} start.", dataBaseName);
+      }
 
       if (isAlive()) {
         return;
@@ -116,7 +118,9 @@ public class LevelDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
         throw new RuntimeException(String.format("Can't initialize database, %s", dataBaseName),
             ioe);
       }
-      logger.debug("Init DB {} done.", dataBaseName);
+      if (!this.getDBName().startsWith("checkpoint")) {
+        logger.info("Init DB {} done.", dataBaseName);
+      }
     } finally {
       resetDbLock.writeLock().unlock();
     }
