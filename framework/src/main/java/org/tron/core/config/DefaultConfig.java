@@ -31,6 +31,7 @@ import org.tron.core.services.interfaceOnSolidity.RpcApiServiceOnSolidity;
 import org.tron.core.services.interfaceOnSolidity.http.solidity.HttpApiOnSolidityService;
 import org.tron.core.services.jsonrpc.ArchiveJsonRpcExecutor;
 import org.tron.core.services.jsonrpc.ArchiveJsonRpcStateAdapter;
+import org.tron.core.services.jsonrpc.HistoricalDebugTraceSupport;
 import org.tron.core.services.jsonrpc.HistoricalEthCallSupport;
 
 @Slf4j(topic = "app")
@@ -113,6 +114,14 @@ public class DefaultConfig {
     return new HistoricalEthCallSupport(wallet, archiveService);
   }
 
+  @Bean
+  public HistoricalDebugTraceSupport historicalDebugTraceSupport(Wallet wallet,
+      ArchiveService archiveService) {
+    StorageConfig.ArchiveConfig archive =
+        CommonParameter.getInstance().getStorage().getArchive();
+    return new HistoricalDebugTraceSupport(wallet, archiveService, archive.getDebug());
+  }
+
   @Bean(destroyMethod = "close")
   public ArchiveJsonRpcExecutor archiveJsonRpcExecutor(ArchiveService archiveService) {
     if (!archiveService.isEnabled()) {
@@ -120,8 +129,12 @@ public class DefaultConfig {
     }
     StorageConfig.ArchiveConfig.QueryConfig query = CommonParameter.getInstance()
         .getStorage().getArchive().getQuery();
+    StorageConfig.ArchiveConfig.DebugConfig debug = CommonParameter.getInstance()
+        .getStorage().getArchive().getDebug();
     return new ArchiveJsonRpcExecutor(
-        query.getJsonRpcWorkerThreads(), query.getDeadlineMs());
+        query.getJsonRpcWorkerThreads(), query.getDeadlineMs(),
+        debug.isEnable() ? debug.getMaxConcurrentTraces() : 0,
+        debug.isEnable() ? debug.getMaxPendingTraces() : 0);
   }
 
   @Bean(destroyMethod = "")

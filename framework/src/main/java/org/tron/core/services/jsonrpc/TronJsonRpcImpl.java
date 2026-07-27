@@ -205,6 +205,9 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
   // L8: historical eth_call replayed against archived state; null/disabled falls back to latest.
   @Autowired(required = false)
   private HistoricalEthCallSupport historicalEthCallSupport;
+  // Expensive historical debug tracing is separately configured and worker-isolated.
+  @Autowired(required = false)
+  private HistoricalDebugTraceSupport historicalDebugTraceSupport;
   private final String esName = "query-section";
 
   @Autowired
@@ -1073,6 +1076,60 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
         && callData.length() > MAX_HISTORICAL_CALL_DATA_HEX_BODY_CHARS + prefixChars) {
       throw new JsonRpcInvalidParamsException(
           "historical call data exceeds maximum transaction size");
+    }
+  }
+
+  @Override
+  public Object debugTraceCall(CallArguments transactionCall, Object blockParamObj)
+      throws JsonRpcMethodNotFoundException, JsonRpcInvalidParamsException,
+      JsonRpcInvalidRequestException, JsonRpcInternalException {
+    return debugTraceCall(transactionCall, blockParamObj, null);
+  }
+
+  @Override
+  public Object debugTraceCall(CallArguments transactionCall, Object blockParamObj,
+      Object traceOptions) throws JsonRpcMethodNotFoundException,
+      JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
+      JsonRpcInternalException {
+    requireDebugTraceEnabled();
+    ResolvedBlockParam blockParam = resolveBlockParam(blockParamObj);
+    String blockNumOrTag = blockParam.getBlockNumOrTag();
+    if (blockNumOrTag != null) {
+      HistoricalEthCallSupport.validateHistoricalSelectorSyntax(blockNumOrTag);
+    }
+    requireCallArguments(transactionCall);
+    requireHistoricalCallDataWithinLimit(transactionCall.getInput());
+    requireHistoricalCallDataWithinLimit(transactionCall.getData());
+    DebugTraceOptions options = DebugTraceOptions.parse(traceOptions);
+    return historicalDebugTraceSupport.traceCall(
+        addressCompatibleToByteArray(transactionCall.getFrom()),
+        addressCompatibleToByteArray(transactionCall.getTo()),
+        transactionCall.parseValue(),
+        ByteArray.fromHexString(transactionCall.resolveData()),
+        blockNumOrTag,
+        blockParam.getRequestedBlockHash(),
+        options);
+  }
+
+  @Override
+  public Object debugTraceTransaction(String txHash)
+      throws JsonRpcMethodNotFoundException, JsonRpcInvalidParamsException,
+      JsonRpcInvalidRequestException, JsonRpcInternalException {
+    return debugTraceTransaction(txHash, null);
+  }
+
+  @Override
+  public Object debugTraceTransaction(String txHash, Object traceOptions)
+      throws JsonRpcMethodNotFoundException, JsonRpcInvalidParamsException,
+      JsonRpcInvalidRequestException, JsonRpcInternalException {
+    requireDebugTraceEnabled();
+    DebugTraceOptions options = DebugTraceOptions.parse(traceOptions);
+    return historicalDebugTraceSupport.traceTransaction(hashToByteArray(txHash), options);
+  }
+
+  private void requireDebugTraceEnabled() throws JsonRpcMethodNotFoundException {
+    if (historicalDebugTraceSupport == null || !historicalDebugTraceSupport.isEnabled()) {
+      throw new JsonRpcMethodNotFoundException("archive debug tracing is disabled");
     }
   }
 

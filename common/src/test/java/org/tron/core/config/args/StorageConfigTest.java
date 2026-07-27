@@ -458,10 +458,32 @@ public class StorageConfigTest {
   }
 
   @Test
-  public void testArchiveRejectsDebugEnabled() {
+  public void testArchiveAcceptsBoundedDebugTracing() {
+    StorageConfig.ArchiveConfig.DebugConfig debug = StorageConfig.fromConfig(withRef(
+        "storage.archive { enable = true, debug { enable = true, "
+            + "maxConcurrentTraces = 2, maxPendingTraces = 3, "
+            + "maxTraceSteps = 4000, maxTraceBytes = 5000 } }"))
+        .getArchive()
+        .getDebug();
+    assertTrue(debug.isEnable());
+    assertEquals(2, debug.getMaxConcurrentTraces());
+    assertEquals(3, debug.getMaxPendingTraces());
+    assertEquals(4_000L, debug.getMaxTraceSteps());
+    assertEquals(5_000L, debug.getMaxTraceBytes());
+  }
+
+  @Test
+  public void testArchiveRejectsDebugWithoutArchive() {
     assertThrows(IllegalArgumentException.class,
-        () -> StorageConfig.fromConfig(withRef(
-            "storage.archive { enable = true, debug { enable = true } }")));
+        () -> StorageConfig.fromConfig(withRef("storage.archive.debug.enable = true")));
+  }
+
+  @Test
+  public void testArchiveRejectsInvalidDebugLimits() {
+    assertArchiveDebugRejected("maxConcurrentTraces", 0);
+    assertArchiveDebugRejected("maxPendingTraces", -1);
+    assertArchiveDebugRejected("maxTraceSteps", 0);
+    assertArchiveDebugRejected("maxTraceBytes", 0);
   }
 
   @Test
@@ -485,6 +507,13 @@ public class StorageConfigTest {
         () -> StorageConfig.fromConfig(withRef(
             "storage.archive.query." + key + " = " + value)));
     assertTrue(failure.getMessage().contains("storage.archive.query." + key));
+  }
+
+  private static void assertArchiveDebugRejected(String key, long value) {
+    IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+        () -> StorageConfig.fromConfig(withRef(
+            "storage.archive.debug." + key + " = " + value)));
+    assertTrue(failure.getMessage().contains("storage.archive.debug." + key));
   }
 
   // ---- readProperties() ----
