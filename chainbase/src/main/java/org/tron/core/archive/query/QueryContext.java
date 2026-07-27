@@ -6,6 +6,7 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.LongSupplier;
+import org.tron.common.math.StrictMathWrapper;
 
 /** Per-request monotonic deadline and overflow-safe resource accounting. */
 public final class QueryContext {
@@ -70,7 +71,7 @@ public final class QueryContext {
       batchTimeout = elapsedSinceConstraint >= batchDeadline.remainingNanos
           ? 0L : batchDeadline.remainingNanos - elapsedSinceConstraint;
     }
-    timeoutNanos = Math.min(requestTimeout, batchTimeout);
+    timeoutNanos = StrictMathWrapper.min(requestTimeout, batchTimeout);
     deadlineEnabled = requestDeadlineConfigured || batchDeadline != null;
     deadlineLimit = batchDeadline != null && batchTimeout <= requestTimeout
         ? HistoricalQueryLimitException.Limit.BATCH_DEADLINE
@@ -397,7 +398,7 @@ public final class QueryContext {
     if (!deadlineEnabled) {
       throw new IllegalStateException("unlimited query context has no deadline");
     }
-    long elapsed = Math.max(timeoutNanos, elapsedNanos(nanoTime.getAsLong()));
+    long elapsed = StrictMathWrapper.max(timeoutNanos, elapsedNanos(nanoTime.getAsLong()));
     return terminate(HistoricalQueryLimitException.deadlineExceeded(
         deadlineLimit, timeoutNanos, elapsed));
   }

@@ -9,6 +9,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.tron.common.math.StrictMathWrapper;
 import org.tron.common.prometheus.MetricKeys;
 import org.tron.common.prometheus.Metrics;
 import org.tron.core.archive.query.HistoricalQueryLimitException;
@@ -60,14 +61,14 @@ public final class ArchiveMetrics {
         incrementWork("previous_value_read_failures", previousValueReadFailures);
         if (previousValueReads > 0 || previousValueReadFailures > 0) {
           Metrics.histogramObserve(MetricKeys.Histogram.ARCHIVE_STAGE_LATENCY,
-              Math.max(0L, previousValueReadNanos) / NANOS_PER_SECOND,
+              StrictMathWrapper.max(0L, previousValueReadNanos) / NANOS_PER_SECOND,
               "previous_value_reads_block");
         }
         incrementWork("account_asset_prefix_rows", accountAssetPrefixRows);
         incrementWork("account_asset_point_reads", accountAssetPointReads);
         if (accountAssetLookups > 0) {
           Metrics.histogramObserve(MetricKeys.Histogram.ARCHIVE_STAGE_LATENCY,
-              Math.max(0L, accountAssetLookupNanos) / NANOS_PER_SECOND,
+              StrictMathWrapper.max(0L, accountAssetLookupNanos) / NANOS_PER_SECOND,
               "account_asset_diff_block");
         }
       });
@@ -258,7 +259,7 @@ public final class ArchiveMetrics {
       return 0D;
     }
     long elapsed = System.nanoTime() - startedNanos;
-    return Math.max(0L, elapsed) / NANOS_PER_SECOND;
+    return StrictMathWrapper.max(0L, elapsed) / NANOS_PER_SECOND;
   }
 
   private static void observeStage(String stage, double elapsedSeconds) {

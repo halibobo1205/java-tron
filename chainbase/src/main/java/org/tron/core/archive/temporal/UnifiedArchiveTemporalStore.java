@@ -1521,7 +1521,7 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
     private void addPayloadBytes(long bytes) {
       payloadAndCopyBytes = addSaturated(payloadAndCopyBytes, bytes);
       // RocksDB's preallocated-buffer JNI Get still materializes one native PinnableSlice.
-      maxNativeReadBytes = Math.max(maxNativeReadBytes, bytes);
+      maxNativeReadBytes = StrictMathWrapper.max(maxNativeReadBytes, bytes);
     }
 
     private void addCopy(long bytes) {

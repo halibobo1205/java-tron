@@ -8,6 +8,7 @@ import java.lang.reflect.Field;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.Test;
+import org.tron.common.math.StrictMathWrapper;
 
 public class ArchiveQueryRequestScopeTest {
 
@@ -87,7 +88,7 @@ public class ArchiveQueryRequestScopeTest {
         .build();
 
     try (ArchiveQueryRequestScope ignored = ArchiveQueryRequestScope.open(
-        () -> samples[(int) Math.min(calls.getAndIncrement(), samples.length - 1L)])) {
+        () -> samples[(int) StrictMathWrapper.min(calls.getAndIncrement(), samples.length - 1L)])) {
       ArchiveQueryRequestScope.DeadlineConstraint constraint =
           ArchiveQueryRequestScope.deadlineConstraint(limits);
 

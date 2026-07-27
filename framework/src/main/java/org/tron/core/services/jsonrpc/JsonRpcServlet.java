@@ -27,6 +27,7 @@ import javax.servlet.http.HttpServletResponseWrapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.tron.common.math.StrictMathWrapper;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.core.Constant;
 import org.tron.core.archive.query.ArchiveQueryRequestScope;
@@ -626,7 +627,7 @@ public class JsonRpcServlet extends RateLimiterServlet {
       int configuredMaxBytes)
       throws IOException {
     int maxBytes = configuredMaxBytes > 0
-        ? Math.min(configuredMaxBytes, MAX_DIRECT_ERROR_BYTES)
+        ? StrictMathWrapper.min(configuredMaxBytes, MAX_DIRECT_ERROR_BYTES)
         : MAX_DIRECT_ERROR_BYTES;
     if (bytes.length > maxBytes) {
       writeEmptyResponse(resp);

@@ -11,6 +11,7 @@ import org.rocksdb.RocksDB;
 import org.rocksdb.RocksDBException;
 import org.rocksdb.RocksIterator;
 import org.rocksdb.Snapshot;
+import org.tron.common.math.StrictMathWrapper;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchiveRocksIterators;
 import org.tron.core.archive.ArchiveSnapshotReleaseException;
@@ -88,7 +89,7 @@ public final class UnifiedArchiveReadView implements AutoCloseable {
     }
     try {
       ColumnFamilyHandle handle = handles.get(columnFamily);
-      int probeBytes = (int) Math.min(maxValueBytes, MAX_BOUNDED_GET_PROBE_BYTES);
+      int probeBytes = (int) StrictMathWrapper.min(maxValueBytes, MAX_BOUNDED_GET_PROBE_BYTES);
       if (boundedGetProbe.length < probeBytes) {
         boundedGetProbe = new byte[probeBytes];
       }
@@ -153,7 +154,7 @@ public final class UnifiedArchiveReadView implements AutoCloseable {
       queryContext.validateBackendValueBytes(expectedValueBytes);
     }
     try {
-      int probeBytes = (int) Math.min(expectedValueBytes, MAX_BOUNDED_GET_PROBE_BYTES);
+      int probeBytes = (int) StrictMathWrapper.min(expectedValueBytes, MAX_BOUNDED_GET_PROBE_BYTES);
       if (boundedGetProbe.length < probeBytes) {
         boundedGetProbe = new byte[probeBytes];
       }

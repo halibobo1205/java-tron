@@ -21,6 +21,7 @@ import java.util.Optional;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+import org.tron.common.math.StrictMathWrapper;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveSource;
@@ -188,7 +189,7 @@ public class UnifiedArchiveTemporalStoreOracleTest {
   public void sameBlockRepeatedKeyBuildsReferenceChainWithoutPayloadCopies() {
     ArchiveBlockRange range = new ArchiveBlockRange(
         3L, 5L, 7L, 5L, 7L, new byte[32], 0, ArchiveSource.NORMAL);
-    putBlock(range, List.of(
+    putBlock(range, Arrays.asList(
         rec(5L, 3L, K1, DomainValue.tombstone(), val(0x0A)),
         rec(6L, 3L, K1, val(0x0A), val(0x0B))));
 
@@ -227,7 +228,7 @@ public class UnifiedArchiveTemporalStoreOracleTest {
     long changesetBytes = persistedPayloadBytes(
         UnifiedArchiveColumnFamily.CHANGESET,
         ArchiveTemporalCodec.changesetKey(5L, DOMAIN, K1));
-    long largestNativeRead = Math.max(anchorBytes, changesetBytes);
+    long largestNativeRead = StrictMathWrapper.max(anchorBytes, changesetBytes);
     long expectedBytes = anchorBytes + changesetBytes + changesetBytes + largestNativeRead;
     ArchiveChangeRecord next = rec(6L, 2L, K1, current, val(0x0B));
 
@@ -247,7 +248,7 @@ public class UnifiedArchiveTemporalStoreOracleTest {
     assertEquals(7L, unified.estimatePublicationPreparation(
         Collections.singletonList(first)).getMutations());
     assertEquals(13L, unified.estimatePublicationPreparation(
-        List.of(first, second)).getMutations());
+        Arrays.asList(first, second)).getMutations());
   }
 
   @Test
@@ -333,7 +334,8 @@ public class UnifiedArchiveTemporalStoreOracleTest {
     byte[] latestKey = ArchiveTemporalCodec.latestKey(DOMAIN, K1);
     byte[] anchorKey = ArchiveTemporalCodec.anchorKey(DOMAIN, K1);
     putBlock(range,
-        List.of(rec(0L, 0L, K1, DomainValue.tombstone(), val(0x0A))));
+        Collections.singletonList(
+            rec(0L, 0L, K1, DomainValue.tombstone(), val(0x0A))));
 
     ArchiveException failure = assertThrows(
         ArchiveException.class, () -> unified.unwindBlock(range));
@@ -357,8 +359,9 @@ public class UnifiedArchiveTemporalStoreOracleTest {
     ArchiveBlockRange second = new ArchiveBlockRange(
         1L, 2L, 3L, 2L, 3L, new byte[32], 0, ArchiveSource.NORMAL);
     putBlock(first,
-        List.of(rec(0L, 0L, K1, DomainValue.tombstone(), val(0x0A))));
-    putBlock(second, List.of(
+        Collections.singletonList(
+            rec(0L, 0L, K1, DomainValue.tombstone(), val(0x0A))));
+    putBlock(second, Arrays.asList(
         rec(2L, 1L, K1, val(0x0A), val(0x0B)),
         rec(3L, 1L, K2, DomainValue.tombstone(), val(0x20))));
 
@@ -667,7 +670,8 @@ public class UnifiedArchiveTemporalStoreOracleTest {
     ArchiveBlockRange range = new ArchiveBlockRange(
         3L, 5L, 6L, 5L, 6L, new byte[32], 0, ArchiveSource.NORMAL);
     putBlock(range,
-        List.of(rec(5L, 3L, K1, DomainValue.tombstone(), val(0x0A))));
+        Collections.singletonList(
+            rec(5L, 3L, K1, DomainValue.tombstone(), val(0x0A))));
     byte[] historyKey = ArchiveTemporalCodec.historyKey(DOMAIN, K1, 5L);
     corruptReferenceLink(UnifiedArchiveColumnFamily.HISTORY, historyKey, 4L);
 
@@ -679,7 +683,8 @@ public class UnifiedArchiveTemporalStoreOracleTest {
     ArchiveBlockRange range = new ArchiveBlockRange(
         3L, 5L, 6L, 5L, 6L, new byte[32], 0, ArchiveSource.NORMAL);
     putBlock(range,
-        List.of(rec(5L, 3L, K1, DomainValue.tombstone(), val(0x0A))));
+        Collections.singletonList(
+            rec(5L, 3L, K1, DomainValue.tombstone(), val(0x0A))));
 
     ArchiveException failure = assertThrows(
         ArchiveException.class, () -> unified.unwindBlock(range));
@@ -695,7 +700,8 @@ public class UnifiedArchiveTemporalStoreOracleTest {
     ArchiveBlockRange range = new ArchiveBlockRange(
         3L, 5L, 6L, 5L, 6L, new byte[32], 0, ArchiveSource.NORMAL);
     putBlock(range,
-        List.of(rec(5L, 3L, K1, DomainValue.tombstone(), val(0x0A))));
+        Collections.singletonList(
+            rec(5L, 3L, K1, DomainValue.tombstone(), val(0x0A))));
 
     ArchiveException unifiedFailure = assertThrows(ArchiveException.class,
         () -> unified.unwind(5L));
@@ -848,7 +854,7 @@ public class UnifiedArchiveTemporalStoreOracleTest {
     // K3: mid-chain -- existed as 0x30 before coverage; first captured change at tx6 (0x30->0x31).
     put(6, K3, val(0x30), val(0x31));
 
-    for (byte[] k : List.of(K1, K2, K3)) {
+    for (byte[] k : Arrays.asList(K1, K2, K3)) {
       assertParity(k, 12);
     }
 
@@ -895,8 +901,11 @@ public class UnifiedArchiveTemporalStoreOracleTest {
         3, 10, 11, 10, 11, new byte[32], 0, ArchiveSource.NORMAL);
     ArchiveBlockRange b4 = new ArchiveBlockRange(
         4, 12, 13, 12, 13, new byte[32], 0, ArchiveSource.NORMAL);
-    putBlock(b3, List.of(rec(10, 3, K1, DomainValue.tombstone(), val(0x0A))));
-    putBlock(b4, List.of(rec(12, 4, K1, val(0x0A), val(0x0B))));
+    putBlock(b3,
+        Collections.singletonList(
+            rec(10, 3, K1, DomainValue.tombstone(), val(0x0A))));
+    putBlock(b4,
+        Collections.singletonList(rec(12, 4, K1, val(0x0A), val(0x0B))));
 
     assertTrue(assertThrows(ArchiveException.class, () -> mem.unwindBlock(b3))
         .getMessage().contains("not temporal head"));
@@ -921,8 +930,10 @@ public class UnifiedArchiveTemporalStoreOracleTest {
         3, 10, 11, 10, 11, new byte[32], 0, ArchiveSource.NORMAL);
     ArchiveBlockRange b4empty = new ArchiveBlockRange(
         4, 12, 13, 12, 13, new byte[32], 0, ArchiveSource.NORMAL);
-    putBlock(b3, List.of(rec(10, 3, K1, DomainValue.tombstone(), val(0x0A))));
-    putBlock(b4empty, List.of());
+    putBlock(b3,
+        Collections.singletonList(
+            rec(10, 3, K1, DomainValue.tombstone(), val(0x0A))));
+    putBlock(b4empty, Collections.emptyList());
 
     assertTrue(assertThrows(ArchiveException.class, () -> mem.unwindBlock(b3))
         .getMessage().contains("not temporal head"));

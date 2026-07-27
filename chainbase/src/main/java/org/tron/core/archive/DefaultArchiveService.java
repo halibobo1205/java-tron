@@ -28,6 +28,7 @@ import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.tron.common.math.StrictMathWrapper;
 import org.tron.core.archive.capture.ArchiveCaptureEngine;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
@@ -381,7 +382,7 @@ public final class DefaultArchiveService implements ArchiveService {
         ArchiveBlockRange range = block.getRange();
         long retainedBytes = block.estimatedRetainedBytes();
         startupJournalBytes[0] = addSaturated(startupJournalBytes[0], retainedBytes);
-        startupPublicationBytes[0] = Math.max(
+        startupPublicationBytes[0] = StrictMathWrapper.max(
             startupPublicationBytes[0], blockResourceFootprintBytes(block));
         startupResourceBytes[0] = addSaturated(
             startupJournalBytes[0], startupPublicationBytes[0]);
@@ -648,7 +649,7 @@ public final class DefaultArchiveService implements ArchiveService {
           } else {
             try {
               long waitNanos = diskSoftLimitReached
-                  ? Math.min(remaining, DISK_SAMPLE_INTERVAL_NANOS) : remaining;
+                  ? StrictMathWrapper.min(remaining, DISK_SAMPLE_INTERVAL_NANOS) : remaining;
               TimeUnit.NANOSECONDS.timedWait(backlogMonitor, waitNanos);
             } catch (InterruptedException e) {
               Thread.currentThread().interrupt();
@@ -1703,7 +1704,7 @@ public final class DefaultArchiveService implements ArchiveService {
       }
       long projectedBytes = addSaturated(
           addSaturated(inFlightRetainedBytes,
-              Math.max(inFlightPublicationBytes,
+              StrictMathWrapper.max(inFlightPublicationBytes,
                   addSaturated(activePublicationBytes, bytes))),
           addSaturated(activeCaptureBytes, activeExecutionPositionBytes));
       if (projectedBytes > publisherConfig.getHardInFlightBytes()) {
@@ -1802,7 +1803,8 @@ public final class DefaultArchiveService implements ArchiveService {
     if (publishedThrough < 0 && !inFlightBlocks.isEmpty()) {
       publishedThrough = inFlightBlocks.firstKey() - 1L;
     }
-    long lag = publishedThrough < 0 ? 0L : Math.max(0L, targetBlockNum - publishedThrough);
+    long lag = publishedThrough < 0
+        ? 0L : StrictMathWrapper.max(0L, targetBlockNum - publishedThrough);
     ArchiveMetrics.setPublisherLag(lag);
   }
 
@@ -1824,7 +1826,7 @@ public final class DefaultArchiveService implements ArchiveService {
     long projectedRetainedBytes = addSaturated(
         inFlightRetainedBytes, block.estimatedRetainedBytes());
     long candidatePublicationBytes = blockResourceFootprintBytes(block);
-    long projectedPublicationBytes = Math.max(
+    long projectedPublicationBytes = StrictMathWrapper.max(
         inFlightPublicationBytes, candidatePublicationBytes);
     long projectedSteadyBytes = addSaturated(
         projectedRetainedBytes, projectedPublicationBytes);
@@ -1833,8 +1835,8 @@ public final class DefaultArchiveService implements ArchiveService {
     long projectedAppendBytes = addSaturated(
         projectedRetainedBytes,
         addSaturated(activePublicationBytes, candidatePublicationBytes));
-    long projectedBytes = Math.max(
-        inFlightResourceBytes, Math.max(projectedSteadyBytes, projectedAppendBytes));
+    long projectedBytes = StrictMathWrapper.max(
+        inFlightResourceBytes, StrictMathWrapper.max(projectedSteadyBytes, projectedAppendBytes));
     if (projectedBytes > publisherConfig.getHardInFlightBytes()) {
       throw new ArchiveException("archive in-flight buffer would exceed hard resource watermark "
           + publisherConfig.getHardInFlightBytes() + " while appending block " + blockNum
@@ -1846,7 +1848,7 @@ public final class DefaultArchiveService implements ArchiveService {
           + publisherConfig.getHardInFlightRecords() + " while appending block " + blockNum
           + ": projectedRecords=" + projectedRecords);
     }
-    long journalHeadroom = Math.max(
+    long journalHeadroom = StrictMathWrapper.max(
         MIN_JOURNAL_DISK_HEADROOM_BYTES, multiplySaturated(block.estimatedRetainedBytes(), 2L));
     long requiredFree = addSaturated(publisherConfig.getHardMinFreeBytes(), journalHeadroom);
     long usableSpace = cachedUsableSpaceForJournal();
@@ -1866,7 +1868,8 @@ public final class DefaultArchiveService implements ArchiveService {
     if (unifiedBackend == null) {
       return 0L;
     }
-    return Math.max(blockPublicationBytes(block), estimatedJournalDeleteWorkspace(block));
+    return StrictMathWrapper.max(
+        blockPublicationBytes(block), estimatedJournalDeleteWorkspace(block));
   }
 
   private long beginActivePublication(ArchiveInFlightBlock block) {
@@ -1901,7 +1904,7 @@ public final class DefaultArchiveService implements ArchiveService {
         }
         long projectedBytes = addSaturated(
             addSaturated(inFlightRetainedBytes,
-                Math.max(inFlightPublicationBytes,
+                StrictMathWrapper.max(inFlightPublicationBytes,
                     addSaturated(updatedBytes, activeJournalMutationBytes))),
             addSaturated(activeCaptureBytes, activeExecutionPositionBytes));
         if (projectedBytes > publisherConfig.getHardInFlightBytes()) {
@@ -1941,7 +1944,7 @@ public final class DefaultArchiveService implements ArchiveService {
 
   private void refreshInFlightResourceBytesLocked() {
     long backlogAndPublication = addSaturated(inFlightRetainedBytes,
-        Math.max(inFlightPublicationBytes,
+        StrictMathWrapper.max(inFlightPublicationBytes,
             addSaturated(activePublicationBytes, activeJournalMutationBytes)));
     inFlightResourceBytes = addSaturated(
         backlogAndPublication,
@@ -1959,7 +1962,7 @@ public final class DefaultArchiveService implements ArchiveService {
       }
       long previousBytes = activeCaptureBytes;
       long backlogAndPublication = addSaturated(inFlightRetainedBytes,
-          Math.max(inFlightPublicationBytes,
+          StrictMathWrapper.max(inFlightPublicationBytes,
               addSaturated(activePublicationBytes, activeJournalMutationBytes)));
       long projectedBytes = addSaturated(
           backlogAndPublication,
@@ -2059,7 +2062,7 @@ public final class DefaultArchiveService implements ArchiveService {
 
   private void validateExecutionPositionResourceBytesLocked(long positionBytes) {
     long backlogAndPublication = addSaturated(inFlightRetainedBytes,
-        Math.max(inFlightPublicationBytes,
+        StrictMathWrapper.max(inFlightPublicationBytes,
             addSaturated(activePublicationBytes, activeJournalMutationBytes)));
     long projectedBytes = addSaturated(backlogAndPublication,
         addSaturated(activeCaptureBytes, positionBytes));
@@ -2200,10 +2203,10 @@ public final class DefaultArchiveService implements ArchiveService {
   }
 
   private long diskRefreshThresholdBytes() {
-    long maximumJournalHeadroom = Math.max(
+    long maximumJournalHeadroom = StrictMathWrapper.max(
         MIN_JOURNAL_DISK_HEADROOM_BYTES,
         multiplySaturated(publisherConfig.getHardInFlightBytes(), 2L));
-    long configuredFreeSpaceWatermark = Math.max(
+    long configuredFreeSpaceWatermark = StrictMathWrapper.max(
         publisherConfig.getSoftMinFreeBytes(),
         publisherConfig.getHardMinFreeBytes());
     return addSaturated(configuredFreeSpaceWatermark, maximumJournalHeadroom);
@@ -3601,7 +3604,7 @@ public final class DefaultArchiveService implements ArchiveService {
         }
         long started = System.nanoTime();
         TimeUnit.NANOSECONDS.timedWait(fatalTransitionMonitor, remaining);
-        long elapsed = Math.max(0L, System.nanoTime() - started);
+        long elapsed = StrictMathWrapper.max(0L, System.nanoTime() - started);
         remaining = elapsed >= remaining ? 0L : remaining - elapsed;
       }
       return true;

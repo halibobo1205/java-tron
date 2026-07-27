@@ -22,6 +22,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.LongConsumer;
 import org.junit.After;
 import org.junit.Test;
+import org.tron.common.math.StrictMathWrapper;
 import org.tron.common.utils.ReflectUtils;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
@@ -60,7 +61,7 @@ public class DefaultArchiveServiceAsyncPublisherTest {
     doAnswer(invocation -> {
       int call = calls.incrementAndGet();
       int activeNow = active.incrementAndGet();
-      maxActive.accumulateAndGet(activeNow, Math::max);
+      maxActive.accumulateAndGet(activeNow, StrictMathWrapper::max);
       try {
         if (call == 1) {
           firstEntered.countDown();
@@ -226,7 +227,7 @@ public class DefaultArchiveServiceAsyncPublisherTest {
     ArchiveInFlightBlock empty = emptyJournal(first, 0L, schemaChecksum);
     long publicationBytes = 4_096L;
     long cleanupBytes = 8L * 1024L + 3L * empty.encodedBlockBytes();
-    long steadyWorkspaceBytes = Math.max(publicationBytes, cleanupBytes);
+    long steadyWorkspaceBytes = StrictMathWrapper.max(publicationBytes, cleanupBytes);
     long hardBytes = empty.estimatedRetainedBytes() * 2L + steadyWorkspaceBytes;
     UnifiedArchiveBackend unifiedBackend = mock(UnifiedArchiveBackend.class);
     when(unifiedBackend.estimatedPublicationRetainedBytes(any()))
@@ -298,7 +299,7 @@ public class DefaultArchiveServiceAsyncPublisherTest {
     ArchiveInFlightBlock empty = emptyJournal(first, 0L, schemaChecksum);
     long publicationBytes = 4_096L;
     long cleanupBytes = 8L * 1024L + 3L * empty.encodedBlockBytes();
-    long stateAwareBytes = Math.max(publicationBytes, cleanupBytes) + 4_096L;
+    long stateAwareBytes = StrictMathWrapper.max(publicationBytes, cleanupBytes) + 4_096L;
     long hardBytes = empty.estimatedRetainedBytes() * 2L + stateAwareBytes;
     UnifiedArchiveBackend unifiedBackend = mock(UnifiedArchiveBackend.class);
     when(unifiedBackend.estimatedPublicationRetainedBytes(any()))
@@ -380,7 +381,7 @@ public class DefaultArchiveServiceAsyncPublisherTest {
         21, 0, account.length);
     long publicationBytes = 4_096L;
     long cleanupBytes = 8L * 1024L + 3L * empty.encodedBlockBytes();
-    long steadyWorkspaceBytes = Math.max(publicationBytes, cleanupBytes);
+    long steadyWorkspaceBytes = StrictMathWrapper.max(publicationBytes, cleanupBytes);
     long stateAwareBytes = steadyWorkspaceBytes + 4_096L;
     long hardBytes = empty.estimatedRetainedBytes() + stateAwareBytes + captureBytes - 1L;
     UnifiedArchiveBackend unifiedBackend = mock(UnifiedArchiveBackend.class);

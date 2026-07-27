@@ -13,6 +13,7 @@ import java.util.Collections;
 import java.util.List;
 import org.junit.Before;
 import org.junit.Test;
+import org.tron.common.math.StrictMathWrapper;
 import org.tron.core.archive.ArchiveExecutionContext;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchivePhase;
@@ -230,7 +231,7 @@ public class ArchiveCaptureEngineTest {
         21, 0, first.length);
     long secondPipeline = ArchiveResourceEstimator.estimatedRawRecordPipelineBytes(
         21, first.length, second.length);
-    long hardBytes = Math.max(firstPipeline, retainedFirst + secondPipeline);
+    long hardBytes = StrictMathWrapper.max(firstPipeline, retainedFirst + secondPipeline);
     assertTrue(firstPipeline + secondPipeline > hardBytes);
     ArchiveCaptureEngine bounded = new ArchiveCaptureEngine(
         new DefaultArchiveDomainRegistry(), new DefaultArchiveDomainCatalog(),

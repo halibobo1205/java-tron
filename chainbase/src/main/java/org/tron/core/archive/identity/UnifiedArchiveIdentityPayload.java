@@ -3,6 +3,7 @@ package org.tron.core.archive.identity;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Arrays;
+import org.tron.common.math.StrictMathWrapper;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchivePersistentStateCorruptionException;
 import org.tron.core.archive.UnifiedArchiveInFlightStore;
@@ -106,7 +107,7 @@ public final class UnifiedArchiveIdentityPayload implements ArchiveIdentityPaylo
           new UnifiedArchiveInFlightStore(
               db, catalog, maxEncodedBlockBytes, maxRecordsPerBlock, maxBlocks);
       long[] firstJournal = {Long.MAX_VALUE};
-      inFlight.forEachBlock(block -> firstJournal[0] = Math.min(
+      inFlight.forEachBlock(block -> firstJournal[0] = StrictMathWrapper.min(
           firstJournal[0], block.getRange().getBlockNum()));
       return firstJournal[0] == Long.MAX_VALUE ? 0L : firstJournal[0];
     } catch (RuntimeException | Error e) {
