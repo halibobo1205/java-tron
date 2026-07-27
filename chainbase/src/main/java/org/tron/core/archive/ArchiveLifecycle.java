@@ -7,6 +7,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
+import org.tron.common.math.StrictMathWrapper;
 
 /** Fair lifecycle admission and drain accounting for the archive sidecar. */
 public final class ArchiveLifecycle {
@@ -260,7 +261,7 @@ public final class ArchiveLifecycle {
     }
     try {
       if (remaining != Long.MAX_VALUE) {
-        long elapsed = Math.max(0L, System.nanoTime() - lockStartedNanos);
+        long elapsed = StrictMathWrapper.max(0L, System.nanoTime() - lockStartedNanos);
         remaining = elapsed >= remaining ? 0L : remaining - elapsed;
       }
       applyDrainLocked();

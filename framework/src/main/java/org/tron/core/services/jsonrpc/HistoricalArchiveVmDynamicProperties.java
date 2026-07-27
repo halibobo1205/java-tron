@@ -3,6 +3,7 @@ package org.tron.core.services.jsonrpc;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
+import org.tron.common.math.StrictMathWrapper;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.archive.reader.ArchiveReadResult;
 import org.tron.core.archive.reader.ArchiveReadResult.Status;
@@ -202,7 +203,7 @@ public final class HistoricalArchiveVmDynamicProperties implements VmDynamicProp
     this.energyFee = energyFee;
     ArchiveStatePoint point = reader.getPoint();
     this.latestBlockHeaderNumber = point.getKind() == ArchiveStatePoint.Kind.TX_BEFORE
-        ? Math.max(0L, point.getBlockNum() - 1L)
+        ? StrictMathWrapper.max(0L, point.getBlockNum() - 1L)
         : point.getBlockNum();
     this.latestBlockHeaderTimestamp = resolve(reader, "latest_block_header_timestamp",
         genesisComplete, 0L);

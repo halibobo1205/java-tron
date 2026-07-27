@@ -4,6 +4,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.concurrent.TimeUnit;
 import org.rocksdb.ReadOptions;
+import org.tron.common.math.StrictMathWrapper;
 
 /** Shared native deadline configuration for archive-related RocksDB reads. */
 public final class ArchiveRocksReadOptions {
@@ -33,7 +34,7 @@ public final class ArchiveRocksReadOptions {
     if (remainingNanos % 1_000L != 0L && timeoutMicros != Long.MAX_VALUE) {
       timeoutMicros++;
     }
-    timeoutMicros = Math.max(1L, timeoutMicros);
+    timeoutMicros = StrictMathWrapper.max(1L, timeoutMicros);
     long nowMicros = TimeUnit.MILLISECONDS.toMicros(System.currentTimeMillis());
     long deadlineMicros = addSaturated(nowMicros, timeoutMicros);
     invokeReadOptions(SET_READ_DEADLINE, readOptions, deadlineMicros);

@@ -11,6 +11,7 @@ import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
 import java.util.TreeMap;
+import org.tron.common.math.StrictMathWrapper;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchivePhase;
@@ -227,7 +228,7 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
     if (lastCommittedBlock < 0) {
       return;
     }
-    long discardThrough = Math.min(blockNum, lastCommittedBlock);
+    long discardThrough = StrictMathWrapper.min(blockNum, lastCommittedBlock);
     if (discardThrough <= discardedThroughBlock) {
       return;
     }

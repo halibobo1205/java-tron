@@ -9,6 +9,7 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import org.tron.common.math.StrictMathWrapper;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
@@ -284,16 +285,17 @@ final class ArchiveInFlightCodec {
             ArchiveInFlightBlock.estimatedRecordRetainedBytes(
                 keyBytes, prevValueBytes, valueBytes));
         long decodeTransientBytes = addSaturated(
-            keyBytes, Math.max(prevValueBytes, valueBytes));
+            keyBytes, StrictMathWrapper.max(prevValueBytes, valueBytes));
         requireRetainedBytes(
             addSaturated(retainedBytes, decodeTransientBytes), maxRetainedBytes);
         // DynamicKeyPolicy may retain the key copy while constructing a UTF-16 property name.
         long keyValidationBytes = domain == ArchiveDomain.DYNAMIC_PROPERTIES
             ? addSaturated(keyBytes, addSaturated(keyBytes, keyBytes)) : keyBytes;
         long valueValidationBytes = addSaturated(
-            keyBytes, Math.max(prevValueBytes, valueBytes));
-        long validationTransientBytes = Math.max(keyValidationBytes, valueValidationBytes);
-        maxValidationTransientBytes = Math.max(
+            keyBytes, StrictMathWrapper.max(prevValueBytes, valueBytes));
+        long validationTransientBytes =
+            StrictMathWrapper.max(keyValidationBytes, valueValidationBytes);
+        maxValidationTransientBytes = StrictMathWrapper.max(
             maxValidationTransientBytes, validationTransientBytes);
       }
       requireRetainedBytes(

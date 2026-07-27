@@ -2,6 +2,7 @@ package org.tron.core.archive;
 
 import java.util.concurrent.TimeUnit;
 import java.util.function.LongSupplier;
+import org.tron.common.math.StrictMathWrapper;
 
 /** Single-flight daemon sampler that bounds callers when a filesystem capacity probe stalls. */
 final class ArchiveDiskSpaceSampler implements AutoCloseable {
@@ -127,7 +128,7 @@ final class ArchiveDiskSpaceSampler implements AutoCloseable {
       if (requestedGeneration == targetGeneration
           && requestedGeneration > completedGeneration
           && requestedAtNanos != Long.MIN_VALUE) {
-        long pendingNanos = Math.max(0L, System.nanoTime() - requestedAtNanos);
+        long pendingNanos = StrictMathWrapper.max(0L, System.nanoTime() - requestedAtNanos);
         remainingNanos = pendingNanos >= remainingNanos
             ? 0L : remainingNanos - pendingNanos;
       }
@@ -142,7 +143,7 @@ final class ArchiveDiskSpaceSampler implements AutoCloseable {
           interrupted = true;
           break;
         }
-        long elapsedNanos = Math.max(0L, System.nanoTime() - startedNanos);
+        long elapsedNanos = StrictMathWrapper.max(0L, System.nanoTime() - startedNanos);
         remainingNanos = elapsedNanos >= remainingNanos
             ? 0L : remainingNanos - elapsedNanos;
       }

@@ -71,6 +71,7 @@ import org.tron.common.logsfilter.trigger.ContractEventTrigger;
 import org.tron.common.logsfilter.trigger.ContractLogTrigger;
 import org.tron.common.logsfilter.trigger.ContractTrigger;
 import org.tron.common.logsfilter.trigger.Trigger;
+import org.tron.common.math.StrictMathWrapper;
 import org.tron.common.overlay.message.Message;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.prometheus.MetricKeys;
@@ -557,7 +558,7 @@ public class Manager {
           getDynamicPropertiesStore().getLatestBlockHeaderHash());
       this.khaosDb.start(canonicalHead);
       if (archiveService.isEnabled()) {
-        long solidifiedNum = Math.min(
+        long solidifiedNum = StrictMathWrapper.min(
             getDynamicPropertiesStore().getLatestSolidifiedBlockNum(), canonicalHead.getNum());
         archiveService.reconcilePublishedHeadOnStartup(canonicalHead.getNum());
         archiveService.reconcileInFlightOnStartup(solidifiedNum, canonicalHead.getNum(),
@@ -1370,7 +1371,7 @@ public class Manager {
       // restart. Pending batched flushes are not recoverable until their checkpoint is durable.
       long recoverableBlockNum = getDynamicPropertiesStore().getLatestBlockHeaderNumber()
           - revokingStore.size() - revokingStore.getPendingFlushCount();
-      long publishableBlockNum = Math.min(solidifiedBlockNum, recoverableBlockNum);
+      long publishableBlockNum = StrictMathWrapper.min(solidifiedBlockNum, recoverableBlockNum);
       if (publishableBlockNum < 0) {
         return;
       }

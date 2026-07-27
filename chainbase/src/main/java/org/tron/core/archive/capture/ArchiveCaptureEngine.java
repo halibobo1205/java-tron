@@ -13,6 +13,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.function.LongConsumer;
+import org.tron.common.math.StrictMathWrapper;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchiveExecutionContext;
 import org.tron.core.archive.ArchiveResourceEstimator;
@@ -286,7 +287,7 @@ public final class ArchiveCaptureEngine {
 
   void endAccountAssetPlanning() {
     transientRawBytes = 0L;
-    reserveCaptureResources(Math.max(rawRecordBytes, retainedRecordBytes));
+    reserveCaptureResources(StrictMathWrapper.max(rawRecordBytes, retainedRecordBytes));
   }
 
   /** Captures one effective TRC10 balance transition without materializing an Account proto. */
@@ -441,7 +442,7 @@ public final class ArchiveCaptureEngine {
       previousValueReadFailures = incrementSaturated(previousValueReadFailures);
     }
     if (startedNanos != Long.MIN_VALUE) {
-      long elapsed = Math.max(0L, System.nanoTime() - startedNanos);
+      long elapsed = StrictMathWrapper.max(0L, System.nanoTime() - startedNanos);
       previousValueReadNanos = addSaturated(previousValueReadNanos, elapsed);
     }
   }
@@ -457,7 +458,7 @@ public final class ArchiveCaptureEngine {
     accountAssetLookups = incrementSaturated(accountAssetLookups);
     if (startedNanos != Long.MIN_VALUE) {
       accountAssetLookupNanos = addSaturated(
-          accountAssetLookupNanos, Math.max(0L, System.nanoTime() - startedNanos));
+          accountAssetLookupNanos, StrictMathWrapper.max(0L, System.nanoTime() - startedNanos));
     }
   }
 
@@ -535,7 +536,7 @@ public final class ArchiveCaptureEngine {
     long capturePeak = ArchiveResourceEstimator.addSaturated(
         retainedRecordBytes,
         ArchiveResourceEstimator.addSaturated(transientRawBytes, estimated));
-    long captureBytes = Math.max(rawRecordBytes, capturePeak);
+    long captureBytes = StrictMathWrapper.max(rawRecordBytes, capturePeak);
     long activeBytes = ArchiveResourceEstimator.addSaturated(
         resourceBaselineBytes, captureBytes);
     if (nextCount > maxRawRecords || activeBytes > maxRawBytes) {
@@ -553,7 +554,7 @@ public final class ArchiveCaptureEngine {
     long estimated = ArchiveResourceEstimator.estimatedRawRecordPipelineBytes(
         keyBytes, prevBytes, valueBytes);
     long capturePeak = ArchiveResourceEstimator.addSaturated(retainedRecordBytes, estimated);
-    long captureBytes = Math.max(rawRecordBytes, capturePeak);
+    long captureBytes = StrictMathWrapper.max(rawRecordBytes, capturePeak);
     long activeBytes = ArchiveResourceEstimator.addSaturated(
         resourceBaselineBytes, captureBytes);
     if (activeBytes > maxRawBytes) {
@@ -578,7 +579,7 @@ public final class ArchiveCaptureEngine {
         subtractChecked(capturedPayloadBytes, previousPayload), payloadBytes(replacement));
     long capturePeak = ArchiveResourceEstimator.addSaturated(
         nextRetained, transientRawBytes);
-    long captureBytes = Math.max(nextPipeline, capturePeak);
+    long captureBytes = StrictMathWrapper.max(nextPipeline, capturePeak);
     long activeBytes = ArchiveResourceEstimator.addSaturated(
         resourceBaselineBytes, captureBytes);
     if (activeBytes > maxRawBytes) {

@@ -21,6 +21,7 @@ import java.util.Optional;
 import java.util.Random;
 import org.junit.After;
 import org.junit.Test;
+import org.tron.common.math.StrictMathWrapper;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
@@ -94,7 +95,7 @@ public class DefaultArchiveServiceIncrementalDifferentialTest {
           fixture.appendRandomBlock(random);
           operation = "append";
         } else if (roll < 82) {
-          int count = Math.min(fixture.inFlightSize(), 1 + random.nextInt(3));
+          int count = StrictMathWrapper.min(fixture.inFlightSize(), 1 + random.nextInt(3));
           fixture.publishOldest(count);
           operation = "publish-oldest-" + count;
         } else {

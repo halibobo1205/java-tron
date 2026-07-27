@@ -2,6 +2,7 @@ package org.tron.core.archive.query;
 
 import java.util.concurrent.TimeUnit;
 import java.util.function.LongSupplier;
+import org.tron.common.math.StrictMathWrapper;
 
 /** Applies aggregate historical-query budgets across one JSON-RPC batch request. */
 public final class ArchiveQueryRequestScope implements AutoCloseable {
@@ -103,7 +104,7 @@ public final class ArchiveQueryRequestScope implements AutoCloseable {
     }
     long deadlineNanos = TimeUnit.MILLISECONDS.toNanos(deadlineMs);
     deadlineConfigured = true;
-    configuredDeadlineNanos = Math.min(configuredDeadlineNanos, deadlineNanos);
+    configuredDeadlineNanos = StrictMathWrapper.min(configuredDeadlineNanos, deadlineNanos);
     return remainingNanos(sampledNanos - startedNanos);
   }
 
