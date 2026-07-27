@@ -185,6 +185,8 @@ public final class HistoricalArchiveVmDynamicProperties implements VmDynamicProp
   // at the target block exactly like the other flags.
   private final long unfreezeDelayDays;
   private final long allowNewResourceModel;
+  private final long allowCancelAllUnfreezeV2;
+  private final long allowNewReward;
   private final long allowShieldedTRC20Transaction;
   private final long allowMultiSign;
   private final long allowHigherLimitForMaxCpuTimeOfOneTx;
@@ -245,6 +247,10 @@ public final class HistoricalArchiveVmDynamicProperties implements VmDynamicProp
         resolveArchived(reader, "ALLOW_OPTIMIZED_RETURN_VALUE_OF_CHAIN_ID");
     this.unfreezeDelayDays = resolveArchived(reader, "UNFREEZE_DELAY_DAYS");
     this.allowNewResourceModel = resolveArchived(reader, "ALLOW_NEW_RESOURCE_MODEL");
+    this.allowCancelAllUnfreezeV2 =
+        resolve(reader, "ALLOW_CANCEL_ALL_UNFREEZE_V2", genesisComplete, 0L);
+    this.allowNewReward =
+        resolve(reader, "ALLOW_NEW_REWARD", genesisComplete, 0L);
     this.allowShieldedTRC20Transaction =
         resolveArchived(reader, "ALLOW_SHIELDED_TRC20_TRANSACTION");
     this.allowMultiSign = resolveArchived(reader, "ALLOW_MULTI_SIGN");
@@ -576,6 +582,16 @@ public final class HistoricalArchiveVmDynamicProperties implements VmDynamicProp
   @Override
   public boolean supportAllowNewResourceModel() {
     return allowNewResourceModel == 1L;
+  }
+
+  @Override
+  public boolean supportAllowCancelAllUnfreezeV2() {
+    return allowCancelAllUnfreezeV2 == 1L;
+  }
+
+  @Override
+  public long getAllowNewReward() {
+    return allowNewReward;
   }
 
   @Override

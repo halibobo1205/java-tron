@@ -15,6 +15,7 @@ import org.tron.core.vm.program.Program;
 import org.tron.core.vm.program.Program.JVMStackOverFlowException;
 import org.tron.core.vm.program.Program.OutOfTimeException;
 import org.tron.core.vm.program.Program.TransferException;
+import org.tron.core.vm.trace.VmStructuredTraceListener;
 
 @Slf4j(topic = "VM")
 public class VM {
@@ -24,6 +25,8 @@ public class VM {
 
   public static void play(Program program, JumpTable jumpTable) {
     final QueryContext queryContext = QueryContextHolder.current();
+    final VmStructuredTraceListener structuredTraceListener =
+        program.getStructuredTraceListener();
     try {
       long factor = DYNAMIC_ENERGY_FACTOR_DECIMAL;
       long energyUsage = 0L;
@@ -82,12 +85,21 @@ public class VM {
                 energy += penalty;
               }
 
+              if (structuredTraceListener != null) {
+                structuredTraceListener.captureEnergyCost(program, energy);
+              }
               program.spendEnergyWithPenalty(energy, penalty, opName);
             } else {
+              if (structuredTraceListener != null) {
+                structuredTraceListener.captureEnergyCost(program, energy);
+              }
               program.spendEnergy(energy, opName);
             }
 
           } else {
+            if (structuredTraceListener != null) {
+              structuredTraceListener.captureEnergyCost(program, energy);
+            }
             program.spendEnergy(energy, opName);
           }
 
@@ -144,6 +156,10 @@ public class VM {
     } catch (StackOverflowError soe) {
       logger.info("\n !!! StackOverflowError: update your java run command with -Xss !!!\n", soe);
       throw new JVMStackOverFlowException();
+    } finally {
+      if (structuredTraceListener != null) {
+        structuredTraceListener.onProgramExit(program);
+      }
     }
   }
 }

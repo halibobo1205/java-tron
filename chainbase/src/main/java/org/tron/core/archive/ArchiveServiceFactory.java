@@ -363,9 +363,6 @@ public final class ArchiveServiceFactory {
       throw new ArchiveException(
           "storage.archive.commitment.persistTxRoots cannot be true in P0");
     }
-    if (config.getDebug() != null && config.getDebug().isEnable()) {
-      throw new ArchiveException("storage.archive.debug.enable is not supported in P0");
-    }
     if (config.getQuery() == null
         || ArchiveQueryLimits.isUnlimited(config.getQuery().getDeadlineMs())) {
       throw new ArchiveException(

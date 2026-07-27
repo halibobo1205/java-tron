@@ -175,13 +175,13 @@ public class NoopArchiveServiceTest {
   }
 
   @Test
-  public void factoryRejectsUnsupportedDebugEnabled() {
+  public void factoryAllowsDebugTracingThroughFeatureValidation() {
     StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
     config.setEnable(true);
     config.getDebug().setEnable(true);
     ArchiveException failure = assertThrows(ArchiveException.class,
         () -> createViaFactory(config));
-    assertTrue(failure.getMessage().contains("debug.enable is not supported"));
+    assertTrue(failure.getMessage().contains("requires a UNIFIED_V1 archive directory"));
   }
 
   @After
