@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.LongFunction;
+import org.tron.common.math.StrictMathWrapper;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
@@ -118,8 +119,8 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
     this.point = point;
     this.onClose = onClose;
     this.completeHistory = completeHistory;
-    this.maxMemoEntries = Math.max(0, maxMemoEntries);
-    this.maxMemoBytes = Math.max(0, maxMemoBytes);
+    this.maxMemoEntries = StrictMathWrapper.max(0, maxMemoEntries);
+    this.maxMemoBytes = StrictMathWrapper.max(0, maxMemoBytes);
     this.queryContext = queryContext;
     this.blockRangeLookup = blockRangeLookup;
     this.ownerThread = Thread.currentThread();

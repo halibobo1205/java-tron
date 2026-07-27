@@ -42,6 +42,7 @@ import org.rocksdb.WriteBatch;
 import org.rocksdb.WriteOptions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.tron.common.math.StrictMathWrapper;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchiveNativeResourceReleaseException;
 import org.tron.core.archive.ArchiveRepairClearPermit;
@@ -1548,7 +1549,7 @@ public final class UnifiedArchiveDb implements AutoCloseable {
   }
 
   private static long remainingBudgetNanos(long timeoutNanos, long startedNanos) {
-    long elapsed = Math.max(0L, System.nanoTime() - startedNanos);
+    long elapsed = StrictMathWrapper.max(0L, System.nanoTime() - startedNanos);
     return elapsed >= timeoutNanos ? 0L : timeoutNanos - elapsed;
   }
 

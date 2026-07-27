@@ -9,6 +9,7 @@ import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.LongConsumer;
+import org.tron.common.math.StrictMathWrapper;
 import org.tron.core.archive.ArchiveMetrics;
 
 /**
@@ -131,7 +132,7 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
       ArchiveQueryRequestScope.checkCurrentDeadline();
       long remainingAcquireNanos = timeoutNanos;
       if (remainingAcquireNanos != ArchiveQueryLimits.UNLIMITED) {
-        long elapsed = Math.max(0L, System.nanoTime() - lockStartedNanos);
+        long elapsed = StrictMathWrapper.max(0L, System.nanoTime() - lockStartedNanos);
         remainingAcquireNanos = elapsed >= remainingAcquireNanos
             ? 0L : remainingAcquireNanos - elapsed;
         if (timeoutNanos != 0L && remainingAcquireNanos == 0L) {
@@ -184,7 +185,8 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
             long waitRemainingNanos = waiter.condition.awaitNanos(waitNanos);
             if (remainingAcquireNanos != ArchiveQueryLimits.UNLIMITED) {
               long waitedNanos = elapsedWaitNanos(waitNanos, waitRemainingNanos);
-              remainingAcquireNanos = Math.max(0L, remainingAcquireNanos - waitedNanos);
+              remainingAcquireNanos =
+                  StrictMathWrapper.max(0L, remainingAcquireNanos - waitedNanos);
             }
           }
         }
@@ -291,7 +293,7 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
     }
     try {
       if (remainingNanos != Long.MAX_VALUE) {
-        long elapsed = Math.max(0L, System.nanoTime() - lockStartedNanos);
+        long elapsed = StrictMathWrapper.max(0L, System.nanoTime() - lockStartedNanos);
         remainingNanos = elapsed >= remainingNanos ? 0L : remainingNanos - elapsed;
       }
       transitionToDraining();
@@ -528,7 +530,7 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
       long backoffNanos = 1_000L;
       while (lock.getHoldCount() == previousHoldCount && !lock.tryLock()) {
         LockSupport.parkNanos(backoffNanos);
-        backoffNanos = Math.min(TimeUnit.MILLISECONDS.toNanos(1L), backoffNanos * 2L);
+        backoffNanos = StrictMathWrapper.min(TimeUnit.MILLISECONDS.toNanos(1L), backoffNanos * 2L);
       }
       return failure;
     }
@@ -641,7 +643,7 @@ public final class ArchiveQueryCoordinator implements AutoCloseable {
     if (second == ArchiveQueryLimits.UNLIMITED) {
       return first;
     }
-    return Math.min(first, second);
+    return StrictMathWrapper.min(first, second);
   }
 
   private static long normalizeTimeout(long timeout) {

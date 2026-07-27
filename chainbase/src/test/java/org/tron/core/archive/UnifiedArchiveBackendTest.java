@@ -22,6 +22,7 @@ import static org.tron.core.archive.unified.UnifiedArchiveTestMaintenance.openWi
 import static org.tron.core.archive.unified.UnifiedArchiveTestMaintenance.openWithStatistics;
 import static org.tron.core.archive.unified.UnifiedArchiveTestMaintenance.write;
 
+import com.google.common.base.Strings;
 import com.google.protobuf.ByteString;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -44,6 +45,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Function;
 import org.junit.After;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -56,6 +58,7 @@ import org.rocksdb.Snapshot;
 import org.rocksdb.Statistics;
 import org.rocksdb.TickerType;
 import org.rocksdb.WriteOptions;
+import org.tron.common.math.StrictMathWrapper;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.common.utils.ReflectUtils;
@@ -230,7 +233,7 @@ public class UnifiedArchiveBackendTest {
 
   @Test
   public void repairEvidenceHonorsRestartReadableMetadataBoundary() {
-    String maximumReason = "x".repeat(4_096);
+    String maximumReason = Strings.repeat("x", 4_096);
     index.markRepairRequired(maximumReason);
     assertArrayEquals(maximumReason.getBytes(StandardCharsets.UTF_8),
         db.get(UnifiedArchiveColumnFamily.META,
@@ -246,7 +249,7 @@ public class UnifiedArchiveBackendTest {
 
     index.markRepairRequired("preserved");
     ArchiveException failure = assertThrows(
-        ArchiveException.class, () -> index.markRepairRequired("y".repeat(4_097)));
+        ArchiveException.class, () -> index.markRepairRequired(Strings.repeat("y", 4_097)));
     assertTrue(failure.getMessage().contains("4096"));
     assertArrayEquals("preserved".getBytes(StandardCharsets.UTF_8),
         db.get(UnifiedArchiveColumnFamily.META,
@@ -255,7 +258,8 @@ public class UnifiedArchiveBackendTest {
 
   @Test
   public void internallyBoundRepairReasonPreservesUtf8Boundary() {
-    String bounded = UnifiedArchiveTxNumIndex.boundRepairReason("\u754c".repeat(2_000));
+    String bounded =
+        UnifiedArchiveTxNumIndex.boundRepairReason(Strings.repeat("\u754c", 2_000));
 
     assertTrue(bounded.endsWith("... [truncated]"));
     assertTrue(bounded.getBytes(StandardCharsets.UTF_8).length
@@ -281,7 +285,7 @@ public class UnifiedArchiveBackendTest {
 
     ReflectUtils.invokeMethod(service, "markFatal",
         new Class<?>[] {RuntimeException.class},
-        new ArchiveException("x".repeat(4_097)));
+        new ArchiveException(Strings.repeat("x", 4_097)));
 
     assertTrue(delivered.await(1L, TimeUnit.SECONDS));
     byte[] marker = db.get(UnifiedArchiveColumnFamily.META,
@@ -530,7 +534,7 @@ public class UnifiedArchiveBackendTest {
     ArchiveInFlightBlock candidate = new ArchiveInFlightBlock(
         range, Arrays.asList(prepare, finalize), Collections.emptyList());
     long publishBytes = backend.estimatedPublicationRetainedBytes(candidate);
-    long hardBytes = Math.max(candidate.estimatedRetainedBytes(), publishBytes);
+    long hardBytes = StrictMathWrapper.max(candidate.estimatedRetainedBytes(), publishBytes);
     assertTrue(candidate.estimatedRetainedBytes() + publishBytes > hardBytes);
     ArchivePublisherConfig publisherConfig = new ArchivePublisherConfig(
         false, false, 32, 64, hardBytes, hardBytes,
@@ -600,14 +604,17 @@ public class UnifiedArchiveBackendTest {
         CommonParameter.getInstance().isMetricsPrometheusEnable();
     try {
       reopenWithMetrics(true);
+      TickerType iteratorCreationTicker = requireIteratorCreationTicker();
       publish(block(0L, DomainValue.tombstone(), value(1)));
       Statistics statistics = ReflectUtils.getFieldValue(db, "statistics");
-      long oneBlockIterators = fullScrubIteratorCount(statistics);
+      long oneBlockIterators =
+          fullScrubIteratorCount(statistics, iteratorCreationTicker);
 
       for (int blockNum = 1; blockNum < 16; blockNum++) {
         publish(block(blockNum, value(blockNum), value(blockNum + 1)));
       }
-      long manyBlockIterators = fullScrubIteratorCount(statistics);
+      long manyBlockIterators =
+          fullScrubIteratorCount(statistics, iteratorCreationTicker);
 
       assertEquals("full scrub iterator creation must stay O(1)",
           oneBlockIterators, manyBlockIterators);
@@ -810,7 +817,7 @@ public class UnifiedArchiveBackendTest {
     inFlight.acknowledgeBlock(head.getJournalToken());
     inFlight.putBlock(tail);
     long staticHeadBytes = backend.estimatedPublicationRetainedBytes(head);
-    long staticPublicationBytes = Math.max(
+    long staticPublicationBytes = StrictMathWrapper.max(
         staticHeadBytes, backend.estimatedPublicationRetainedBytes(tail));
     long stateAwarePublicationBytes = staticPublicationBytes + 1_024L;
     long hardBytes = head.estimatedRetainedBytes() + tail.estimatedRetainedBytes()
@@ -857,9 +864,9 @@ public class UnifiedArchiveBackendTest {
     inFlight.acknowledgeBlock(head.getJournalToken());
     inFlight.putBlock(tail);
     long staticHeadBytes = backend.estimatedPublicationRetainedBytes(head);
-    long staticWorkspaceBytes = Math.max(
-        Math.max(staticHeadBytes, backend.estimatedPublicationRetainedBytes(tail)),
-        Math.max(8L * 1024L + 3L * head.encodedBlockBytes(),
+    long staticWorkspaceBytes = StrictMathWrapper.max(
+        StrictMathWrapper.max(staticHeadBytes, backend.estimatedPublicationRetainedBytes(tail)),
+        StrictMathWrapper.max(8L * 1024L + 3L * head.encodedBlockBytes(),
             8L * 1024L + 3L * tail.encodedBlockBytes()));
     long stateAwarePublicationBytes = staticWorkspaceBytes + 1_024L;
     long hardBytes = head.estimatedRetainedBytes() + tail.estimatedRetainedBytes()
@@ -908,7 +915,7 @@ public class UnifiedArchiveBackendTest {
     long stateAwarePublicationBytes = staticPublicationBytes
         + persistedPreparationBytes(candidate);
     long retainedBytes = candidate.estimatedRetainedBytes();
-    long hardBytes = stateAwarePublicationBytes + Math.max(1L, retainedBytes / 2L);
+    long hardBytes = stateAwarePublicationBytes + StrictMathWrapper.max(1L, retainedBytes / 2L);
     assertTrue(retainedBytes + staticPublicationBytes <= hardBytes);
     assertTrue(stateAwarePublicationBytes <= hardBytes);
     assertTrue(retainedBytes + stateAwarePublicationBytes > hardBytes);
@@ -2622,7 +2629,7 @@ public class UnifiedArchiveBackendTest {
     long encodedLength = ArchiveInFlightCodec.encodedBlockSize(block);
     ArchiveChangeRecord record = block.getRecords().get(0);
     long decodeTransientBytes = record.canonicalKeySize()
-        + Math.max(record.getPrevValue().size(), record.getValue().size());
+        + StrictMathWrapper.max(record.getPrevValue().size(), record.getValue().size());
     long nativeReadPeak = encodedLength * 2L;
     long decodePeak = encodedLength + block.estimatedRetainedBytes() + decodeTransientBytes;
     assertTrue(decodePeak > nativeReadPeak);
@@ -2641,10 +2648,10 @@ public class UnifiedArchiveBackendTest {
     long encodedLength = ArchiveInFlightCodec.encodedBlockSize(block);
     ArchiveChangeRecord record = block.getRecords().get(0);
     long decodeTransientBytes = record.canonicalKeySize()
-        + Math.max(record.getPrevValue().size(), record.getValue().size());
+        + StrictMathWrapper.max(record.getPrevValue().size(), record.getValue().size());
     long nativeReadPeak = encodedLength * 2L;
     long decodePeak = encodedLength + block.estimatedRetainedBytes() + decodeTransientBytes;
-    long peakBytes = Math.max(nativeReadPeak, decodePeak);
+    long peakBytes = StrictMathWrapper.max(nativeReadPeak, decodePeak);
     UnifiedArchiveInFlightStore bounded =
         new UnifiedArchiveInFlightStore(db, catalog, peakBytes);
 
@@ -2894,10 +2901,22 @@ public class UnifiedArchiveBackendTest {
     backend = new UnifiedArchiveBackend(db, index, temporal);
   }
 
-  private long fullScrubIteratorCount(Statistics statistics) {
-    long before = statistics.getTickerCount(TickerType.NO_ITERATOR_CREATED);
+  private long fullScrubIteratorCount(
+      Statistics statistics, TickerType iteratorCreationTicker) {
+    long before = statistics.getTickerCount(iteratorCreationTicker);
     backend.validateStartup(true, false);
-    return statistics.getTickerCount(TickerType.NO_ITERATOR_CREATED) - before;
+    return statistics.getTickerCount(iteratorCreationTicker) - before;
+  }
+
+  private TickerType requireIteratorCreationTicker() {
+    for (TickerType tickerType : TickerType.values()) {
+      if ("NO_ITERATOR_CREATED".equals(tickerType.name())) {
+        return tickerType;
+      }
+    }
+    // RocksDB 5.15 exposes only the current open-iterator gauge, not this cumulative counter.
+    Assume.assumeTrue("RocksDB does not expose an iterator creation counter", false);
+    throw new AssertionError("unreachable");
   }
 
   private void reopenWithMetrics(boolean enabled) {

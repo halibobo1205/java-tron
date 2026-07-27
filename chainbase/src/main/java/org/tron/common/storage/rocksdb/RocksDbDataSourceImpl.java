@@ -31,6 +31,7 @@ import org.rocksdb.Status;
 import org.rocksdb.WriteBatch;
 import org.rocksdb.WriteOptions;
 import org.tron.common.error.TronDBException;
+import org.tron.common.math.StrictMathWrapper;
 import org.tron.common.setting.RocksDbSettings;
 import org.tron.common.storage.WriteOptionsWrapper;
 import org.tron.common.storage.metric.DbStat;
@@ -281,10 +282,10 @@ public class RocksDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
         long maxRequestBytes = queryContext.getLimits().getMaxBackendReadBytesPerRequest();
         long probeLimit = HISTORICAL_READ_PROBE_BYTES;
         if (!ArchiveQueryLimits.isUnlimited(maxValueBytes)) {
-          probeLimit = Math.min(probeLimit, maxValueBytes);
+          probeLimit = StrictMathWrapper.min(probeLimit, maxValueBytes);
         }
         if (!ArchiveQueryLimits.isUnlimited(maxRequestBytes)) {
-          probeLimit = Math.min(probeLimit, maxRequestBytes);
+          probeLimit = StrictMathWrapper.min(probeLimit, maxRequestBytes);
         }
         int probeBytes = (int) probeLimit;
         byte[] probe = new byte[probeBytes];

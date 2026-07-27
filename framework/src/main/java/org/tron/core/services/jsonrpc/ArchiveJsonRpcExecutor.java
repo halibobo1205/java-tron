@@ -13,6 +13,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import lombok.extern.slf4j.Slf4j;
+import org.tron.common.math.StrictMathWrapper;
 import org.tron.core.archive.ArchiveMetrics;
 import org.tron.core.archive.query.ArchiveQueryLimits;
 import org.tron.core.archive.query.HistoricalQueryLimitException;
@@ -46,7 +47,7 @@ public final class ArchiveJsonRpcExecutor implements AutoCloseable {
     this.workerThreads = workerThreads;
     this.shutdownWaitMs = queryDeadlineMs == ArchiveQueryLimits.UNLIMITED
         ? MAX_SHUTDOWN_WAIT_MS
-        : Math.min(MAX_SHUTDOWN_WAIT_MS, Math.max(1L, queryDeadlineMs));
+        : StrictMathWrapper.min(MAX_SHUTDOWN_WAIT_MS, StrictMathWrapper.max(1L, queryDeadlineMs));
     this.executor = new ThreadPoolExecutor(
         workerThreads, workerThreads, 0L, TimeUnit.MILLISECONDS,
         new SynchronousQueue<>(), lowPriorityThreadFactory(),
@@ -209,7 +210,7 @@ public final class ArchiveJsonRpcExecutor implements AutoCloseable {
       Thread thread = new Thread(task,
           "archive-jsonrpc-" + THREAD_SEQUENCE.getAndIncrement());
       thread.setDaemon(true);
-      thread.setPriority(Math.max(Thread.MIN_PRIORITY, Thread.NORM_PRIORITY - 1));
+      thread.setPriority(StrictMathWrapper.max(Thread.MIN_PRIORITY, Thread.NORM_PRIORITY - 1));
       return thread;
     };
   }

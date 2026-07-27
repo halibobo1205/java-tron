@@ -10,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Collections;
 import org.junit.Test;
+import org.tron.common.math.StrictMathWrapper;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
@@ -113,7 +114,7 @@ public class ArchiveInFlightValidatorTest {
         valid.getRange(), valid.getPositions(), Collections.singletonList(codeRecord));
     byte[] encoded = ArchiveInFlightCodec.encodeBlock(block);
     long decodeTransientBytes = codeRecord.canonicalKeySize()
-        + Math.max(codeRecord.getPrevValue().size(), codeRecord.getValue().size());
+        + StrictMathWrapper.max(codeRecord.getPrevValue().size(), codeRecord.getValue().size());
 
     assertThrows(ArchiveJournalLimitException.class,
         () -> ArchiveInFlightCodec.decodeBlock(encoded, Long.MAX_VALUE,
@@ -137,7 +138,7 @@ public class ArchiveInFlightValidatorTest {
         valid.getRange(), valid.getPositions(), Arrays.asList(largeFirst, smallLast));
     byte[] encoded = ArchiveInFlightCodec.encodeBlock(block);
     long largestValidationWorkspace = largeFirst.canonicalKeySize()
-        + Math.max(largeFirst.getPrevValue().size(), largeFirst.getValue().size());
+        + StrictMathWrapper.max(largeFirst.getPrevValue().size(), largeFirst.getValue().size());
     long requiredBytes = block.estimatedRetainedBytes() + largestValidationWorkspace;
 
     assertThrows(ArchiveJournalLimitException.class,

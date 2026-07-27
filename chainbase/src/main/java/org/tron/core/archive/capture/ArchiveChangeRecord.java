@@ -1,6 +1,7 @@
 package org.tron.core.archive.capture;
 
 import java.util.Arrays;
+import org.tron.common.math.StrictMathWrapper;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
 import org.tron.core.archive.txnum.ArchiveTxPosition;
@@ -78,7 +79,7 @@ public final class ArchiveChangeRecord {
     if (other == null) {
       throw new NullPointerException("other");
     }
-    int length = Math.min(canonicalKey.length, other.canonicalKey.length);
+    int length = StrictMathWrapper.min(canonicalKey.length, other.canonicalKey.length);
     for (int i = 0; i < length; i++) {
       int result = (canonicalKey[i] & 0xff) - (other.canonicalKey[i] & 0xff);
       if (result != 0) {
