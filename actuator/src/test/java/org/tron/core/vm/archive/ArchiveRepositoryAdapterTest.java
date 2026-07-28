@@ -39,6 +39,8 @@ import org.tron.core.store.AccountStore;
 import org.tron.core.store.DynamicPropertiesStore;
 import org.tron.core.store.VmDynamicProperties;
 import org.tron.core.vm.ChainParameterEnum;
+import org.tron.core.vm.config.VMConfig;
+import org.tron.core.vm.repository.RepositoryImpl;
 import org.tron.protos.Protocol;
 import org.tron.protos.contract.Common.ResourceCode;
 
@@ -506,29 +508,35 @@ public class ArchiveRepositoryAdapterTest {
   }
 
   @Test
-  public void globalEnergyLimitMatchesCanonicalV1AndFreezeV2Formulas() {
-    for (boolean unfreezeDelay : new boolean[] {false, true}) {
-      for (boolean harden : new boolean[] {false, true}) {
-        DynamicPropertiesStore dynamicProperties = mock(DynamicPropertiesStore.class);
-        when(dynamicProperties.supportUnfreezeDelay()).thenReturn(unfreezeDelay);
-        when(dynamicProperties.getTotalEnergyCurrentLimit()).thenReturn(50_000_000_000L);
-        when(dynamicProperties.getTotalEnergyWeight()).thenReturn(10_000L);
-        when(dynamicProperties.allowHardenResourceCalculation()).thenReturn(harden);
-        when(vmProps.supportUnfreezeDelay()).thenReturn(unfreezeDelay);
-        when(vmProps.getTotalEnergyCurrentLimit()).thenReturn(50_000_000_000L);
-        when(vmProps.getTotalEnergyWeight()).thenReturn(10_000L);
-        when(vmProps.getAllowHardenResourceCalculation()).thenReturn(harden ? 1L : 0L);
+  public void globalEnergyLimitMatchesCanonicalRepositoryForFractionalFreezeV2() {
+    DynamicPropertiesStore dynamicProperties = mock(DynamicPropertiesStore.class);
+    when(dynamicProperties.getTotalEnergyCurrentLimit()).thenReturn(50_000_000_000L);
+    when(dynamicProperties.getTotalEnergyWeight()).thenReturn(10_000L);
+    when(vmProps.getTotalEnergyCurrentLimit()).thenReturn(50_000_000_000L);
+    when(vmProps.getTotalEnergyWeight()).thenReturn(10_000L);
+    RepositoryImpl canonical = new RepositoryImpl(null, null) {
+      @Override
+      public DynamicPropertiesStore getDynamicPropertiesStore() {
+        return dynamicProperties;
+      }
+    };
+    AccountCapsule account = new AccountCapsule(Protocol.Account.newBuilder()
+        .setAddress(ByteString.copyFrom(ADDR))
+        .build());
+    account.addFrozenBalanceForEnergyV2(1_500_000L);
 
-        AccountCapsule account = new AccountCapsule(Protocol.Account.newBuilder()
-            .setAddress(ByteString.copyFrom(ADDR))
-            .build());
-        account.setFrozenForEnergy(1_500_000L, 0L);
-        EnergyProcessor canonical =
-            new EnergyProcessor(dynamicProperties, mock(AccountStore.class));
-
+    for (boolean harden : new boolean[] {false, true}) {
+      VMConfig.Snapshot snapshot = new VMConfig.Snapshot();
+      snapshot.allowHardenResourceCalculation = harden;
+      when(vmProps.getAllowHardenResourceCalculation()).thenReturn(harden ? 1L : 0L);
+      VMConfig.setLocalSnapshot(snapshot);
+      try {
+        assertEquals(5_000_000L, canonical.calculateGlobalEnergyLimit(account));
         assertEquals(
             canonical.calculateGlobalEnergyLimit(account),
             adapter.calculateGlobalEnergyLimit(account));
+      } finally {
+        VMConfig.clearLocalSnapshot();
       }
     }
   }

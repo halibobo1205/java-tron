@@ -4,6 +4,7 @@ import static org.tron.core.Wallet.CONTRACT_VALIDATE_ERROR;
 import static org.tron.core.services.jsonrpc.JsonRpcApiUtil.triggerCallContract;
 
 import com.google.protobuf.ByteString;
+import com.google.protobuf.Message;
 import java.math.BigInteger;
 import java.util.Arrays;
 import org.tron.common.utils.ByteArray;
@@ -82,6 +83,14 @@ public final class HistoricalDebugTraceSupport {
       byte[] data, String blockNumOrTag, byte[] requestedBlockHash,
       DebugTraceOptions options) throws JsonRpcInvalidParamsException,
       JsonRpcInvalidRequestException, JsonRpcInternalException {
+    return traceCall(ownerAddress, contractAddress, callValue, data, null,
+        blockNumOrTag, requestedBlockHash, options);
+  }
+
+  public Object traceCall(byte[] ownerAddress, byte[] contractAddress, long callValue,
+      byte[] data, Long requestedEnergyLimit, String blockNumOrTag, byte[] requestedBlockHash,
+      DebugTraceOptions options) throws JsonRpcInvalidParamsException,
+      JsonRpcInvalidRequestException, JsonRpcInternalException {
     requireEnabledAndAvailable();
     if (blockNumOrTag != null && JsonRpcApiUtil.LATEST_STR.equalsIgnoreCase(blockNumOrTag)) {
       throw new JsonRpcInvalidParamsException(
@@ -110,14 +119,27 @@ public final class HistoricalDebugTraceSupport {
       }
       Throwable readerFailure = null;
       try {
-        TriggerSmartContract trigger =
-            triggerCallContract(ownerAddress, contractAddress, callValue, data, 0, null);
-        TransactionCapsule trxCap =
-            createHistoricalCallTransaction(trigger, resolvedBlock[0]);
-        HistoricalCallTraceSpec callSpec = new HistoricalCallTraceSpec(
-            Op.CALL, ownerAddress, contractAddress, data, BigInteger.valueOf(callValue));
+        TransactionCapsule trxCap;
+        HistoricalCallTraceSpec callSpec;
+        if (contractAddress == null) {
+          CreateSmartContract create =
+              createCallContract(ownerAddress, callValue, data);
+          trxCap = createHistoricalCallTransaction(
+              create, ContractType.CreateSmartContract, resolvedBlock[0]);
+          callSpec = new HistoricalCallTraceSpec(
+              Op.CREATE, ownerAddress, WalletUtil.generateContractAddress(trxCap.getInstance()),
+              data, BigInteger.valueOf(callValue));
+        } else {
+          TriggerSmartContract trigger =
+              triggerCallContract(ownerAddress, contractAddress, callValue, data, 0, null);
+          trxCap = createHistoricalCallTransaction(
+              trigger, ContractType.TriggerSmartContract, resolvedBlock[0]);
+          callSpec = new HistoricalCallTraceSpec(
+              Op.CALL, ownerAddress, contractAddress, data, BigInteger.valueOf(callValue));
+        }
         return runTrace(
-            admittedReader, resolvedBlock[0], trxCap, callSpec, requestedBlockHash, options, true);
+            admittedReader, resolvedBlock[0], trxCap, callSpec, requestedBlockHash, options, true,
+            requestedEnergyLimit);
       } catch (ContractValidateException | ContractExeException | ArchiveReaderException
           | JsonRpcInternalException failure) {
         readerFailure = failure;
@@ -131,7 +153,7 @@ public final class HistoricalDebugTraceSupport {
         closeReader(admittedReader, readerFailure);
       }
     } catch (BlockHeaderNotFoundException failure) {
-      throw new JsonRpcInvalidParamsException("block header not found");
+      throw new JsonRpcInternalException("block header not found", failure);
     } catch (ContractValidateException failure) {
       throw new JsonRpcInvalidRequestException(
           failure.getMessage() == null ? CONTRACT_VALIDATE_ERROR : failure.getMessage());
@@ -155,11 +177,8 @@ public final class HistoricalDebugTraceSupport {
         if (transaction == null) {
           throw new JsonRpcInvalidParamsException("transaction not found");
         }
-        if (transaction.getRetCount() == 0) {
-          throw new JsonRpcInternalException(
-              "historical transaction execution result is missing");
-        }
-        if (transaction.getRet(0).getContractRet() == contractResult.OUT_OF_TIME) {
+        contractResult expectedResult = requireRecordedContractResult(transaction);
+        if (expectedResult == contractResult.OUT_OF_TIME) {
           throw new JsonRpcInvalidParamsException(
               "OUT_OF_TIME transactions cannot be replayed deterministically");
         }
@@ -169,7 +188,7 @@ public final class HistoricalDebugTraceSupport {
         }
         HistoricalCallTraceSpec callSpec = callSpec(transaction);
         return runTrace(
-            admittedReader, resolvedBlock[0], trxCap, callSpec, null, options, false);
+            admittedReader, resolvedBlock[0], trxCap, callSpec, null, options, false, null);
       } catch (JsonRpcInvalidParamsException | ContractValidateException
           | ContractExeException | ArchiveReaderException | JsonRpcInternalException failure) {
         readerFailure = failure;
@@ -183,7 +202,7 @@ public final class HistoricalDebugTraceSupport {
         closeReader(admittedReader, readerFailure);
       }
     } catch (BlockHeaderNotFoundException failure) {
-      throw new JsonRpcInvalidParamsException("block header not found");
+      throw new JsonRpcInternalException("block header not found", failure);
     } catch (ContractValidateException failure) {
       throw new JsonRpcInvalidRequestException(
           failure.getMessage() == null ? CONTRACT_VALIDATE_ERROR : failure.getMessage());
@@ -195,7 +214,7 @@ public final class HistoricalDebugTraceSupport {
 
   private Object runTrace(ArchiveStateReader reader, BlockCapsule historicalBlock,
       TransactionCapsule trxCap, HistoricalCallTraceSpec callSpec, byte[] requestedBlockHash,
-      DebugTraceOptions options, boolean constantCall)
+      DebugTraceOptions options, boolean constantCall, Long constantCallEnergyLimit)
       throws ContractValidateException, ContractExeException,
       JsonRpcInternalException, ArchiveReaderException {
     long blockNum = reader.getPoint().getBlockNum();
@@ -230,7 +249,7 @@ public final class HistoricalDebugTraceSupport {
           new ArchiveStructLogCollector(options, maxTraceSteps, budget);
       result = executor.execute(
           reader, vmProperties, historicalBlock, trxCap, genesisComplete, constantCall,
-          collector, null, null);
+          collector, null, null, constantCallEnergyLimit);
       requireReplayOutcome(trxCap.getInstance(), result, constantCall);
       int outputLength = result.isFailed() && !result.isReverted()
           ? 0 : result.getOutputLength();
@@ -246,7 +265,7 @@ public final class HistoricalDebugTraceSupport {
       ArchiveTraceStepLimiter stepLimiter = new ArchiveTraceStepLimiter(maxTraceSteps);
       result = executor.execute(
           reader, vmProperties, historicalBlock, trxCap, genesisComplete, constantCall,
-          stepLimiter, collector, callSpec);
+          stepLimiter, collector, callSpec, constantCallEnergyLimit);
       requireReplayOutcome(trxCap.getInstance(), result, constantCall);
       response = collector.getRoot();
     }
@@ -361,11 +380,7 @@ public final class HistoricalDebugTraceSupport {
     if (constantCall) {
       return;
     }
-    if (transaction.getRetCount() == 0) {
-      throw new JsonRpcInternalException(
-          "historical transaction execution result is missing");
-    }
-    contractResult expected = transaction.getRet(0).getContractRet();
+    contractResult expected = requireRecordedContractResult(transaction);
     boolean matches;
     if (expected == contractResult.SUCCESS) {
       matches = !result.isFailed();
@@ -384,16 +399,44 @@ public final class HistoricalDebugTraceSupport {
     }
   }
 
+  private static contractResult requireRecordedContractResult(Transaction transaction)
+      throws JsonRpcInternalException {
+    if (transaction.getRetCount() == 0) {
+      throw new JsonRpcInternalException(
+          "historical transaction execution result is missing");
+    }
+    contractResult expected = transaction.getRet(0).getContractRet();
+    if (expected == contractResult.DEFAULT || expected == contractResult.UNRECOGNIZED) {
+      throw new JsonRpcInternalException(
+          "historical transaction execution result is missing or unrecognized");
+    }
+    return expected;
+  }
+
   private static TransactionCapsule createHistoricalCallTransaction(
-      TriggerSmartContract trigger, BlockCapsule historicalBlock) {
+      Message contract, ContractType contractType, BlockCapsule historicalBlock) {
     TransactionCapsule trxCap =
-        new TransactionCapsule(trigger, ContractType.TriggerSmartContract);
+        new TransactionCapsule(contract, contractType);
     long blockTimestamp = historicalBlock.getTimeStamp();
     trxCap.setReference(historicalBlock.getNum(), historicalBlock.getBlockId().getBytes());
     trxCap.setTimestamp(blockTimestamp);
     trxCap.setExpiration(blockTimestamp == Long.MAX_VALUE
         ? Long.MAX_VALUE : blockTimestamp + 1L);
     return trxCap;
+  }
+
+  private static CreateSmartContract createCallContract(byte[] ownerAddress,
+      long callValue, byte[] bytecode) {
+    SmartContract newContract = SmartContract.newBuilder()
+        .setOriginAddress(ByteString.copyFrom(ownerAddress))
+        .setBytecode(ByteString.copyFrom(bytecode == null ? new byte[0] : bytecode))
+        .setCallValue(callValue)
+        .setConsumeUserResourcePercent(100L)
+        .build();
+    return CreateSmartContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ownerAddress))
+        .setNewContract(newContract)
+        .build();
   }
 
   private static void requireResolvedBlockHash(long blockNum, byte[] canonicalHash,

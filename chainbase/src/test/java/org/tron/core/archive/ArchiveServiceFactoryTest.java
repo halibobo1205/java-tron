@@ -19,6 +19,7 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.mockito.MockedStatic;
 import org.tron.common.arch.Arch;
+import org.tron.common.utils.ReflectUtils;
 import org.tron.core.ChainBaseManager;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
 import org.tron.core.archive.codec.DomainValue;
@@ -144,6 +145,7 @@ public class ArchiveServiceFactoryTest {
     Path anchors = Files.createDirectory(base.resolve("unified-anchors"));
     StorageConfig.ArchiveConfig config = archiveConfig();
     config.getIdentity().setInitialize(true);
+    config.getDebug().setEnable(true);
     ChainBaseManager chainBaseManager = mock(ChainBaseManager.class);
     when(chainBaseManager.hasBlocks()).thenReturn(false);
     BlockCapsule genesis = mock(BlockCapsule.class);
@@ -158,6 +160,7 @@ public class ArchiveServiceFactoryTest {
       ArchiveService service = ArchiveServiceFactory.create(
           config, root.toString(), chainBaseManager, anchors);
       try {
+        assertTrue((boolean) ReflectUtils.getFieldValue(service, "captureVmPreState"));
         completeRecovery(service);
       } finally {
         service.close();

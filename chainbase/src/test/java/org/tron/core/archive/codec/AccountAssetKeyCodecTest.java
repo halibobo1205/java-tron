@@ -12,9 +12,8 @@ import org.tron.core.archive.ArchiveException;
 
 /**
  * Contract for {@link AccountAssetKeyCodec}: the ACCOUNT_ASSET key = address(21) || assetId. Its
- * invariant is "must be strictly longer than the 21-byte address" (a non-empty assetId) and a
- * defensive copy on normalize. A regression accepting a bare 21-byte address would collide distinct
- * assets under one key. Not exercised elsewhere.
+ * asset ID is the canonical decimal representation of a positive long, and normalize returns a
+ * defensive copy.
  */
 public class AccountAssetKeyCodecTest {
 
@@ -60,5 +59,30 @@ public class AccountAssetKeyCodecTest {
     byte[] k = key("1"); // 21 + 1 = 22 bytes, the minimum valid key
     assertArrayEquals(k, codec.normalize(k));
     codec.validate(k);
+  }
+
+  @Test
+  public void positiveLongBoundaryIsAcceptedAndDecodes() {
+    String max = Long.toString(Long.MAX_VALUE);
+    codec.validate(key(max));
+    assertEquals(max, AccountAssetKeyCodec.decodeAssetId(
+        max.getBytes(StandardCharsets.US_ASCII)));
+  }
+
+  @Test
+  public void nonCanonicalOrOutOfRangeAssetIdsAreRejected() {
+    String[] invalid = {
+        "0",
+        "01",
+        "-1",
+        "abc",
+        "10000000000000000000",
+        "9223372036854775808"
+    };
+    for (String assetId : invalid) {
+      assertThrows(ArchiveException.class, () -> codec.validate(key(assetId)));
+      assertThrows(ArchiveException.class, () -> AccountAssetKeyCodec.decodeAssetId(
+          assetId.getBytes(StandardCharsets.US_ASCII)));
+    }
   }
 }

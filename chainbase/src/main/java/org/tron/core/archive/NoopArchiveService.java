@@ -44,6 +44,10 @@ public final class NoopArchiveService implements ArchiveService {
   }
 
   @Override
+  public void beginUserVmTx() {
+  }
+
+  @Override
   public void endTx() {
   }
 }

@@ -315,6 +315,28 @@ public class DefaultArchiveStateReaderTest {
   }
 
   @Test
+  public void getAccountAssetsChargesMaterializedEntriesToVmOverlayBudget() {
+    byte[] address = addr(1);
+    byte[] assetId = "1000001".getBytes(StandardCharsets.US_ASCII);
+    put(ArchiveDomain.ACCOUNT_ASSET, Bytes.concat(address, assetId),
+        DomainValue.tombstone(), DomainValue.present(ByteArray.fromLong(88L)), 2L);
+    QueryContext context = new QueryContext(ArchiveQueryLimits.builder()
+        .maxVmOverlayBytes(200L)
+        .build());
+    ArchiveStateReader reader = new DefaultArchiveStateReader(
+        store.openReadView(), catalog,
+        ArchiveStatePoint.blockEnd(1L, new byte[] {1}, 5L),
+        () -> { }, true, 16, 4_096L, context);
+
+    HistoricalQueryLimitException failure = assertThrows(
+        HistoricalQueryLimitException.class, () -> reader.getAccountAssets(address));
+
+    assertEquals(HistoricalQueryLimitException.Limit.VM_OVERLAY_BYTES, failure.getLimit());
+    assertSame(failure, context.getTerminalException());
+    reader.close();
+  }
+
+  @Test
   public void corruptAccountAssetLengthThrows() {
     byte[] address = addr(1);
     byte[] assetId = "1000001".getBytes(StandardCharsets.US_ASCII);

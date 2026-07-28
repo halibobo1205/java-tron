@@ -86,6 +86,7 @@ public final class DefaultArchiveService implements ArchiveService {
   private static final LongConsumer IGNORE_PUBLICATION_BYTES = ignored -> { };
 
   private final boolean enabled;
+  private final boolean captureVmPreState;
   /** Published, durable archive index visible to readers. */
   private final ArchiveTxNumIndex txNumIndex;
   /** Execution-only txNum allocator for canonical but not-yet-solidified blocks. */
@@ -236,8 +237,18 @@ public final class DefaultArchiveService implements ArchiveService {
       ArchiveQueryLimits queryLimits,
       boolean asyncPublisher) {
     this(enabled, txNumIndex, executionContext, temporalStore, inFlightStore, registry, catalog,
+        initialPhase, queryLimits, asyncPublisher, false);
+  }
+
+  DefaultArchiveService(boolean enabled, ArchiveTxNumIndex txNumIndex,
+      ArchiveExecutionContext executionContext, ArchiveTemporalStore temporalStore,
+      ArchiveInFlightStore inFlightStore, ArchiveDomainRegistry registry,
+      ArchiveDomainCatalog catalog, ArchiveLifecycle.Phase initialPhase,
+      ArchiveQueryLimits queryLimits,
+      boolean asyncPublisher, boolean captureVmPreState) {
+    this(enabled, txNumIndex, executionContext, temporalStore, inFlightStore, registry, catalog,
         initialPhase, queryLimits, asyncPublisher, () -> {
-        });
+        }, captureVmPreState);
   }
 
   DefaultArchiveService(boolean enabled, ArchiveTxNumIndex txNumIndex,
@@ -247,11 +258,22 @@ public final class DefaultArchiveService implements ArchiveService {
       ArchiveQueryLimits queryLimits,
       boolean asyncPublisher, Runnable startupValidator) {
     this(enabled, txNumIndex, executionContext, temporalStore, inFlightStore, registry, catalog,
+        initialPhase, queryLimits, asyncPublisher, startupValidator, false);
+  }
+
+  DefaultArchiveService(boolean enabled, ArchiveTxNumIndex txNumIndex,
+      ArchiveExecutionContext executionContext, ArchiveTemporalStore temporalStore,
+      ArchiveInFlightStore inFlightStore, ArchiveDomainRegistry registry,
+      ArchiveDomainCatalog catalog, ArchiveLifecycle.Phase initialPhase,
+      ArchiveQueryLimits queryLimits,
+      boolean asyncPublisher, Runnable startupValidator, boolean captureVmPreState) {
+    this(enabled, txNumIndex, executionContext, temporalStore, inFlightStore, registry, catalog,
         initialPhase, queryLimits,
         new ArchivePublisherConfig(asyncPublisher, asyncPublisher,
             ArchivePublisherConfig.DEFAULT_SOFT_IN_FLIGHT_BLOCKS,
             ArchivePublisherConfig.DEFAULT_HARD_IN_FLIGHT_BLOCKS,
-            ArchivePublisherConfig.DEFAULT_BACKPRESSURE_TIMEOUT_MS), startupValidator);
+            ArchivePublisherConfig.DEFAULT_BACKPRESSURE_TIMEOUT_MS), startupValidator, null,
+        captureVmPreState);
   }
 
   DefaultArchiveService(boolean enabled, ArchiveTxNumIndex txNumIndex,
@@ -271,6 +293,17 @@ public final class DefaultArchiveService implements ArchiveService {
       ArchiveQueryLimits queryLimits,
       ArchivePublisherConfig publisherConfig, Runnable startupValidator,
       UnifiedArchiveBackend unifiedBackend) {
+    this(enabled, txNumIndex, executionContext, temporalStore, inFlightStore, registry, catalog,
+        initialPhase, queryLimits, publisherConfig, startupValidator, unifiedBackend, false);
+  }
+
+  DefaultArchiveService(boolean enabled, ArchiveTxNumIndex txNumIndex,
+      ArchiveExecutionContext executionContext, ArchiveTemporalStore temporalStore,
+      ArchiveInFlightStore inFlightStore, ArchiveDomainRegistry registry,
+      ArchiveDomainCatalog catalog, ArchiveLifecycle.Phase initialPhase,
+      ArchiveQueryLimits queryLimits,
+      ArchivePublisherConfig publisherConfig, Runnable startupValidator,
+      UnifiedArchiveBackend unifiedBackend, boolean captureVmPreState) {
     if (startupValidator == null) {
       throw new NullPointerException("startupValidator");
     }
@@ -278,6 +311,7 @@ public final class DefaultArchiveService implements ArchiveService {
       throw new NullPointerException("publisherConfig");
     }
     this.enabled = enabled;
+    this.captureVmPreState = enabled && captureVmPreState;
     this.txNumIndex = txNumIndex;
     this.executionContext = executionContext;
     this.lifecycle = new ArchiveLifecycle(initialPhase);
@@ -795,6 +829,34 @@ public final class DefaultArchiveService implements ArchiveService {
       }
       throw e;
     }
+    executionContext.enter(position);
+  }
+
+  @Override
+  public void beginUserVmTx() {
+    if (!captureVmPreState) {
+      return;
+    }
+    validateAvailable();
+    ArchiveTxPosition current = executionContext.currentOrNull();
+    if (current == null || current.getPhase() != ArchivePhase.USER_TX) {
+      throw new ArchiveException(
+          "archive user VM position requires an active user transaction");
+    }
+    long previousPositionBytes = reserveNextExecutionPosition();
+    ArchiveTxPosition position;
+    try {
+      position = executionTxNumIndex.allocateUserVmTx(
+          current.getBlockNum(), current.getTxIndex(), current.getTxId());
+    } catch (RuntimeException | Error e) {
+      try {
+        rollbackExecutionPositionReservation(previousPositionBytes);
+      } catch (RuntimeException | Error cleanupFailure) {
+        addSuppressedSafely(e, cleanupFailure);
+      }
+      throw e;
+    }
+    executionContext.clear();
     executionContext.enter(position);
   }
 
@@ -1497,12 +1559,20 @@ public final class DefaultArchiveService implements ArchiveService {
       return txNumIndex.allocateUserTx(
           position.getBlockNum(), position.getTxIndex(), position.getTxId());
     }
+    if (position.getPhase() == ArchivePhase.USER_TX_VM) {
+      return txNumIndex.allocateUserVmTx(
+          position.getBlockNum(), position.getTxIndex(), position.getTxId());
+    }
     return txNumIndex.allocateSystemTx(position.getBlockNum(), position.getPhase());
   }
 
   private ArchiveTxPosition allocateExecutionPosition(ArchiveTxPosition position) {
     if (position.getPhase() == ArchivePhase.USER_TX) {
       return executionTxNumIndex.allocateUserTx(
+          position.getBlockNum(), position.getTxIndex(), position.getTxId());
+    }
+    if (position.getPhase() == ArchivePhase.USER_TX_VM) {
+      return executionTxNumIndex.allocateUserVmTx(
           position.getBlockNum(), position.getTxIndex(), position.getTxId());
     }
     return executionTxNumIndex.allocateSystemTx(position.getBlockNum(), position.getPhase());
@@ -2679,11 +2749,13 @@ public final class DefaultArchiveService implements ArchiveService {
         throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
             "transaction has no pre-state archive point");
       }
-      if (position.getPhase() != ArchivePhase.USER_TX
-          || expectedBlockNum >= 0 && position.getBlockNum() != expectedBlockNum
+      if (position.getPhase() != ArchivePhase.USER_TX_VM
+          || (expectedBlockNum >= 0 && position.getBlockNum() != expectedBlockNum)
           || !Arrays.equals(position.getTxId(), txId)) {
         throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
-            "archive transaction position mismatch");
+            position.getPhase() == ArchivePhase.USER_TX
+                ? "archive transaction VM pre-state was not captured"
+                : "archive transaction position mismatch");
       }
       long blockNum = position.getBlockNum();
       if (txNum < range.getFirstTxNum() || txNum > range.getLastTxNum()) {

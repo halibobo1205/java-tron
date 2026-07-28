@@ -94,6 +94,12 @@ storage.archive.debug {
 }
 ```
 
+`enable` is both the RPC exposure switch and the capture switch for the exact transaction TVM
+pre-state coordinate. It must be enabled before synchronizing blocks that need
+`debug_traceTransaction`. Blocks synchronized while it is disabled remain valid for ordinary
+archive queries, but transaction tracing fails closed because their intermediate VM pre-state was
+not captured.
+
 The existing finite archive query deadline remains the wall-clock timeout for debug replay. It
 replaces the canonical transaction CPU deadline only for an explicitly injected debug trace, so
 trace collection overhead cannot create a false `OUT_OF_TIME`. Ordinary historical `eth_call` and

@@ -1801,7 +1801,7 @@ public class UnifiedArchiveDbTest {
     closeForRawEdit();
     byte[] current = UnifiedArchiveManifest.value(SCHEMA_CHECKSUM);
     byte[] previous = new String(current, StandardCharsets.US_ASCII)
-        .replace("layout-schema=6", "layout-schema=5")
+        .replace("layout-schema=7", "layout-schema=6")
         .getBytes(StandardCharsets.US_ASCII);
     editRaw((rocksDb, handles) -> {
       try (WriteOptions writeOptions = new WriteOptions().setDisableWAL(false).setSync(true)) {

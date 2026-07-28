@@ -100,9 +100,57 @@ public class ArchiveCallTraceCollectorTest {
     create.complete(new byte[0], 100L, false, "execution failed");
     create.close();
 
-    assertNull(createCollector.getRoot().getTo());
+    assertEquals("0x0000000000000000000000000000000000000000",
+        createCollector.getRoot().getTo());
     assertNull(createCollector.getRoot().getOutput());
     assertEquals("execution failed", createCollector.getRoot().getError());
+  }
+
+  @Test
+  public void decodesKnownAndUnknownSolidityPanicReasons() throws Exception {
+    Map<String, Object> raw = new HashMap<>();
+    raw.put("tracer", "callTracer");
+
+    ArchiveCallTraceCollector knownCollector = new ArchiveCallTraceCollector(
+        DebugTraceOptions.parse(raw), new DebugTraceBudget(100_000L));
+    TraceScope known = knownCollector.enter(
+        Op.CALL, address(1), address(2), new byte[0], 100L,
+        BigInteger.ZERO, false);
+    known.complete(panic(0x11), 5L, true, "execution reverted");
+    known.close();
+    assertEquals("arithmetic underflow or overflow",
+        knownCollector.getRoot().getRevertReason());
+
+    ArchiveCallTraceCollector unknownCollector = new ArchiveCallTraceCollector(
+        DebugTraceOptions.parse(raw), new DebugTraceBudget(100_000L));
+    TraceScope unknown = unknownCollector.enter(
+        Op.CALL, address(1), address(2), new byte[0], 100L,
+        BigInteger.ZERO, false);
+    unknown.complete(panic(0x7f), 5L, true, "execution reverted");
+    unknown.close();
+    assertEquals("unknown panic code: 0x7f",
+        unknownCollector.getRoot().getRevertReason());
+  }
+
+  @Test
+  public void suicideOpcodeUsesSelfdestructWireName() throws Exception {
+    Map<String, Object> raw = new HashMap<>();
+    raw.put("tracer", "callTracer");
+    ArchiveCallTraceCollector collector = new ArchiveCallTraceCollector(
+        DebugTraceOptions.parse(raw), new DebugTraceBudget(100_000L));
+
+    TraceScope scope = collector.enter(
+        Op.SUICIDE, address(1), address(2), new byte[0], 0L,
+        BigInteger.valueOf(99L), false);
+    scope.complete(new byte[0], 0L, false, null);
+    scope.close();
+
+    CallTraceFrame frame = collector.getRoot();
+    assertEquals("SELFDESTRUCT", frame.getType());
+    assertEquals("0x0", frame.getGas());
+    assertEquals("0x0", frame.getGasUsed());
+    assertEquals("0x63", frame.getValue());
+    assertNull(frame.getOutput());
   }
 
   @Test
@@ -131,5 +179,15 @@ public class ArchiveCallTraceCollectorTest {
     address[0] = 0x41;
     address[address.length - 1] = (byte) suffix;
     return address;
+  }
+
+  private static byte[] panic(int code) {
+    byte[] output = new byte[36];
+    output[0] = 0x4e;
+    output[1] = 0x48;
+    output[2] = 0x7b;
+    output[3] = 0x71;
+    output[35] = (byte) code;
+    return output;
   }
 }

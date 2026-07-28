@@ -42,7 +42,8 @@ public interface ArchiveStateReader extends AutoCloseable {
   /**
    * Enumerates every positive TRC10 balance held by an account at this reader's state point.
    * Implementations must fail closed unless they can prove complete membership, not merely resolve
-   * balances for token IDs already known to the caller.
+   * balances for token IDs already known to the caller. The returned map must be an immutable,
+   * defensive snapshot.
    */
   default Map<String, Long> getAccountAssets(byte[] address) throws ArchiveReaderException {
     throw new ArchiveReaderException(ArchiveReaderException.Reason.DOMAIN_UNSUPPORTED,

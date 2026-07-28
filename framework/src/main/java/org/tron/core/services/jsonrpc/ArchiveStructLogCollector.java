@@ -8,7 +8,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import org.bouncycastle.util.encoders.Hex;
-import org.tron.common.runtime.ProgramResult;
 import org.tron.common.runtime.vm.DataWord;
 import org.tron.core.archive.query.HistoricalQueryLimitException;
 import org.tron.core.db.ByteArrayWrapper;
@@ -73,16 +72,17 @@ final class ArchiveStructLogCollector implements VmStructuredTraceListener {
         stackWords, memoryWords, storageEntries, returnDataBytes));
 
     List<String> stack = options.isDisableStack() ? null : snapshotStack(program);
-    List<String> memory = options.isEnableMemory() ? snapshotMemory(program.getMemory()) : null;
+    List<String> memory = options.isEnableMemory() && program.getMemorySize() > 0
+        ? snapshotMemory(program.getMemory()) : null;
     Map<String, String> storage =
         touchedStorage == null ? null : snapshotStorage(touchedStorage);
     String returnData = options.isEnableReturnData()
         && program.getReturnDataBufferLength() > 0
         ? "0x" + Hex.toHexString(program.getReturnDataBuffer()) : null;
-    String opName = Op.getNameOf(program.getCurrentOpIntValue());
+    String opName = wireOpName(program.getCurrentOpIntValue());
     StructLog log = new StructLog(
         program.getPC(),
-        opName == null ? "INVALID" : opName,
+        opName,
         gas,
         program.getCallDeep() + 1,
         stack,
@@ -103,12 +103,18 @@ final class ArchiveStructLogCollector implements VmStructuredTraceListener {
   }
 
   @Override
-  public void onProgramExit(Program program) {
+  public void captureFault(Program program, Throwable failure) {
     StructLog lastLog = lastLogByProgram.get(program);
-    String error = terminalError(program.getResult());
-    if (lastLog != null && error != null) {
-      lastLog.setError(error);
+    if (lastLog == null) {
+      return;
     }
+    String error = failureMessage(failure);
+    budget.reserve(saturatedAdd(16L, saturatedMultiply(error.length(), 2L)));
+    lastLog.setError(error);
+  }
+
+  @Override
+  public void onProgramExit(Program program) {
     lastLogByProgram.remove(program);
   }
 
@@ -191,16 +197,23 @@ final class ArchiveStructLogCollector implements VmStructuredTraceListener {
     return value < 0L ? 0L : value;
   }
 
-  private static String terminalError(ProgramResult result) {
-    if (result.getException() != null) {
-      String message = result.getException().getMessage();
-      return message == null || message.isEmpty()
-          ? result.getException().getClass().getSimpleName() : message;
+  private static String wireOpName(int opCode) {
+    if (opCode == Op.SHA3) {
+      return "KECCAK256";
     }
-    if (result.isRevert()) {
-      return "execution reverted";
+    if (opCode == Op.SUICIDE) {
+      return "SELFDESTRUCT";
     }
-    return result.getRuntimeError() == null || result.getRuntimeError().isEmpty()
-        ? null : result.getRuntimeError();
+    String name = Op.getNameOf(opCode);
+    return name == null
+        ? "opcode 0x" + Integer.toHexString(opCode & 0xff) + " not defined"
+        : name;
+  }
+
+  private static String failureMessage(Throwable failure) {
+    String message = failure == null ? null : failure.getMessage();
+    return message == null || message.isEmpty()
+        ? failure == null ? "execution failed" : failure.getClass().getSimpleName()
+        : message;
   }
 }

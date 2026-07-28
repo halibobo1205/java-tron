@@ -83,9 +83,10 @@ final class ArchiveInFlightValidator {
     if (range.getUserTxCount() < 0) {
       throw new ArchiveException("archive in-flight user tx count must be non-negative");
     }
-    long expectedSpan = (long) range.getUserTxCount() + 2L;
     long actualSpan = range.getLastTxNum() - range.getFirstTxNum() + 1L;
-    if (actualSpan != expectedSpan) {
+    long minimumSpan = (long) range.getUserTxCount() + 2L;
+    long maximumSpan = (long) range.getUserTxCount() * 2L + 2L;
+    if (actualSpan < minimumSpan || actualSpan > maximumSpan) {
       throw new ArchiveException(
           "archive in-flight txNum span does not match user tx count for block "
               + range.getBlockNum());
@@ -105,11 +106,11 @@ final class ArchiveInFlightValidator {
     if (expectedCount > Integer.MAX_VALUE || positions.size() != (int) expectedCount) {
       throw new ArchiveException("archive in-flight position count does not match block range");
     }
-    Set<Integer> userIndexes = new HashSet<>();
     Set<ByteArrayKey> userTxIds = new HashSet<>();
     boolean sawPrepare = false;
     boolean sawFinalize = false;
-    int userCount = 0;
+    int expectedUserIndex = 0;
+    ArchiveTxPosition previous = null;
     for (int positionIndex = 0; positionIndex < positions.size(); positionIndex++) {
       ArchiveTxPosition position = positions.get(positionIndex);
       validatePosition(range, position);
@@ -131,20 +132,29 @@ final class ArchiveInFlightValidator {
           sawFinalize = true;
           break;
         case USER_TX:
-          userCount++;
-          if (!userIndexes.add(position.getTxIndex())) {
-            throw new ArchiveException("archive in-flight duplicate user tx index "
+          if (position.getTxIndex() != expectedUserIndex++) {
+            throw new ArchiveException("archive in-flight user tx index is out of order "
                 + position.getTxIndex());
           }
           if (!userTxIds.add(new ByteArrayKey(position.getTxId()))) {
             throw new ArchiveException("archive in-flight duplicate user txId");
           }
           break;
+        case USER_TX_VM:
+          if (previous == null
+              || previous.getPhase() != ArchivePhase.USER_TX
+              || position.getTxIndex() != previous.getTxIndex()
+              || !Arrays.equals(position.getTxId(), previous.getTxId())) {
+            throw new ArchiveException(
+                "archive in-flight user VM position does not follow its user transaction");
+          }
+          break;
         default:
           throw new ArchiveException("archive in-flight position phase is not publishable");
       }
+      previous = position;
     }
-    if (!sawPrepare || !sawFinalize || userCount != range.getUserTxCount()) {
+    if (!sawPrepare || !sawFinalize || expectedUserIndex != range.getUserTxCount()) {
       throw new ArchiveException("archive in-flight positions do not match block range");
     }
   }
@@ -168,16 +178,13 @@ final class ArchiveInFlightValidator {
         && !Arrays.equals(positionBlockHash, range.getBlockHash())) {
       throw new ArchiveException("archive in-flight position block hash mismatch");
     }
-    if (position.getPhase() == ArchivePhase.USER_TX) {
+    if (position.getPhase() == ArchivePhase.USER_TX
+        || position.getPhase() == ArchivePhase.USER_TX_VM) {
       if (position.getTxIndex() < 0 || position.getTxIndex() >= range.getUserTxCount()) {
         throw new ArchiveException("archive in-flight user tx index is outside block range");
       }
       requireLength(position.getTxId(), ArchiveBlockRange.BLOCK_HASH_LENGTH,
           "archive in-flight user txId");
-      long expectedTxNum = range.getFirstTxNum() + 1L + position.getTxIndex();
-      if (position.getTxNum() != expectedTxNum) {
-        throw new ArchiveException("archive in-flight user tx-position order mismatch");
-      }
       return;
     }
     if (position.getTxIndex() != -1 || position.getTxId().length != 0) {

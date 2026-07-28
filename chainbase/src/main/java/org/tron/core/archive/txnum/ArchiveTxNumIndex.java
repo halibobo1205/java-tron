@@ -19,6 +19,8 @@ public interface ArchiveTxNumIndex {
 
   ArchiveTxPosition allocateUserTx(long blockNum, int txIndex, byte[] txId);
 
+  ArchiveTxPosition allocateUserVmTx(long blockNum, int txIndex, byte[] txId);
+
   ArchiveBlockRange commitBlock(long blockNum, int userTxCount);
 
   default ArchiveBlockRange commitBlock(long blockNum, byte[] blockHash, int userTxCount) {
