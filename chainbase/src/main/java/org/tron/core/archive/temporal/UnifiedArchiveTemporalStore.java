@@ -523,10 +523,10 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
   }
 
   @Override
-  public List<byte[]> scanLatestCanonicalKeys(ArchiveDomain domain,
+  public List<byte[]> scanKnownCanonicalKeys(ArchiveDomain domain,
       int canonicalKeyLength, byte[] canonicalPrefix) {
     try (UnifiedArchiveReadView view = db.openScanView()) {
-      return scanLatestCanonicalKeys(view, domain, canonicalKeyLength, canonicalPrefix);
+      return scanKnownCanonicalKeys(view, domain, canonicalKeyLength, canonicalPrefix);
     }
   }
 
@@ -1473,10 +1473,10 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
     }
 
     @Override
-    public List<byte[]> scanLatestCanonicalKeys(ArchiveDomain domain,
+    public List<byte[]> scanKnownCanonicalKeys(ArchiveDomain domain,
         int canonicalKeyLength, byte[] canonicalPrefix) {
       requireOpen();
-      return UnifiedArchiveTemporalStore.this.scanLatestCanonicalKeys(
+      return UnifiedArchiveTemporalStore.this.scanKnownCanonicalKeys(
           view, domain, canonicalKeyLength, canonicalPrefix);
     }
 
@@ -1504,33 +1504,56 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
     }
   }
 
-  private List<byte[]> scanLatestCanonicalKeys(UnifiedArchiveReadView view,
+  private List<byte[]> scanKnownCanonicalKeys(UnifiedArchiveReadView view,
       ArchiveDomain domain, int canonicalKeyLength, byte[] canonicalPrefix) {
-    byte[] physicalPrefix =
-        ArchiveTemporalCodec.latestKeyPrefix(domain, canonicalKeyLength, canonicalPrefix);
+    List<byte[]> latestKeys = scanCanonicalKeys(
+        view, UnifiedArchiveColumnFamily.LATEST,
+        ArchiveTemporalCodec.latestKeyPrefix(domain, canonicalKeyLength, canonicalPrefix),
+        canonicalKeyLength, canonicalPrefix, false);
+    List<byte[]> anchorKeys = scanCanonicalKeys(
+        view, UnifiedArchiveColumnFamily.COMMITMENT,
+        ArchiveTemporalCodec.anchorKeyPrefix(domain, canonicalKeyLength, canonicalPrefix),
+        canonicalKeyLength, canonicalPrefix, true);
+    if (latestKeys.size() != anchorKeys.size()) {
+      throw new ArchiveException(
+          "UNIFIED_V1 canonical-key membership evidence count mismatch");
+    }
+    for (int i = 0; i < latestKeys.size(); i++) {
+      if (!Arrays.equals(latestKeys.get(i), anchorKeys.get(i))) {
+        throw new ArchiveException(
+            "UNIFIED_V1 canonical-key membership evidence mismatch");
+      }
+    }
+    return latestKeys;
+  }
+
+  private List<byte[]> scanCanonicalKeys(UnifiedArchiveReadView view,
+      UnifiedArchiveColumnFamily columnFamily, byte[] physicalPrefix,
+      int canonicalKeyLength, byte[] canonicalPrefix, boolean anchorKeys) {
     List<byte[]> canonicalKeys = new ArrayList<>();
-    try (UnifiedArchiveIterator latest =
-        view.newIterator(UnifiedArchiveColumnFamily.LATEST)) {
-      latest.seek(physicalPrefix);
+    try (UnifiedArchiveIterator iterator = view.newIterator(columnFamily)) {
+      iterator.seek(physicalPrefix);
       ArchiveRocksIterators.requireOk(
-          latest, "UNIFIED_V1 seek latest canonical-key prefix");
-      while (latest.isValid()) {
-        byte[] physicalKey = latest.key();
+          iterator, "UNIFIED_V1 seek canonical-key membership prefix");
+      while (iterator.isValid()) {
+        byte[] physicalKey = iterator.key();
         if (!ArchiveTemporalCodec.startsWith(physicalKey, physicalPrefix)) {
           break;
         }
-        byte[] canonicalKey = ArchiveTemporalCodec.canonicalKeyOfLatestKey(physicalKey);
+        byte[] canonicalKey = anchorKeys
+            ? ArchiveTemporalCodec.canonicalKeyOfAnchorKey(physicalKey)
+            : ArchiveTemporalCodec.canonicalKeyOfLatestKey(physicalKey);
         if (canonicalKey.length != canonicalKeyLength
             || !ArchiveTemporalCodec.startsWith(canonicalKey, canonicalPrefix)) {
           throw new ArchiveException(
-              "UNIFIED_V1 latest canonical-key prefix scan crossed its range");
+              "UNIFIED_V1 canonical-key membership scan crossed its range");
         }
         reserveScanResultKey(canonicalKey.length);
         canonicalKeys.add(canonicalKey);
-        latest.next();
+        iterator.next();
       }
       ArchiveRocksIterators.requireOk(
-          latest, "UNIFIED_V1 scan latest canonical-key prefix");
+          iterator, "UNIFIED_V1 scan canonical-key membership prefix");
     }
     return canonicalKeys;
   }

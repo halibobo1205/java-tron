@@ -4,13 +4,10 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
-import static org.mockito.Mockito.mockStatic;
 
 import com.google.protobuf.ByteString;
 import org.junit.After;
 import org.junit.Test;
-import org.mockito.MockedStatic;
-import org.tron.common.arch.Arch;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.capsule.BlockCapsule;
@@ -105,20 +102,6 @@ public class NoopArchiveServiceTest {
   }
 
   @Test
-  public void factoryRejectsArchiveEnabledOnUnsupportedPlatform() {
-    StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
-    config.setEnable(true);
-    try (MockedStatic<Arch> arch = mockStatic(Arch.class)) {
-      arch.when(Arch::isArm64).thenReturn(false);
-
-      ArchiveException failure = assertThrows(ArchiveException.class,
-          () -> ArchiveServiceFactory.create(config));
-
-      assertTrue(failure.getMessage().contains("archive is not supported"));
-    }
-  }
-
-  @Test
   public void factoryRejectsArchiveEnabledWithTxnumDisabled() {
     StorageConfig.ArchiveConfig config = new StorageConfig.ArchiveConfig();
     config.setEnable(true);
@@ -190,9 +173,6 @@ public class NoopArchiveServiceTest {
   }
 
   private static ArchiveService createViaFactory(StorageConfig.ArchiveConfig config) {
-    try (MockedStatic<Arch> arch = mockStatic(Arch.class)) {
-      arch.when(Arch::isArm64).thenReturn(true);
-      return ArchiveServiceFactory.create(config);
-    }
+    return ArchiveServiceFactory.create(config);
   }
 }

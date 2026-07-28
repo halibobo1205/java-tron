@@ -79,13 +79,14 @@ public interface ArchiveTemporalStore {
   Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey);
 
   /**
-   * Returns canonical keys represented in latest whose length is exactly
-   * {@code canonicalKeyLength} and whose bytes start with {@code canonicalPrefix}. This internal
-   * query primitive exists for bounded, snapshot-consistent enumeration of composite-key domains.
+   * Returns known canonical keys whose length is exactly {@code canonicalKeyLength} and whose
+   * bytes start with {@code canonicalPrefix}. Persistent implementations must cross-check mutable
+   * latest membership against immutable first-observation evidence in the same frozen snapshot.
+   * This internal query primitive exists for bounded enumeration of composite-key domains.
    */
-  default List<byte[]> scanLatestCanonicalKeys(ArchiveDomain domain,
+  default List<byte[]> scanKnownCanonicalKeys(ArchiveDomain domain,
       int canonicalKeyLength, byte[] canonicalPrefix) {
-    throw new ArchiveException("archive temporal latest-key scan is unsupported");
+    throw new ArchiveException("archive temporal canonical-key scan is unsupported");
   }
 
   /**

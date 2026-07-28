@@ -9,7 +9,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Optional;
-import org.tron.common.arch.Arch;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.ChainBaseManager;
 import org.tron.core.archive.domain.ArchiveDomainCatalog;
@@ -78,9 +77,6 @@ public final class ArchiveServiceFactory {
       return NoopArchiveService.INSTANCE;
     }
     validateSupportedConfig(config);
-    if (!Arch.isArm64()) {
-      throw new ArchiveException("archive is not supported on this build/platform");
-    }
     if (config.getTxnum() == null || !config.getTxnum().isEnable()) {
       throw new ArchiveException(
           "storage.archive.txnum.enable must be true when archive is enabled");

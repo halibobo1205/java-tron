@@ -544,6 +544,7 @@ public class Manager {
     chainBaseManager.setMerkleContainer(getMerkleContainer());
     chainBaseManager.setMortgageService(mortgageService);
     boolean canonicalHasBlocks = chainBaseManager.hasBlocks();
+    validateArchiveGenesisCommitMarkerPresence(canonicalHasBlocks);
     validateArchiveStartupStateMigrations(canonicalHasBlocks);
     if (archiveService.isEnabled() && !canonicalHasBlocks) {
       // A crash can leave a durable genesis journal before the canonical session commits. Remove
@@ -669,6 +670,12 @@ public class Manager {
 
     if (chainBaseManager.containBlock(genesisBlock.getBlockId())) {
       Args.getInstance().setChainId(genesisBlock.getBlockId().toString());
+      if (archiveService.isEnabled()
+          && !chainBaseManager.getDynamicPropertiesStore().isArchiveGenesisCommitComplete(
+              genesisBlock.getBlockId().getByteString())) {
+        throw archiveGenesisCanonicalStateError(
+            "canonical genesis exists without a matching COMMITTED marker", null);
+      }
       // Genesis archive coverage is validated in init() AFTER reconcileInFlightOnStartup, not here:
       // a genesis committed to the journal but not yet published (crash between commitBlock and
       // publishSolidifiedBlocks) must get its reconcile-republish chance before being judged.
@@ -681,6 +688,15 @@ public class Manager {
         logger.info("Create genesis block.");
         Args.getInstance().setChainId(genesisBlock.getBlockId().toString());
 
+        if (archiveService.isEnabled()) {
+          try {
+            chainBaseManager.getDynamicPropertiesStore().saveArchiveGenesisCommitIntent(
+                genesisBlock.getBlockId().getByteString());
+          } catch (RuntimeException e) {
+            throw archiveGenesisCanonicalStateError(
+                "could not persist the genesis commit INTENT marker", e);
+          }
+        }
         boolean archivePending = false;
         ArchiveJournalToken archiveJournalToken = null;
         boolean canonicalCommitStarted = false;
@@ -734,6 +750,13 @@ public class Manager {
                 genesisBlock, 0, "initialize genesis");
             canonicalCommitStarted = true;
             genesisSession.commitToRoot();
+            try {
+              chainBaseManager.getDynamicPropertiesStore().saveArchiveGenesisCommitComplete(
+                  genesisBlock.getBlockId().getByteString());
+            } catch (RuntimeException e) {
+              throw archiveGenesisCanonicalStateError(
+                  "canonical genesis committed but its COMMITTED marker could not be persisted", e);
+            }
             archiveService.acknowledgeCanonicalCommit(archiveJournalToken);
           } else {
             archiveService.commitBlock(genesisBlock, 0);
@@ -757,6 +780,41 @@ public class Manager {
         }
       }
     }
+  }
+
+  void validateArchiveGenesisCommitMarkerPresence(boolean canonicalHasBlocks) {
+    if (!archiveService.isEnabled()) {
+      return;
+    }
+    boolean markerPresent =
+        chainBaseManager.getDynamicPropertiesStore().hasArchiveGenesisCommitMarker();
+    if (!canonicalHasBlocks && markerPresent) {
+      throw archiveGenesisCanonicalStateError(
+          "an incomplete genesis commit marker exists while the canonical block store is empty",
+          null);
+    }
+    if (canonicalHasBlocks && !markerPresent) {
+      throw archiveGenesisCanonicalStateError(
+          "canonical blocks exist but the genesis commit marker is missing", null);
+    }
+  }
+
+  private TronError archiveGenesisCanonicalStateError(String detail, Throwable cause) {
+    String message = "archive-enabled canonical genesis state is not provably atomic: " + detail
+        + "; rebuild canonical and archive databases together";
+    try {
+      archiveService.markRebuildRequired(message);
+    } catch (RuntimeException markerFailure) {
+      if (cause != null && cause != markerFailure) {
+        markerFailure.addSuppressed(cause);
+      }
+      return new TronError(
+          message + "; failed to persist archive rebuild marker",
+          markerFailure, TronError.ErrCode.GENESIS_BLOCK_INIT);
+    }
+    return cause == null
+        ? new TronError(message, TronError.ErrCode.GENESIS_BLOCK_INIT)
+        : new TronError(message, cause, TronError.ErrCode.GENESIS_BLOCK_INIT);
   }
 
   void validateArchiveStartupStateMigrations(boolean canonicalHasBlocks) {

@@ -473,6 +473,15 @@ public class HistoricalEthCallSupportIntegrationTest extends BaseMethodTest {
     assertEquals("0x", lowFeeResult.getReturnValue());
     assertEquals(1, lowFeeResult.getStructLogs().size());
     when(wallet.getTransactionById(ByteString.copyFrom(lowFeeTxId)))
+        .thenReturn(withContractResult(
+            lowFeeTrxCap.getInstance(), contractResult.ILLEGAL_OPERATION));
+    JsonRpcInternalException exactFailureMismatch = assertThrows(
+        JsonRpcInternalException.class,
+        () -> support.traceTransaction(
+            lowFeeTxId, DebugTraceOptions.parse(Collections.emptyMap())));
+    assertTrue(exactFailureMismatch.getMessage().contains(
+        "expected=ILLEGAL_OPERATION, actual=OUT_OF_ENERGY"));
+    when(wallet.getTransactionById(ByteString.copyFrom(lowFeeTxId)))
         .thenReturn(withContractResult(lowFeeTrxCap.getInstance(), contractResult.SUCCESS));
     JsonRpcInternalException mismatch = assertThrows(JsonRpcInternalException.class,
         () -> support.traceTransaction(

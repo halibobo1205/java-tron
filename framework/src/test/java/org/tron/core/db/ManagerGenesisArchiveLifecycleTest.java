@@ -4,15 +4,12 @@ import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
-import static org.mockito.Mockito.mockStatic;
 
 import java.nio.charset.StandardCharsets;
 import org.junit.Test;
-import org.mockito.MockedStatic;
 import org.tron.common.BaseMethodTest;
 import org.tron.common.application.ApplicationFactory;
 import org.tron.common.application.TronApplicationContext;
-import org.tron.common.arch.Arch;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.archive.ArchiveService;
@@ -31,7 +28,6 @@ import org.tron.core.services.jsonrpc.HistoricalArchiveVmDynamicProperties;
 
 public class ManagerGenesisArchiveLifecycleTest extends BaseMethodTest {
 
-  private MockedStatic<Arch> arch;
   private DefaultArchiveService archiveService;
   private boolean archiveEnabledBefore;
   private boolean identityInitializeBefore;
@@ -40,8 +36,6 @@ public class ManagerGenesisArchiveLifecycleTest extends BaseMethodTest {
 
   @Override
   protected void beforeContext() {
-    arch = mockStatic(Arch.class);
-    arch.when(Arch::isArm64).thenReturn(true);
     archiveEnabledBefore = CommonParameter.getInstance().getStorage().getArchive().isEnable();
     identityInitializeBefore = CommonParameter.getInstance().getStorage().getArchive()
         .getIdentity().isInitialize();
@@ -60,9 +54,6 @@ public class ManagerGenesisArchiveLifecycleTest extends BaseMethodTest {
         .setInitialize(identityInitializeBefore);
     CommonParameter.getInstance().setNeedToUpdateAsset(needToUpdateAssetBefore);
     CommonParameter.getInstance().setAllowTvmConstantinople(allowTvmConstantinopleBefore);
-    if (arch != null) {
-      arch.close();
-    }
   }
 
   @Override
@@ -75,6 +66,8 @@ public class ManagerGenesisArchiveLifecycleTest extends BaseMethodTest {
   @Test
   public void initGenesisArchivesConstructorSeededVmDynamicProperties() throws Exception {
     BlockCapsule genesis = chainBaseManager.getGenesisBlock();
+    assertTrue(chainBaseManager.getDynamicPropertiesStore()
+        .isArchiveGenesisCommitComplete(genesis.getBlockId().getByteString()));
     assertEquals(0L, archiveService.getFirstArchivedBlock());
     try (ArchiveStateReader reader = archiveService.openBlockEndReader(
         0, genesis.getBlockId().getBytes())) {
@@ -125,6 +118,8 @@ public class ManagerGenesisArchiveLifecycleTest extends BaseMethodTest {
 
     assertTrue(chainBaseManager.hasBlocks());
     assertTrue(chainBaseManager.containBlock(genesis.getBlockId()));
+    assertTrue(chainBaseManager.getDynamicPropertiesStore()
+        .isArchiveGenesisCommitComplete(genesis.getBlockId().getByteString()));
     assertEquals(0L, archiveService.getFirstArchivedBlock());
     try (ArchiveStateReader reader = archiveService.openBlockEndReader(
         0L, genesis.getBlockId().getBytes())) {

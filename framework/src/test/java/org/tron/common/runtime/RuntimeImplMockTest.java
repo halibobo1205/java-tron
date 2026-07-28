@@ -1,53 +1,47 @@
 package org.tron.common.runtime;
 
-import java.lang.reflect.Method;
+import static org.junit.Assert.assertEquals;
 
-import lombok.extern.slf4j.Slf4j;
-import org.junit.After;
 import org.junit.Test;
 import org.tron.core.vm.program.Program;
+import org.tron.core.vm.program.VmResultCodeMapper;
+import org.tron.protos.Protocol.Transaction.Result.contractResult;
 
-
-
-@Slf4j
 public class RuntimeImplMockTest {
-  @After
-  public void  clearMocks() {
-
-  }
 
   @Test
-  public void testSetResultCode1() throws Exception {
-    RuntimeImpl runtime = new RuntimeImpl();
+  public void testResultCodeMapping() {
     ProgramResult programResult = new ProgramResult();
-    Method privateMethod = RuntimeImpl.class.getDeclaredMethod(
-        "setResultCode", ProgramResult.class);
-    privateMethod.setAccessible(true);
 
     Program.BadJumpDestinationException badJumpDestinationException
         = new Program.BadJumpDestinationException("Operation with pc isn't 'JUMPDEST': PC[%d];", 0);
     programResult.setException(badJumpDestinationException);
-    privateMethod.invoke(runtime, programResult);
+    assertEquals(
+        contractResult.BAD_JUMP_DESTINATION,
+        VmResultCodeMapper.resultCodeOf(programResult));
 
     Program.OutOfTimeException outOfTimeException
         = new Program.OutOfTimeException("CPU timeout for 0x0a executing");
     programResult.setException(outOfTimeException);
-    privateMethod.invoke(runtime, programResult);
+    assertEquals(contractResult.OUT_OF_TIME, VmResultCodeMapper.resultCodeOf(programResult));
 
     Program.PrecompiledContractException precompiledContractException
         = new Program.PrecompiledContractException("precompiled contract exception");
     programResult.setException(precompiledContractException);
-    privateMethod.invoke(runtime, programResult);
+    assertEquals(
+        contractResult.PRECOMPILED_CONTRACT,
+        VmResultCodeMapper.resultCodeOf(programResult));
 
     Program.StackTooSmallException stackTooSmallException
         = new Program.StackTooSmallException("Expected stack size %d but actual %d;", 100, 10);
     programResult.setException(stackTooSmallException);
-    privateMethod.invoke(runtime, programResult);
+    assertEquals(contractResult.STACK_TOO_SMALL, VmResultCodeMapper.resultCodeOf(programResult));
 
     Program.JVMStackOverFlowException jvmStackOverFlowException
         = new Program.JVMStackOverFlowException();
     programResult.setException(jvmStackOverFlowException);
-    privateMethod.invoke(runtime, programResult);
+    assertEquals(
+        contractResult.JVM_STACK_OVER_FLOW,
+        VmResultCodeMapper.resultCodeOf(programResult));
   }
-
 }

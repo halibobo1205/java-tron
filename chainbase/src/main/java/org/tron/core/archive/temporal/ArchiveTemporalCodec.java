@@ -84,6 +84,13 @@ public final class ArchiveTemporalCodec {
         Ints.toByteArray(canonicalKeyLength), canonicalPrefix);
   }
 
+  static byte[] anchorKeyPrefix(ArchiveDomain domain, int canonicalKeyLength,
+      byte[] canonicalPrefix) {
+    byte[] prefix = latestKeyPrefix(domain, canonicalKeyLength, canonicalPrefix);
+    prefix[0] = ANCHOR_PREFIX;
+    return prefix;
+  }
+
   /** Prefix shared by all history entries of a (domain, key); a history key starts with it. */
   static byte[] historyPrefix(ArchiveDomain domain, byte[] canonicalKey) {
     return Bytes.concat(new byte[] {HISTORY_PREFIX}, domainId(domain), keyLength(canonicalKey),
@@ -317,6 +324,12 @@ public final class ArchiveTemporalCodec {
     validateLatestKey(latestKey);
     int keyLen = intAt(latestKey, 3);
     return Arrays.copyOfRange(latestKey, 7, 7 + keyLen);
+  }
+
+  static byte[] canonicalKeyOfAnchorKey(byte[] anchorKey) {
+    validateAnchorKey(anchorKey);
+    int keyLen = intAt(anchorKey, 3);
+    return Arrays.copyOfRange(anchorKey, 7, 7 + keyLen);
   }
 
   static byte[] canonicalKeyOfHistoryKey(byte[] historyKey) {

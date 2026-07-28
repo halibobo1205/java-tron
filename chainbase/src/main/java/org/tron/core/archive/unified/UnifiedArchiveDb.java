@@ -1,8 +1,5 @@
 package org.tron.core.archive.unified;
 
-import java.lang.invoke.MethodHandle;
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.MethodType;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -74,16 +71,13 @@ public final class UnifiedArchiveDb implements AutoCloseable {
   private static final long MAX_TOTAL_WAL_BYTES = 256L * 1024L * 1024L;
   private static final int MAX_OPEN_FILES = 512;
   private static final int COLUMN_FAMILY_COUNT = UnifiedArchiveColumnFamily.values().length + 1;
-  // Stabilizes SST encoding across the bundled RocksDB variants. RocksDB MANIFEST downgrade
-  // compatibility is separate: a directory written by a newer native library may still require
-  // that version or newer even when every SST uses this legacy-compatible format.
+  // Keep the on-disk table encoding explicit across supported architectures.
   private static final int STABLE_SST_TABLE_FORMAT_VERSION = 0;
   private static final long BACKGROUND_SYNC_BYTES = 1024L * 1024L;
   private static final byte[] MAINTENANCE_REPAIR_VALUE =
       ArchiveBlockRangeCodec.encodeRepairRequired(
           "UNIFIED_V1 maintenance write requires full startup scrub");
-  private static final AtomicBoolean nativeDeadlineWarningReported = new AtomicBoolean();
-  private static final RocksDbCloser DEFAULT_ROCKS_DB_CLOSER = resolveRocksDbCloser();
+  private static final RocksDbCloser DEFAULT_ROCKS_DB_CLOSER = RocksDB::closeE;
 
   private final Path path;
   private final byte[] schemaChecksum;
@@ -1045,11 +1039,6 @@ public final class UnifiedArchiveDb implements AutoCloseable {
           .setWalBytesPerSync(0L)
           .setUseDirectReads(false)
           .setUseDirectIoForFlushAndCompaction(false);
-      if (!nativeReadDeadlineSupported()
-          && nativeDeadlineWarningReported.compareAndSet(false, true)) {
-        logger.warn("archive RocksDB does not support native query deadlines; "
-            + "Java deadline checks remain active around native reads");
-      }
       if (statistics != null) {
         dbOptions.setStatistics(statistics);
       }
@@ -1729,27 +1718,6 @@ public final class UnifiedArchiveDb implements AutoCloseable {
       addSuppressedSafely(uncertain, priorFailure);
     }
     return uncertain;
-  }
-
-  private static RocksDbCloser resolveRocksDbCloser() {
-    MethodHandles.Lookup lookup = MethodHandles.publicLookup();
-    MethodType closeType = MethodType.methodType(void.class);
-    MethodHandle closeHandle;
-    try {
-      closeHandle = lookup.findVirtual(RocksDB.class, "closeE", closeType);
-    } catch (NoSuchMethodException missingCloseE) {
-      try {
-        closeHandle = lookup.findVirtual(RocksDB.class, "close", closeType);
-      } catch (NoSuchMethodException | IllegalAccessException impossible) {
-        throw new ExceptionInInitializerError(impossible);
-      }
-    } catch (IllegalAccessException inaccessibleCloseE) {
-      throw new ExceptionInInitializerError(inaccessibleCloseE);
-    }
-    MethodHandle resolvedCloseHandle = closeHandle;
-    return rocksDb -> {
-      resolvedCloseHandle.invokeExact(rocksDb);
-    };
   }
 
   static Throwable closeAndCollect(Throwable firstFailure, AutoCloseable resource) {

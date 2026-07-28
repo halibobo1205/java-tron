@@ -43,6 +43,8 @@ public class ManagerGenesisArchiveTest {
     when(chainBaseManager.containBlock(genesis.getBlockId())).thenReturn(true);
     when(chainBaseManager.getDynamicPropertiesStore()).thenReturn(dynamicPropertiesStore);
     when(dynamicPropertiesStore.getLatestBlockHeaderNumber()).thenReturn(12L);
+    when(dynamicPropertiesStore.isArchiveGenesisCommitComplete(
+        genesis.getBlockId().getByteString())).thenReturn(true);
     when(archiveService.isEnabled()).thenReturn(true);
     ReflectUtils.setFieldValue(manager, "chainBaseManager", chainBaseManager);
     ReflectUtils.setFieldValue(manager, "archiveService", archiveService);
@@ -50,6 +52,46 @@ public class ManagerGenesisArchiveTest {
     manager.initGenesis();
 
     verify(archiveService, never()).reconcileInFlightOnStartup(anyLong(), anyLong(), any());
+  }
+
+  @Test
+  public void startupRejectsGenesisIntentWithoutCanonicalBlock() {
+    Manager manager = new Manager();
+    ChainBaseManager chainBaseManager = mock(ChainBaseManager.class);
+    ArchiveService archiveService = mock(ArchiveService.class);
+    DynamicPropertiesStore dynamicPropertiesStore = mock(DynamicPropertiesStore.class);
+    when(archiveService.isEnabled()).thenReturn(true);
+    when(chainBaseManager.getDynamicPropertiesStore()).thenReturn(dynamicPropertiesStore);
+    when(dynamicPropertiesStore.hasArchiveGenesisCommitMarker()).thenReturn(true);
+    ReflectUtils.setFieldValue(manager, "chainBaseManager", chainBaseManager);
+    ReflectUtils.setFieldValue(manager, "archiveService", archiveService);
+
+    TronError error = assertThrows(TronError.class,
+        () -> manager.validateArchiveGenesisCommitMarkerPresence(false));
+
+    assertEquals(TronError.ErrCode.GENESIS_BLOCK_INIT, error.getErrCode());
+    assertTrue(error.getMessage().contains("not provably atomic"));
+    verify(archiveService).markRebuildRequired(anyString());
+  }
+
+  @Test
+  public void startupRejectsCanonicalBlocksWithoutGenesisCommitMarker() {
+    Manager manager = new Manager();
+    ChainBaseManager chainBaseManager = mock(ChainBaseManager.class);
+    ArchiveService archiveService = mock(ArchiveService.class);
+    DynamicPropertiesStore dynamicPropertiesStore = mock(DynamicPropertiesStore.class);
+    when(archiveService.isEnabled()).thenReturn(true);
+    when(chainBaseManager.getDynamicPropertiesStore()).thenReturn(dynamicPropertiesStore);
+    when(dynamicPropertiesStore.hasArchiveGenesisCommitMarker()).thenReturn(false);
+    ReflectUtils.setFieldValue(manager, "chainBaseManager", chainBaseManager);
+    ReflectUtils.setFieldValue(manager, "archiveService", archiveService);
+
+    TronError error = assertThrows(TronError.class,
+        () -> manager.validateArchiveGenesisCommitMarkerPresence(true));
+
+    assertEquals(TronError.ErrCode.GENESIS_BLOCK_INIT, error.getErrCode());
+    assertTrue(error.getMessage().contains("marker is missing"));
+    verify(archiveService).markRebuildRequired(anyString());
   }
 
   @Test

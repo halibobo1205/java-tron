@@ -20,6 +20,7 @@ import static org.tron.common.utils.ByteUtil.stripLeadingZeroes;
 import static org.tron.core.config.Parameter.ChainConstant.TRX_PRECISION;
 import static org.tron.core.vm.VMConstant.SIG_LENGTH;
 
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.google.protobuf.ByteString;
 
 import java.lang.reflect.Constructor;
@@ -476,6 +477,20 @@ public class PrecompiledContracts {
 
     public Repository getDeposit() {
       return deposit;
+    }
+
+    protected final boolean isHistoricalArchiveCall() {
+      return deposit != null && deposit.isHistoricalArchive();
+    }
+
+    protected final void checkHistoricalArchiveDeadline() {
+      if (!isHistoricalArchiveCall()) {
+        return;
+      }
+      QueryContext queryContext = QueryContextHolder.current();
+      if (queryContext != null) {
+        queryContext.checkDeadline();
+      }
     }
 
     public ProgramResult getResult() {
@@ -1155,17 +1170,19 @@ public class PrecompiledContracts {
 
     @Override
     public Pair<Boolean, byte[]> execute(byte[] data) {
+      boolean historicalCall = isHistoricalArchiveCall();
       try {
-        return doExecute(data);
+        return doExecute(data, historicalCall);
       } catch (Throwable t) {
-        if (t instanceof InterruptedException){
+        if (t instanceof InterruptedException) {
           Thread.currentThread().interrupt();
         }
+        VerifyTransferProof.rethrowHistoricalHardFailure(historicalCall, t);
         return Pair.of(true, new byte[WORD_SIZE]);
       }
     }
 
-    private Pair<Boolean, byte[]> doExecute(byte[] data)
+    private Pair<Boolean, byte[]> doExecute(byte[] data, boolean historicalCall)
         throws InterruptedException, ExecutionException {
       if (VMConfig.allowTvmOsaka()
           && !isValidAbiEncoding(data, ABI_HEADER_WORDS, ABI_ITEM_WORDS)) {
@@ -1192,12 +1209,18 @@ public class PrecompiledContracts {
         return Pair.of(true, DATA_FALSE);
       }
       byte[] res = new byte[WORD_SIZE];
-      if (isConstantCall()) {
-        //for constant call not use thread pool to avoid potential effect
+      if (!usesCanonicalWorkers(isConstantCall(), historicalCall)) {
+        // Request-local execution must not contend with the canonical validation worker pool.
         for (int i = 0; i < cnt; i++) {
+          if (historicalCall) {
+            checkHistoricalArchiveDeadline();
+          }
           if (DataWord
               .equalAddressByteArray(addresses[i], recoverAddrBySign(signatures[i], hash))) {
             res[i] = 1;
+          }
+          if (historicalCall) {
+            checkHistoricalArchiveDeadline();
           }
         }
       } else {
@@ -1227,6 +1250,10 @@ public class PrecompiledContracts {
         }
       }
       return Pair.of(true, res);
+    }
+
+    static boolean usesCanonicalWorkers(boolean constantCall, boolean historicalCall) {
+      return !constantCall && !historicalCall;
     }
 
     @AllArgsConstructor
@@ -1460,19 +1487,22 @@ public class PrecompiledContracts {
     private static final Integer[] SIZE = {2080, 2368, 2464, 2752};
     private static final int HISTORICAL_QUEUE_CAPACITY = 64;
     private static final ExecutorService workersInConstantCall;
-    private static final ThreadPoolExecutor workersInHistoricalConstantCall;
+    private static final ThreadPoolExecutor workersInHistoricalCall;
     private static final ExecutorService workersInNonConstantCall;
     private static final String constantCallName = "verify-transfer-constant-call";
-    private static final String historicalConstantCallName =
-        "verify-transfer-historical-constant-call";
+    private static final String historicalCallName = "verify-transfer-historical-call";
     private static final String nonConstantCallName = "verify-transfer-non-constant-call";
 
     static {
       workersInConstantCall = ExecutorServiceManager.newFixedThreadPool(constantCallName, 5);
-      workersInHistoricalConstantCall = (ThreadPoolExecutor)
-          ExecutorServiceManager.newThreadPoolExecutor(
-              5, 5, 0L, TimeUnit.MILLISECONDS,
-              new ArrayBlockingQueue<>(HISTORICAL_QUEUE_CAPACITY), historicalConstantCallName);
+      workersInHistoricalCall = new ThreadPoolExecutor(
+          5, 5, 0L, TimeUnit.MILLISECONDS,
+          new ArrayBlockingQueue<>(HISTORICAL_QUEUE_CAPACITY),
+          new ThreadFactoryBuilder()
+              .setNameFormat(historicalCallName + "-%d")
+              .setDaemon(true)
+              .setPriority(Thread.MIN_PRIORITY)
+              .build());
       workersInNonConstantCall = ExecutorServiceManager.newFixedThreadPool(nonConstantCallName, 5);
     }
 
@@ -1582,7 +1612,7 @@ public class PrecompiledContracts {
         CountDownLatch countDownLatch = new CountDownLatch(threadCount);
         ExecutorService workers;
         if (historicalCall) {
-          workers = workersInHistoricalConstantCall;
+          workers = workersInHistoricalCall;
         } else if (isConstantCall()) {
           workers = workersInConstantCall;
         } else {
@@ -1726,17 +1756,12 @@ public class PrecompiledContracts {
             future.cancel(true);
           }
           if (future instanceof Runnable) {
-            workersInHistoricalConstantCall.remove((Runnable) future);
+            workersInHistoricalCall.remove((Runnable) future);
           }
         } catch (RuntimeException ignored) {
           // Cancellation is best-effort; preserve the historical call's primary result/failure.
         }
       }
-    }
-
-    private boolean isHistoricalArchiveCall() {
-      Repository repository = getDeposit();
-      return isConstantCall() && repository != null && repository.isHistoricalArchive();
     }
 
     static void rethrowHistoricalHardFailure(boolean historicalCall, Throwable failure) {

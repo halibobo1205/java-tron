@@ -1,26 +1,34 @@
 package org.tron.core.vm.archive;
 
 import java.util.Arrays;
+import org.tron.protos.Protocol.Transaction.Result.contractResult;
 
 /** Terminal TVM outcome used to render either struct logs or a callTracer frame. */
 public final class HistoricalDebugTraceResult {
 
   private final byte[] output;
   private final long energyUsed;
+  private final contractResult resultCode;
   private final boolean failed;
   private final boolean reverted;
 
   private HistoricalDebugTraceResult(
-      byte[] output, long energyUsed, boolean failed, boolean reverted) {
+      byte[] output, long energyUsed, contractResult resultCode,
+      boolean failed, boolean reverted) {
     this.output = output == null ? new byte[0] : output;
     this.energyUsed = energyUsed;
+    this.resultCode = resultCode;
     this.failed = failed;
     this.reverted = reverted;
   }
 
   public static HistoricalDebugTraceResult of(
-      byte[] output, long energyUsed, boolean failed, boolean reverted) {
-    return new HistoricalDebugTraceResult(output, energyUsed, failed, reverted);
+      byte[] output, long energyUsed, contractResult resultCode,
+      boolean failed, boolean reverted) {
+    if (resultCode == null) {
+      throw new NullPointerException("resultCode");
+    }
+    return new HistoricalDebugTraceResult(output, energyUsed, resultCode, failed, reverted);
   }
 
   public byte[] getOutput() {
@@ -33,6 +41,10 @@ public final class HistoricalDebugTraceResult {
 
   public long getEnergyUsed() {
     return energyUsed;
+  }
+
+  public contractResult getResultCode() {
+    return resultCode;
   }
 
   public boolean isFailed() {

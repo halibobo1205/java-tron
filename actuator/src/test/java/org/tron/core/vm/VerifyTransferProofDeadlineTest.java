@@ -25,10 +25,19 @@ import org.tron.core.archive.query.ArchiveQueryLimits;
 import org.tron.core.archive.query.HistoricalQueryLimitException;
 import org.tron.core.archive.query.QueryContext;
 import org.tron.core.archive.query.QueryContextHolder;
+import org.tron.core.vm.PrecompiledContracts.BatchValidateSign;
 import org.tron.core.vm.PrecompiledContracts.VerifyTransferProof;
 import org.tron.core.vm.program.Program.OutOfTimeException;
 
 public class VerifyTransferProofDeadlineTest {
+
+  @Test
+  public void historicalBatchSignatureValidationNeverUsesCanonicalWorkers() {
+    assertFalse(BatchValidateSign.usesCanonicalWorkers(false, true));
+    assertFalse(BatchValidateSign.usesCanonicalWorkers(true, true));
+    assertFalse(BatchValidateSign.usesCanonicalWorkers(true, false));
+    assertTrue(BatchValidateSign.usesCanonicalWorkers(false, false));
+  }
 
   @Test
   public void historicalProofWaitFailsAtDeadlineWithoutUnboundedFutureGet() throws Exception {

@@ -18,6 +18,7 @@ import org.tron.core.store.StoreFactory;
 import org.tron.core.store.VmDynamicProperties;
 import org.tron.core.vm.config.VMConfig;
 import org.tron.core.vm.program.Program;
+import org.tron.core.vm.program.VmResultCodeMapper;
 import org.tron.core.vm.trace.VmCallTraceCollector;
 import org.tron.core.vm.trace.VmStructuredTraceListener;
 
@@ -162,7 +163,8 @@ public final class HistoricalDebugTraceExecutor {
   private static HistoricalDebugTraceResult toTraceResult(ProgramResult result) {
     boolean failed = traceFailed(result);
     return HistoricalDebugTraceResult.of(
-        result.getHReturn(), result.getEnergyUsed(), failed, result.isRevert());
+        result.getHReturn(), result.getEnergyUsed(),
+        VmResultCodeMapper.resultCodeOf(result), failed, result.isRevert());
   }
 
   private static void completeRootTrace(VmCallTraceCollector.TraceScope scope,

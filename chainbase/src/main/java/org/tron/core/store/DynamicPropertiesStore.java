@@ -34,6 +34,11 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule>
       .getBytes();
   private static final byte[] LATEST_BLOCK_HEADER_NUMBER = "latest_block_header_number".getBytes();
   private static final byte[] LATEST_BLOCK_HEADER_HASH = "latest_block_header_hash".getBytes();
+  private static final byte[] ARCHIVE_GENESIS_COMMIT_MARKER =
+      "ARCHIVE_GENESIS_COMMIT_MARKER".getBytes();
+  private static final byte[] ARCHIVE_GENESIS_MARKER_MAGIC = new byte[] {'A', 'G', 'C', 1};
+  private static final byte ARCHIVE_GENESIS_INTENT = 0;
+  private static final byte ARCHIVE_GENESIS_COMMITTED = 1;
   private static final byte[] STATE_FLAG = "state_flag"
       .getBytes(); // 1 : is maintenance, 0 : is not maintenance
   private static final byte[] LATEST_SOLIDIFIED_BLOCK_NUM = "LATEST_SOLIDIFIED_BLOCK_NUM"
@@ -2341,6 +2346,44 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule>
         .map(BytesCapsule::getData)
         .orElseThrow(() -> new IllegalArgumentException("not found block hash"));
     return Sha256Hash.wrap(blockHash);
+  }
+
+  /** Persists a fail-stop fence before any archive-enabled genesis store mutation begins. */
+  public void saveArchiveGenesisCommitIntent(ByteString genesisHash) {
+    this.put(ARCHIVE_GENESIS_COMMIT_MARKER,
+        new BytesCapsule(archiveGenesisMarker(ARCHIVE_GENESIS_INTENT, genesisHash)));
+  }
+
+  /** Marks that every canonical genesis store finished its root commit. */
+  public void saveArchiveGenesisCommitComplete(ByteString genesisHash) {
+    this.put(ARCHIVE_GENESIS_COMMIT_MARKER,
+        new BytesCapsule(archiveGenesisMarker(ARCHIVE_GENESIS_COMMITTED, genesisHash)));
+  }
+
+  public boolean hasArchiveGenesisCommitMarker() {
+    return has(ARCHIVE_GENESIS_COMMIT_MARKER);
+  }
+
+  public boolean isArchiveGenesisCommitComplete(ByteString genesisHash) {
+    if (!hasArchiveGenesisCommitMarker()) {
+      return false;
+    }
+    BytesCapsule marker = getUnchecked(ARCHIVE_GENESIS_COMMIT_MARKER);
+    return marker != null && Arrays.equals(
+        archiveGenesisMarker(ARCHIVE_GENESIS_COMMITTED, genesisHash), marker.getData());
+  }
+
+  private static byte[] archiveGenesisMarker(byte state, ByteString genesisHash) {
+    if (genesisHash == null || genesisHash.size() != Sha256Hash.LENGTH) {
+      throw new IllegalArgumentException("archive genesis marker requires a 32-byte block hash");
+    }
+    byte[] hash = genesisHash.toByteArray();
+    byte[] marker = new byte[ARCHIVE_GENESIS_MARKER_MAGIC.length + 1 + hash.length];
+    System.arraycopy(
+        ARCHIVE_GENESIS_MARKER_MAGIC, 0, marker, 0, ARCHIVE_GENESIS_MARKER_MAGIC.length);
+    marker[ARCHIVE_GENESIS_MARKER_MAGIC.length] = state;
+    System.arraycopy(hash, 0, marker, ARCHIVE_GENESIS_MARKER_MAGIC.length + 1, hash.length);
+    return marker;
   }
 
   /**

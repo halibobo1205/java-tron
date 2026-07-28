@@ -168,7 +168,7 @@ public class StorageArchiveCaptureTest {
   }
 
   @Test
-  public void sloadOriginalValueAvoidsSecondPrevReadAtCommit() {
+  public void sloadDefersArchivePreviousValueReadUntilCommit() {
     ArchiveExecutionContext context = new ArchiveExecutionContext();
     ArchiveCaptureEngine engine = new ArchiveCaptureEngine(
         new DefaultArchiveDomainRegistry(), new DefaultArchiveDomainCatalog(),
@@ -183,19 +183,21 @@ public class StorageArchiveCaptureTest {
     byte[] rowKey = ArchiveStorageKeyCodec.contractStorageKey(address, slot.getData(), 0);
     byte[] original = new DataWord(new byte[] {7}).getData();
     StorageRowStore store = mock(StorageRowStore.class);
-    when(store.get(any())).thenReturn(new StorageRowCapsule(rowKey, original));
+    when(store.get(any())).thenAnswer(
+        invocation -> new StorageRowCapsule(rowKey, original));
     Storage storage = new Storage(address, store);
 
     assertArrayEquals(original, storage.getValue(slot).getData());
+    verify(store, times(1)).get(any());
     storage.put(slot, new DataWord(new byte[] {9}));
     storage.commit();
 
-    verify(store, times(1)).get(any());
+    verify(store, times(2)).get(any());
     assertArrayEquals(original, engine.records().get(0).getPrevValue().getValue());
   }
 
   @Test
-  public void absentSloadAvoidsSecondPrevReadAtCommit() {
+  public void absentSloadDefersArchivePreviousValueReadUntilCommit() {
     ArchiveExecutionContext context = new ArchiveExecutionContext();
     ArchiveCaptureEngine engine = new ArchiveCaptureEngine(
         new DefaultArchiveDomainRegistry(), new DefaultArchiveDomainCatalog(),
@@ -213,10 +215,11 @@ public class StorageArchiveCaptureTest {
     Storage storage = new Storage(address, store);
 
     assertNull(storage.getValue(slot));
+    verify(store, times(1)).get(any());
     storage.put(slot, new DataWord(new byte[] {9}));
     storage.commit();
 
-    verify(store, times(1)).get(any());
+    verify(store, times(2)).get(any());
     assertTrue(engine.records().get(0).getPrevValue().isDeleted());
   }
 

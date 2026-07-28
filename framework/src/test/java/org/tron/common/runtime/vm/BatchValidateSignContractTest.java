@@ -1,8 +1,10 @@
 package org.tron.common.runtime.vm;
 
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.ThreadPoolExecutor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.tuple.Pair;
 import org.bouncycastle.util.encoders.Hex;
@@ -17,6 +19,7 @@ import org.tron.core.db.TransactionTrace;
 import org.tron.core.vm.PrecompiledContracts;
 import org.tron.core.vm.PrecompiledContracts.BatchValidateSign;
 import org.tron.core.vm.config.VMConfig;
+import org.tron.core.vm.repository.Repository;
 
 
 @Slf4j
@@ -131,6 +134,29 @@ public class BatchValidateSignContractTest {
     System.gc(); // force triggering full gc to avoid timeout for next test
   }
 
+  @Test
+  public void historicalRepositoryBypassesCanonicalWorkersWhenNotConstantCall() throws Exception {
+    Repository historical = org.mockito.Mockito.mock(Repository.class);
+    org.mockito.Mockito.when(historical.isHistoricalArchive()).thenReturn(true);
+    contract.setRepository(historical);
+    contract.setConstantCall(false);
+    ThreadPoolExecutor canonicalWorkers = canonicalWorkers();
+    long submittedBefore = canonicalWorkers.getTaskCount();
+    ECKey key = new ECKey();
+    byte[] hash = Hash.sha3(longData);
+    List<Object> signatures = new ArrayList<>();
+    signatures.add(Hex.toHexString(key.sign(hash).toByteArray()));
+    List<Object> addresses = new ArrayList<>();
+    addresses.add(StringUtil.encode58Check(key.getAddress()));
+
+    Pair<Boolean, byte[]> result = validateMultiSign(
+        hash, signatures, addresses);
+
+    Assert.assertTrue(result.getLeft());
+    Assert.assertEquals(1, result.getRight()[0]);
+    Assert.assertEquals(submittedBefore, canonicalWorkers.getTaskCount());
+  }
+
   // TIP-854: after activation, batchValidateSign (H=5, I=6) must reject calldata
   // whose byte length is incompatible with the (words - 5) / 6 shape the per-call
   // energy formula already assumes, returning (false, empty). The guard lives in
@@ -225,5 +251,10 @@ public class BatchValidateSignContractTest {
     return ret;
   }
 
+  private static ThreadPoolExecutor canonicalWorkers() throws ReflectiveOperationException {
+    Field field = BatchValidateSign.class.getDeclaredField("workers");
+    field.setAccessible(true);
+    return (ThreadPoolExecutor) field.get(null);
+  }
 
 }

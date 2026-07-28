@@ -383,21 +383,11 @@ public final class HistoricalDebugTraceSupport {
       return;
     }
     contractResult expected = requireRecordedContractResult(transaction);
-    boolean matches;
-    if (expected == contractResult.SUCCESS) {
-      matches = !result.isFailed();
-    } else if (expected == contractResult.REVERT) {
-      matches = result.isReverted();
-    } else {
-      matches = result.isFailed() && !result.isReverted();
-    }
-    if (!matches) {
-      String actual = result.isReverted()
-          ? contractResult.REVERT.name()
-          : result.isFailed() ? "FAILED" : contractResult.SUCCESS.name();
+    contractResult actual = result.getResultCode();
+    if (expected != actual) {
       throw new JsonRpcInternalException(
           "historical transaction replay result mismatch: expected="
-              + expected.name() + ", actual=" + actual);
+              + expected.name() + ", actual=" + actual.name());
     }
   }
 

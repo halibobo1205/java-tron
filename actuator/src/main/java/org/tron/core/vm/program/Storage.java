@@ -23,7 +23,6 @@ public class Storage {
   private static final int PREFIX_BYTES = 16;
   @Getter
   private final Map<DataWord, StorageRowCapsule> rowCache = new HashMap<>();
-  private Map<WrappedByteArray, OriginalValue> originalValues;
   @Getter
   private byte[] addrHash;
   @Getter
@@ -48,11 +47,6 @@ public class Storage {
       StorageRowCapsule newRow = new StorageRowCapsule(row);
       this.rowCache.put(rowKey.clone(), newRow);
     });
-    if (storage.originalValues != null) {
-      this.originalValues = new HashMap<>();
-      storage.originalValues.forEach((rowKey, original) -> this.originalValues.put(
-          WrappedByteArray.copyOf(rowKey.getBytes()), original.copy()));
-    }
   }
 
   private byte[] compose(byte[] key, byte[] addrHash) {
@@ -88,9 +82,6 @@ public class Storage {
     }
     byte[] rowKey = compose(key.getData(), addrHash);
     StorageRowCapsule row = store.get(rowKey);
-    if (ArchiveCaptureHolder.isCapturingCurrentTx()) {
-      rememberOriginal(WrappedByteArray.copyOf(rowKey), row);
-    }
     if (row == null || row.getInstance() == null) {
       return null;
     }
@@ -101,9 +92,6 @@ public class Storage {
   public void put(DataWord key, DataWord value) {
     if (rowCache.containsKey(key)) {
       StorageRowCapsule row = rowCache.get(key);
-      if (ArchiveCaptureHolder.isCapturingCurrentTx() && !row.isDirty()) {
-        rememberOriginal(WrappedByteArray.copyOf(row.getRowKey()), row);
-      }
       row.setValue(value.getData());
     } else {
       byte[] rowKey = compose(key.getData(), addrHash);
@@ -143,8 +131,7 @@ public class Storage {
               byte[] current = currentValues.get(cacheKey);
               prev = current == null ? null : Arrays.copyOf(current, current.length);
             } else {
-              OriginalValue original = originalValues == null ? null : originalValues.get(cacheKey);
-              prev = original == null ? prevSlotValue(archiveRowKey) : original.valueOrNull();
+              prev = prevSlotValue(archiveRowKey);
             }
             capturePrepared = true;
           } catch (Exception e) {
@@ -171,11 +158,6 @@ public class Storage {
         }
       }
     });
-    if (archiveActive) {
-      if (originalValues != null) {
-        originalValues.clear();
-      }
-    }
   }
 
   /** The committed value of a storage row before this tx overwrites it, or null if the slot was
@@ -192,41 +174,4 @@ public class Storage {
     }
   }
 
-  private void rememberOriginal(WrappedByteArray rowKey, StorageRowCapsule row) {
-    if (originalValues == null) {
-      originalValues = new HashMap<>();
-    }
-    if (originalValues.containsKey(rowKey)) {
-      return;
-    }
-    OriginalValue original = row == null || row.getInstance() == null
-        ? OriginalValue.absent()
-        : OriginalValue.present(row.getValue());
-    originalValues.put(WrappedByteArray.copyOf(rowKey.getBytes()), original);
-  }
-
-  private static final class OriginalValue {
-
-    private final byte[] value;
-
-    private OriginalValue(byte[] value) {
-      this.value = value == null ? null : Arrays.copyOf(value, value.length);
-    }
-
-    private static OriginalValue absent() {
-      return new OriginalValue(null);
-    }
-
-    private static OriginalValue present(byte[] value) {
-      return new OriginalValue(value);
-    }
-
-    private byte[] valueOrNull() {
-      return value == null ? null : Arrays.copyOf(value, value.length);
-    }
-
-    private OriginalValue copy() {
-      return new OriginalValue(value);
-    }
-  }
 }

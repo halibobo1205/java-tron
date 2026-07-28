@@ -246,7 +246,7 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
     try (QueryContextHolder.Scope ignored = QueryContextHolder.attach(queryContext)) {
       for (int assetIdLength = 1;
           assetIdLength <= AccountAssetKeyCodec.MAX_ASSET_ID_LEN; assetIdLength++) {
-        List<byte[]> candidates = temporalView.scanLatestCanonicalKeys(
+        List<byte[]> candidates = temporalView.scanKnownCanonicalKeys(
             ArchiveDomain.ACCOUNT_ASSET, ADDRESS_LEN + assetIdLength, address);
         for (byte[] canonicalKey : candidates) {
           byte[] assetId = accountAssetId(address, canonicalKey);
