@@ -32,12 +32,14 @@ import org.tron.common.utils.Sha256Hash;
 import org.tron.common.utils.WalletUtil;
 import org.tron.core.Wallet;
 import org.tron.core.archive.ArchivePhase;
+import org.tron.core.archive.ArchiveService;
 import org.tron.core.archive.ArchiveSource;
 import org.tron.core.archive.DefaultArchiveService;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
 import org.tron.core.archive.query.HistoricalQueryLimitException;
+import org.tron.core.archive.reader.ArchiveStateReader;
 import org.tron.core.archive.reader.ArchiveStorageKeyCodec;
 import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
@@ -53,6 +55,7 @@ import org.tron.protos.Protocol.Account;
 import org.tron.protos.Protocol.Transaction;
 import org.tron.protos.Protocol.Transaction.Contract.ContractType;
 import org.tron.protos.Protocol.Transaction.Result.contractResult;
+import org.tron.protos.contract.BalanceContract.TransferContract;
 import org.tron.protos.contract.SmartContractOuterClass.SmartContract;
 import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
 
@@ -486,6 +489,97 @@ public class HistoricalEthCallSupportIntegrationTest extends BaseMethodTest {
         () -> support.traceTransaction(
             unknownResultTxId, DebugTraceOptions.parse(Collections.emptyMap())));
     assertTrue(unknownResult.getMessage().contains("unrecognized"));
+  }
+
+  @Test
+  public void historicalDebugTraceTransactionRejectsNonVmBeforeArchiveVmLookup()
+      throws Exception {
+    byte[] owner = addr(0x45);
+    TransferContract transfer = TransferContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(owner))
+        .setToAddress(ByteString.copyFrom(addr(0x46)))
+        .setAmount(1L)
+        .build();
+    TransactionCapsule trxCap =
+        new TransactionCapsule(transfer, ContractType.TransferContract);
+    Transaction transaction = trxCap.getInstance();
+    byte[] txId = trxCap.getTransactionId().getBytes();
+
+    Wallet wallet = mock(Wallet.class);
+    when(wallet.getTransactionById(ByteString.copyFrom(txId))).thenReturn(transaction);
+    ArchiveService archiveService = mock(ArchiveService.class);
+    when(archiveService.isEnabled()).thenReturn(true);
+    StorageConfig.ArchiveConfig.DebugConfig debug =
+        new StorageConfig.ArchiveConfig.DebugConfig();
+    debug.setEnable(true);
+    HistoricalDebugTraceSupport support =
+        new HistoricalDebugTraceSupport(wallet, archiveService, debug);
+
+    JsonRpcInvalidParamsException failure = assertThrows(
+        JsonRpcInvalidParamsException.class,
+        () -> support.traceTransaction(
+            txId, DebugTraceOptions.parse(Collections.emptyMap())));
+
+    assertEquals("transaction does not execute TVM bytecode", failure.getMessage());
+    verify(archiveService, never()).openTransactionReader(eq(txId), any());
+  }
+
+  @Test
+  public void historicalDebugTraceTransactionTreatsMissingArchivedPayloadAsInternal()
+      throws Exception {
+    byte[] txId = new byte[32];
+    txId[31] = 1;
+    Wallet wallet = mock(Wallet.class);
+    ArchiveService archiveService = mock(ArchiveService.class);
+    ArchiveStateReader reader = mock(ArchiveStateReader.class);
+    when(archiveService.isEnabled()).thenReturn(true);
+    when(archiveService.openTransactionReader(eq(txId), any())).thenReturn(reader);
+    StorageConfig.ArchiveConfig.DebugConfig debug =
+        new StorageConfig.ArchiveConfig.DebugConfig();
+    debug.setEnable(true);
+    HistoricalDebugTraceSupport support =
+        new HistoricalDebugTraceSupport(wallet, archiveService, debug);
+
+    JsonRpcInternalException failure = assertThrows(
+        JsonRpcInternalException.class,
+        () -> support.traceTransaction(
+            txId, DebugTraceOptions.parse(Collections.emptyMap())));
+
+    assertEquals("archived transaction payload is missing", failure.getMessage());
+    verify(reader).close();
+  }
+
+  @Test
+  public void historicalDebugTraceTransactionChecksIdentityBeforeType()
+      throws Exception {
+    byte[] owner = addr(0x45);
+    TransferContract transfer = TransferContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(owner))
+        .setToAddress(ByteString.copyFrom(addr(0x46)))
+        .setAmount(1L)
+        .build();
+    Transaction transaction =
+        new TransactionCapsule(transfer, ContractType.TransferContract).getInstance();
+    byte[] requestedTxId = new TransactionCapsule(transaction).getTransactionId().getBytes();
+    requestedTxId[0] ^= 1;
+
+    Wallet wallet = mock(Wallet.class);
+    when(wallet.getTransactionById(ByteString.copyFrom(requestedTxId))).thenReturn(transaction);
+    ArchiveService archiveService = mock(ArchiveService.class);
+    when(archiveService.isEnabled()).thenReturn(true);
+    StorageConfig.ArchiveConfig.DebugConfig debug =
+        new StorageConfig.ArchiveConfig.DebugConfig();
+    debug.setEnable(true);
+    HistoricalDebugTraceSupport support =
+        new HistoricalDebugTraceSupport(wallet, archiveService, debug);
+
+    JsonRpcInternalException failure = assertThrows(
+        JsonRpcInternalException.class,
+        () -> support.traceTransaction(
+            requestedTxId, DebugTraceOptions.parse(Collections.emptyMap())));
+
+    assertEquals("archive transaction identity mismatch", failure.getMessage());
+    verify(archiveService, never()).openTransactionReader(eq(requestedTxId), any());
   }
 
   @Test

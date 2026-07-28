@@ -65,8 +65,13 @@ continuously (§ Watch metrics). Pass criteria:
 - **Correctness:** against an independent full/archive node, diff `eth_call`, `eth_getBalance`,
   `eth_getCode`, `eth_getTransactionCount`, and `eth_getStorageAt` at a **sample of historical
   blocks** (include an SSTORE-heavy contract, a delete-recreate account, a TRC10 asset, and a block
-  just before a fork-flag activation). Any mismatch = blocker. Historical `debug_trace*` is outside
-  the supported archive API and must remain method-not-found.
+  just before a fork-flag activation). Any mismatch = blocker.
+- **Debug trace:** a default-off node must return JSON-RPC `-32601` for `debug_traceCall` and
+  `debug_traceTransaction`. On a dedicated node started from genesis with
+  `storage.archive.debug.enable = true`, compare both `structLogs` and `callTracer` output at
+  sampled blocks; spot-diff `debug_traceTransaction` against an independent node. Blocks captured
+  before debug tracing was enabled must fail closed with `UnsupportedHistoricalStateException`,
+  never return a partial trace.
 - **Soak:** run the §4 mixed query load (40 getters / 8 `eth_call` concurrent) for ≥72h against a
   finality-stall/catch-up cycle; retained heap flat after a 6h warmup (gate 7).
 

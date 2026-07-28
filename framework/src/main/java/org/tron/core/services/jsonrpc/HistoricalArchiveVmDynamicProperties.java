@@ -371,7 +371,7 @@ public final class HistoricalArchiveVmDynamicProperties implements VmDynamicProp
       // .orElse(...) returns for an absent key. That default is 0 for a fork gate on the plain
       // path, but a config-defaulted flag (e.g. ALLOW_TVM_SHANGHAI on a custom net) can default to
       // a non-zero value, so the caller passes it in. Resolving to that default (instead of failing
-      // closed) keeps historical eth_call working for every pre-activation block of an
+      // closed) keeps historical eth_call/trace working for every pre-activation block of an
       // in-window upgrade; MISSING (below) stays strict because genesis coverage cannot be proven.
       return tombstoneDefault;
     }

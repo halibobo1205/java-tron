@@ -105,6 +105,29 @@ public class ManagerArchiveLifecycleTest extends BaseMethodTest {
   }
 
   @Test
+  public void archiveUserVmTransitionRequiresSignedTvmBlock() {
+    BlockCapsule block = new BlockCapsule(
+        1,
+        Sha256Hash.wrap(chainManager.getGenesisBlockId().getByteString()),
+        1,
+        ByteString.copyFrom(ECKey.fromPrivate(
+            ByteArray.fromHexString(Args.getLocalWitnesses().getPrivateKey())).getAddress()));
+
+    assertFalse(Manager.shouldBeginArchiveUserVmTx(
+        block, Protocol.Transaction.Contract.ContractType.TriggerSmartContract));
+    block.setMerkleRoot();
+    block.sign(ByteArray.fromHexString(Args.getLocalWitnesses().getPrivateKey()));
+    assertTrue(Manager.shouldBeginArchiveUserVmTx(
+        block, Protocol.Transaction.Contract.ContractType.TriggerSmartContract));
+    assertTrue(Manager.shouldBeginArchiveUserVmTx(
+        block, Protocol.Transaction.Contract.ContractType.CreateSmartContract));
+    assertFalse(Manager.shouldBeginArchiveUserVmTx(
+        block, Protocol.Transaction.Contract.ContractType.TransferContract));
+    assertFalse(Manager.shouldBeginArchiveUserVmTx(
+        null, Protocol.Transaction.Contract.ContractType.TriggerSmartContract));
+  }
+
+  @Test
   public void enabledArchiveMustReturnDurableJournalToken() {
     ArchiveService failingArchive = mock(ArchiveService.class);
     BlockCapsule block = new BlockCapsule(1, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY);

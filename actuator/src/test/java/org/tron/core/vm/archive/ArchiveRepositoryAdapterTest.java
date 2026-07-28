@@ -8,6 +8,8 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -19,6 +21,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.junit.Test;
+import org.mockito.Answers;
 import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.archive.query.ArchiveQueryLimits;
@@ -36,6 +39,7 @@ import org.tron.core.capsule.ContractStateCapsule;
 import org.tron.core.capsule.VotesCapsule;
 import org.tron.core.db.EnergyProcessor;
 import org.tron.core.store.AccountStore;
+import org.tron.core.store.DelegationStore;
 import org.tron.core.store.DynamicPropertiesStore;
 import org.tron.core.store.VmDynamicProperties;
 import org.tron.core.vm.ChainParameterEnum;
@@ -403,6 +407,34 @@ public class ArchiveRepositoryAdapterTest {
     assertEquals(180L, adapter.getTotalEnergyWeight());
     assertEquals(270L, adapter.getTotalTronPowerWeight());
     assertEquals(1, adapter.getVotes(ADDR).getNewVotes().size());
+  }
+
+  @Test
+  public void delegationKeysMatchCanonicalStoreBuilders() {
+    DelegationStore delegationStore =
+        mock(DelegationStore.class, Answers.CALLS_REAL_METHODS);
+    doAnswer(invocation -> {
+      byte[] key = invocation.getArgument(0);
+      BytesCapsule value = invocation.getArgument(1);
+      putDelegation(key, value.getData());
+      return null;
+    }).when(delegationStore).put(any(byte[].class), any(BytesCapsule.class));
+    AccountCapsule accountVote = new AccountCapsule(
+        Protocol.Account.newBuilder()
+            .setAddress(ByteString.copyFrom(ADDR))
+            .setBalance(17L)
+            .build());
+    BigInteger witnessVi = BigInteger.TEN.pow(18).multiply(BigInteger.valueOf(3L));
+
+    delegationStore.setBeginCycle(ADDR, 2L);
+    delegationStore.setEndCycle(ADDR, 4L);
+    delegationStore.setAccountVote(3L, ADDR, accountVote);
+    delegationStore.setWitnessVi(3L, ADDR, witnessVi);
+
+    assertEquals(2L, adapter.getBeginCycle(ADDR));
+    assertEquals(4L, adapter.getEndCycle(ADDR));
+    assertEquals(accountVote.getInstance(), adapter.getAccountVote(3L, ADDR).getInstance());
+    assertEquals(witnessVi, adapter.getWitnessVi(3L, ADDR));
   }
 
   @Test

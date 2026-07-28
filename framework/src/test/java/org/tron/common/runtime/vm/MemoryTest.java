@@ -562,5 +562,26 @@ public class MemoryTest {
     assertTrue(zero == 10);
   }
 
+  @Test
+  public void peekReadsExistingBytesWithoutExtendingMemory() {
+    Memory memory = new Memory();
+    byte[] data = new byte[40];
+    Arrays.fill(data, (byte) 1);
+    memory.write(1000, data, data.length, false);
+    int softSize = memory.size();
+    int internalSize = memory.internalSize();
+
+    byte[] peeked = memory.peek(1016, 64);
+
+    byte[] expected = new byte[64];
+    Arrays.fill(expected, 0, 24, (byte) 1);
+    assertArrayEquals(expected, peeked);
+    Assert.assertEquals(softSize, memory.size());
+    Assert.assertEquals(internalSize, memory.internalSize());
+    assertArrayEquals(new byte[16], memory.peek(4096, 16));
+    Assert.assertEquals(softSize, memory.size());
+    Assert.assertEquals(internalSize, memory.internalSize());
+  }
+
 
 }
