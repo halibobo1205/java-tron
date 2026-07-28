@@ -15,6 +15,7 @@ import com.google.common.primitives.Bytes;
 import com.google.protobuf.ByteString;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -311,6 +312,55 @@ public class DefaultArchiveStateReaderTest {
     assertEquals(HistoricalQueryLimitException.Limit.BACKEND_READS, failure.getLimit());
     assertEquals(8L, context.getBackendReads());
     assertSame(failure, context.getTerminalException());
+    reader.close();
+  }
+
+  @Test
+  public void getAccountAssetsFailsClosedWhenMembershipEvidenceIsInconsistent() {
+    // The persistent store cross-checks mutable LATEST membership against immutable ANCHOR
+    // first-observation evidence in one snapshot and throws when the two disagree (one side
+    // deleted or mutated). The reader must surface that as a query failure: returning the keys
+    // enumerated before the mismatch would hand a SELFDESTRUCT replay an incomplete TRC10 set,
+    // which is a silent wrong answer rather than a fail-closed one.
+    byte[] address = addr(1);
+    byte[] shortAssetId = "1000001".getBytes(StandardCharsets.US_ASCII);
+    int consistentLength = address.length + shortAssetId.length;
+    ArchiveTemporalReadView view = new ArchiveTemporalReadView() {
+      @Override
+      public Optional<DomainValue> getAsOf(ArchiveDomain domain, byte[] canonicalKey, long txNum) {
+        return Optional.of(DomainValue.present(ByteArray.fromLong(88L)));
+      }
+
+      @Override
+      public Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey) {
+        return Optional.of(DomainValue.present(ByteArray.fromLong(88L)));
+      }
+
+      @Override
+      public List<byte[]> scanKnownCanonicalKeys(ArchiveDomain domain,
+          int canonicalKeyLength, byte[] canonicalPrefix) {
+        if (canonicalKeyLength == consistentLength) {
+          return Collections.singletonList(Bytes.concat(address, shortAssetId));
+        }
+        if (canonicalKeyLength == consistentLength + 1) {
+          throw new ArchivePersistentStateCorruptionException(
+              "archive account-asset membership evidence does not match");
+        }
+        return Collections.emptyList();
+      }
+
+      @Override
+      public void close() {
+      }
+    };
+    ArchiveStateReader reader = new DefaultArchiveStateReader(
+        view, catalog, ArchiveStatePoint.blockEnd(1L, new byte[] {1}, 5L),
+        () -> { }, true, 16, 4_096L, new QueryContext(ArchiveQueryLimits.unlimited()));
+
+    ArchiveReaderException failure = assertThrows(
+        ArchiveReaderException.class, () -> reader.getAccountAssets(address));
+
+    assertEquals(ArchiveReaderException.Reason.CORRUPT_INDEX, failure.getReason());
     reader.close();
   }
 
