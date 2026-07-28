@@ -79,6 +79,7 @@ public class ArchiveRepositoryAdapterTest {
     Map<String, ArchiveReadResult<byte[]>> dynamicProperties = new HashMap<>();
     Map<String, ArchiveReadResult<byte[]>> delegations = new HashMap<>();
     ArchiveReaderException accountError;
+    ArchiveReaderException accountAssetsError;
     byte[] blockHash = new byte[32];
     int blockHashReads;
 
@@ -97,7 +98,10 @@ public class ArchiveRepositoryAdapterTest {
       return accountAsset;
     }
 
-    public Map<String, Long> getAccountAssets(byte[] a) {
+    public Map<String, Long> getAccountAssets(byte[] a) throws ArchiveReaderException {
+      if (accountAssetsError != null) {
+        throw accountAssetsError;
+      }
       return accountAssets;
     }
 
@@ -337,6 +341,27 @@ public class ArchiveRepositoryAdapterTest {
         adapter.getTokenBalances(ADDR));
     assertThrows(UnsupportedOperationException.class,
         () -> adapter.getTokenBalances(ADDR).put("1000001", 1L));
+  }
+
+  @Test
+  public void tokenBalanceEnumerationFailsClosedWhenMembershipEvidenceIsInconsistent() {
+    // The store fails closed when LATEST and ANCHOR membership disagree and the reader turns that
+    // into an ArchiveReaderException. This is the consumer end of that chain: a SELFDESTRUCT
+    // replay must see the explicit unsupported error, never an empty or partial TRC10 set, and
+    // the failure must be recorded terminally so a nested call cannot swallow it.
+    reader.account = ArchiveReadResult.present(account(1L));
+    reader.accountAssetsError = new ArchiveReaderException(
+        ArchiveReaderException.Reason.CORRUPT_INDEX,
+        "archive account-asset enumeration failed");
+    QueryContext context = new QueryContext(ArchiveQueryLimits.unlimited());
+
+    try (QueryContextHolder.Scope ignored = QueryContextHolder.attach(context)) {
+      UnsupportedHistoricalStateException failure = assertThrows(
+          UnsupportedHistoricalStateException.class, () -> adapter.getTokenBalances(ADDR));
+
+      assertSame(reader.accountAssetsError, failure.getCause());
+      assertSame(failure, context.getRecordedExecutionTerminalFailure());
+    }
   }
 
   @Test
