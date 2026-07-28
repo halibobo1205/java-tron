@@ -14,6 +14,7 @@ import org.tron.core.ChainBaseManager;
 import org.tron.core.config.DefaultConfig;
 import org.tron.core.config.args.Args;
 import org.tron.core.db.Manager;
+import org.tron.core.vm.config.VMConfig;
 
 /**
  * Base class for tests that need a fresh Spring context per test method.
@@ -57,6 +58,7 @@ public abstract class BaseMethodTest {
 
   @Before
   public final void initContext() throws IOException {
+    VMConfig.clearLocalSnapshot();
     String[] baseArgs = new String[]{
         "--output-directory", temporaryFolder.newFolder().toString()};
     String[] allArgs = mergeArgs(baseArgs, extraArgs());
@@ -82,6 +84,7 @@ public abstract class BaseMethodTest {
       context.close(); // triggers appT.shutdown() via TronApplicationContext
     }
     Args.clearParam();
+    VMConfig.clearLocalSnapshot();
   }
 
   protected void beforeDestroy() {

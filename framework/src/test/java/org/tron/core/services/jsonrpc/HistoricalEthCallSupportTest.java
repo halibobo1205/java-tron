@@ -17,6 +17,8 @@ import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
 import io.prometheus.client.CollectorRegistry;
+import java.util.ArrayList;
+import java.util.List;
 import org.junit.After;
 import org.junit.Test;
 import org.tron.common.parameter.CommonParameter;
@@ -54,10 +56,24 @@ import org.tron.protos.Protocol.Block;
  */
 public class HistoricalEthCallSupportTest {
 
+  private final List<DefaultArchiveService> archiveServices = new ArrayList<>();
+
   @After
-  public void clearCaptureHolder() {
-    // An enabled DefaultArchiveService installs a static capture engine; clear between tests.
-    ArchiveCaptureHolder.clear();
+  public void closeArchiveServices() {
+    try {
+      for (DefaultArchiveService archiveService : archiveServices) {
+        archiveService.close();
+      }
+    } finally {
+      // An enabled DefaultArchiveService installs a static capture engine; clear between tests.
+      ArchiveCaptureHolder.clear();
+    }
+  }
+
+  private DefaultArchiveService newArchiveService() {
+    DefaultArchiveService archiveService = new DefaultArchiveService(true);
+    archiveServices.add(archiveService);
+    return archiveService;
   }
 
   @Test
@@ -90,7 +106,7 @@ public class HistoricalEthCallSupportTest {
   @Test
   public void enabledArchiveBypassesLatestButRoutesHistorical() {
     HistoricalEthCallSupport support =
-        new HistoricalEthCallSupport(null, new DefaultArchiveService(true));
+        new HistoricalEthCallSupport(null, newArchiveService());
     assertFalse(support.shouldUseArchive("latest"));
     assertFalse(support.shouldUseArchive("LATEST"));
     assertTrue(support.shouldUseArchive("earliest"));
@@ -325,7 +341,7 @@ public class HistoricalEthCallSupportTest {
   }
 
   private DefaultArchiveService midChainArchiveService() {
-    DefaultArchiveService svc = new DefaultArchiveService(true);
+    DefaultArchiveService svc = newArchiveService();
     svc.getTxNumIndex().beginBlock(5, ArchiveSource.NORMAL);
     svc.getTxNumIndex().allocateSystemTx(5, ArchivePhase.BLOCK_PREPARE);
     svc.getTxNumIndex().allocateSystemTx(5, ArchivePhase.BLOCK_FINALIZE);
@@ -334,7 +350,7 @@ public class HistoricalEthCallSupportTest {
   }
 
   private DefaultArchiveService genesisCompleteArchiveService() {
-    DefaultArchiveService svc = new DefaultArchiveService(true);
+    DefaultArchiveService svc = newArchiveService();
     svc.getTxNumIndex().beginBlock(0, ArchiveSource.NORMAL);
     svc.getTxNumIndex().allocateSystemTx(0, ArchivePhase.BLOCK_PREPARE);
     svc.getTxNumIndex().allocateSystemTx(0, ArchivePhase.BLOCK_FINALIZE);

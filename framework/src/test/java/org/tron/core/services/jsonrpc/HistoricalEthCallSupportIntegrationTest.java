@@ -17,8 +17,10 @@ import com.google.protobuf.ByteString;
 import java.io.ByteArrayOutputStream;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import org.junit.Before;
 import org.junit.Test;
@@ -101,9 +103,23 @@ public class HistoricalEthCallSupportIntegrationTest extends BaseMethodTest {
       "CONSENSUS_LOGIC_OPTIMIZATION",
       "ALLOW_HARDEN_RESOURCE_CALCULATION"
   };
+  private final List<DefaultArchiveService> archiveServices = new ArrayList<>();
 
   @Override
   protected void afterInit() {
+  }
+
+  @Override
+  protected void beforeDestroy() {
+    for (DefaultArchiveService archiveService : archiveServices) {
+      archiveService.close();
+    }
+  }
+
+  private DefaultArchiveService newArchiveService(InMemoryArchiveTemporalStore temporalStore) {
+    DefaultArchiveService archiveService = new DefaultArchiveService(true, temporalStore);
+    archiveServices.add(archiveService);
+    return archiveService;
   }
 
   @Before
@@ -151,7 +167,7 @@ public class HistoricalEthCallSupportIntegrationTest extends BaseMethodTest {
   @Test
   public void historicalEthCallReturnsArchivedStorageSlot() throws Exception {
     InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
-    DefaultArchiveService svc = new DefaultArchiveService(true, temporal);
+    DefaultArchiveService svc = newArchiveService(temporal);
 
     // Block 0 proves genesis-complete coverage; block 1 holds the archived contract snapshot.
     svc.getTxNumIndex().beginBlock(0, ArchiveSource.NORMAL);
@@ -204,7 +220,7 @@ public class HistoricalEthCallSupportIntegrationTest extends BaseMethodTest {
 
   @Test
   public void historicalEthCallRejectsBlockHashChangedAfterResolution() throws Exception {
-    DefaultArchiveService svc = new DefaultArchiveService(true, new InMemoryArchiveTemporalStore());
+    DefaultArchiveService svc = newArchiveService(new InMemoryArchiveTemporalStore());
     svc.getTxNumIndex().beginBlock(0, ArchiveSource.NORMAL);
     svc.getTxNumIndex().allocateSystemTx(0, ArchivePhase.BLOCK_PREPARE);
     svc.getTxNumIndex().allocateSystemTx(0, ArchivePhase.BLOCK_FINALIZE);
@@ -226,7 +242,7 @@ public class HistoricalEthCallSupportIntegrationTest extends BaseMethodTest {
   @Test
   public void historicalDebugTraceReturnsStructLogsAndCallFrame() throws Exception {
     InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
-    DefaultArchiveService svc = new DefaultArchiveService(true, temporal);
+    DefaultArchiveService svc = newArchiveService(temporal);
     svc.getTxNumIndex().beginBlock(0, ArchiveSource.NORMAL);
     svc.getTxNumIndex().allocateSystemTx(0, ArchivePhase.BLOCK_PREPARE);
     svc.getTxNumIndex().allocateSystemTx(0, ArchivePhase.BLOCK_FINALIZE);
@@ -371,7 +387,7 @@ public class HistoricalEthCallSupportIntegrationTest extends BaseMethodTest {
     byte[] unknownResultTxId = unknownResultTrxCap.getTransactionId().getBytes();
 
     InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
-    DefaultArchiveService svc = new DefaultArchiveService(true, temporal);
+    DefaultArchiveService svc = newArchiveService(temporal);
     svc.getTxNumIndex().beginBlock(0, ArchiveSource.NORMAL);
     svc.getTxNumIndex().allocateSystemTx(0, ArchivePhase.BLOCK_PREPARE);
     svc.getTxNumIndex().allocateSystemTx(0, ArchivePhase.BLOCK_FINALIZE);
@@ -483,7 +499,7 @@ public class HistoricalEthCallSupportIntegrationTest extends BaseMethodTest {
     byte[] txId = trxCap.getTransactionId().getBytes();
 
     InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
-    DefaultArchiveService svc = new DefaultArchiveService(true, temporal);
+    DefaultArchiveService svc = newArchiveService(temporal);
     svc.getTxNumIndex().beginBlock(0, ArchiveSource.NORMAL);
     svc.getTxNumIndex().allocateSystemTx(0, ArchivePhase.BLOCK_PREPARE);
     svc.getTxNumIndex().allocateSystemTx(0, ArchivePhase.BLOCK_FINALIZE);
@@ -552,7 +568,7 @@ public class HistoricalEthCallSupportIntegrationTest extends BaseMethodTest {
   @Test
   public void historicalCallTracerCapturesNestedTvmCall() throws Exception {
     InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
-    DefaultArchiveService svc = new DefaultArchiveService(true, temporal);
+    DefaultArchiveService svc = newArchiveService(temporal);
     svc.getTxNumIndex().beginBlock(0, ArchiveSource.NORMAL);
     svc.getTxNumIndex().allocateSystemTx(0, ArchivePhase.BLOCK_PREPARE);
     svc.getTxNumIndex().allocateSystemTx(0, ArchivePhase.BLOCK_FINALIZE);

@@ -5,8 +5,10 @@ import java.io.IOException;
 import javax.annotation.PostConstruct;
 import javax.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
+import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.ClassRule;
 import org.junit.rules.TemporaryFolder;
 import org.junit.runner.RunWith;
@@ -28,6 +30,7 @@ import org.tron.core.exception.BalanceInsufficientException;
 import org.tron.core.net.peer.PeerConnection;
 import org.tron.core.net.peer.PeerManager;
 import org.tron.core.store.AccountStore;
+import org.tron.core.vm.config.VMConfig;
 import org.tron.protos.Protocol;
 
 /**
@@ -78,6 +81,16 @@ public abstract class BaseTest {
   @PostConstruct
   private void prepare() {
     appT1 = appT;
+  }
+
+  @Before
+  public final void clearThreadLocalVmConfigBeforeTest() {
+    VMConfig.clearLocalSnapshot();
+  }
+
+  @After
+  public final void clearThreadLocalVmConfigAfterTest() {
+    VMConfig.clearLocalSnapshot();
   }
 
   public static String dbPath() {

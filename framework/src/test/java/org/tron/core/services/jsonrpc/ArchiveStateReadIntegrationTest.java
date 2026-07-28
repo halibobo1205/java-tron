@@ -6,6 +6,8 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
+import java.util.ArrayList;
+import java.util.List;
 import org.junit.After;
 import org.junit.Test;
 import org.tron.common.utils.Sha256Hash;
@@ -35,15 +37,29 @@ import org.tron.protos.contract.SmartContractOuterClass.SmartContract;
  */
 public class ArchiveStateReadIntegrationTest {
 
+  private final List<DefaultArchiveService> archiveServices = new ArrayList<>();
+
   @After
-  public void clearCaptureHolder() {
-    ArchiveCaptureHolder.clear();
+  public void closeArchiveServices() {
+    try {
+      for (DefaultArchiveService archiveService : archiveServices) {
+        archiveService.close();
+      }
+    } finally {
+      ArchiveCaptureHolder.clear();
+    }
+  }
+
+  private DefaultArchiveService newArchiveService(InMemoryArchiveTemporalStore temporalStore) {
+    DefaultArchiveService archiveService = new DefaultArchiveService(true, temporalStore);
+    archiveServices.add(archiveService);
+    return archiveService;
   }
 
   @Test
   public void archiveReturnsHistoricalBalanceCodeStorage() throws Exception {
     InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
-    DefaultArchiveService svc = new DefaultArchiveService(true, temporal);
+    DefaultArchiveService svc = newArchiveService(temporal);
 
     ArchiveBlockRange range = commitEmptyBlock(svc, 0);
     long t = range.getFinalizeTxNum();
@@ -77,7 +93,7 @@ public class ArchiveStateReadIntegrationTest {
 
   @Test
   public void blockOneStartRejectsPublicQueryBeforeStateLookup() throws Exception {
-    DefaultArchiveService svc = new DefaultArchiveService(true, new InMemoryArchiveTemporalStore());
+    DefaultArchiveService svc = newArchiveService(new InMemoryArchiveTemporalStore());
     commitEmptyBlock(svc, 1);
     Wallet wallet = walletWithBlock(1);
     ArchiveJsonRpcStateAdapter adapter = new ArchiveJsonRpcStateAdapter(wallet, svc);
@@ -91,7 +107,7 @@ public class ArchiveStateReadIntegrationTest {
 
   @Test
   public void blockZeroStartAllowsMissingAccountAsZeroBalance() throws Exception {
-    DefaultArchiveService svc = new DefaultArchiveService(true, new InMemoryArchiveTemporalStore());
+    DefaultArchiveService svc = newArchiveService(new InMemoryArchiveTemporalStore());
     commitEmptyBlock(svc, 0);
     Wallet wallet = walletWithBlock(0);
     ArchiveJsonRpcStateAdapter adapter = new ArchiveJsonRpcStateAdapter(wallet, svc);
