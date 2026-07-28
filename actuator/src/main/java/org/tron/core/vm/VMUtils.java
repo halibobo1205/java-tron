@@ -111,13 +111,19 @@ public final class VMUtils {
 
   public static byte[] compress(byte[] bytes) throws IOException {
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
+    Deflater deflater = new Deflater();
 
-    ByteArrayInputStream in = new ByteArrayInputStream(bytes);
-    DeflaterOutputStream out = new DeflaterOutputStream(baos, new Deflater(), BUF_SIZE);
+    try {
+      ByteArrayInputStream in = new ByteArrayInputStream(bytes);
+      DeflaterOutputStream out = new DeflaterOutputStream(baos, deflater, BUF_SIZE);
 
-    write(in, out, BUF_SIZE);
+      write(in, out, BUF_SIZE);
 
-    return baos.toByteArray();
+      return baos.toByteArray();
+    } finally {
+      // DeflaterOutputStream only ends Deflaters it creates itself.
+      deflater.end();
+    }
   }
 
   public static byte[] compress(String content) throws IOException {
