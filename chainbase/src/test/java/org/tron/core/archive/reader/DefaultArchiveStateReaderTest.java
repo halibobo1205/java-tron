@@ -14,6 +14,8 @@ import static org.mockito.Mockito.when;
 import com.google.common.primitives.Bytes;
 import com.google.protobuf.ByteString;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -32,6 +34,7 @@ import org.tron.core.archive.domain.ArchiveDomain;
 import org.tron.core.archive.domain.ArchiveDomainCatalog;
 import org.tron.core.archive.domain.DefaultArchiveDomainCatalog;
 import org.tron.core.archive.query.ArchiveQueryLimits;
+import org.tron.core.archive.query.HistoricalQueryLimitException;
 import org.tron.core.archive.query.QueryContext;
 import org.tron.core.archive.reader.ArchiveReadResult.Status;
 import org.tron.core.archive.temporal.ArchiveTemporalStore;
@@ -210,6 +213,29 @@ public class DefaultArchiveStateReaderTest {
   }
 
   @Test
+  public void votesAndDelegationReadHistoricalSnapshotWithoutLiveFallback() throws Exception {
+    byte[] address = addr(1);
+    byte[] delegationKey = "12-witness-vi".getBytes(StandardCharsets.US_ASCII);
+    org.tron.protos.Protocol.Votes votes = org.tron.protos.Protocol.Votes.newBuilder()
+        .setAddress(ByteString.copyFrom(address))
+        .addNewVotes(org.tron.protos.Protocol.Vote.newBuilder()
+            .setVoteAddress(ByteString.copyFrom(addr(2)))
+            .setVoteCount(7L))
+        .build();
+    put(ArchiveDomain.VOTES, address, DomainValue.present(votes.toByteArray()), 5L);
+    put(ArchiveDomain.DELEGATION, delegationKey,
+        DomainValue.present(ByteArray.fromLong(123L)), 5L);
+
+    ArchiveStateReader reader = readerAt(5L);
+    assertEquals(votes, reader.getVotes(address).getValue().getInstance());
+    assertEquals(123L, ByteArray.toLong(
+        reader.getDelegation(delegationKey).getValue()));
+    assertEquals(Status.MISSING, reader.getVotes(addr(3)).getStatus());
+    assertEquals(Status.MISSING, reader.getDelegation(
+        "missing".getBytes(StandardCharsets.US_ASCII)).getStatus());
+  }
+
+  @Test
   public void getAccountAssetReadsTrc10Balance() throws Exception {
     byte[] address = addr(1);
     byte[] assetId = "1000001".getBytes(StandardCharsets.US_ASCII);
@@ -221,6 +247,71 @@ public class DefaultArchiveStateReaderTest {
     assertEquals(Status.PRESENT, balance.getStatus());
     assertEquals(88L, ByteArray.toLong(balance.getValue()));
     assertEquals(Status.MISSING, readerAt(5).getAccountAsset(addr(2), assetId).getStatus());
+  }
+
+  @Test
+  public void getAccountAssetsEnumeratesMembershipAtHistoricalPoint() throws Exception {
+    byte[] address = addr(1);
+    byte[] firstId = "1000001".getBytes(StandardCharsets.US_ASCII);
+    byte[] secondId = "1000010".getBytes(StandardCharsets.US_ASCII);
+    byte[] otherAddressId = "1000100".getBytes(StandardCharsets.US_ASCII);
+    put(ArchiveDomain.ACCOUNT_ASSET, Bytes.concat(address, firstId),
+        DomainValue.tombstone(), DomainValue.present(ByteArray.fromLong(88L)), 2L);
+    put(ArchiveDomain.ACCOUNT_ASSET, Bytes.concat(address, secondId),
+        DomainValue.tombstone(), DomainValue.present(ByteArray.fromLong(99L)), 6L);
+    put(ArchiveDomain.ACCOUNT_ASSET, Bytes.concat(addr(2), otherAddressId),
+        DomainValue.tombstone(), DomainValue.present(ByteArray.fromLong(777L)), 3L);
+    put(ArchiveDomain.ACCOUNT_ASSET, Bytes.concat(address, firstId),
+        DomainValue.present(ByteArray.fromLong(88L)), DomainValue.tombstone(), 8L);
+
+    Map<String, Long> atFive = readerAt(5L).getAccountAssets(address);
+    Map<String, Long> atSeven = readerAt(7L).getAccountAssets(address);
+    Map<String, Long> atNine = readerAt(9L).getAccountAssets(address);
+
+    assertEquals(Collections.singletonMap("1000001", 88L), atFive);
+    assertEquals(2, atSeven.size());
+    assertEquals(Long.valueOf(88L), atSeven.get("1000001"));
+    assertEquals(Long.valueOf(99L), atSeven.get("1000010"));
+    assertEquals(Collections.singletonMap("1000010", 99L), atNine);
+    assertThrows(UnsupportedOperationException.class,
+        () -> atSeven.put("1000100", 1L));
+  }
+
+  @Test
+  public void getAccountAssetsFailsClosedForMidChainCoverage() {
+    ArchiveStateReader reader = new DefaultArchiveStateReader(
+        store.openReadView(), catalog,
+        ArchiveStatePoint.blockEnd(1L, new byte[] {1}, 5L),
+        () -> { }, false);
+
+    ArchiveReaderException failure = assertThrows(
+        ArchiveReaderException.class, () -> reader.getAccountAssets(addr(1)));
+
+    assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, failure.getReason());
+    reader.close();
+  }
+
+  @Test
+  public void getAccountAssetsStopsAtBackendReadBudgetDuringMembershipScan() {
+    byte[] address = addr(1);
+    byte[] assetId = "1000001".getBytes(StandardCharsets.US_ASCII);
+    put(ArchiveDomain.ACCOUNT_ASSET, Bytes.concat(address, assetId),
+        DomainValue.tombstone(), DomainValue.present(ByteArray.fromLong(88L)), 2L);
+    QueryContext context = new QueryContext(ArchiveQueryLimits.builder()
+        .maxBackendReadsPerRequest(7L)
+        .build());
+    ArchiveStateReader reader = new DefaultArchiveStateReader(
+        store.openReadView(), catalog,
+        ArchiveStatePoint.blockEnd(1L, new byte[] {1}, 5L),
+        () -> { }, true, 16, 4_096L, context);
+
+    HistoricalQueryLimitException failure = assertThrows(
+        HistoricalQueryLimitException.class, () -> reader.getAccountAssets(address));
+
+    assertEquals(HistoricalQueryLimitException.Limit.BACKEND_READS, failure.getLimit());
+    assertEquals(8L, context.getBackendReads());
+    assertSame(failure, context.getTerminalException());
+    reader.close();
   }
 
   @Test

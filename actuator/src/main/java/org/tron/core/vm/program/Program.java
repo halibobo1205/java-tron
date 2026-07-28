@@ -473,8 +473,11 @@ public class Program {
 
     increaseNonce();
 
+    Map<String, Long> tokenBalances = getContractState().isHistoricalArchive()
+        ? getContractState().getTokenBalances(owner)
+        : getContractState().getAccount(owner).getAssetMapV2();
     InternalTransaction internalTx = addInternalTx(null, owner, obtainer, balance, null,
-        "suicide", nonce, getContractState().getAccount(owner).getAssetMapV2());
+        "suicide", nonce, tokenBalances);
 
     int ADDRESS_SIZE = VMUtils.getAddressSize();
     if (FastByteComparisons.compareTo(owner, 0, ADDRESS_SIZE, obtainer, 0, ADDRESS_SIZE) == 0) {
@@ -483,14 +486,14 @@ public class Program {
       byte[] blackHoleAddress = getContractState().getBlackHoleAddress();
       if (VMConfig.allowTvmTransferTrc10()) {
         getContractState().addBalance(blackHoleAddress, balance);
-        MUtil.transferAllToken(getContractState(), owner, blackHoleAddress);
+        MUtil.transferAllToken(getContractState(), owner, blackHoleAddress, tokenBalances);
       }
     } else {
       createAccountIfNotExist(getContractState(), obtainer);
       try {
         MUtil.transfer(getContractState(), owner, obtainer, balance);
         if (VMConfig.allowTvmTransferTrc10()) {
-          MUtil.transferAllToken(getContractState(), owner, obtainer);
+          MUtil.transferAllToken(getContractState(), owner, obtainer, tokenBalances);
         }
       } catch (ContractValidateException e) {
         if (VMConfig.allowTvmConstantinople()) {
@@ -542,8 +545,11 @@ public class Program {
 
     increaseNonce();
 
+    Map<String, Long> tokenBalances = getContractState().isHistoricalArchive()
+        ? getContractState().getTokenBalances(owner)
+        : getContractState().getAccount(owner).getAssetMapV2();
     InternalTransaction internalTx = addInternalTx(null, owner, obtainer, balance, null,
-        "suicide", nonce, getContractState().getAccount(owner).getAssetMapV2());
+        "suicide", nonce, tokenBalances);
 
     if (FastByteComparisons.isEqual(owner, obtainer)) {
       return;
@@ -562,7 +568,7 @@ public class Program {
     try {
       MUtil.transfer(getContractState(), owner, obtainer, balance);
       if (VMConfig.allowTvmTransferTrc10()) {
-        MUtil.transferAllToken(getContractState(), owner, obtainer);
+        MUtil.transferAllToken(getContractState(), owner, obtainer, tokenBalances);
       }
     } catch (ContractValidateException e) {
       if (VMConfig.allowTvmConstantinople()) {
@@ -647,26 +653,31 @@ public class Program {
             });
 
     // merge usage
-    BandwidthProcessor bandwidthProcessor = new BandwidthProcessor(ChainBaseManager.getInstance());
-    bandwidthProcessor.updateUsageForDelegated(ownerCapsule);
-    ownerCapsule.setLatestConsumeTime(now);
-    if (ownerCapsule.getNetUsage() > 0) {
-      bandwidthProcessor.unDelegateIncrease(inheritorCapsule, ownerCapsule,
-          ownerCapsule.getNetUsage(), BANDWIDTH, now);
-    }
+    if (repo.isHistoricalArchive()) {
+      repo.transferFrozenV2UsageForSelfDestruct(ownerCapsule, inheritorCapsule, now);
+    } else {
+      BandwidthProcessor bandwidthProcessor =
+          new BandwidthProcessor(ChainBaseManager.getInstance());
+      bandwidthProcessor.updateUsageForDelegated(ownerCapsule);
+      ownerCapsule.setLatestConsumeTime(now);
+      if (ownerCapsule.getNetUsage() > 0) {
+        bandwidthProcessor.unDelegateIncrease(inheritorCapsule, ownerCapsule,
+            ownerCapsule.getNetUsage(), BANDWIDTH, now);
+      }
 
-    EnergyProcessor energyProcessor =
-        new EnergyProcessor(
-            repo.getDynamicPropertiesStore(), ChainBaseManager.getInstance().getAccountStore());
-    energyProcessor.updateUsage(ownerCapsule);
-    ownerCapsule.setLatestConsumeTimeForEnergy(now);
-    if (ownerCapsule.getEnergyUsage() > 0) {
-      energyProcessor.unDelegateIncrease(inheritorCapsule, ownerCapsule,
-          ownerCapsule.getEnergyUsage(), ENERGY, now);
+      EnergyProcessor energyProcessor =
+          new EnergyProcessor(
+              repo.getDynamicPropertiesStore(), ChainBaseManager.getInstance().getAccountStore());
+      energyProcessor.updateUsage(ownerCapsule);
+      ownerCapsule.setLatestConsumeTimeForEnergy(now);
+      if (ownerCapsule.getEnergyUsage() > 0) {
+        energyProcessor.unDelegateIncrease(inheritorCapsule, ownerCapsule,
+            ownerCapsule.getEnergyUsage(), ENERGY, now);
+      }
     }
 
     // withdraw expire unfrozen balance
-    long nowTimestamp = repo.getDynamicPropertiesStore().getLatestBlockHeaderTimestamp();
+    long nowTimestamp = repo.getVmDynamicProperties().getLatestBlockHeaderTimestamp();
     long expireUnfrozenBalance =
         ownerCapsule.getUnfrozenV2List().stream()
             .filter(
@@ -761,7 +772,7 @@ public class Program {
     }
 
     // check freeze
-    long now = getContractState().getDynamicPropertiesStore().getLatestBlockHeaderTimestamp();
+    long now = getContractState().getVmDynamicProperties().getLatestBlockHeaderTimestamp();
     // bandwidth
     if (accountCapsule.getFrozenCount() > 0
         && accountCapsule.getFrozenList().stream()
@@ -784,7 +795,7 @@ public class Program {
     if (!VMConfig.allowTvmFreezeV2()) {
       return true;
     }
-    long now = getContractState().getDynamicPropertiesStore().getLatestBlockHeaderTimestamp();
+    long now = getContractState().getVmDynamicProperties().getLatestBlockHeaderTimestamp();
 
     boolean isDelegatedResourceEmpty =
         accountCapsule.getDelegatedFrozenV2BalanceForBandwidth() == 0

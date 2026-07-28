@@ -13,12 +13,15 @@ import static org.tron.core.config.Parameter.ChainConstant.WINDOW_SIZE_PRECISION
 import com.google.protobuf.ByteString;
 import com.google.protobuf.MessageLite;
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import org.apache.commons.lang3.tuple.Pair;
+import org.bouncycastle.util.encoders.Hex;
 import org.tron.common.math.StrictMathWrapper;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.runtime.vm.DataWord;
@@ -62,10 +65,10 @@ import org.tron.protos.contract.Common.ResourceCode;
  * the parent chain, then the archive root; a value absent from the archive is reported absent,
  * never read from the latest stores.
  *
- * <p>Hard-fork / proposal flags are NOT read here: they come from the thread-local {@link VMConfig}
- * snapshot the executor installs (L8 Slice 3). Domains the archive does not cover in P0
- * (delegation, votes, witness, asset-issue, and the live dynamic-properties store) and
- * account-creation paths that need unavailable block context throw
+ * <p>Hard-fork / proposal flags come from the thread-local {@link VMConfig} snapshot the executor
+ * installs. Mutable VM side effects for votes, delegation, and resource weights are isolated in
+ * the same request overlay. Domains the archive does not cover and account-creation paths that
+ * need unavailable block context throw
  * {@link UnsupportedHistoricalStateException} rather than fall back to latest.
  */
 public class ArchiveRepositoryAdapter implements Repository {
@@ -75,6 +78,12 @@ public class ArchiveRepositoryAdapter implements Repository {
   private static final int MAX_BLOCK_HASH_CACHE_ENTRIES = 257;
   private static final long OVERLAY_ENTRY_OVERHEAD_BYTES = 192L;
   private static final long ENERGY_WINDOW_SIZE = WINDOW_SIZE_MS / BLOCK_PRODUCED_INTERVAL;
+  private static final byte[] TOTAL_NET_WEIGHT =
+      "TOTAL_NET_WEIGHT".getBytes(StandardCharsets.US_ASCII);
+  private static final byte[] TOTAL_ENERGY_WEIGHT =
+      "TOTAL_ENERGY_WEIGHT".getBytes(StandardCharsets.US_ASCII);
+  private static final byte[] TOTAL_TRON_POWER_WEIGHT =
+      "TOTAL_TRON_POWER_WEIGHT".getBytes(StandardCharsets.US_ASCII);
 
   // Root: reader + vmProperties set, parent null. Child: parent set, reader/vmProperties null.
   private final ArchiveStateReader reader;
@@ -82,12 +91,16 @@ public class ArchiveRepositoryAdapter implements Repository {
   private final ArchiveRepositoryAdapter parent;
   private final boolean genesisComplete;
   private final Map<Long, byte[]> blockHashCache;
+  private final byte[] blackHoleAddress;
 
   // Copy-on-write overlay. containsKey decides; a null value marks a deletion at this level.
   private final Map<Key, AccountCapsule> accounts = new HashMap<>();
   private final Map<Key, byte[]> codes = new HashMap<>();
   private final Map<Key, ContractCapsule> contracts = new HashMap<>();
   private final Map<Key, ContractStateCapsule> contractStates = new HashMap<>();
+  private final Map<Key, BytesCapsule> dynamicProperties = new HashMap<>();
+  private final Map<Key, VotesCapsule> votes = new HashMap<>();
+  private final Map<Key, BytesCapsule> delegations = new HashMap<>();
   private final Map<Key, Map<DataWord, DataWord>> storage = new HashMap<>();
   private final Map<Key, Map<Key, Long>> tokenBalances = new HashMap<>();
   private final Map<Key, Map<Key, byte[]>> transientStorage = new HashMap<>();
@@ -99,10 +112,17 @@ public class ArchiveRepositoryAdapter implements Repository {
 
   public ArchiveRepositoryAdapter(ArchiveStateReader reader, VmDynamicProperties vmProperties,
       boolean genesisComplete) {
+    this(reader, vmProperties, genesisComplete, null);
+  }
+
+  public ArchiveRepositoryAdapter(ArchiveStateReader reader, VmDynamicProperties vmProperties,
+      boolean genesisComplete, byte[] blackHoleAddress) {
     this.reader = reader;
     this.vmProperties = vmProperties;
     this.parent = null;
     this.genesisComplete = genesisComplete;
+    this.blackHoleAddress =
+        blackHoleAddress == null ? null : blackHoleAddress.clone();
     this.blockHashCache = new LinkedHashMap<Long, byte[]>(16, 0.75f, true) {
       @Override
       protected boolean removeEldestEntry(Map.Entry<Long, byte[]> eldest) {
@@ -117,6 +137,7 @@ public class ArchiveRepositoryAdapter implements Repository {
     this.parent = parent;
     this.genesisComplete = parent.genesisComplete;
     this.blockHashCache = parent.blockHashCache;
+    this.blackHoleAddress = parent.blackHoleAddress;
   }
 
   @Override
@@ -170,6 +191,29 @@ public class ArchiveRepositoryAdapter implements Repository {
         () -> reader.getAccountAsset(address, tokenIdWithoutLeadingZero), "account-asset");
     requireKnown(row, "account-asset");
     return row.isPresent() ? ByteArray.toLong(row.getValue()) : 0L;
+  }
+
+  @Override
+  public Map<String, Long> getTokenBalances(byte[] address) {
+    Key accountKey = Key.create(address);
+    if (getAccount(address) == null) {
+      return Collections.emptyMap();
+    }
+    Map<String, Long> visible = parent == null
+        ? new LinkedHashMap<>(readValue(() -> reader.getAccountAssets(address), "account-assets"))
+        : new LinkedHashMap<>(parent.getTokenBalances(address));
+    Map<Key, Long> local = tokenBalances.get(accountKey);
+    if (local != null) {
+      local.forEach((tokenKey, balance) -> {
+        String tokenId = new String(tokenKey.getData(), StandardCharsets.US_ASCII);
+        if (balance == null || balance <= 0L) {
+          visible.remove(tokenId);
+        } else {
+          visible.put(tokenId, balance);
+        }
+      });
+    }
+    return Collections.unmodifiableMap(visible);
   }
 
   @Override
@@ -347,6 +391,11 @@ public class ArchiveRepositoryAdapter implements Repository {
       }
     });
     contractStates.forEach((key, state) -> parent.updateContractState(key.getData(), state));
+    dynamicProperties.forEach((key, value) ->
+        parent.updateDynamicProperty(key.getData(), value));
+    votes.forEach((key, value) -> parent.updateVotes(key.getData(), value));
+    delegations.forEach((key, value) ->
+        parent.updateDelegation(key.getData(), value));
     newContracts.forEach(key -> parent.putNewContract(key.getData()));
     storage.forEach((addrKey, slots) ->
         slots.forEach((slot, value) -> parent.putStorageValue(addrKey.getData(), slot, value)));
@@ -475,7 +524,17 @@ public class ArchiveRepositoryAdapter implements Repository {
 
   @Override
   public BytesCapsule getDynamicProperty(byte[] bytesKey) {
-    throw unsupported("raw dynamic-property reads");
+    Key key = Key.create(bytesKey);
+    if (dynamicProperties.containsKey(key)) {
+      return copyBytes(dynamicProperties.get(key));
+    }
+    if (parent != null) {
+      return parent.getDynamicProperty(bytesKey);
+    }
+    ArchiveReadResult<byte[]> row =
+        read(() -> reader.getDynamicProperty(bytesKey), "dynamic-property");
+    requireKnown(row, "dynamic-property");
+    return row.isPresent() ? new BytesCapsule(row.getValue()) : null;
   }
 
   @Override
@@ -485,27 +544,55 @@ public class ArchiveRepositoryAdapter implements Repository {
 
   @Override
   public VotesCapsule getVotes(byte[] address) {
-    throw unsupported("votes reads");
+    Key key = Key.create(address);
+    if (votes.containsKey(key)) {
+      return copyVotes(votes.get(key));
+    }
+    if (parent != null) {
+      return parent.getVotes(address);
+    }
+    ArchiveReadResult<VotesCapsule> row =
+        read(() -> reader.getVotes(address), "votes");
+    requireKnown(row, "votes");
+    return row.isPresent() ? copyVotes(row.getValue()) : null;
   }
 
   @Override
   public long getBeginCycle(byte[] address) {
-    throw unsupported("begin-cycle reads");
+    BytesCapsule value = getDelegation(Key.create(address));
+    return value == null ? 0L : delegationLong(value, "begin-cycle");
   }
 
   @Override
   public long getEndCycle(byte[] address) {
-    throw unsupported("end-cycle reads");
+    BytesCapsule value = getDelegation(Key.create(endCycleKey(address)));
+    return value == null ? DelegationStore.REMARK : delegationLong(value, "end-cycle");
   }
 
   @Override
   public AccountCapsule getAccountVote(long cycle, byte[] address) {
-    throw unsupported("account-vote reads");
+    BytesCapsule value = getDelegation(Key.create(accountVoteKey(cycle, address)));
+    return value == null ? null : new AccountCapsule(value.getData());
   }
 
   @Override
   public BytesCapsule getDelegation(Key key) {
-    throw unsupported("delegation reads");
+    if (delegations.containsKey(key)) {
+      return copyBytes(delegations.get(key));
+    }
+    if (parent != null) {
+      return parent.getDelegation(key);
+    }
+    ArchiveReadResult<byte[]> row =
+        read(() -> reader.getDelegation(key.getData()), "delegation");
+    requireKnown(row, "delegation");
+    return row.isPresent() ? new BytesCapsule(row.getValue()) : null;
+  }
+
+  @Override
+  public BigInteger getWitnessVi(long cycle, byte[] address) {
+    BytesCapsule value = getDelegation(Key.create(witnessViKey(cycle, address)));
+    return value == null ? BigInteger.ZERO : new BigInteger(value.getData());
   }
 
   @Override
@@ -520,7 +607,10 @@ public class ArchiveRepositoryAdapter implements Repository {
 
   @Override
   public byte[] getBlackHoleAddress() {
-    throw unsupported("black-hole address" + NEEDS_BLOCK_CTX);
+    if (blackHoleAddress == null || blackHoleAddress.length == 0) {
+      throw unsupported("black-hole address" + NEEDS_BLOCK_CTX);
+    }
+    return blackHoleAddress.clone();
   }
 
   @Override
@@ -561,17 +651,20 @@ public class ArchiveRepositoryAdapter implements Repository {
 
   @Override
   public long getTotalNetWeight() {
-    return getVmDynamicProperties().getTotalNetWeight();
+    return dynamicLong(
+        TOTAL_NET_WEIGHT, getVmDynamicProperties().getTotalNetWeight(), "total net weight");
   }
 
   @Override
   public long getTotalEnergyWeight() {
-    return getVmDynamicProperties().getTotalEnergyWeight();
+    return dynamicLong(TOTAL_ENERGY_WEIGHT,
+        getVmDynamicProperties().getTotalEnergyWeight(), "total energy weight");
   }
 
   @Override
   public long getTotalTronPowerWeight() {
-    return getVmDynamicProperties().getTotalTronPowerWeight();
+    return dynamicLong(TOTAL_TRON_POWER_WEIGHT,
+        getVmDynamicProperties().getTotalTronPowerWeight(), "total tron-power weight");
   }
 
   @Override
@@ -617,11 +710,20 @@ public class ArchiveRepositoryAdapter implements Repository {
     long previousTime =
         accountCapsule.getAccountResource().getLatestConsumeTimeForEnergy();
     long recoveredUsage =
-        increaseEnergyUsage(accountCapsule, previousUsage, 0L, previousTime, now);
+        increaseUsage(
+            accountCapsule, ResourceCode.ENERGY, previousUsage, 0L, previousTime, now);
     accountCapsule.setEnergyUsage(recoveredUsage);
     accountCapsule.setLatestConsumeTimeForEnergy(now);
     accountCapsule.setEnergyUsage(
-        increaseEnergyUsage(accountCapsule, recoveredUsage, usage, now, now));
+        increaseUsage(
+            accountCapsule, ResourceCode.ENERGY, recoveredUsage, usage, now, now));
+  }
+
+  @Override
+  public void transferFrozenV2UsageForSelfDestruct(AccountCapsule owner,
+      AccountCapsule inheritor, long now) {
+    transferUsageForSelfDestruct(owner, inheritor, ResourceCode.BANDWIDTH, now);
+    transferUsageForSelfDestruct(owner, inheritor, ResourceCode.ENERGY, now);
   }
 
   @Override
@@ -714,6 +816,44 @@ public class ArchiveRepositoryAdapter implements Repository {
 
   private static ContractStateCapsule copyContractState(ContractStateCapsule state) {
     return state == null ? null : new ContractStateCapsule(state.getInstance());
+  }
+
+  private static VotesCapsule copyVotes(VotesCapsule value) {
+    return value == null ? null : new VotesCapsule(value.getData());
+  }
+
+  private static BytesCapsule copyBytes(BytesCapsule value) {
+    return value == null ? null : new BytesCapsule(value.getData().clone());
+  }
+
+  private long dynamicLong(byte[] key, long fallback, String what) {
+    BytesCapsule value = getDynamicProperty(key);
+    if (value == null) {
+      return fallback;
+    }
+    return delegationLong(value, what);
+  }
+
+  private static long delegationLong(BytesCapsule value, String what) {
+    byte[] data = value.getData();
+    if (data == null || data.length != Long.BYTES) {
+      throw unsupportedHistoricalOperation(what + " with a non-int64 value");
+    }
+    return ByteArray.toLong(data);
+  }
+
+  private static byte[] endCycleKey(byte[] address) {
+    return ("end-" + Hex.toHexString(address)).getBytes(StandardCharsets.US_ASCII);
+  }
+
+  private static byte[] accountVoteKey(long cycle, byte[] address) {
+    return (cycle + "-" + Hex.toHexString(address) + "-account-vote")
+        .getBytes(StandardCharsets.US_ASCII);
+  }
+
+  private static byte[] witnessViKey(long cycle, byte[] address) {
+    return (cycle + "-" + Hex.toHexString(address) + "-vi")
+        .getBytes(StandardCharsets.US_ASCII);
   }
 
   private static void reserveOverlay(byte[]... values) {
@@ -816,7 +956,8 @@ public class ArchiveRepositoryAdapter implements Repository {
 
   @Override
   public void updateDynamicProperty(byte[] word, BytesCapsule bytesCapsule) {
-    throw unsupported("updateDynamicProperty");
+    reserveOverlay(word, bytesCapsule == null ? null : bytesCapsule.getData());
+    dynamicProperties.put(Key.create(word), copyBytes(bytesCapsule));
   }
 
   @Override
@@ -826,27 +967,31 @@ public class ArchiveRepositoryAdapter implements Repository {
 
   @Override
   public void updateVotes(byte[] word, VotesCapsule votesCapsule) {
-    throw unsupported("updateVotes");
+    reserveOverlayMessage(word,
+        votesCapsule == null ? null : votesCapsule.getInstance());
+    votes.put(Key.create(word), copyVotes(votesCapsule));
   }
 
   @Override
   public void updateBeginCycle(byte[] word, long cycle) {
-    throw unsupported("updateBeginCycle");
+    updateDelegation(word, new BytesCapsule(ByteArray.fromLong(cycle)));
   }
 
   @Override
   public void updateEndCycle(byte[] word, long cycle) {
-    throw unsupported("updateEndCycle");
+    updateDelegation(endCycleKey(word), new BytesCapsule(ByteArray.fromLong(cycle)));
   }
 
   @Override
   public void updateAccountVote(byte[] word, long cycle, AccountCapsule accountCapsule) {
-    throw unsupported("updateAccountVote");
+    updateDelegation(
+        accountVoteKey(cycle, word), new BytesCapsule(accountCapsule.getData()));
   }
 
   @Override
   public void updateDelegation(byte[] word, BytesCapsule bytesCapsule) {
-    throw unsupported("updateDelegation");
+    reserveOverlay(word, bytesCapsule == null ? null : bytesCapsule.getData());
+    delegations.put(Key.create(word), copyBytes(bytesCapsule));
   }
 
   @Override
@@ -857,32 +1002,35 @@ public class ArchiveRepositoryAdapter implements Repository {
 
   @Override
   public void addTotalNetWeight(long amount) {
-    throw unsupported("addTotalNetWeight");
+    saveTotalNetWeight(getTotalNetWeight() + amount);
   }
 
   @Override
   public void addTotalEnergyWeight(long amount) {
-    throw unsupported("addTotalEnergyWeight");
+    saveTotalEnergyWeight(getTotalEnergyWeight() + amount);
   }
 
   @Override
   public void addTotalTronPowerWeight(long amount) {
-    throw unsupported("addTotalTronPowerWeight");
+    saveTotalTronPowerWeight(getTotalTronPowerWeight() + amount);
   }
 
   @Override
   public void saveTotalNetWeight(long totalNetWeight) {
-    throw unsupported("saveTotalNetWeight");
+    updateDynamicProperty(
+        TOTAL_NET_WEIGHT, new BytesCapsule(ByteArray.fromLong(totalNetWeight)));
   }
 
   @Override
   public void saveTotalEnergyWeight(long totalEnergyWeight) {
-    throw unsupported("saveTotalEnergyWeight");
+    updateDynamicProperty(
+        TOTAL_ENERGY_WEIGHT, new BytesCapsule(ByteArray.fromLong(totalEnergyWeight)));
   }
 
   @Override
   public void saveTotalTronPowerWeight(long totalTronPowerWeight) {
-    throw unsupported("saveTotalTronPowerWeight");
+    updateDynamicProperty(
+        TOTAL_TRON_POWER_WEIGHT, new BytesCapsule(ByteArray.fromLong(totalTronPowerWeight)));
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -921,12 +1069,13 @@ public class ArchiveRepositoryAdapter implements Repository {
     return energyUsageFromAverage(averageLastUsage + averageUsage, windowSize);
   }
 
-  private long increaseEnergyUsage(AccountCapsule accountCapsule, long lastUsage,
-      long usage, long lastTime, long now) {
+  private long increaseUsage(AccountCapsule accountCapsule, ResourceCode resourceCode,
+      long lastUsage, long usage, long lastTime, long now) {
     if (getVmDynamicProperties().supportAllowCancelAllUnfreezeV2()) {
-      return increaseEnergyUsageV2(accountCapsule, lastUsage, usage, lastTime, now);
+      return increaseUsageV2(
+          accountCapsule, resourceCode, lastUsage, usage, lastTime, now);
     }
-    long oldWindowSize = accountCapsule.getWindowSize(ResourceCode.ENERGY);
+    long oldWindowSize = accountCapsule.getWindowSize(resourceCode);
     requireValidUsageWindow(lastTime, now, oldWindowSize);
     long averageLastUsage;
     long averageUsage;
@@ -956,21 +1105,21 @@ public class ArchiveRepositoryAdapter implements Repository {
     if (getVmDynamicProperties().supportUnfreezeDelay()) {
       long remainingUsage = energyUsageFromAverage(averageLastUsage, oldWindowSize);
       if (remainingUsage == 0L) {
-        accountCapsule.setNewWindowSize(ResourceCode.ENERGY, ENERGY_WINDOW_SIZE);
+        accountCapsule.setNewWindowSize(resourceCode, ENERGY_WINDOW_SIZE);
         return newUsage;
       }
       long remainingWindow = oldWindowSize - (now - lastTime);
       long newWindow = weightedWindowSize(
           remainingUsage, remainingWindow, usage, ENERGY_WINDOW_SIZE, newUsage);
-      accountCapsule.setNewWindowSize(ResourceCode.ENERGY, newWindow);
+      accountCapsule.setNewWindowSize(resourceCode, newWindow);
     }
     return newUsage;
   }
 
-  private long increaseEnergyUsageV2(AccountCapsule accountCapsule, long lastUsage,
-      long usage, long lastTime, long now) {
-    long oldWindowSizeV2 = accountCapsule.getWindowSizeV2(ResourceCode.ENERGY);
-    long oldWindowSize = accountCapsule.getWindowSize(ResourceCode.ENERGY);
+  private long increaseUsageV2(AccountCapsule accountCapsule, ResourceCode resourceCode,
+      long lastUsage, long usage, long lastTime, long now) {
+    long oldWindowSizeV2 = accountCapsule.getWindowSizeV2(resourceCode);
+    long oldWindowSize = accountCapsule.getWindowSize(resourceCode);
     requireValidUsageWindow(lastTime, now, oldWindowSize);
     long averageLastUsage;
     long averageUsage;
@@ -1000,7 +1149,7 @@ public class ArchiveRepositoryAdapter implements Repository {
     long remainingUsage = energyUsageFromAverage(averageLastUsage, oldWindowSize);
     if (remainingUsage == 0L) {
       accountCapsule.setNewWindowSizeV2(
-          ResourceCode.ENERGY, ENERGY_WINDOW_SIZE * WINDOW_SIZE_PRECISION);
+          resourceCode, ENERGY_WINDOW_SIZE * WINDOW_SIZE_PRECISION);
       return newUsage;
     }
     long remainingWindowV2 =
@@ -1023,8 +1172,70 @@ public class ArchiveRepositoryAdapter implements Repository {
         newWindowV2,
         ENERGY_WINDOW_SIZE * WINDOW_SIZE_PRECISION,
         disableJavaLangMath());
-    accountCapsule.setNewWindowSizeV2(ResourceCode.ENERGY, newWindowV2);
+    accountCapsule.setNewWindowSizeV2(resourceCode, newWindowV2);
     return newUsage;
+  }
+
+  private void transferUsageForSelfDestruct(AccountCapsule owner,
+      AccountCapsule inheritor, ResourceCode resourceCode, long now) {
+    long lastTime = owner.getLastConsumeTime(resourceCode);
+    long usage = owner.getUsage(resourceCode);
+    usage = increaseUsage(owner, resourceCode, usage, 0L, lastTime, now);
+    owner.setUsage(resourceCode, usage);
+    owner.setLatestTime(resourceCode, now);
+    if (usage > 0L) {
+      unDelegateIncreaseForReplay(inheritor, owner, usage, resourceCode, now);
+    }
+  }
+
+  private void unDelegateIncreaseForReplay(AccountCapsule owner,
+      AccountCapsule receiver, long transferUsage, ResourceCode resourceCode, long now) {
+    long lastOwnerTime = owner.getLastConsumeTime(resourceCode);
+    long ownerUsage = owner.getUsage(resourceCode);
+    ownerUsage =
+        increaseUsage(owner, resourceCode, ownerUsage, 0L, lastOwnerTime, now);
+    long newOwnerUsage = ownerUsage + transferUsage;
+    if (newOwnerUsage == 0L) {
+      if (getVmDynamicProperties().supportAllowCancelAllUnfreezeV2()) {
+        owner.setNewWindowSizeV2(
+            resourceCode, ENERGY_WINDOW_SIZE * WINDOW_SIZE_PRECISION);
+      } else {
+        owner.setNewWindowSize(resourceCode, ENERGY_WINDOW_SIZE);
+      }
+      owner.setUsage(resourceCode, 0L);
+      owner.setLatestTime(resourceCode, now);
+      return;
+    }
+    if (getVmDynamicProperties().supportAllowCancelAllUnfreezeV2()) {
+      long ownerWindow = nonNegative(owner.getWindowSizeV2(resourceCode));
+      long receiverWindow = nonNegative(receiver.getWindowSizeV2(resourceCode));
+      long newWindow;
+      if (hardenResourceCalculation()) {
+        BigInteger weighted = BigInteger.valueOf(ownerUsage)
+            .multiply(BigInteger.valueOf(ownerWindow))
+            .add(BigInteger.valueOf(transferUsage)
+                .multiply(BigInteger.valueOf(receiverWindow)));
+        newWindow = divideCeilExact(weighted, BigInteger.valueOf(newOwnerUsage));
+      } else {
+        newWindow = divideCeil(
+            ownerUsage * ownerWindow + transferUsage * receiverWindow,
+            newOwnerUsage);
+      }
+      owner.setNewWindowSizeV2(resourceCode,
+          min(newWindow, ENERGY_WINDOW_SIZE * WINDOW_SIZE_PRECISION,
+              disableJavaLangMath()));
+    } else {
+      long ownerWindow = nonNegative(owner.getWindowSize(resourceCode));
+      long receiverWindow = nonNegative(receiver.getWindowSize(resourceCode));
+      owner.setNewWindowSize(resourceCode, weightedWindowSize(
+          ownerUsage, ownerWindow, transferUsage, receiverWindow, newOwnerUsage));
+    }
+    owner.setUsage(resourceCode, newOwnerUsage);
+    owner.setLatestTime(resourceCode, now);
+  }
+
+  private static long nonNegative(long value) {
+    return value < 0L ? 0L : value;
   }
 
   private long combinedEnergyUsage(long averageLastUsage, long lastWindowSize,
@@ -1091,6 +1302,10 @@ public class ArchiveRepositoryAdapter implements Repository {
     ArchiveReadResult<T> call() throws ArchiveReaderException;
   }
 
+  private interface ReaderValueCall<T> {
+    T call() throws ArchiveReaderException;
+  }
+
   private <T> T present(ArchiveReadResult<T> result, String what) {
     requireKnown(result, what);
     return result.isPresent() ? result.getValue() : null;
@@ -1104,6 +1319,15 @@ public class ArchiveRepositoryAdapter implements Repository {
   }
 
   private <T> ArchiveReadResult<T> read(ReaderCall<T> call, String what) {
+    try {
+      return call.call();
+    } catch (ArchiveReaderException e) {
+      throw recordUnsupported(new UnsupportedHistoricalStateException(
+          "archive read failed for " + what, e));
+    }
+  }
+
+  private <T> T readValue(ReaderValueCall<T> call, String what) {
     try {
       return call.call();
     } catch (ArchiveReaderException e) {

@@ -1,5 +1,6 @@
 package org.tron.core.archive.reader;
 
+import java.util.Map;
 import java.util.Objects;
 import java.util.function.Consumer;
 import org.tron.core.archive.ArchiveException;
@@ -14,6 +15,7 @@ import org.tron.core.archive.query.QueryLease;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.ContractCapsule;
 import org.tron.core.capsule.ContractStateCapsule;
+import org.tron.core.capsule.VotesCapsule;
 
 /** Reader wrapper that owns lifecycle and query-admission leases. */
 public final class ManagedArchiveStateReader implements ArchiveStateReader {
@@ -96,6 +98,11 @@ public final class ManagedArchiveStateReader implements ArchiveStateReader {
   }
 
   @Override
+  public Map<String, Long> getAccountAssets(byte[] address) throws ArchiveReaderException {
+    return read(() -> delegate.getAccountAssets(address));
+  }
+
+  @Override
   public ArchiveReadResult<ContractCapsule> getContract(byte[] address)
       throws ArchiveReaderException {
     return read(() -> delegate.getContract(address));
@@ -105,6 +112,18 @@ public final class ManagedArchiveStateReader implements ArchiveStateReader {
   public ArchiveReadResult<ContractStateCapsule> getContractState(byte[] address)
       throws ArchiveReaderException {
     return read(() -> delegate.getContractState(address));
+  }
+
+  @Override
+  public ArchiveReadResult<VotesCapsule> getVotes(byte[] address)
+      throws ArchiveReaderException {
+    return read(() -> delegate.getVotes(address));
+  }
+
+  @Override
+  public ArchiveReadResult<byte[]> getDelegation(byte[] key)
+      throws ArchiveReaderException {
+    return read(() -> delegate.getDelegation(key));
   }
 
   @Override

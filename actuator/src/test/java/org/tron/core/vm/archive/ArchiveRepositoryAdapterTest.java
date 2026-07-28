@@ -12,6 +12,12 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
+import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import org.junit.Test;
 import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.utils.ByteArray;
@@ -24,8 +30,10 @@ import org.tron.core.archive.reader.ArchiveReaderException;
 import org.tron.core.archive.reader.ArchiveStatePoint;
 import org.tron.core.archive.reader.ArchiveStateReader;
 import org.tron.core.capsule.AccountCapsule;
+import org.tron.core.capsule.BytesCapsule;
 import org.tron.core.capsule.ContractCapsule;
 import org.tron.core.capsule.ContractStateCapsule;
+import org.tron.core.capsule.VotesCapsule;
 import org.tron.core.db.EnergyProcessor;
 import org.tron.core.store.AccountStore;
 import org.tron.core.store.DynamicPropertiesStore;
@@ -56,10 +64,14 @@ public class ArchiveRepositoryAdapterTest {
   private static final class FakeReader implements ArchiveStateReader {
     ArchiveReadResult<AccountCapsule> account = ArchiveReadResult.missing();
     ArchiveReadResult<byte[]> accountAsset = ArchiveReadResult.missing();
+    Map<String, Long> accountAssets = Collections.emptyMap();
     ArchiveReadResult<ContractCapsule> contract = ArchiveReadResult.missing();
     ArchiveReadResult<ContractStateCapsule> contractState = ArchiveReadResult.missing();
     ArchiveReadResult<byte[]> code = ArchiveReadResult.missing();
     ArchiveReadResult<byte[]> storage = ArchiveReadResult.missing();
+    ArchiveReadResult<VotesCapsule> votes = ArchiveReadResult.missing();
+    Map<String, ArchiveReadResult<byte[]>> dynamicProperties = new HashMap<>();
+    Map<String, ArchiveReadResult<byte[]>> delegations = new HashMap<>();
     ArchiveReaderException accountError;
     byte[] blockHash = new byte[32];
     int blockHashReads;
@@ -79,6 +91,10 @@ public class ArchiveRepositoryAdapterTest {
       return accountAsset;
     }
 
+    public Map<String, Long> getAccountAssets(byte[] a) {
+      return accountAssets;
+    }
+
     public ArchiveReadResult<ContractCapsule> getContract(byte[] a) {
       return contract;
     }
@@ -96,7 +112,17 @@ public class ArchiveRepositoryAdapterTest {
     }
 
     public ArchiveReadResult<byte[]> getDynamicProperty(byte[] key) {
-      return ArchiveReadResult.missing();
+      return dynamicProperties.getOrDefault(
+          ByteArray.toHexString(key), ArchiveReadResult.missing());
+    }
+
+    public ArchiveReadResult<VotesCapsule> getVotes(byte[] address) {
+      return votes;
+    }
+
+    public ArchiveReadResult<byte[]> getDelegation(byte[] key) {
+      return delegations.getOrDefault(
+          ByteArray.toHexString(key), ArchiveReadResult.missing());
     }
 
     public byte[] getBlockHash(long blockNum) {
@@ -115,6 +141,11 @@ public class ArchiveRepositoryAdapterTest {
 
   private static AccountCapsule account(long balance) {
     return new AccountCapsule(Protocol.Account.newBuilder().setBalance(balance).build());
+  }
+
+  private void putDelegation(byte[] key, byte[] value) {
+    reader.delegations.put(
+        ByteArray.toHexString(key), ArchiveReadResult.present(value));
   }
 
   @Test
@@ -279,6 +310,30 @@ public class ArchiveRepositoryAdapterTest {
   }
 
   @Test
+  public void tokenBalanceEnumerationMergesOverlayAndMasksZeroBalances() {
+    reader.account = ArchiveReadResult.present(account(1L));
+    reader.accountAsset = ArchiveReadResult.present(ByteArray.fromLong(77L));
+    Map<String, Long> archived = new LinkedHashMap<>();
+    archived.put("1000001", 77L);
+    archived.put("1000010", 99L);
+    reader.accountAssets = Collections.unmodifiableMap(archived);
+
+    ArchiveRepositoryAdapter child = (ArchiveRepositoryAdapter) adapter.newRepositoryChild();
+    child.addTokenBalance(ADDR, "1000001".getBytes(), -77L);
+
+    assertEquals(Collections.singletonMap("1000010", 99L),
+        child.getTokenBalances(ADDR));
+    assertEquals(archived, adapter.getTokenBalances(ADDR));
+
+    child.commit();
+
+    assertEquals(Collections.singletonMap("1000010", 99L),
+        adapter.getTokenBalances(ADDR));
+    assertThrows(UnsupportedOperationException.class,
+        () -> adapter.getTokenBalances(ADDR).put("1000001", 1L));
+  }
+
+  @Test
   public void vmDynamicPropertiesIsTheInjectedHistoricalView() {
     assertSame(vmProps, adapter.getVmDynamicProperties());
   }
@@ -299,6 +354,67 @@ public class ArchiveRepositoryAdapterTest {
         ChainParameterEnum.TOTAL_ENERGY_WEIGHT.getAction().apply(adapter).longValue());
     assertEquals(105L,
         ChainParameterEnum.UNFREEZE_DELAY_DAYS.getAction().apply(adapter).longValue());
+  }
+
+  @Test
+  public void votesDelegationAndResourceWeightsMergeThroughChildOverlay() {
+    VotesCapsule archivedVotes = new VotesCapsule(
+        ByteString.copyFrom(ADDR), Collections.emptyList());
+    reader.votes = ArchiveReadResult.present(archivedVotes);
+    putDelegation(ADDR, ByteArray.fromLong(2L));
+    byte[] endKey = ("end-" + ByteArray.toHexString(ADDR))
+        .getBytes(StandardCharsets.US_ASCII);
+    putDelegation(endKey, ByteArray.fromLong(4L));
+    byte[] viKey = ("3-" + ByteArray.toHexString(ADDR) + "-vi")
+        .getBytes(StandardCharsets.US_ASCII);
+    BigInteger vi = BigInteger.TEN.pow(18);
+    putDelegation(viKey, vi.toByteArray());
+    when(vmProps.getTotalNetWeight()).thenReturn(100L);
+    when(vmProps.getTotalEnergyWeight()).thenReturn(200L);
+    when(vmProps.getTotalTronPowerWeight()).thenReturn(300L);
+
+    ArchiveRepositoryAdapter child = (ArchiveRepositoryAdapter) adapter.newRepositoryChild();
+    assertEquals(2L, child.getBeginCycle(ADDR));
+    assertEquals(4L, child.getEndCycle(ADDR));
+    assertEquals(vi, child.getWitnessVi(3L, ADDR));
+    assertEquals(archivedVotes.getInstance(), child.getVotes(ADDR).getInstance());
+
+    VotesCapsule updatedVotes = child.getVotes(ADDR);
+    updatedVotes.addNewVotes(ByteString.copyFrom(ADDR), 7L);
+    child.updateVotes(ADDR, updatedVotes);
+    child.updateBeginCycle(ADDR, 5L);
+    child.addTotalNetWeight(-10L);
+    child.addTotalEnergyWeight(-20L);
+    child.addTotalTronPowerWeight(-30L);
+
+    assertEquals(5L, child.getBeginCycle(ADDR));
+    assertEquals(90L, child.getTotalNetWeight());
+    assertEquals(180L, child.getTotalEnergyWeight());
+    assertEquals(270L, child.getTotalTronPowerWeight());
+    assertEquals(2L, adapter.getBeginCycle(ADDR));
+    assertEquals(100L, adapter.getTotalNetWeight());
+
+    child.commit();
+
+    assertEquals(5L, adapter.getBeginCycle(ADDR));
+    assertEquals(90L, adapter.getTotalNetWeight());
+    assertEquals(180L, adapter.getTotalEnergyWeight());
+    assertEquals(270L, adapter.getTotalTronPowerWeight());
+    assertEquals(1, adapter.getVotes(ADDR).getNewVotes().size());
+  }
+
+  @Test
+  public void blackHoleAddressIsInjectedAsImmutableChainIdentity() {
+    byte[] blackHole = ADDR.clone();
+    blackHole[20] = 0x55;
+    ArchiveRepositoryAdapter withIdentity =
+        new ArchiveRepositoryAdapter(reader, vmProps, true, blackHole);
+
+    byte[] returned = withIdentity.getBlackHoleAddress();
+    returned[20] = 0;
+    blackHole[20] = 0;
+
+    assertEquals(0x55, withIdentity.getBlackHoleAddress()[20]);
   }
 
   @Test
@@ -351,6 +467,45 @@ public class ArchiveRepositoryAdapterTest {
   }
 
   @Test
+  public void selfDestructFrozenV2UsageMergeMatchesCanonicalResourceProcessor() {
+    for (boolean cancelAllUnfreezeV2 : new boolean[] {false, true}) {
+      for (boolean harden : new boolean[] {false, true}) {
+        long now = 1_000L;
+        DynamicPropertiesStore dynamicProperties = mock(DynamicPropertiesStore.class);
+        when(dynamicProperties.supportUnfreezeDelay()).thenReturn(true);
+        when(dynamicProperties.supportAllowCancelAllUnfreezeV2())
+            .thenReturn(cancelAllUnfreezeV2);
+        when(dynamicProperties.allowHardenResourceCalculation()).thenReturn(harden);
+        when(vmProps.supportUnfreezeDelay()).thenReturn(true);
+        when(vmProps.supportAllowCancelAllUnfreezeV2()).thenReturn(cancelAllUnfreezeV2);
+        when(vmProps.getAllowHardenResourceCalculation()).thenReturn(harden ? 1L : 0L);
+
+        AccountCapsule expectedOwner = resourceAccount(ADDR, cancelAllUnfreezeV2,
+            900L, 8_000L, 6_000L);
+        byte[] inheritorAddress = ADDR.clone();
+        inheritorAddress[20] = 1;
+        AccountCapsule expectedInheritor = resourceAccount(
+            inheritorAddress, cancelAllUnfreezeV2, 920L, 700L, 500L);
+        AccountCapsule actualOwner = new AccountCapsule(expectedOwner.getInstance());
+        AccountCapsule actualInheritor = new AccountCapsule(expectedInheritor.getInstance());
+        EnergyProcessor canonical =
+            new EnergyProcessor(dynamicProperties, mock(AccountStore.class));
+
+        canonicalTransferUsage(
+            canonical, expectedOwner, expectedInheritor, ResourceCode.BANDWIDTH, now);
+        canonicalTransferUsage(
+            canonical, expectedOwner, expectedInheritor, ResourceCode.ENERGY, now);
+
+        adapter.transferFrozenV2UsageForSelfDestruct(
+            actualOwner, actualInheritor, now);
+
+        assertEquals(expectedOwner.getInstance(), actualOwner.getInstance());
+        assertEquals(expectedInheritor.getInstance(), actualInheritor.getInstance());
+      }
+    }
+  }
+
+  @Test
   public void globalEnergyLimitMatchesCanonicalV1AndFreezeV2Formulas() {
     for (boolean unfreezeDelay : new boolean[] {false, true}) {
       for (boolean harden : new boolean[] {false, true}) {
@@ -375,6 +530,38 @@ public class ArchiveRepositoryAdapterTest {
             canonical.calculateGlobalEnergyLimit(account),
             adapter.calculateGlobalEnergyLimit(account));
       }
+    }
+  }
+
+  private static AccountCapsule resourceAccount(byte[] address,
+      boolean cancelAllUnfreezeV2, long latestTime, long netUsage, long energyUsage) {
+    AccountCapsule account = new AccountCapsule(Protocol.Account.newBuilder()
+        .setAddress(ByteString.copyFrom(address))
+        .build());
+    account.setNetUsage(netUsage);
+    account.setLatestConsumeTime(latestTime);
+    account.setEnergyUsage(energyUsage);
+    account.setLatestConsumeTimeForEnergy(latestTime);
+    if (cancelAllUnfreezeV2) {
+      account.setNewWindowSizeV2(ResourceCode.BANDWIDTH, 20_000_000_000L);
+      account.setNewWindowSizeV2(ResourceCode.ENERGY, 20_000_000_000L);
+    } else {
+      account.setNewWindowSize(ResourceCode.BANDWIDTH, 20_000L);
+      account.setNewWindowSize(ResourceCode.ENERGY, 20_000L);
+    }
+    return account;
+  }
+
+  private static void canonicalTransferUsage(EnergyProcessor processor,
+      AccountCapsule owner, AccountCapsule inheritor,
+      ResourceCode resourceCode, long now) {
+    long lastTime = owner.getLastConsumeTime(resourceCode);
+    long usage = owner.getUsage(resourceCode);
+    usage = processor.increase(owner, resourceCode, usage, 0L, lastTime, now);
+    owner.setUsage(resourceCode, usage);
+    owner.setLatestTime(resourceCode, now);
+    if (usage > 0L) {
+      processor.unDelegateIncrease(inheritor, owner, usage, resourceCode, now);
     }
   }
 
@@ -551,6 +738,8 @@ public class ArchiveRepositoryAdapterTest {
         () -> midChain.getContract(ADDR));
     assertThrows(UnsupportedHistoricalStateException.class,
         () -> midChain.getContractState(ADDR));
+    assertThrows(UnsupportedHistoricalStateException.class,
+        () -> midChain.getVotes(ADDR));
 
     reader.account = ArchiveReadResult.present(account(1L));
     assertThrows(UnsupportedHistoricalStateException.class,
@@ -561,7 +750,6 @@ public class ArchiveRepositoryAdapterTest {
 
   @Test
   public void uncoveredDomainsFailFast() {
-    assertThrows(UnsupportedHistoricalStateException.class, () -> adapter.getVotes(ADDR));
     assertThrows(UnsupportedHistoricalStateException.class, () -> adapter.getWitness(ADDR));
     assertThrows(UnsupportedHistoricalStateException.class,
         () -> adapter.getDelegatedResource(ADDR));

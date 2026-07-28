@@ -1,9 +1,11 @@
 package org.tron.core.archive.reader;
 
+import java.util.Map;
 import org.tron.core.archive.query.QueryContext;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.ContractCapsule;
 import org.tron.core.capsule.ContractStateCapsule;
+import org.tron.core.capsule.VotesCapsule;
 
 /**
  * Reads historical state from the archive at a fixed {@link ArchiveStatePoint}. Each method answers
@@ -37,10 +39,32 @@ public interface ArchiveStateReader extends AutoCloseable {
   ArchiveReadResult<byte[]> getAccountAsset(byte[] address, byte[] assetId)
       throws ArchiveReaderException;
 
+  /**
+   * Enumerates every positive TRC10 balance held by an account at this reader's state point.
+   * Implementations must fail closed unless they can prove complete membership, not merely resolve
+   * balances for token IDs already known to the caller.
+   */
+  default Map<String, Long> getAccountAssets(byte[] address) throws ArchiveReaderException {
+    throw new ArchiveReaderException(ArchiveReaderException.Reason.DOMAIN_UNSUPPORTED,
+        "archive account-asset enumeration is not available");
+  }
+
   ArchiveReadResult<ContractCapsule> getContract(byte[] address) throws ArchiveReaderException;
 
   ArchiveReadResult<ContractStateCapsule> getContractState(byte[] address)
       throws ArchiveReaderException;
+
+  default ArchiveReadResult<VotesCapsule> getVotes(byte[] address)
+      throws ArchiveReaderException {
+    throw new ArchiveReaderException(ArchiveReaderException.Reason.DOMAIN_UNSUPPORTED,
+        "archive votes lookup is not available");
+  }
+
+  default ArchiveReadResult<byte[]> getDelegation(byte[] key)
+      throws ArchiveReaderException {
+    throw new ArchiveReaderException(ArchiveReaderException.Reason.DOMAIN_UNSUPPORTED,
+        "archive delegation lookup is not available");
+  }
 
   ArchiveReadResult<byte[]> getCode(byte[] address) throws ArchiveReaderException;
 
