@@ -3,6 +3,7 @@ package org.tron.core.vm.archive;
 import java.util.Objects;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import org.tron.common.parameter.CommonParameter;
 import org.tron.common.runtime.ProgramResult;
 import org.tron.core.actuator.VMActuator;
 import org.tron.core.archive.query.QueryContext;
@@ -44,8 +45,24 @@ public final class HistoricalDebugTraceExecutor {
       VmStructuredTraceListener structuredTraceListener,
       VmCallTraceCollector callTraceCollector, HistoricalCallTraceSpec callTraceSpec)
       throws ContractValidateException, ContractExeException {
+    return execute(reader, vmProperties, block, trxCap, genesisComplete, constantCall,
+        structuredTraceListener, callTraceCollector, callTraceSpec, null);
+  }
+
+  public HistoricalDebugTraceResult execute(ArchiveStateReader reader,
+      VmDynamicProperties vmProperties, BlockCapsule block, TransactionCapsule trxCap,
+      boolean genesisComplete, boolean constantCall,
+      VmStructuredTraceListener structuredTraceListener,
+      VmCallTraceCollector callTraceCollector, HistoricalCallTraceSpec callTraceSpec,
+      Long constantCallEnergyLimit)
+      throws ContractValidateException, ContractExeException {
     if (callTraceCollector != null && callTraceSpec == null) {
       throw new NullPointerException("callTraceSpec");
+    }
+    if (constantCallEnergyLimit != null
+        && (!constantCall || constantCallEnergyLimit < 0L)) {
+      throw new IllegalArgumentException(
+          "constant-call energy limit requires a non-negative constant call");
     }
 
     QueryContext readerQueryContext = reader.getQueryContext();
@@ -63,6 +80,12 @@ public final class HistoricalDebugTraceExecutor {
           vmActuatorFactory.apply(constantCall), "vmActuatorFactory result");
       vmActuator.setInjectedRootRepository(root);
       vmActuator.setUseQueryDeadlineForVm(true);
+      if (constantCallEnergyLimit != null) {
+        long configuredLimit = CommonParameter.getInstance().maxEnergyLimitForConstant;
+        vmActuator.setConstantCallMaxEnergyLimit(
+            constantCallEnergyLimit < configuredLimit
+                ? constantCallEnergyLimit : configuredLimit);
+      }
       VmCallTraceCollector.TraceScope rootTraceScope = null;
       Throwable executionFailure = null;
       boolean completedSuccessfully = false;
@@ -107,12 +130,19 @@ public final class HistoricalDebugTraceExecutor {
         if (queryContext != null) {
           RuntimeException terminalFailure =
               queryContext.getRecordedExecutionTerminalFailure();
-          if (terminalFailure != null && executionFailure != null) {
+          if (terminalFailure != null && executionFailure instanceof Error) {
             addSuppressedSafely(executionFailure, terminalFailure);
           } else if (terminalFailure != null) {
-            finalizationFailure = collectFailure(finalizationFailure, terminalFailure);
+            if (executionFailure != null) {
+              addSuppressedSafely(terminalFailure, executionFailure);
+              executionFailure = null;
+            }
+            if (finalizationFailure != null) {
+              addSuppressedSafely(terminalFailure, finalizationFailure);
+            }
+            finalizationFailure = terminalFailure;
           }
-          if (executionFailure == null && completedSuccessfully) {
+          if (terminalFailure == null && executionFailure == null && completedSuccessfully) {
             try {
               queryContext.throwIfTerminated();
             } catch (RuntimeException | Error failure) {

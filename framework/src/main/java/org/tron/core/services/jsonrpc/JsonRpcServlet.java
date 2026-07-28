@@ -164,7 +164,8 @@ public class JsonRpcServlet extends RateLimiterServlet {
     int maxResponseSize = parameter.getJsonRpcMaxResponseSize();
     long maxPendingResponseBytes = parameter.getJsonRpcMaxPendingResponseBytes();
     DeferredJsonRpcResponse deferredResponse =
-        ArchiveJsonRpcExecutor.containsHistoricalRequest(rootNode)
+        archiveJsonRpcExecutor.isEnabled()
+            && ArchiveJsonRpcExecutor.containsHistoricalRequest(rootNode)
             ? new DeferredJsonRpcResponse(resp) : null;
     HttpServletResponse executionResponse = deferredResponse == null
         ? resp : deferredResponse;

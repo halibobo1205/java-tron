@@ -15,6 +15,10 @@ public interface VmStructuredTraceListener {
   default void captureEnergyCost(Program program, long energyCost) {
   }
 
+  /** Attaches a fault raised while executing the most recently captured opcode. */
+  default void captureFault(Program program, Throwable failure) {
+  }
+
   /** Completes the last opcode in this program frame from its terminal state. */
   void onProgramExit(Program program);
 }

@@ -257,6 +257,13 @@ public interface ArchiveService {
 
   void beginUserTx(BlockCapsule block, int txIndex, TransactionCapsule tx);
 
+  /**
+   * Advances a traceable user transaction from its transaction-start coordinate to the exact TVM
+   * pre-state after canonical bandwidth and transaction-fee charging.
+   */
+  default void beginUserVmTx() {
+  }
+
   void endTx();
 
   /** Release resources (e.g. close a persistent temporal store) at shutdown; no-op by default. */

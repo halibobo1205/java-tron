@@ -12,6 +12,8 @@ import org.tron.common.utils.ByteArray;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public final class CallTraceFrame {
 
+  private static final String ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
   private final String type;
   private final String from;
   private String to;
@@ -42,7 +44,7 @@ public final class CallTraceFrame {
     error = completedError;
     revertReason = completedRevertReason;
     if (completedError != null && ("CREATE".equals(type) || "CREATE2".equals(type))) {
-      to = null;
+      to = ZERO_ADDRESS;
     }
   }
 

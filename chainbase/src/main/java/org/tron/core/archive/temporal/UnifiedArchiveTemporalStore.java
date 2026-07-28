@@ -23,6 +23,8 @@ import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
 import org.tron.core.archive.domain.ArchiveDomainCatalog;
 import org.tron.core.archive.domain.DynamicKeyPolicy;
+import org.tron.core.archive.query.QueryContext;
+import org.tron.core.archive.query.QueryContextHolder;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.archive.unified.UnifiedArchiveColumnFamily;
 import org.tron.core.archive.unified.UnifiedArchiveDb;
@@ -48,6 +50,7 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
 
   private static final Comparator<ArchiveChangeRecord> RECORD_ORDER =
       UnifiedArchiveTemporalStore::compareRecords;
+  private static final long SCAN_RESULT_KEY_OVERHEAD_BYTES = 48L;
 
   private final UnifiedArchiveDb db;
   private final ArchiveDomainCatalog catalog;
@@ -1511,14 +1514,18 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
       latest.seek(physicalPrefix);
       ArchiveRocksIterators.requireOk(
           latest, "UNIFIED_V1 seek latest canonical-key prefix");
-      while (latest.isValid()
-          && ArchiveTemporalCodec.startsWith(latest.key(), physicalPrefix)) {
-        byte[] canonicalKey = ArchiveTemporalCodec.canonicalKeyOfLatestKey(latest.key());
+      while (latest.isValid()) {
+        byte[] physicalKey = latest.key();
+        if (!ArchiveTemporalCodec.startsWith(physicalKey, physicalPrefix)) {
+          break;
+        }
+        byte[] canonicalKey = ArchiveTemporalCodec.canonicalKeyOfLatestKey(physicalKey);
         if (canonicalKey.length != canonicalKeyLength
             || !ArchiveTemporalCodec.startsWith(canonicalKey, canonicalPrefix)) {
           throw new ArchiveException(
               "UNIFIED_V1 latest canonical-key prefix scan crossed its range");
         }
+        reserveScanResultKey(canonicalKey.length);
         canonicalKeys.add(canonicalKey);
         latest.next();
       }
@@ -1526,6 +1533,13 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
           latest, "UNIFIED_V1 scan latest canonical-key prefix");
     }
     return canonicalKeys;
+  }
+
+  private static void reserveScanResultKey(int keyLength) {
+    QueryContext queryContext = QueryContextHolder.current();
+    if (queryContext != null) {
+      queryContext.recordVmOverlayBytes(SCAN_RESULT_KEY_OVERHEAD_BYTES + keyLength);
+    }
   }
 
   private static final class PreparationEstimate {

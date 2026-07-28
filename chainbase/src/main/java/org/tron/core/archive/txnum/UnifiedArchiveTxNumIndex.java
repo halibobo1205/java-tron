@@ -116,18 +116,28 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
       publish.put(UnifiedArchiveColumnFamily.INDEX, ArchiveBlockRangeCodec.FIRST_BLOCK_KEY,
           ArchiveBlockRangeCodec.encodeFirstBlock(persisted.getBlockNum()));
     }
-    for (ArchiveTxPosition journalPosition : block.getPositions()) {
+    List<ArchiveTxPosition> journalPositions = block.getPositions();
+    boolean explicitBlockIndex = usesExplicitBlockIndex(persisted);
+    for (int index = 0; index < journalPositions.size(); index++) {
+      ArchiveTxPosition journalPosition = journalPositions.get(index);
       ArchiveTxPosition position = persistedPosition(persisted, journalPosition);
       publish.put(UnifiedArchiveColumnFamily.INDEX,
           ArchiveBlockRangeCodec.positionKey(position.getTxNum()),
           ArchiveBlockRangeCodec.encodePosition(position));
-      if (position.getTxId().length > 0) {
-        if (findTxNumByTxId(position.getTxId()).isPresent()) {
-          throw new ArchiveException("archive txId is already committed");
-        }
+      if (explicitBlockIndex && position.getPhase() == ArchivePhase.USER_TX) {
         publish.put(UnifiedArchiveColumnFamily.INDEX,
-            ArchiveBlockRangeCodec.txIdKey(position.getTxId()),
+            ArchiveBlockRangeCodec.blockIndexKey(
+                position.getBlockNum(), position.getTxIndex()),
             ArchiveBlockRangeCodec.encodeCursor(position.getTxNum()));
+      }
+      boolean transactionLookupPosition =
+          position.getPhase() == ArchivePhase.USER_TX_VM
+              || (position.getPhase() == ArchivePhase.USER_TX
+                  && (index + 1 >= journalPositions.size()
+                      || journalPositions.get(index + 1).getPhase()
+                          != ArchivePhase.USER_TX_VM));
+      if (transactionLookupPosition) {
+        stageTransactionLookup(publish, position);
       }
     }
     publish.cursor(UnifiedArchiveManifest.publishedCursorKey(),
@@ -147,6 +157,11 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
 
   @Override
   public ArchiveTxPosition allocateUserTx(long blockNum, int txIndex, byte[] txId) {
+    throw unsupportedMutableOperation();
+  }
+
+  @Override
+  public ArchiveTxPosition allocateUserVmTx(long blockNum, int txIndex, byte[] txId) {
     throw unsupportedMutableOperation();
   }
 
@@ -248,7 +263,18 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
     if (!range.isPresent() || txIndex >= range.get().getUserTxCount()) {
       return OptionalLong.empty();
     }
-    long txNum = range.get().getFirstTxNum() + 1L + txIndex;
+    long txNum;
+    if (usesExplicitBlockIndex(range.get())) {
+      byte[] txNumValue = get(UnifiedArchiveColumnFamily.INDEX,
+          ArchiveBlockRangeCodec.blockIndexKey(blockNum, txIndex));
+      if (txNumValue == null) {
+        throw new ArchiveException("archive block-index row is missing for block "
+            + blockNum + " transaction " + txIndex);
+      }
+      txNum = ArchiveBlockRangeCodec.decodeCursor(txNumValue);
+    } else {
+      txNum = range.get().getFirstTxNum() + 1L + txIndex;
+    }
     ArchiveTxPosition position = getPosition(txNum)
         .orElseThrow(() -> new ArchiveException("archive block-index is orphan for txNum "
             + txNum));
@@ -258,6 +284,16 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
           + txNum);
     }
     return OptionalLong.of(txNum);
+  }
+
+  private void stageTransactionLookup(UnifiedArchivePublish.Builder publish,
+      ArchiveTxPosition position) {
+    if (findTxNumByTxId(position.getTxId()).isPresent()) {
+      throw new ArchiveException("archive txId is already committed");
+    }
+    publish.put(UnifiedArchiveColumnFamily.INDEX,
+        ArchiveBlockRangeCodec.txIdKey(position.getTxId()),
+        ArchiveBlockRangeCodec.encodeCursor(position.getTxNum()));
   }
 
   @Override
@@ -592,6 +628,27 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
             getPosition(positionTxNum).orElseThrow(() -> new ArchiveException(
                 "UNIFIED_V1 position row is not committed"));
             break;
+          case ArchiveBlockRangeCodec.TXNUM_BY_BLOCK_INDEX_PREFIX:
+            long indexedBlockNum =
+                ArchiveBlockRangeCodec.blockNumFromBlockIndexKey(key);
+            int indexedTxIndex =
+                ArchiveBlockRangeCodec.txIndexFromBlockIndexKey(key);
+            long indexedTxNum = ArchiveBlockRangeCodec.decodeCursor(
+                get(UnifiedArchiveColumnFamily.INDEX, key));
+            ArchiveTxPosition indexedPosition = getPosition(indexedTxNum)
+                .orElseThrow(() -> new ArchiveException(
+                    "UNIFIED_V1 block-index row has no committed position"));
+            ArchiveBlockRange indexedRange = getBlockRange(indexedBlockNum)
+                .orElseThrow(() -> new ArchiveException(
+                    "UNIFIED_V1 block-index row has no committed range"));
+            if (!usesExplicitBlockIndex(indexedRange)
+                || indexedPosition.getPhase() != ArchivePhase.USER_TX
+                || indexedPosition.getBlockNum() != indexedBlockNum
+                || indexedPosition.getTxIndex() != indexedTxIndex) {
+              throw new ArchiveException(
+                  "UNIFIED_V1 block-index row does not match its position");
+            }
+            break;
           default:
             throw new ArchiveException("UNIFIED_V1 index column family has an unknown key");
         }
@@ -784,11 +841,14 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
     ArchiveCoordinates.requireTxNum(range.getLastTxNum(), "archive block range last txNum");
     ArchiveCoordinates.requireTxNum(range.getPrepareTxNum(), "archive block range prepare txNum");
     ArchiveCoordinates.requireTxNum(range.getFinalizeTxNum(), "archive block range finalize txNum");
+    long span = range.getLastTxNum() - range.getFirstTxNum() + 1L;
+    long minimumSpan = (long) range.getUserTxCount() + 2L;
+    long maximumSpan = (long) range.getUserTxCount() * 2L + 2L;
     if (range.getPrepareTxNum() != range.getFirstTxNum()
         || range.getFinalizeTxNum() != range.getLastTxNum()
         || range.getUserTxCount() < 0
-        || range.getLastTxNum() - range.getFirstTxNum() + 1L
-            != (long) range.getUserTxCount() + 2L) {
+        || span < minimumSpan
+        || span > maximumSpan) {
       throw new ArchiveException("archive block range shape is invalid for block "
           + range.getBlockNum());
     }
@@ -806,6 +866,8 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
       throw new ArchiveException("UNIFIED_V1 journal position count does not match block range");
     }
     Set<String> userTxIds = new HashSet<>();
+    int expectedTxIndex = 0;
+    ArchiveTxPosition previous = null;
     for (int offset = 0; offset < positions.size(); offset++) {
       ArchiveTxPosition position = positions.get(offset);
       if (position == null) {
@@ -826,10 +888,8 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
         requireSystemPosition(position, ArchivePhase.BLOCK_PREPARE);
       } else if (offset == positions.size() - 1) {
         requireSystemPosition(position, ArchivePhase.BLOCK_FINALIZE);
-      } else {
-        int expectedTxIndex = offset - 1;
-        if (position.getPhase() != ArchivePhase.USER_TX
-            || position.getTxIndex() != expectedTxIndex) {
+      } else if (position.getPhase() == ArchivePhase.USER_TX) {
+        if (position.getTxIndex() != expectedTxIndex++) {
           throw new ArchiveException("UNIFIED_V1 journal user position order mismatch");
         }
         ArchiveBlockRangeCodec.requireTxId(position.getTxId(),
@@ -837,7 +897,21 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
         if (!userTxIds.add(ByteArray.toHexString(position.getTxId()))) {
           throw new ArchiveException("UNIFIED_V1 journal contains duplicate txId");
         }
+      } else if (position.getPhase() == ArchivePhase.USER_TX_VM) {
+        if (previous == null
+            || previous.getPhase() != ArchivePhase.USER_TX
+            || position.getTxIndex() != previous.getTxIndex()
+            || !Arrays.equals(position.getTxId(), previous.getTxId())) {
+          throw new ArchiveException(
+              "UNIFIED_V1 journal user VM position order mismatch");
+        }
+      } else {
+        throw new ArchiveException("UNIFIED_V1 journal position phase is not publishable");
       }
+      previous = position;
+    }
+    if (expectedTxIndex != range.getUserTxCount()) {
+      throw new ArchiveException("UNIFIED_V1 journal user position count mismatch");
     }
   }
 
@@ -863,13 +937,45 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
   private void validatePosition(ArchiveBlockRange range, ArchiveTxPosition position,
       long txNum) {
     validatePositionShape(range, position, txNum);
-    if (position.getPhase() != ArchivePhase.USER_TX) {
+    if (position.getPhase() != ArchivePhase.USER_TX
+        && position.getPhase() != ArchivePhase.USER_TX_VM) {
       return;
     }
     byte[] txIdValue = get(UnifiedArchiveColumnFamily.INDEX,
         ArchiveBlockRangeCodec.txIdKey(position.getTxId()));
-    if (txIdValue == null || ArchiveBlockRangeCodec.decodeCursor(txIdValue) != txNum) {
+    if (txIdValue == null) {
       throw new ArchiveException("archive txId index missing for committed txNum " + txNum);
+    }
+    long lookupTxNum = ArchiveBlockRangeCodec.decodeCursor(txIdValue);
+    if (position.getPhase() == ArchivePhase.USER_TX_VM && lookupTxNum != txNum) {
+      throw new ArchiveException("archive txId index does not point to VM position " + txNum);
+    }
+    if (position.getPhase() == ArchivePhase.USER_TX) {
+      if (usesExplicitBlockIndex(range)) {
+        byte[] blockIndexValue = get(UnifiedArchiveColumnFamily.INDEX,
+            ArchiveBlockRangeCodec.blockIndexKey(
+                position.getBlockNum(), position.getTxIndex()));
+        if (blockIndexValue == null
+            || ArchiveBlockRangeCodec.decodeCursor(blockIndexValue) != txNum) {
+          throw new ArchiveException(
+              "archive block-index is missing for committed txNum " + txNum);
+        }
+      } else if (txNum != range.getFirstTxNum() + 1L + position.getTxIndex()) {
+        throw new ArchiveException(
+            "archive fixed block-index does not match committed txNum " + txNum);
+      }
+      if (lookupTxNum != txNum) {
+        ArchiveTxPosition vmPosition = getPosition(lookupTxNum)
+            .orElseThrow(() -> new ArchiveException(
+                "archive txId VM position is missing for txNum " + lookupTxNum));
+        if (lookupTxNum != txNum + 1L
+            || vmPosition.getPhase() != ArchivePhase.USER_TX_VM
+            || vmPosition.getTxIndex() != position.getTxIndex()
+            || !Arrays.equals(vmPosition.getTxId(), position.getTxId())) {
+          throw new ArchiveException(
+              "archive txId index does not match its user/VM position pair");
+        }
+      }
     }
   }
 
@@ -894,11 +1000,18 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
       }
       return;
     }
-    if (position.getPhase() != ArchivePhase.USER_TX || position.getTxIndex() < 0
+    if ((position.getPhase() != ArchivePhase.USER_TX
+        && position.getPhase() != ArchivePhase.USER_TX_VM)
+        || position.getTxIndex() < 0
         || position.getTxIndex() >= range.getUserTxCount()
-        || position.getTxNum() != range.getFirstTxNum() + 1L + position.getTxIndex()) {
+        || position.getTxId().length != ArchiveBlockRange.BLOCK_HASH_LENGTH) {
       throw new ArchiveException("archive user tx-position mismatch for txNum " + txNum);
     }
+  }
+
+  private static boolean usesExplicitBlockIndex(ArchiveBlockRange range) {
+    return range.getLastTxNum() - range.getFirstTxNum() + 1L
+        > (long) range.getUserTxCount() + 2L;
   }
 
   private static void validateRangeKeyMatchesValue(byte[] key, ArchiveBlockRange range) {

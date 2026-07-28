@@ -293,13 +293,18 @@ public class HistoricalEthCallSupportIntegrationTest extends BaseMethodTest {
         new BigInteger(callTrace.getGasUsed().substring(2), 16).longValueExact());
     assertNull(callTrace.getError());
 
+    TraceResult zeroGasTrace = (TraceResult) support.traceCall(
+        caller, contractAddress, 0L, new byte[0], 0L, "0x1", null,
+        DebugTraceOptions.parse(Collections.emptyMap()));
+    assertTrue(zeroGasTrace.isFailed());
+    assertEquals(0L, zeroGasTrace.getGas());
+
     TraceResult revertTrace = (TraceResult) support.traceCall(
         caller, revertAddress, 0L, new byte[0], "0x1", null,
         DebugTraceOptions.parse(Collections.emptyMap()));
     assertTrue(revertTrace.isFailed());
     assertEquals("0x", revertTrace.getReturnValue());
-    assertEquals(
-        "execution reverted",
+    assertNull(
         revertTrace.getStructLogs().get(revertTrace.getStructLogs().size() - 1).getError());
     CallTraceFrame revertCallTrace = (CallTraceFrame) support.traceCall(
         caller, revertAddress, 0L, new byte[0], "0x1", null,
@@ -351,6 +356,19 @@ public class HistoricalEthCallSupportIntegrationTest extends BaseMethodTest {
     Transaction outOfTimeTransaction =
         withContractResult(outOfTimeTrxCap.getInstance(), contractResult.OUT_OF_TIME);
     byte[] outOfTimeTxId = outOfTimeTrxCap.getTransactionId().getBytes();
+    TransactionCapsule defaultResultTrxCap =
+        new TransactionCapsule(trigger, ContractType.TriggerSmartContract);
+    defaultResultTrxCap.setFeeLimit(300L);
+    Transaction defaultResultTransaction =
+        withContractResult(defaultResultTrxCap.getInstance(), contractResult.DEFAULT);
+    byte[] defaultResultTxId = defaultResultTrxCap.getTransactionId().getBytes();
+    TransactionCapsule unknownResultTrxCap =
+        new TransactionCapsule(trigger, ContractType.TriggerSmartContract);
+    unknownResultTrxCap.setFeeLimit(400L);
+    Transaction unknownResultTransaction = unknownResultTrxCap.getInstance().toBuilder()
+        .addRet(Transaction.Result.newBuilder().setContractRetValue(999))
+        .build();
+    byte[] unknownResultTxId = unknownResultTrxCap.getTransactionId().getBytes();
 
     InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
     DefaultArchiveService svc = new DefaultArchiveService(true, temporal);
@@ -390,10 +408,17 @@ public class HistoricalEthCallSupportIntegrationTest extends BaseMethodTest {
     svc.getTxNumIndex().beginBlock(2, ArchiveSource.NORMAL);
     svc.getTxNumIndex().allocateSystemTx(2, ArchivePhase.BLOCK_PREPARE);
     svc.getTxNumIndex().allocateUserTx(2, 0, txId);
+    svc.getTxNumIndex().allocateUserVmTx(2, 0, txId);
     svc.getTxNumIndex().allocateUserTx(2, 1, lowFeeTxId);
+    svc.getTxNumIndex().allocateUserVmTx(2, 1, lowFeeTxId);
     svc.getTxNumIndex().allocateUserTx(2, 2, outOfTimeTxId);
+    svc.getTxNumIndex().allocateUserVmTx(2, 2, outOfTimeTxId);
+    svc.getTxNumIndex().allocateUserTx(2, 3, defaultResultTxId);
+    svc.getTxNumIndex().allocateUserVmTx(2, 3, defaultResultTxId);
+    svc.getTxNumIndex().allocateUserTx(2, 4, unknownResultTxId);
+    svc.getTxNumIndex().allocateUserVmTx(2, 4, unknownResultTxId);
     svc.getTxNumIndex().allocateSystemTx(2, ArchivePhase.BLOCK_FINALIZE);
-    svc.getTxNumIndex().commitBlock(2, blockHash(2), 3);
+    svc.getTxNumIndex().commitBlock(2, blockHash(2), 5);
 
     Wallet wallet = mock(Wallet.class);
     BlockCapsule block = blockCapsule(2);
@@ -404,6 +429,10 @@ public class HistoricalEthCallSupportIntegrationTest extends BaseMethodTest {
         .thenReturn(lowFeeTransaction);
     when(wallet.getTransactionById(ByteString.copyFrom(outOfTimeTxId)))
         .thenReturn(outOfTimeTransaction);
+    when(wallet.getTransactionById(ByteString.copyFrom(defaultResultTxId)))
+        .thenReturn(defaultResultTransaction);
+    when(wallet.getTransactionById(ByteString.copyFrom(unknownResultTxId)))
+        .thenReturn(unknownResultTransaction);
     StorageConfig.ArchiveConfig.DebugConfig debug =
         new StorageConfig.ArchiveConfig.DebugConfig();
     debug.setEnable(true);
@@ -433,6 +462,14 @@ public class HistoricalEthCallSupportIntegrationTest extends BaseMethodTest {
     assertThrows(JsonRpcInvalidParamsException.class,
         () -> support.traceTransaction(
             outOfTimeTxId, DebugTraceOptions.parse(Collections.emptyMap())));
+    JsonRpcInternalException missingResult = assertThrows(JsonRpcInternalException.class,
+        () -> support.traceTransaction(
+            defaultResultTxId, DebugTraceOptions.parse(Collections.emptyMap())));
+    assertTrue(missingResult.getMessage().contains("execution result is missing"));
+    JsonRpcInternalException unknownResult = assertThrows(JsonRpcInternalException.class,
+        () -> support.traceTransaction(
+            unknownResultTxId, DebugTraceOptions.parse(Collections.emptyMap())));
+    assertTrue(unknownResult.getMessage().contains("unrecognized"));
   }
 
   @Test
@@ -467,11 +504,16 @@ public class HistoricalEthCallSupportIntegrationTest extends BaseMethodTest {
     svc.getTxNumIndex().beginBlock(2, ArchiveSource.NORMAL);
     svc.getTxNumIndex().allocateSystemTx(2, ArchivePhase.BLOCK_PREPARE);
     svc.getTxNumIndex().allocateUserTx(2, 0, txId);
+    svc.getTxNumIndex().allocateUserVmTx(2, 0, txId);
     svc.getTxNumIndex().allocateSystemTx(2, ArchivePhase.BLOCK_FINALIZE);
     svc.getTxNumIndex().commitBlock(2, blockHash(2), 1);
 
     Wallet wallet = mock(Wallet.class);
+    BlockCapsule stateBlock = blockCapsule(1);
     BlockCapsule block = blockCapsule(2);
+    when(wallet.getBlockByNumWithoutCache(1L)).thenReturn(stateBlock.getInstance());
+    when(wallet.getBlockIdByNumWithoutCache(1L))
+        .thenReturn(stateBlock.getBlockId().getBytes());
     when(wallet.getBlockByNumWithoutCache(2L)).thenReturn(block.getInstance());
     when(wallet.getBlockIdByNumWithoutCache(2L)).thenReturn(block.getBlockId().getBytes());
     when(wallet.getTransactionById(ByteString.copyFrom(txId))).thenReturn(transaction);
@@ -497,6 +539,14 @@ public class HistoricalEthCallSupportIntegrationTest extends BaseMethodTest {
         callTrace.getTo());
     assertEquals("0x00", callTrace.getOutput());
     assertNull(callTrace.getError());
+
+    CallTraceFrame syntheticCreate = (CallTraceFrame) support.traceCall(
+        creator, null, 0L, ByteArray.fromHexString(initCode), 1_000_000L,
+        "0x1", null, DebugTraceOptions.parse(callTracerOptions));
+    assertEquals("CREATE", syntheticCreate.getType());
+    assertNotNull(syntheticCreate.getTo());
+    assertEquals("0x00", syntheticCreate.getOutput());
+    assertNull(syntheticCreate.getError());
   }
 
   @Test

@@ -1,11 +1,13 @@
 package org.tron.core.services.jsonrpc;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -96,7 +98,7 @@ public class ArchiveStructLogCollectorTest {
     collector.capture(program);
     collector.captureEnergyCost(program, 3L);
     when(program.getEnergylimitLeftLong()).thenReturn(0L);
-    program.getResult().setException(new RuntimeException("out of energy"));
+    collector.captureFault(program, new RuntimeException("out of energy"));
     collector.onProgramExit(program);
 
     assertEquals(3L, collector.getLogs().get(0).getGasCost());
@@ -113,11 +115,64 @@ public class ArchiveStructLogCollectorTest {
 
     collector.capture(program);
     when(program.getEnergylimitLeftLong()).thenReturn(0L);
-    program.getResult().setException(new RuntimeException("invalid opcode"));
+    collector.captureFault(program, new RuntimeException("invalid opcode"));
     collector.onProgramExit(program);
 
     assertEquals(0L, collector.getLogs().get(0).getGasCost());
     assertEquals("invalid opcode", collector.getLogs().get(0).getError());
+  }
+
+  @Test
+  public void normalRevertDoesNotAnnotateTheRevertOpcodeAsFaulting() throws Exception {
+    ArchiveStructLogCollector collector = new ArchiveStructLogCollector(
+        DebugTraceOptions.parse(Collections.emptyMap()),
+        10L,
+        new DebugTraceBudget(100_000L));
+    Program program = program(Op.REVERT, 0, 0, 10L, new byte[0]);
+
+    collector.capture(program);
+    program.getResult().setRevert();
+    collector.onProgramExit(program);
+
+    assertNull(collector.getLogs().get(0).getError());
+  }
+
+  @Test
+  public void mapsStandardWireNamesAndUndefinedOpcodes() throws Exception {
+    ArchiveStructLogCollector collector = new ArchiveStructLogCollector(
+        DebugTraceOptions.parse(Collections.emptyMap()),
+        10L,
+        new DebugTraceBudget(100_000L));
+    Program program = program(Op.SHA3, 0, 0, 10L, new byte[0]);
+
+    collector.capture(program);
+    when(program.getCurrentOpIntValue()).thenReturn(Op.SUICIDE);
+    collector.capture(program);
+    when(program.getCurrentOpIntValue()).thenReturn(0xfe);
+    collector.capture(program);
+
+    assertEquals("KECCAK256", collector.getLogs().get(0).getOp());
+    assertEquals("SELFDESTRUCT", collector.getLogs().get(1).getOp());
+    assertEquals("opcode 0xfe not defined", collector.getLogs().get(2).getOp());
+  }
+
+  @Test
+  public void faultTextIsChargedToResponseBudgetBeforeRetention() throws Exception {
+    Map<String, Object> rawOptions = new HashMap<>();
+    rawOptions.put("disableStack", true);
+    ArchiveStructLogCollector collector = new ArchiveStructLogCollector(
+        DebugTraceOptions.parse(rawOptions),
+        10L,
+        new DebugTraceBudget(180L));
+    Program program = program(Op.PUSH1, 0, 0, 10L, new byte[0]);
+    collector.capture(program);
+
+    HistoricalQueryLimitException failure = assertThrows(
+        HistoricalQueryLimitException.class,
+        () -> collector.captureFault(program, new RuntimeException("budgeted failure")));
+
+    assertEquals(HistoricalQueryLimitException.Limit.RESPONSE_BYTES, failure.getLimit());
+    assertNull(collector.getLogs().get(0).getError());
   }
 
   @Test
@@ -159,6 +214,23 @@ public class ArchiveStructLogCollectorTest {
     collector.capture(program);
 
     assertEquals("0xab", collector.getLogs().get(0).getReturnData());
+  }
+
+  @Test
+  public void enabledButEmptyMemoryIsOmittedFromWireResult() throws Exception {
+    Map<String, Object> rawOptions = new HashMap<>();
+    rawOptions.put("enableMemory", true);
+    ArchiveStructLogCollector collector = new ArchiveStructLogCollector(
+        DebugTraceOptions.parse(rawOptions),
+        10L,
+        new DebugTraceBudget(100_000L));
+    Program program = program(Op.PUSH1, 0, 0, 100L, new byte[0]);
+
+    collector.capture(program);
+
+    StructLog log = collector.getLogs().get(0);
+    assertNull(log.getMemory());
+    assertFalse(new ObjectMapper().writeValueAsString(log).contains("\"memory\""));
   }
 
   @Test

@@ -220,7 +220,7 @@ public class PrecompiledContracts {
   private static final DataWord p256VerifyAddr = new DataWord(
       "0000000000000000000000000000000000000000000000000000000000000100");
 
-  public static PrecompiledContract getOptimizedContractForConstant(PrecompiledContract contract) {
+  public static PrecompiledContract newIsolatedContract(PrecompiledContract contract) {
     try {
       Constructor<?> constructor = contract.getClass().getDeclaredConstructor();
       return (PrecompiledContracts.PrecompiledContract) constructor.newInstance();

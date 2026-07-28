@@ -2126,6 +2126,11 @@ public class Manager {
     consumeBandwidth(trxCap, trace);
     consumeMultiSignFee(trxCap, trace);
     consumeMemoFee(trxCap, trace);
+    if (Objects.nonNull(blockCap)
+        && (contract.getType() == Contract.ContractType.TriggerSmartContract
+        || contract.getType() == Contract.ContractType.CreateSmartContract)) {
+      archiveService.beginUserVmTx();
+    }
 
     trace.init(blockCap, eventPluginLoaded);
     if (Objects.isNull(blockCap) || !CommonParameter.getInstance().isSolidityNode()) {

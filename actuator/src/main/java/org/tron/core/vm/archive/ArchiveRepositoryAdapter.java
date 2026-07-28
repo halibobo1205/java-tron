@@ -199,20 +199,23 @@ public class ArchiveRepositoryAdapter implements Repository {
     if (getAccount(address) == null) {
       return Collections.emptyMap();
     }
-    Map<String, Long> visible = parent == null
-        ? new LinkedHashMap<>(readValue(() -> reader.getAccountAssets(address), "account-assets"))
-        : new LinkedHashMap<>(parent.getTokenBalances(address));
+    Map<String, Long> base = parent == null
+        ? readValue(() -> reader.getAccountAssets(address), "account-assets")
+        : parent.getTokenBalances(address);
     Map<Key, Long> local = tokenBalances.get(accountKey);
-    if (local != null) {
-      local.forEach((tokenKey, balance) -> {
-        String tokenId = new String(tokenKey.getData(), StandardCharsets.US_ASCII);
-        if (balance == null || balance <= 0L) {
-          visible.remove(tokenId);
-        } else {
-          visible.put(tokenId, balance);
-        }
-      });
+    if (local == null || local.isEmpty()) {
+      return base;
     }
+    reserveTokenBalanceMap(base);
+    Map<String, Long> visible = new LinkedHashMap<>(base);
+    local.forEach((tokenKey, balance) -> {
+      String tokenId = new String(tokenKey.getData(), StandardCharsets.US_ASCII);
+      if (balance == null || balance <= 0L) {
+        visible.remove(tokenId);
+      } else {
+        visible.put(tokenId, balance);
+      }
+    });
     return Collections.unmodifiableMap(visible);
   }
 
@@ -739,35 +742,15 @@ public class ArchiveRepositoryAdapter implements Repository {
   @Override
   public long calculateGlobalEnergyLimit(AccountCapsule accountCapsule) {
     long frozenBalance = accountCapsule.getAllFrozenBalanceForEnergy();
-    long totalEnergyLimit = getVmDynamicProperties().getTotalEnergyCurrentLimit();
-    long totalEnergyWeight = getVmDynamicProperties().getTotalEnergyWeight();
-    if (getVmDynamicProperties().supportUnfreezeDelay()) {
-      if (totalEnergyWeight == 0L) {
-        return 0L;
-      }
-      if (totalEnergyWeight < 0L) {
-        throw unsupported("global-energy-limit accounting with negative total weight");
-      }
-      if (hardenResourceCalculation()) {
-        return BigInteger.valueOf(frozenBalance)
-            .multiply(BigInteger.valueOf(totalEnergyLimit))
-            .divide(BigInteger.valueOf(TRX_PRECISION)
-                .multiply(BigInteger.valueOf(totalEnergyWeight)))
-            .longValueExact();
-      }
-      double energyWeight = (double) frozenBalance / TRX_PRECISION;
-      return (long) (energyWeight * ((double) totalEnergyLimit / totalEnergyWeight));
-    }
     if (frozenBalance < TRX_PRECISION) {
       return 0L;
     }
-    if (totalEnergyWeight <= 0L) {
-      if (getVmDynamicProperties().getAllowNewReward() == 1L) {
-        return 0L;
-      }
-      throw unsupported("global-energy-limit accounting with non-positive total weight");
-    }
     long energyWeight = frozenBalance / TRX_PRECISION;
+    long totalEnergyLimit = getVmDynamicProperties().getTotalEnergyCurrentLimit();
+    long totalEnergyWeight = getVmDynamicProperties().getTotalEnergyWeight();
+
+    assert totalEnergyWeight > 0L;
+
     if (hardenResourceCalculation()) {
       return BigInteger.valueOf(energyWeight)
           .multiply(BigInteger.valueOf(totalEnergyLimit))
@@ -878,6 +861,17 @@ public class ArchiveRepositoryAdapter implements Repository {
     if (queryContext != null) {
       queryContext.recordVmOverlayBytes(
           addSaturated(OVERLAY_ENTRY_OVERHEAD_BYTES, payloadBytes));
+    }
+  }
+
+  private static void reserveTokenBalanceMap(Map<String, Long> balances) {
+    if (balances == null || balances.isEmpty()) {
+      return;
+    }
+    QueryContext queryContext = QueryContextHolder.current();
+    if (queryContext != null) {
+      queryContext.recordVmOverlayBytes(
+          OVERLAY_ENTRY_OVERHEAD_BYTES * (long) balances.size());
     }
   }
 

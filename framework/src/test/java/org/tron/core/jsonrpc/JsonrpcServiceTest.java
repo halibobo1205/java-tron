@@ -856,7 +856,8 @@ public class JsonrpcServiceTest extends BaseTest {
     canonicalHashParams.put("requireCanonical", Boolean.TRUE);
     Exception canonicalHashEx = Assert.assertThrows(Exception.class,
         () -> tronJsonRpc.getCall(null, canonicalHashParams));
-    Assert.assertEquals("invalid json request", canonicalHashEx.getMessage());
+    Assert.assertEquals(
+        "QUANTITY not supported, just support TAG as latest", canonicalHashEx.getMessage());
 
     BlockCapsule forkBlock = new BlockCapsule(blockCapsule1.getNum(), Sha256Hash.wrap(
         ByteString.copyFrom(ByteArray.fromHexString(

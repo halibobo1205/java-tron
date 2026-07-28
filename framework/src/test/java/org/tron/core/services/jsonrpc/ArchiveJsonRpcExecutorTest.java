@@ -11,10 +11,12 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.Test;
+import org.tron.common.utils.ReflectUtils;
 import org.tron.core.archive.query.HistoricalQueryLimitException;
 
 public class ArchiveJsonRpcExecutorTest {
@@ -186,6 +188,63 @@ public class ArchiveJsonRpcExecutorTest {
     } finally {
       release.countDown();
       caller.shutdownNow();
+      executor.close();
+    }
+  }
+
+  @Test
+  public void fullDebugQueueReportsStablePendingCapacity() throws Exception {
+    ArchiveJsonRpcExecutor executor = new ArchiveJsonRpcExecutor(1, 1_000L, 1, 1);
+    ExecutorService callers = Executors.newFixedThreadPool(2);
+    CountDownLatch activeEntered = new CountDownLatch(1);
+    CountDownLatch release = new CountDownLatch(1);
+    JsonNode debug = request("debug_traceTransaction", "[\"0x01\",{}]");
+    try {
+      Future<?> active = callers.submit(() -> {
+        try {
+          executor.executeIfHistorical(debug, () -> {
+            activeEntered.countDown();
+            try {
+              release.await();
+            } catch (InterruptedException e) {
+              Thread.currentThread().interrupt();
+            }
+          });
+        } catch (Exception e) {
+          throw new IllegalStateException(e);
+        }
+      });
+      assertTrue(activeEntered.await(5L, TimeUnit.SECONDS));
+
+      Future<?> queued = callers.submit(() -> {
+        try {
+          executor.executeIfHistorical(debug, () -> { });
+        } catch (Exception e) {
+          throw new IllegalStateException(e);
+        }
+      });
+      ThreadPoolExecutor traceExecutor =
+          ReflectUtils.getFieldValue(executor, "debugTraceExecutor");
+      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5L);
+      while (traceExecutor.getQueue().size() != 1 && System.nanoTime() < deadline) {
+        Thread.yield();
+      }
+      assertEquals(1, traceExecutor.getQueue().size());
+
+      HistoricalQueryLimitException failure = assertThrows(
+          HistoricalQueryLimitException.class,
+          () -> executor.executeIfHistorical(debug, () -> { }));
+      assertEquals(HistoricalQueryLimitException.Limit.PENDING_QUERIES,
+          failure.getLimit());
+      assertEquals(2L, failure.getConfiguredLimit());
+      assertEquals(3L, failure.getObserved());
+
+      release.countDown();
+      active.get(5L, TimeUnit.SECONDS);
+      queued.get(5L, TimeUnit.SECONDS);
+    } finally {
+      release.countDown();
+      callers.shutdownNow();
       executor.close();
     }
   }
