@@ -162,6 +162,7 @@ public final class DynamicKeyPolicy {
     excluded("BANDWIDTH_PRICE_HISTORY_DONE", DynamicKeyClass.MIGRATION_MARKER);
     excluded("TURKISH_KEY_MIGRATION_DONE", DynamicKeyClass.MIGRATION_MARKER);
     excluded("SET_BLACKHOLE_ACCOUNT_PERMISSION", DynamicKeyClass.MIGRATION_MARKER);
+    excluded("ARCHIVE_GENESIS_COMMIT_MARKER", DynamicKeyClass.MIGRATION_MARKER);
     excluded("state_flag", DynamicKeyClass.INDEX_CURSOR);
     excluded("BLOCK_FILLED_SLOTS_INDEX", DynamicKeyClass.INDEX_CURSOR);
     excluded("BLOCK_FILLED_SLOTS", DynamicKeyClass.STATISTIC);

@@ -15,6 +15,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.google.common.primitives.Bytes;
@@ -217,7 +218,7 @@ public class AccountStoreArchiveCaptureTest {
   }
 
   @Test
-  public void storeLoadedAccountCapturesOnlyTouchedAssetAndRebasesHint() throws Exception {
+  public void storeLoadedAccountCapturesOnlyChangedAssetAtPutBoundary() throws Exception {
     byte[] address = address();
     AccountCapsule oldAccount = account(address, false,
         "1000001", 1L, "1000002", 2L, "1000003", 3L);
@@ -229,13 +230,9 @@ public class AccountStoreArchiveCaptureTest {
 
     AccountCapsule updated = store.get(address);
     updated.addAssetMapV2(Collections.singletonMap("1000002", 9L));
-    assertTrue(updated.hasCompleteAssetV2ChangeTracking());
-    assertEquals(Collections.singleton("1000002"), updated.snapshotModifiedAssetV2());
 
     store.put(address, updated);
 
-    assertTrue(updated.hasCompleteAssetV2ChangeTracking());
-    assertTrue(updated.snapshotModifiedAssetV2().isEmpty());
     verify(assetStore, never()).scanPhysicalAssets(
         any(byte[].class), any(AccountAssetStore.PhysicalAssetConsumer.class));
     verify(assetStore, never()).getBalance(any(byte[].class), any(byte[].class));
@@ -246,7 +243,7 @@ public class AccountStoreArchiveCaptureTest {
   }
 
   @Test
-  public void staleStoreLoadedHintFallsBackToActualPreviousVersion() throws Exception {
+  public void staleStoreLoadedAccountDiffsAgainstActualPreviousVersion() throws Exception {
     byte[] address = address();
     AccountCapsule oldAccount = account(address, false, "1000001", 1L);
     AtomicReference<byte[]> canonical = new AtomicReference<>(oldAccount.getData());
@@ -300,7 +297,6 @@ public class AccountStoreArchiveCaptureTest {
 
     AccountCapsule stale = store.get(address);
     assertEquals(1L, stale.getAssetV2("1000001"));
-    assertEquals(Collections.singleton("1000001"), stale.snapshotModifiedAssetV2());
     stale.setBalance(99L);
     store.put(address, stale);
 
@@ -316,7 +312,7 @@ public class AccountStoreArchiveCaptureTest {
   }
 
   @Test
-  public void wholeAccountReplacementInvalidatesHintAndFallsBackToValueDiff() throws Exception {
+  public void wholeAccountReplacementUsesValueDiff() throws Exception {
     byte[] address = address();
     AccountCapsule oldAccount = account(address, false, "1000001", 1L, "1000002", 2L);
     AccountAssetStore assetStore = mock(AccountAssetStore.class);
@@ -327,7 +323,6 @@ public class AccountStoreArchiveCaptureTest {
 
     AccountCapsule updated = store.get(address);
     updated.setInstance(updated.getInstance().toBuilder().putAssetV2("1000001", 7L).build());
-    assertFalse(updated.hasCompleteAssetV2ChangeTracking());
 
     store.put(address, updated);
 
@@ -337,7 +332,7 @@ public class AccountStoreArchiveCaptureTest {
   }
 
   @Test
-  public void storeReadOutsideArchiveCaptureDoesNotEnableAssetTracking() throws Exception {
+  public void storeReadHasNoArchiveOnlyTrackingState() throws Exception {
     byte[] address = address();
     AccountCapsule oldAccount = account(address, false, "1000001", 1L);
     AccountAssetStore assetStore = mock(AccountAssetStore.class);
@@ -347,8 +342,9 @@ public class AccountStoreArchiveCaptureTest {
 
     AccountCapsule loaded = store.get(address);
 
-    assertFalse(loaded.hasCompleteAssetV2ChangeTracking());
-    assertTrue(loaded.snapshotModifiedAssetV2().isEmpty());
+    assertEquals(1L, loaded.getInstance().getAssetV2Map().get("1000001").longValue());
+    verify(revokingDb, times(1)).getUnchecked(same(address));
+    verifyNoInteractions(assetStore);
   }
 
   @Test

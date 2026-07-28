@@ -189,15 +189,30 @@ public class InMemoryArchiveTemporalStoreTest {
     store.putChange(assetChange(4L,
         new byte[] {otherAccount[0], otherAccount[1], '1'}, tomb(), val(4)));
 
-    List<byte[]> matches = store.scanLatestCanonicalKeys(
+    List<byte[]> matches = store.scanKnownCanonicalKeys(
         ArchiveDomain.ACCOUNT_ASSET, 3, account);
 
     assertEquals(2, matches.size());
     assertArrayEquals(first, matches.get(0));
     assertArrayEquals(second, matches.get(1));
     matches.get(0)[0] = 0;
-    assertArrayEquals(first, store.scanLatestCanonicalKeys(
+    assertArrayEquals(first, store.scanKnownCanonicalKeys(
         ArchiveDomain.ACCOUNT_ASSET, 3, account).get(0));
+  }
+
+  @Test
+  public void canonicalKeyScanDropsMembershipWhoseOnlyChangeWasUnwound() {
+    byte[] account = new byte[] {0x41, 1};
+    byte[] key = new byte[] {0x41, 1, '1'};
+    store.putChange(assetChange(8L, key, tomb(), val(1)));
+    assertEquals(1, store.scanKnownCanonicalKeys(
+        ArchiveDomain.ACCOUNT_ASSET, key.length, account).size());
+
+    store.unwind(8L);
+
+    assertTrue(store.latest(ArchiveDomain.ACCOUNT_ASSET, key).get().isDeleted());
+    assertTrue(store.scanKnownCanonicalKeys(
+        ArchiveDomain.ACCOUNT_ASSET, key.length, account).isEmpty());
   }
 
   @Test

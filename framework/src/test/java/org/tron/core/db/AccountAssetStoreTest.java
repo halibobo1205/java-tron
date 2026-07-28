@@ -7,6 +7,7 @@ import com.google.protobuf.ByteString;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import javax.annotation.Resource;
@@ -200,6 +201,48 @@ public class AccountAssetStoreTest extends BaseTest {
       Assert.assertEquals(0L, accountAssetChanges);
     } finally {
       archiveService.abortBlock(new BlockCapsule(1, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY));
+      archiveService.close();
+      ArchiveCaptureHolder.clear();
+    }
+  }
+
+  @Test
+  public void archiveCapturesLazyImportedPhysicalAssetMutationThroughAccountFlush() {
+    chainBaseManager.getDynamicPropertiesStore().setAllowAssetOptimization(1);
+    byte[] address = ByteArray.fromHexString(OWNER_ADDRESS);
+    address[20] = 0x54;
+    String assetId = "30003";
+    byte[] assetKey = Bytes.concat(address, assetId.getBytes(StandardCharsets.US_ASCII));
+    AccountCapsule stripped = new AccountCapsule(Protocol.Account.newBuilder()
+        .setAddress(ByteString.copyFrom(address))
+        .setAssetOptimized(true)
+        .build());
+    accountStore.put(address, stripped);
+    accountAssetStore.put(assetKey, Longs.toByteArray(7L));
+    DefaultArchiveService archiveService =
+        new DefaultArchiveService(true, new InMemoryArchiveTemporalStore());
+    BlockCapsule block = new BlockCapsule(1, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY);
+    try {
+      archiveService.beginBlock(block, ArchiveSource.NORMAL);
+      archiveService.beginSystemTx(block, ArchivePhase.BLOCK_FINALIZE);
+      AccountCapsule updated = accountStore.get(address);
+      Assert.assertTrue(updated.getInstance().getAssetV2Map().isEmpty());
+      Assert.assertEquals(7L, updated.getAssetV2(assetId));
+      updated.addAssetMapV2(Collections.singletonMap(assetId, 12L));
+
+      accountStore.put(address, updated);
+      archiveService.endTx();
+
+      ArchiveChangeRecord assetChange = archiveService.getCaptureEngine().records().stream()
+          .filter(r -> r.getDomain() == ArchiveDomain.ACCOUNT_ASSET)
+          .findFirst()
+          .orElseThrow(AssertionError::new);
+      Assert.assertEquals(7L, Longs.fromByteArray(assetChange.getPrevValue().getValue()));
+      Assert.assertEquals(12L, Longs.fromByteArray(assetChange.getValue().getValue()));
+      Assert.assertEquals(12L, accountAssetStore.getBalance(
+          address, assetId.getBytes(StandardCharsets.US_ASCII)));
+    } finally {
+      archiveService.abortBlock(block);
       archiveService.close();
       ArchiveCaptureHolder.clear();
     }

@@ -29,17 +29,12 @@ import static org.tron.protos.contract.Common.ResourceCode.TRON_POWER;
 import com.google.common.collect.Maps;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
-import java.security.MessageDigest;
-import java.util.Arrays;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
 import org.tron.common.utils.ByteArray;
-import org.tron.common.utils.Sha256Hash;
 import org.tron.core.capsule.utils.AssetUtil;
 import org.tron.core.store.AssetIssueStore;
 import org.tron.core.store.DynamicPropertiesStore;
@@ -62,12 +57,6 @@ public class AccountCapsule implements ProtoCapsule<Account>, Comparable<Account
 
   private Account account;
   private boolean flag = false;
-  private Set<String> modifiedAssetV2;
-  private boolean assetV2ChangeTrackingComplete;
-  private boolean assetOptimizedChanged;
-  private byte[] assetV2TrackedStoreKey;
-  private byte[] assetV2TrackedPreviousDigest;
-  private int assetV2TrackedPreviousLength;
 
   /**
    * get account from bytes data.
@@ -271,7 +260,6 @@ public class AccountCapsule implements ProtoCapsule<Account>, Comparable<Account
   }
 
   public void setInstance(Account account) {
-    invalidateAssetV2ChangeTracking();
     this.account = account;
   }
 
@@ -707,70 +695,7 @@ public class AccountCapsule implements ProtoCapsule<Account>, Comparable<Account
   }
 
   public void setAssetOptimized(boolean flag) {
-    if (assetV2ChangeTrackingComplete && this.account.getAssetOptimized() != flag) {
-      assetOptimizedChanged = true;
-    }
     this.account = this.account.toBuilder().setAssetOptimized(flag).build();
-  }
-
-  /** Enables delta tracking against one exact canonical account-store version. */
-  public void enableAssetV2ChangeTracking(byte[] storeKey, byte[] previousValue) {
-    if (storeKey == null || previousValue == null) {
-      throw new NullPointerException("account asset tracking baseline must not be null");
-    }
-    modifiedAssetV2 = null;
-    assetOptimizedChanged = false;
-    assetV2TrackedStoreKey = Arrays.copyOf(storeKey, storeKey.length);
-    assetV2TrackedPreviousDigest = Sha256Hash.hash(true, previousValue);
-    assetV2TrackedPreviousLength = previousValue.length;
-    assetV2ChangeTrackingComplete = true;
-  }
-
-  public boolean hasCompleteAssetV2ChangeTracking() {
-    return assetV2ChangeTrackingComplete;
-  }
-
-  public boolean hasCompleteAssetV2ChangeTrackingFor(
-      byte[] storeKey, byte[] previousValue) {
-    if (!assetV2ChangeTrackingComplete || storeKey == null || previousValue == null
-        || previousValue.length != assetV2TrackedPreviousLength
-        || !Arrays.equals(assetV2TrackedStoreKey, storeKey)) {
-      return false;
-    }
-    return MessageDigest.isEqual(
-        assetV2TrackedPreviousDigest, Sha256Hash.hash(true, previousValue));
-  }
-
-  public Set<String> snapshotModifiedAssetV2() {
-    return modifiedAssetV2 == null
-        ? java.util.Collections.emptySet() : new HashSet<>(modifiedAssetV2);
-  }
-
-  public boolean isAssetOptimizedChanged() {
-    return assetOptimizedChanged;
-  }
-
-  public boolean hasModifiedAssetV2() {
-    return modifiedAssetV2 != null && !modifiedAssetV2.isEmpty();
-  }
-
-  public void copyModifiedAssetV2Into(Set<String> destination) {
-    if (destination == null) {
-      throw new NullPointerException("destination");
-    }
-    if (modifiedAssetV2 != null) {
-      destination.addAll(modifiedAssetV2);
-    }
-  }
-
-  /** Invalidates hints after a Store put may have changed the physical optimization layout. */
-  public void invalidateAssetV2ChangeTracking() {
-    modifiedAssetV2 = null;
-    assetOptimizedChanged = false;
-    assetV2TrackedStoreKey = null;
-    assetV2TrackedPreviousDigest = null;
-    assetV2TrackedPreviousLength = 0;
-    assetV2ChangeTrackingComplete = false;
   }
 
   public boolean assetBalanceEnoughV2(byte[] key, long amount,
@@ -823,7 +748,6 @@ public class AccountCapsule implements ProtoCapsule<Account>, Comparable<Account
           .putAsset(nameKey, addExact(currentAmount, amount, disableJavaLangMath))
           .putAssetV2(tokenID, addExact(currentAmount, amount, disableJavaLangMath))
           .build();
-      markAssetV2Changed(tokenID);
     }
     //key is token id
     if (dynamicPropertiesStore.getAllowSameTokenName() == 1) {
@@ -836,7 +760,6 @@ public class AccountCapsule implements ProtoCapsule<Account>, Comparable<Account
       this.account = this.account.toBuilder()
           .putAssetV2(tokenIDStr, addExact(currentAmount, amount, disableJavaLangMath))
           .build();
-      markAssetV2Changed(tokenIDStr);
     }
     return true;
   }
@@ -870,7 +793,6 @@ public class AccountCapsule implements ProtoCapsule<Account>, Comparable<Account
                 .putAsset(nameKey, subtractExact(currentAmount, amount, disableJavaLangMath))
                 .putAssetV2(tokenID, subtractExact(currentAmount, amount, disableJavaLangMath))
                 .build();
-        markAssetV2Changed(tokenID);
         return true;
       }
     }
@@ -883,7 +805,6 @@ public class AccountCapsule implements ProtoCapsule<Account>, Comparable<Account
         this.account = this.account.toBuilder()
                 .putAssetV2(tokenID, subtractExact(currentAmount, amount, disableJavaLangMath))
                 .build();
-        markAssetV2Changed(tokenID);
         return true;
       }
     }
@@ -892,14 +813,12 @@ public class AccountCapsule implements ProtoCapsule<Account>, Comparable<Account
   }
 
   public void clearAssetV2() {
-    markAssetV2Changed(this.account.getAssetV2Map().keySet());
     this.account = this.account.toBuilder()
             .clearAssetV2()
             .build();
   }
 
   public void clearAsset() {
-    markAssetV2Changed(this.account.getAssetV2Map().keySet());
     this.account = this.account.toBuilder()
             .clearAsset()
             .clearAssetV2()
@@ -925,13 +844,11 @@ public class AccountCapsule implements ProtoCapsule<Account>, Comparable<Account
     this.account = this.account.toBuilder()
         .putAssetV2(assetId, value)
         .build();
-    markAssetV2Changed(assetId);
     return true;
   }
 
   public void addAssetMapV2(Map<String, Long> assetMap) {
     this.account = this.account.toBuilder().putAllAssetV2(assetMap).build();
-    markAssetV2Changed(assetMap.keySet());
   }
 
   public Long getAsset(DynamicPropertiesStore dynamicStore, String key) {
@@ -1421,39 +1338,13 @@ public class AccountCapsule implements ProtoCapsule<Account>, Comparable<Account
   }
 
   public void importAsset(byte[] key) {
-    Account previous = this.account;
-    this.account = AssetUtil.importAsset(previous, key);
-    if (assetV2ChangeTrackingComplete && this.account != previous) {
-      markAssetV2Changed(ByteArray.toStr(key));
-    }
+    this.account = AssetUtil.importAsset(this.account, key);
   }
 
   public void importAllAsset() {
     if (!flag) {
-      Account previous = this.account;
-      this.account = AssetUtil.importAllAsset(previous);
-      if (this.account != previous) {
-        markAssetV2Changed(this.account.getAssetV2Map().keySet());
-      }
+      this.account = AssetUtil.importAllAsset(this.account);
       flag = true;
-    }
-  }
-
-  private void markAssetV2Changed(String assetId) {
-    if (assetV2ChangeTrackingComplete && assetId != null) {
-      if (modifiedAssetV2 == null) {
-        modifiedAssetV2 = new HashSet<>();
-      }
-      modifiedAssetV2.add(assetId);
-    }
-  }
-
-  private void markAssetV2Changed(Iterable<String> assetIds) {
-    if (!assetV2ChangeTrackingComplete || assetIds == null) {
-      return;
-    }
-    for (String assetId : assetIds) {
-      markAssetV2Changed(assetId);
     }
   }
 
