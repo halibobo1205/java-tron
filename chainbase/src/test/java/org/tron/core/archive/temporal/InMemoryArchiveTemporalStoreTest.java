@@ -8,6 +8,7 @@ import static org.junit.Assert.assertTrue;
 
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.List;
 import org.junit.Test;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchivePhase;
@@ -46,6 +47,14 @@ public class InMemoryArchiveTemporalStoreTest {
     return new ArchiveChangeRecord(
         new ArchiveTxPosition(txNum, blockNum, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, null),
         ArchiveDomain.ACCOUNT, key, prev, value);
+  }
+
+  private static ArchiveChangeRecord assetChange(long txNum, byte[] key, DomainValue prev,
+      DomainValue value) {
+    return new ArchiveChangeRecord(
+        new ArchiveTxPosition(txNum, 1L, ArchivePhase.USER_TX,
+            ArchiveSource.NORMAL, 0, null),
+        ArchiveDomain.ACCOUNT_ASSET, key, prev, value);
   }
 
   private byte[] asOf(long txNum) {
@@ -165,6 +174,30 @@ public class InMemoryArchiveTemporalStoreTest {
     assertFalse(store.latest(ArchiveDomain.ACCOUNT, "nope".getBytes()).isPresent());
     store.putChange(change(5, KEY, tomb(), val(1)));
     assertFalse(store.getAsOf(ArchiveDomain.CODE, KEY, 5).isPresent()); // different domain
+  }
+
+  @Test
+  public void latestCanonicalKeyScanUsesExactLengthAndPrefix() {
+    byte[] account = new byte[] {0x41, 1};
+    byte[] otherAccount = new byte[] {0x41, 2};
+    byte[] first = new byte[] {0x41, 1, '1'};
+    byte[] second = new byte[] {0x41, 1, '2'};
+    byte[] longer = new byte[] {0x41, 1, '1', '0'};
+    store.putChange(assetChange(1L, first, tomb(), val(1)));
+    store.putChange(assetChange(2L, second, val(2), tomb()));
+    store.putChange(assetChange(3L, longer, tomb(), val(3)));
+    store.putChange(assetChange(4L,
+        new byte[] {otherAccount[0], otherAccount[1], '1'}, tomb(), val(4)));
+
+    List<byte[]> matches = store.scanLatestCanonicalKeys(
+        ArchiveDomain.ACCOUNT_ASSET, 3, account);
+
+    assertEquals(2, matches.size());
+    assertArrayEquals(first, matches.get(0));
+    assertArrayEquals(second, matches.get(1));
+    matches.get(0)[0] = 0;
+    assertArrayEquals(first, store.scanLatestCanonicalKeys(
+        ArchiveDomain.ACCOUNT_ASSET, 3, account).get(0));
   }
 
   @Test

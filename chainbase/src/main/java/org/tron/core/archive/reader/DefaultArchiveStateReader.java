@@ -1,11 +1,15 @@
 package org.tron.core.archive.reader;
 
 import com.google.common.primitives.Bytes;
+import com.google.common.primitives.Longs;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Parser;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -29,7 +33,9 @@ import org.tron.core.archive.txnum.ArchiveCoordinates;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.ContractCapsule;
 import org.tron.core.capsule.ContractStateCapsule;
+import org.tron.core.capsule.VotesCapsule;
 import org.tron.protos.Protocol.Account;
+import org.tron.protos.Protocol.Votes;
 import org.tron.protos.contract.SmartContractOuterClass.ContractState;
 import org.tron.protos.contract.SmartContractOuterClass.SmartContract;
 
@@ -44,6 +50,7 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
   private static final int ADDRESS_LEN = 21;
   private static final int SLOT_LEN = 32;
   private static final int MAX_STORAGE_VALUE_LEN = 32;
+  private static final int MAX_TRC10_ID_LEN = 19;
   private static final int DEFAULT_MAX_MEMO_ENTRIES = 4_096;
   private static final long DEFAULT_MAX_MEMO_BYTES = 4L * 1024 * 1024;
 
@@ -226,6 +233,58 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
   }
 
   @Override
+  public Map<String, Long> getAccountAssets(byte[] address) throws ArchiveReaderException {
+    requireOwnerAndOpen();
+    queryContext.recordLogicalRead();
+    requireLength(address, ADDRESS_LEN, "address");
+    if (!completeHistory) {
+      throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
+          "archive account-asset membership is unknown before mid-chain coverage");
+    }
+    Map<String, Long> balances = new LinkedHashMap<>();
+    try (QueryContextHolder.Scope ignored = QueryContextHolder.attach(queryContext)) {
+      for (int assetIdLength = 1; assetIdLength <= MAX_TRC10_ID_LEN; assetIdLength++) {
+        List<byte[]> candidates = temporalView.scanLatestCanonicalKeys(
+            ArchiveDomain.ACCOUNT_ASSET, ADDRESS_LEN + assetIdLength, address);
+        for (byte[] canonicalKey : candidates) {
+          byte[] assetId = accountAssetId(address, canonicalKey);
+          String assetIdText = canonicalTrc10Id(assetId);
+          RawLookup lookup = getLookup(ArchiveDomain.ACCOUNT_ASSET, canonicalKey);
+          if (!lookup.isPresent()) {
+            continue;
+          }
+          if (lookup.value.length != Long.BYTES) {
+            forget(ArchiveDomain.ACCOUNT_ASSET, canonicalKey);
+            throw new ArchiveReaderException(ArchiveReaderException.Reason.CORRUPT_VALUE,
+                "archive account-asset value must be 8 bytes");
+          }
+          long balance = Longs.fromByteArray(lookup.value);
+          if (balance <= 0L) {
+            forget(ArchiveDomain.ACCOUNT_ASSET, canonicalKey);
+            throw new ArchiveReaderException(ArchiveReaderException.Reason.CORRUPT_VALUE,
+                "archive account-asset balance must be positive");
+          }
+          if (balances.put(assetIdText, balance) != null) {
+            throw new ArchiveReaderException(ArchiveReaderException.Reason.CORRUPT_INDEX,
+                "archive account-asset enumeration returned a duplicate token ID");
+          }
+        }
+      }
+      return Collections.unmodifiableMap(balances);
+    } catch (ArchiveReaderException | HistoricalQueryLimitException e) {
+      throw e;
+    } catch (ArchiveException e) {
+      throw new ArchiveReaderException(
+          ArchiveReaderException.reasonForStorageFailure(
+              e, ArchiveReaderException.Reason.CORRUPT_INDEX),
+          "archive account-asset enumeration failed", e);
+    } catch (RuntimeException e) {
+      throw new ArchiveReaderException(ArchiveReaderException.Reason.INTERNAL_IO,
+          "archive account-asset enumeration failed", e);
+    }
+  }
+
+  @Override
   public ArchiveReadResult<ContractCapsule> getContract(byte[] address)
       throws ArchiveReaderException {
     requireOwnerAndOpen();
@@ -264,6 +323,36 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
       throw new ArchiveReaderException(ArchiveReaderException.Reason.CODEC_ERROR,
           "archive CONTRACT_STATE value is not a valid ContractState proto", e);
     }
+  }
+
+  @Override
+  public ArchiveReadResult<VotesCapsule> getVotes(byte[] address)
+      throws ArchiveReaderException {
+    requireOwnerAndOpen();
+    queryContext.recordLogicalRead();
+    requireLength(address, ADDRESS_LEN, "address");
+    RawLookup lookup = getLookup(ArchiveDomain.VOTES, address);
+    if (!lookup.isPresent()) {
+      return retype(toReadResult(ArchiveDomain.VOTES, lookup));
+    }
+    try {
+      return ArchiveReadResult.present(new VotesCapsule(lookup.decode(Votes.parser())));
+    } catch (InvalidProtocolBufferException e) {
+      forget(ArchiveDomain.VOTES, address);
+      throw new ArchiveReaderException(ArchiveReaderException.Reason.CODEC_ERROR,
+          "archive VOTES value is not a valid Votes proto", e);
+    }
+  }
+
+  @Override
+  public ArchiveReadResult<byte[]> getDelegation(byte[] key)
+      throws ArchiveReaderException {
+    requireOwnerAndOpen();
+    queryContext.recordLogicalRead();
+    if (key == null || key.length == 0) {
+      throw new IllegalArgumentException("delegation key must be non-empty");
+    }
+    return getRaw(ArchiveDomain.DELEGATION, key);
   }
 
   @Override
@@ -415,6 +504,55 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
       // Caller-contract violation (bad RPC param); the RPC layer maps this to invalid-params.
       throw new IllegalArgumentException(name + " must be " + expected + " bytes");
     }
+  }
+
+  private static byte[] accountAssetId(byte[] address, byte[] canonicalKey)
+      throws ArchiveReaderException {
+    if (canonicalKey == null || canonicalKey.length <= address.length
+        || !startsWith(canonicalKey, address)) {
+      throw new ArchiveReaderException(ArchiveReaderException.Reason.CORRUPT_INDEX,
+          "archive account-asset enumeration returned a key outside the account prefix");
+    }
+    return Arrays.copyOfRange(canonicalKey, address.length, canonicalKey.length);
+  }
+
+  private static String canonicalTrc10Id(byte[] assetId) throws ArchiveReaderException {
+    if (assetId.length == 0 || assetId.length > MAX_TRC10_ID_LEN
+        || assetId[0] == '0') {
+      throw invalidTrc10Id();
+    }
+    for (byte value : assetId) {
+      if (value < '0' || value > '9') {
+        throw invalidTrc10Id();
+      }
+    }
+    String text = new String(assetId, StandardCharsets.US_ASCII);
+    try {
+      if (Long.parseLong(text) <= 0L) {
+        throw invalidTrc10Id();
+      }
+    } catch (NumberFormatException e) {
+      throw new ArchiveReaderException(ArchiveReaderException.Reason.CORRUPT_INDEX,
+          "archive account-asset token ID is outside the positive long range", e);
+    }
+    return text;
+  }
+
+  private static ArchiveReaderException invalidTrc10Id() {
+    return new ArchiveReaderException(ArchiveReaderException.Reason.CORRUPT_INDEX,
+        "archive account-asset token ID is not canonical");
+  }
+
+  private static boolean startsWith(byte[] value, byte[] prefix) {
+    if (value.length < prefix.length) {
+      return false;
+    }
+    for (int i = 0; i < prefix.length; i++) {
+      if (value[i] != prefix[i]) {
+        return false;
+      }
+    }
+    return true;
   }
 
   @Override

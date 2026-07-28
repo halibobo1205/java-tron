@@ -53,10 +53,12 @@ public final class HistoricalDebugTraceExecutor {
             QueryContextHolder.attachIfPresent(readerQueryContext);
         VMConfig.LocalSnapshotScope ignoredVmConfig = VMConfig.preserveLocalSnapshot()) {
       QueryContext queryContext = QueryContextHolder.current();
+      StoreFactory storeFactory = StoreFactory.getInstance();
       ArchiveRepositoryAdapter root =
-          new ArchiveRepositoryAdapter(reader, vmProperties, genesisComplete);
+          new ArchiveRepositoryAdapter(reader, vmProperties, genesisComplete,
+              HistoricalArchiveChainIdentity.blackHoleAddress(storeFactory));
       TransactionContext context =
-          new TransactionContext(block, trxCap, StoreFactory.getInstance(), constantCall, false);
+          new TransactionContext(block, trxCap, storeFactory, constantCall, false);
       VMActuator vmActuator = Objects.requireNonNull(
           vmActuatorFactory.apply(constantCall), "vmActuatorFactory result");
       vmActuator.setInjectedRootRepository(root);

@@ -20,7 +20,7 @@ public class VoteRewardUtil {
     AccountCapsule accountCapsule = repository.getAccount(address);
     long beginCycle = repository.getBeginCycle(address);
     long endCycle = repository.getEndCycle(address);
-    long currentCycle = repository.getDynamicPropertiesStore().getCurrentCycleNumber();
+    long currentCycle = repository.getVmDynamicProperties().getCurrentCycleNumber();
     long reward = 0;
     if (beginCycle > currentCycle || accountCapsule == null) {
       return;
@@ -61,7 +61,7 @@ public class VoteRewardUtil {
     AccountCapsule accountCapsule = repository.getAccount(address);
     long beginCycle = repository.getBeginCycle(address);
     long endCycle = repository.getEndCycle(address);
-    long currentCycle = repository.getDynamicPropertiesStore().getCurrentCycleNumber();
+    long currentCycle = repository.getVmDynamicProperties().getCurrentCycleNumber();
     long reward = 0;
     if (accountCapsule == null) {
       return 0;
@@ -96,8 +96,8 @@ public class VoteRewardUtil {
     long reward = 0;
     for (Protocol.Vote vote : accountCapsule.getVotesList()) {
       byte[] srAddress = vote.getVoteAddress().toByteArray();
-      BigInteger beginVi = repository.getDelegationStore().getWitnessVi(beginCycle - 1, srAddress);
-      BigInteger endVi = repository.getDelegationStore().getWitnessVi(endCycle - 1, srAddress);
+      BigInteger beginVi = repository.getWitnessVi(beginCycle - 1, srAddress);
+      BigInteger endVi = repository.getWitnessVi(endCycle - 1, srAddress);
       BigInteger deltaVi = endVi.subtract(beginVi);
       if (deltaVi.signum() <= 0) {
         continue;

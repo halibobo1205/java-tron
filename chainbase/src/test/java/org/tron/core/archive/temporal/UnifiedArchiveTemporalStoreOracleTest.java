@@ -1,5 +1,6 @@
 package org.tron.core.archive.temporal;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
@@ -9,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.tron.core.archive.unified.UnifiedArchiveTestMaintenance.write;
 
+import com.google.common.primitives.Longs;
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -155,8 +157,20 @@ public class UnifiedArchiveTemporalStoreOracleTest {
         DOMAIN, key, prev, value);
   }
 
+  private static ArchiveChangeRecord record(long txNum, ArchiveDomain domain, byte[] key,
+      DomainValue prev, DomainValue value) {
+    return new ArchiveChangeRecord(
+        new ArchiveTxPosition(
+            txNum, 1L, ArchivePhase.USER_TX, ArchiveSource.NORMAL, 0, null),
+        domain, key, prev, value);
+  }
+
   private static DomainValue val(int b) {
     return DomainValue.present(new byte[] {(byte) b});
+  }
+
+  private static DomainValue assetVal(long balance) {
+    return DomainValue.present(Longs.toByteArray(balance));
   }
 
   @Test
@@ -212,6 +226,49 @@ public class UnifiedArchiveTemporalStoreOracleTest {
     assertParity(K1, 7L);
     unified.validateCommittedBlock(range);
     unified.validateDomainRows();
+  }
+
+  @Test
+  public void latestCanonicalKeyPrefixScanMatchesOracleAndIsSnapshotBound() {
+    byte[] account = new byte[] {0x41, 1};
+    byte[] first = new byte[] {0x41, 1, '1'};
+    byte[] second = new byte[] {0x41, 1, '2'};
+    byte[] longer = new byte[] {0x41, 1, '1', '0'};
+    ArchiveChangeRecord firstRecord = record(
+        5L, ArchiveDomain.ACCOUNT_ASSET, first,
+        DomainValue.tombstone(), assetVal(1L));
+    ArchiveChangeRecord longerRecord = record(
+        6L, ArchiveDomain.ACCOUNT_ASSET, longer,
+        DomainValue.tombstone(), assetVal(2L));
+    mem.putChange(firstRecord);
+    mem.putChange(longerRecord);
+    putUnifiedChange(unified, firstRecord);
+    putUnifiedChange(unified, longerRecord);
+
+    try (ArchiveTemporalReadView memView = mem.openReadView();
+        ArchiveTemporalReadView unifiedView = unified.openReadView()) {
+      ArchiveChangeRecord secondRecord = record(
+          7L, ArchiveDomain.ACCOUNT_ASSET, second,
+          DomainValue.tombstone(), assetVal(3L));
+      mem.putChange(secondRecord);
+      putUnifiedChange(unified, secondRecord);
+
+      List<byte[]> expected = memView.scanLatestCanonicalKeys(
+          ArchiveDomain.ACCOUNT_ASSET, 3, account);
+      List<byte[]> actual = unifiedView.scanLatestCanonicalKeys(
+          ArchiveDomain.ACCOUNT_ASSET, 3, account);
+      assertEquals(1, expected.size());
+      assertEquals(expected.size(), actual.size());
+      assertArrayEquals(first, actual.get(0));
+    }
+
+    List<byte[]> expected = mem.scanLatestCanonicalKeys(
+        ArchiveDomain.ACCOUNT_ASSET, 3, account);
+    List<byte[]> actual = unified.scanLatestCanonicalKeys(
+        ArchiveDomain.ACCOUNT_ASSET, 3, account);
+    assertEquals(expected.size(), actual.size());
+    assertArrayEquals(first, actual.get(0));
+    assertArrayEquals(second, actual.get(1));
   }
 
   @Test

@@ -74,8 +74,8 @@ public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
           "60006000600060006000730000000000000000000000000000000000000033"
               + "620f4240f150600160005260206000f3");
 
-  // CALL RewardBalance (0x01000005), discard its status, then STOP. RewardBalance reads the
-  // delegation domain, which the historical archive deliberately rejects.
+  // CALL RewardBalance (0x01000005), discard its status, then STOP. The fake reader intentionally
+  // leaves delegation unsupported so the test can prove a nested archive failure reaches the root.
   private static final byte[] CHILD_CALLS_REWARD_BALANCE_CODE =
       org.bouncycastle.util.encoders.Hex.decode(
           "600060006000600060006301000005620f4240f15000");
@@ -247,7 +247,7 @@ public class HistoricalConstantCallExecutorTest extends BaseMethodTest {
             queryContext, CHILD_CALLS_REWARD_BALANCE_CODE));
 
     assertEquals(UnsupportedHistoricalStateException.class, failure.getClass());
-    assertEquals("historical archive call does not support begin-cycle reads",
+    assertEquals("archive read failed for delegation",
         failure.getMessage());
     assertSame(failure, queryContext.getRecordedVmTerminalFailure());
     assertNull(QueryContextHolder.current());
