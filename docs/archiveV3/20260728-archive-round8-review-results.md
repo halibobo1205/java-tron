@@ -26,5 +26,19 @@ P1.1 full-throwable logging **LANDED** (`Manager.java:1730-1746`, 10 call sites,
 6. **[cosmetic batch, one commit]** Mirror the four `storage.archive.debug` budget keys into `config.conf:92`; re-widen the TOMBSTONE comment (`HistoricalArchiveVmDynamicProperties.java:374` — "eth_call" → "eth_call/trace" again); add the round-27-decision breadcrumb at the `eraseBlock` ARCHIVE_RUNTIME catch; drop the stale verification-metadata claim from the `e28409782b` message context if amended.
 7. **[optional perf]** Skip `Program.checkCPUTimeLimit` when the query deadline drives `vmShouldEndInUs` (redundant clock sample per opcode on historical paths); eliminate the SLOAD logical-read double-charge in `ArchiveStructLogCollector.captureTouchedStorage` (post-op capture).
 
+## Remediation verification (claude, 2026-07-28)
+
+`a0616c8879 fix(archive): close round-8 review findings` (15 files, +776/−36) — **items 1-6 all verified LANDED; item 7 (optional perf pair) deferred as designated**:
+
+1. ✅ Runbook Stage C rewritten: default-off → −32601; debug-enabled nodes compare structLogs+callTracer vs an independent node; pre-enable blocks must fail closed with `UnsupportedHistoricalStateException`, never a partial trace.
+2. ✅ Memory hoisting fixed **parity-precisely**: new non-extending `Memory.memoryPeek` used only for the MAX_DEPTH-rejected case across all 4 wrappers — correct scoping, since canonical order is depth-check → `memoryChunk` → balance-check (the balance case extends memory canonically too, so peeking there would have been the opposite divergence). `MemoryTest` covers the peek.
+3. ✅ `HistoricalDebugTraceNestedFailureTest` (266 lines): nested RewardBalance failure cannot be hidden by parent success, asserted for BOTH structLog and callTracer collectors.
+4. ✅ P2.1 closed: `20260728-archive-schema7-round8-e2e-results.md` — exact schema-7 artifact (FullNode.jar SHA-256 `17d43213…`), fresh private chain, JDK 17.0.17.
+5. ✅ `delegationKeysMatchCanonicalStoreBuilders` — real `DelegationStore` (CALLS_REAL_METHODS) writes, adapter reads: drift guard in place.
+6. ✅ Cosmetic batch: config.conf carries the 4 debug budget keys; TOMBSTONE comment re-widened to eth_call/trace; `eraseBlock` breadcrumb explains why failing is mandatory and why ARCHIVE_RUNTIME routes it.
+7. ⏸ Optional perf pair (redundant `checkCPUTimeLimit`, SLOAD double-charge) — open, non-blocking.
+
+Bonus hardening in the same commit (beyond checklist): `shouldBeginArchiveUserVmTx` guard (null blockCap / unsigned block), +94-line eth_call integration test, +48 DefaultArchiveServiceTest, +23 ManagerArchiveLifecycleTest.
+
 ## Verified sound (no action)
 Trace isolation (listener null-checked, canonical byte-identical); budgets reserve-before-materialize clamped by maxResponseBytes; TX_BEFORE/USER_TX_VM anchoring consistent; selfdestruct all axes; `metrics_dropped_reports` semantics; **zero behavioral regressions** — nested-swallow both executors, TRC10 overlay, digest fold + test, close() ordering, reconcile re-ack, fsyncs/block=2, deadline clamp, SolidityNode refusal, query-limit zero rejection, journal budget, metrics labels/gauges/buckets, dynamic_level_bytes.
