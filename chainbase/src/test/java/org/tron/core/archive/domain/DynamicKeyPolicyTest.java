@@ -243,7 +243,8 @@ public class DynamicKeyPolicyTest {
         "TOKEN_UPDATE_DONE",
         "ENERGY_PRICE_HISTORY_DONE",
         "BANDWIDTH_PRICE_HISTORY_DONE",
-        "TURKISH_KEY_MIGRATION_DONE"}) {
+        "TURKISH_KEY_MIGRATION_DONE",
+        "ARCHIVE_GENESIS_COMMIT_MARKER"}) {
       DynamicKeyDecision done = decide(key);
       assertEquals(RootPolicy.EXCLUDED, done.getRootPolicy());
       assertEquals(HistoryPolicy.NO_ARCHIVE, done.getHistoryPolicy());

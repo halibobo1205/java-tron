@@ -163,9 +163,9 @@ public final class InMemoryArchiveTemporalStore implements ArchiveTemporalStore 
   }
 
   @Override
-  public List<byte[]> scanLatestCanonicalKeys(ArchiveDomain domain,
+  public List<byte[]> scanKnownCanonicalKeys(ArchiveDomain domain,
       int canonicalKeyLength, byte[] canonicalPrefix) {
-    return scanLatestCanonicalKeys(byDomain, domain, canonicalKeyLength, canonicalPrefix);
+    return scanKnownCanonicalKeys(byDomain, domain, canonicalKeyLength, canonicalPrefix);
   }
 
   @Override
@@ -185,9 +185,9 @@ public final class InMemoryArchiveTemporalStore implements ArchiveTemporalStore 
       }
 
       @Override
-      public List<byte[]> scanLatestCanonicalKeys(ArchiveDomain domain,
+      public List<byte[]> scanKnownCanonicalKeys(ArchiveDomain domain,
           int canonicalKeyLength, byte[] canonicalPrefix) {
-        return InMemoryArchiveTemporalStore.scanLatestCanonicalKeys(
+        return InMemoryArchiveTemporalStore.scanKnownCanonicalKeys(
             snapshot, domain, canonicalKeyLength, canonicalPrefix);
       }
 
@@ -223,7 +223,7 @@ public final class InMemoryArchiveTemporalStore implements ArchiveTemporalStore 
     return Optional.ofNullable(state == null ? null : state.latest);
   }
 
-  private static List<byte[]> scanLatestCanonicalKeys(
+  private static List<byte[]> scanKnownCanonicalKeys(
       Map<ArchiveDomain, Map<WrappedByteArray, KeyState>> byDomain,
       ArchiveDomain domain, int canonicalKeyLength, byte[] canonicalPrefix) {
     if (domain == null) {
@@ -250,7 +250,7 @@ public final class InMemoryArchiveTemporalStore implements ArchiveTemporalStore 
         queryContext.checkDeadline();
       }
       byte[] key = entry.getKey().getBytes();
-      if (entry.getValue().latest != null
+      if (!entry.getValue().history.isEmpty()
           && key.length == canonicalKeyLength && startsWith(key, canonicalPrefix)) {
         if (queryContext != null) {
           queryContext.recordBackendRead();

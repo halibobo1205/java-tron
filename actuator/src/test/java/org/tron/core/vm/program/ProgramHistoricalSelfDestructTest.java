@@ -25,6 +25,7 @@ import org.junit.Test;
 import org.tron.common.runtime.InternalTransaction;
 import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.utils.ByteArray;
+import org.tron.core.archive.reader.ArchiveReaderException;
 import org.tron.core.archive.reader.ArchiveReadResult;
 import org.tron.core.archive.reader.ArchiveStatePoint;
 import org.tron.core.archive.reader.ArchiveStateReader;
@@ -40,6 +41,7 @@ import org.tron.core.vm.OperationRegistry;
 import org.tron.core.vm.PrecompiledContracts;
 import org.tron.core.vm.VM;
 import org.tron.core.vm.archive.ArchiveRepositoryAdapter;
+import org.tron.core.vm.archive.UnsupportedHistoricalStateException;
 import org.tron.core.vm.config.VMConfig;
 import org.tron.core.vm.program.invoke.ProgramInvoke;
 import org.tron.core.vm.repository.Repository;
@@ -142,6 +144,31 @@ public class ProgramHistoricalSelfDestructTest {
         program.getContractState().getTokenBalance(
             blackHole, TOKEN_ID.getBytes(StandardCharsets.US_ASCII)));
     assertEquals(1, program.getResult().getDeleteAccounts().size());
+  }
+
+  @Test
+  public void historicalSelfDestructFailsClosedOnCorruptAssetMembership() throws Exception {
+    byte[] owner = address(0x27);
+    byte[] inheritor = address(0x28);
+    ArchiveReaderException corruption = new ArchiveReaderException(
+        ArchiveReaderException.Reason.CORRUPT_INDEX, "LATEST/ANCHOR mismatch");
+    HistoricalReader reader = new HistoricalReader(owner, 900L);
+    reader.failAccountAssets(corruption);
+    ArchiveRepositoryAdapter repository = new ArchiveRepositoryAdapter(
+        reader, mock(VmDynamicProperties.class), true, address(0x00));
+    VMConfig.Snapshot historical = new VMConfig.Snapshot();
+    historical.allowTvmTransferTrc10 = true;
+    historical.allowTvmConstantinople = true;
+    historical.allowTvmSolidity059 = true;
+
+    Program program = runSelfDestruct(repository, owner, inheritor, historical);
+
+    assertTrue(program.getResult().getException()
+        instanceof UnsupportedHistoricalStateException);
+    assertSame(corruption, program.getResult().getException().getCause());
+    assertTrue(reader.enumeratedAssets);
+    assertTrue(program.getResult().getInternalTransactions().isEmpty());
+    assertTrue(program.getResult().getDeleteAccounts().isEmpty());
   }
 
   @Test
@@ -490,6 +517,7 @@ public class ProgramHistoricalSelfDestructTest {
     private final Map<String, byte[]> delegations = new HashMap<>();
     private Map<String, Long> accountAssets =
         Collections.singletonMap(TOKEN_ID, TOKEN_BALANCE);
+    private ArchiveReaderException accountAssetsFailure;
     private boolean enumeratedAssets;
 
     private HistoricalReader(byte[] owner, long balance) {
@@ -511,6 +539,10 @@ public class ProgramHistoricalSelfDestructTest {
 
     private void clearAccountAssets() {
       accountAssets = Collections.emptyMap();
+    }
+
+    private void failAccountAssets(ArchiveReaderException failure) {
+      accountAssetsFailure = failure;
     }
 
     @Override
@@ -535,8 +567,11 @@ public class ProgramHistoricalSelfDestructTest {
     }
 
     @Override
-    public Map<String, Long> getAccountAssets(byte[] address) {
+    public Map<String, Long> getAccountAssets(byte[] address) throws ArchiveReaderException {
       enumeratedAssets = true;
+      if (accountAssetsFailure != null) {
+        throw accountAssetsFailure;
+      }
       return Arrays.equals(owner, address)
           ? accountAssets
           : Collections.emptyMap();

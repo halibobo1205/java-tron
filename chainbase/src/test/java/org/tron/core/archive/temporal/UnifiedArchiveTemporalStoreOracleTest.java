@@ -253,18 +253,18 @@ public class UnifiedArchiveTemporalStoreOracleTest {
       mem.putChange(secondRecord);
       putUnifiedChange(unified, secondRecord);
 
-      List<byte[]> expected = memView.scanLatestCanonicalKeys(
+      List<byte[]> expected = memView.scanKnownCanonicalKeys(
           ArchiveDomain.ACCOUNT_ASSET, 3, account);
-      List<byte[]> actual = unifiedView.scanLatestCanonicalKeys(
+      List<byte[]> actual = unifiedView.scanKnownCanonicalKeys(
           ArchiveDomain.ACCOUNT_ASSET, 3, account);
       assertEquals(1, expected.size());
       assertEquals(expected.size(), actual.size());
       assertArrayEquals(first, actual.get(0));
     }
 
-    List<byte[]> expected = mem.scanLatestCanonicalKeys(
+    List<byte[]> expected = mem.scanKnownCanonicalKeys(
         ArchiveDomain.ACCOUNT_ASSET, 3, account);
-    List<byte[]> actual = unified.scanLatestCanonicalKeys(
+    List<byte[]> actual = unified.scanKnownCanonicalKeys(
         ArchiveDomain.ACCOUNT_ASSET, 3, account);
     assertEquals(expected.size(), actual.size());
     assertArrayEquals(first, actual.get(0));
@@ -675,6 +675,9 @@ public class UnifiedArchiveTemporalStoreOracleTest {
         () -> unified.getAsOf(DOMAIN, K1, Long.MAX_VALUE));
 
     assertTrue(failure.getMessage().contains("latest value"));
+    ArchiveException membershipFailure = assertThrows(ArchiveException.class,
+        () -> unified.scanKnownCanonicalKeys(DOMAIN, K1.length, K1));
+    assertTrue(membershipFailure.getMessage().contains("membership evidence"));
   }
 
   @Test
@@ -706,6 +709,9 @@ public class UnifiedArchiveTemporalStoreOracleTest {
         () -> unified.getAsOf(DOMAIN, K1, Long.MAX_VALUE));
 
     assertTrue(failure.getMessage().contains("anchor"));
+    ArchiveException membershipFailure = assertThrows(ArchiveException.class,
+        () -> unified.scanKnownCanonicalKeys(DOMAIN, K1.length, K1));
+    assertTrue(membershipFailure.getMessage().contains("membership evidence"));
     assertThrows(ArchiveException.class, unified::validateDomainRows);
   }
 

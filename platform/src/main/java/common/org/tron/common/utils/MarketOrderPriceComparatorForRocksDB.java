@@ -20,12 +20,11 @@ public class MarketOrderPriceComparatorForRocksDB extends AbstractComparator {
     return MarketComparator.comparePriceKey(convertDataToBytes(a), convertDataToBytes(b));
   }
 
-  /**
-   * DirectSlice.data().array will throw UnsupportedOperationException.
-   * */
+  /** Copies the remaining bytes without requiring an array-backed buffer. */
   public byte[] convertDataToBytes(ByteBuffer buf) {
-    byte[] bytes = new byte[buf.remaining()];
-    buf.get(bytes);
+    ByteBuffer copy = buf.duplicate();
+    byte[] bytes = new byte[copy.remaining()];
+    copy.get(bytes);
     return bytes;
   }
 

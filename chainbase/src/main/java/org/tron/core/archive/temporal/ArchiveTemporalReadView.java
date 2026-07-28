@@ -27,13 +27,13 @@ public interface ArchiveTemporalReadView extends AutoCloseable {
   Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey);
 
   /**
-   * Returns canonical keys represented in latest whose length is exactly
-   * {@code canonicalKeyLength} and whose bytes start with {@code canonicalPrefix}. Implementations
-   * must resolve the scan against this view's frozen snapshot and return defensive key copies.
+   * Returns known canonical keys whose length is exactly {@code canonicalKeyLength} and whose bytes
+   * start with {@code canonicalPrefix}. Persistent implementations must cross-check mutable latest
+   * membership against immutable first-observation evidence in the same frozen snapshot.
    */
-  default List<byte[]> scanLatestCanonicalKeys(ArchiveDomain domain,
+  default List<byte[]> scanKnownCanonicalKeys(ArchiveDomain domain,
       int canonicalKeyLength, byte[] canonicalPrefix) {
-    throw new ArchiveException("archive temporal latest-key scan is unsupported");
+    throw new ArchiveException("archive temporal canonical-key scan is unsupported");
   }
 
   @Override
@@ -62,9 +62,9 @@ public interface ArchiveTemporalReadView extends AutoCloseable {
       }
 
       @Override
-      public List<byte[]> scanLatestCanonicalKeys(ArchiveDomain domain,
+      public List<byte[]> scanKnownCanonicalKeys(ArchiveDomain domain,
           int canonicalKeyLength, byte[] canonicalPrefix) {
-        return store.scanLatestCanonicalKeys(domain, canonicalKeyLength, canonicalPrefix);
+        return store.scanKnownCanonicalKeys(domain, canonicalKeyLength, canonicalPrefix);
       }
 
       @Override

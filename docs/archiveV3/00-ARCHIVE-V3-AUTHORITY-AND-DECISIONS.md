@@ -32,6 +32,9 @@
    有界 worker，饱和时 fail-fast，不在交易/区块执行线程回退执行。查询与有界序列化完成
    后由 Servlet 线程写网络，慢客户端不占用 archive worker；PBFT/Solidity cursor 在实际
    执行线程绑定。
+8. 2026-07-28 起 x86_64 与 arm64 统一使用 RocksDB 9.7.4；archive 可在两种架构启用。
+   x86_64 仍使用 Java 8，arm64 使用 Java 17，因此 archive 生产源码继续保持 Java 8
+   兼容。两种架构使用同一 native deadline、close-error 与 UNIFIED_V1 磁盘语义。
 
 下文决策 5/6 中关于拆分 DB、live latest read-through、`ResolvedArchiveStatePoint` 和通用
 `ReadGuard` 的描述仅保留为历史决策背景，不再定义当前实现。
@@ -43,7 +46,9 @@
 - **权威层**：`20260603/04/05` 的 4e80 看板 + `L1..L9` code-plan。其余 `202605xx / 20260601 / 20260602` 文档为**推导材料**——可读其推理，**但不得从中复制任何标识符（类名/枚举/前缀/字段号）**；一切以 4e80/L 层为准（依 20260609 复审 §1）。
 - **基线漂移良性**：文档基线 `4e80f8ffa9a2` 是当前 HEAD `3a9ccfe48c` 的**直接祖先**，落后 14 commits、纯快进。计划可直接落 HEAD，**编码前按方法名 re-grep 刷行号即可，无需重规划**。
 - **干净起点**：全仓 `ArchiveService/ArchiveTxNumIndex/storage.archive` 零命中——Archive 尚未实现，L1-L9 全为新增。
-- **目标平台（决策 5）**：P0 **只面向 arm64 现代栈**（Java 17 + RocksDB 9.7.4）。基础层（L1 接口/配置/noop）Java 8 兼容、到处都编；真实现（L2-L9）arm64-only 编译单元、可用 Java 17。x86_64（Java 8 + RocksDB 5.15.10）本期 archive 不可启用（`enable=true` 被拒），留作后续。
+- **目标平台（决策 5，2026-07-28 修订）**：arm64（Java 17）与 x86_64
+  （Java 8）均使用 RocksDB 9.7.4，archive 在两种架构均可启用。真实现保持 Java 8
+  源码兼容，磁盘与 native 行为不再按架构分叉。
 
 ---
 
@@ -116,13 +121,14 @@
 
 ### 决策 5 — Archive 物理后端 + 目标平台（历史方案，当前物理布局以 §0 为准）
 
-- **背景**：x86_64 是 **legacy 工具链**（Java 8 + RocksDB 5.15.10 + 老 protoc，几乎肯定为老生产 OS/glibc + Java 8 主网兼容而钉）；arm64 是现代栈（Java 17 + RocksDB 9.7.4）。**全局**把 x86_64 bump 到 9.7.4 会动共识路径 `RocksDbDataSourceImpl` + 冒老 OS 主网兼容风险 → 属项目级基础设施决策，不塞进 archive 本期。
-- **DECISION（2026-07-09 修订）：archive P0 仍只面向 arm64 现代栈；当前实现采用兼容 RocksDB 5.15/9.7 的单 keyspace/单 CF 编码，`temporal` / `inflight` / `index` 拆为独立 DB path。多 CF、BlobDB、Zstd/compaction/bloom/prefix、SST ingest 是 P0 之后的物理优化，不作为当前验收门。** x86_64 仍留作后续（archive 跑稳后再随 x86 上现代工具链 / 回移）。
-  3. **多盘**用 `cf_paths`（HISTORY 容量盘 / LATEST·ROOT 快盘）；真·冷段 freeze 留 M6。
-  4. **模块拆分（关键，与 L1 契合）**：`ArchiveService` 接口 + `NoopArchiveService` + 配置 bean + `ArchiveServiceFactory` 放**基础模块、Java 8 源码级、到处都编**（默认关闭；x86 上 `enable=true` → factory 拒绝"本构建不支持 archive"）。L2-L9 真实现（RocksDB-CF / temporal / reader / commitment）放 **arm64-only 编译单元（Java 17 + RocksDB 9.7.4）**，x86 构建排除。L1 现有"接口 + noop + factory 拒绝 enable"设计本就支持这种拆分。
-  5. **真实现可用 Java 17**（arm64-only）；只有 Java-8 基础那层必须 **Java 8 兼容**。
-  6. **细化（2026-06-26，L2 落地后确认）**：arm64-only 边界**落在 L5（RocksDB 9.7.4）**——L2-L4（txNum index / domain registry / write-collector）是**纯内存 Java、无 RocksDB 依赖**，与 L1 一同留 **chainbase（Java 8、x86/arm 都编）**；只有 **L5-L9（temporal store / reader / commitment，依赖 RocksDB-CF）进 arm64-only 模块**。"x86 archive 禁用"由 L5 模块在 x86 构建缺席、`ArchiveServiceFactory` 拒 enable 强制（L2-L4 阶段 enable 仅供 arm 开发自测）。故 **L1-L4 须 Java 8 兼容，L5-L9 可 Java 17**。
-- **代价/后续**：x86 迁移"是否容易"取决于 x86 是否跟进现代栈——若 x86 上 Java17+9.7.4，纳入模块即可；若仍 Java8/5.15.10，需真 backport（降 Java 语法 + 丢 BlobDB）。建议把"x86 统一现代工具链"作为项目独立 initiative 跟踪。
+- **历史背景**：早期方案将 x86_64 固定在 Java 8 + RocksDB 5.15.10，并让 factory
+  拒绝启用 archive。该平台分叉已废弃。
+- **DECISION（2026-07-28 修订）**：x86_64 与 arm64 统一到 RocksDB 9.7.4，移除
+  architecture gate 和 5.15 反射兼容。UNIFIED_V1 是唯一物理布局；全部 archive 生产
+  源码保持 Java 8 兼容，以支持 x86_64/JDK8 与 arm64/JDK17 两条构建线。
+- **代价/验收门**：该升级同时改变 x86 canonical `RocksDbDataSourceImpl` 的 JNI 版本。
+  合并前必须通过 x86_64/JDK8 编译、canonical RocksDB 回归、archive 启动/重启和
+  SIGKILL 恢复矩阵；arm64 结果不能替代 x86 native 验证。
 
 **实现细化（2026-06-26）— CF 划分 + BlobDB 阈值**
 
@@ -278,7 +284,7 @@ id = **u16 flat 顺序**（决策，作废旧 `0x01XX`）；保留第一版枚�
 
 | 切片 | 现在能否开工 | 前置 |
 |---|---|---|
-| **L1** config/no-op/dbName | ✅ **可立即开工** | 注册 `storage.archive` bean 进 `ConfigParityGateTest`（#6803/#6810，4e80 后新增的构建门）+ 每 key 加 reference.conf 注释 + `:common:test --tests '*ConfigParityGateTest'` 入验收门；用 ConfigBeanFactory（勿抄 milestone-0）。**决策 5**：L1 是**基础层、Java 8 兼容、x86/arm 都编**，default-off，x86 上 `enable=true` 由 factory 拒绝；L2-L9 真实现进 arm64-only 编译单元 |
+| **L1** config/no-op/dbName | ✅ **可立即开工** | 注册 `storage.archive` bean 进 `ConfigParityGateTest`（#6803/#6810，4e80 后新增的构建门）+ 每 key 加 reference.conf 注释 + `:common:test --tests '*ConfigParityGateTest'` 入验收门；用 ConfigBeanFactory（勿抄 milestone-0）。**决策 5（2026-07-28）**：x86/arm 均可启用，统一 RocksDB 9.7.4，全部 archive 源码保持 Java 8 兼容 |
 | **L2** Manager+txNum | ✅ 可（刷行号） | 统一 ArchivePhase=4 值；**决策 6**：提交时机 每块→solidified（capture 仍 per-tx）；确认 #6833 新 rollback-trigger 后 archive commit 仍先于触发发射 |
 | **L3** domain registry | ✅ 决策已定，可开工 | RootPolicy=4 值；TRC10=新增 `ACCOUNT_ASSET` 域 + flush-层 hook 类目；域 ID/RawHookMode 冻结到 L3 |
 | **L4** write collector | ✅ L3 后可开工 | canonical 编码=per-domain codec（决策 4）；**决策 6**：tx-level capture @ per-tx 边界 → in-flight buffer |
