@@ -8,6 +8,7 @@ import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -18,6 +19,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import org.apache.commons.lang3.tuple.Pair;
 import org.bouncycastle.util.encoders.Hex;
 import org.junit.Test;
 import org.tron.common.runtime.InternalTransaction;
@@ -32,6 +34,7 @@ import org.tron.core.capsule.ContractStateCapsule;
 import org.tron.core.capsule.VotesCapsule;
 import org.tron.core.store.DelegationStore;
 import org.tron.core.store.VmDynamicProperties;
+import org.tron.core.vm.MessageCall;
 import org.tron.core.vm.Op;
 import org.tron.core.vm.OperationRegistry;
 import org.tron.core.vm.PrecompiledContracts;
@@ -228,7 +231,7 @@ public class ProgramHistoricalSelfDestructTest {
   }
 
   @Test
-  public void createDepthFailuresRemainVisibleToCallTracer() throws Exception {
+  public void guardRejectedCallsRemainVisibleWithoutExtendingMemory() throws Exception {
     byte[] owner = address(0x43);
     Repository repository = mock(Repository.class);
     VMConfig.Snapshot snapshot = new VMConfig.Snapshot();
@@ -239,19 +242,80 @@ public class ProgramHistoricalSelfDestructTest {
       Program create = newProgram(repository, owner, new byte[0], 64);
       create.setRootTransactionId(new byte[32]);
       create.setCallTraceCollector(createCollector);
-      create.createContract(DataWord.ZERO(), DataWord.ZERO(), DataWord.ZERO());
-      createCollector.assertFailure(Op.CREATE);
+      create.createContract(
+          DataWord.ZERO(), new DataWord(96L), new DataWord(1L));
+      createCollector.assertFailure(Op.CREATE, false, "max call depth exceeded");
+      assertEquals(0, create.getMemSize());
 
       DepthFailureCollector create2Collector = new DepthFailureCollector();
       Program create2 = newProgram(repository, owner, new byte[0], 64);
       create2.setRootTransactionId(new byte[32]);
       create2.setCallTraceCollector(create2Collector);
       create2.createContract2(
-          DataWord.ZERO(), DataWord.ZERO(), DataWord.ZERO(), DataWord.ZERO());
-      create2Collector.assertFailure(Op.CREATE2);
+          DataWord.ZERO(), new DataWord(96L), new DataWord(1L), DataWord.ZERO());
+      create2Collector.assertFailure(Op.CREATE2, false, "max call depth exceeded");
+      assertEquals(0, create2.getMemSize());
+
+      DepthFailureCollector callCollector = new DepthFailureCollector();
+      Program call = newProgram(repository, owner, new byte[0], 64);
+      call.setCallTraceCollector(callCollector);
+      call.callToAddress(callMessage(DataWord.ZERO()));
+      callCollector.assertFailure(Op.CALL, false, "max call depth exceeded");
+      assertEquals(0, call.getMemSize());
+
+      DepthFailureCollector precompileDepthCollector = new DepthFailureCollector();
+      Program precompileDepth = newProgram(repository, owner, new byte[0], 64);
+      precompileDepth.setCallTraceCollector(precompileDepthCollector);
+      precompileDepth.callToPrecompiledAddress(callMessage(DataWord.ZERO()), null);
+      precompileDepthCollector.assertFailure(Op.CALL, true, "max call depth exceeded");
+      assertEquals(0, precompileDepth.getMemSize());
+
+      Repository emptyRepository = mock(Repository.class);
+      when(emptyRepository.newRepositoryChild()).thenReturn(emptyRepository);
+      when(emptyRepository.getBalance(owner)).thenReturn(0L);
+      DepthFailureCollector precompileBalanceCollector = new DepthFailureCollector();
+      Program precompileBalance = newProgram(emptyRepository, owner, new byte[0]);
+      precompileBalance.setCallTraceCollector(precompileBalanceCollector);
+      precompileBalance.callToPrecompiledAddress(callMessage(new DataWord(1L)), null);
+      precompileBalanceCollector.assertFailure(
+          Op.CALL, true, "insufficient balance for transfer");
+      assertEquals(0, precompileBalance.getMemSize());
     } finally {
       VMConfig.clearLocalSnapshot();
     }
+  }
+
+  @Test
+  public void tracedPrecompileSuccessExtendsMemoryAtCanonicalPoint() throws Exception {
+    byte[] owner = address(0x45);
+    Repository repository = mock(Repository.class);
+    when(repository.newRepositoryChild()).thenReturn(repository);
+    PrecompiledContracts.PrecompiledContract contract =
+        mock(PrecompiledContracts.PrecompiledContract.class);
+    when(contract.getEnergyForData(any(byte[].class))).thenReturn(0L);
+    when(contract.execute(any(byte[].class))).thenReturn(Pair.of(true, new byte[0]));
+    DepthFailureCollector collector = new DepthFailureCollector();
+    Program program = newProgram(repository, owner, new byte[0]);
+    program.setCallTraceCollector(collector);
+
+    program.callToPrecompiledAddress(callMessage(DataWord.ZERO()), contract);
+
+    collector.assertSuccess(Op.CALL, true);
+    assertEquals(128, program.getMemSize());
+  }
+
+  private static MessageCall callMessage(DataWord endowment) {
+    return new MessageCall(
+        Op.CALL,
+        new DataWord(100L),
+        new DataWord(address(0x44)),
+        endowment,
+        new DataWord(96L),
+        new DataWord(1L),
+        DataWord.ZERO(),
+        DataWord.ZERO(),
+        DataWord.ZERO(),
+        false);
   }
 
   private static Program runSelfDestruct(ArchiveRepositoryAdapter repository,
@@ -305,16 +369,19 @@ public class ProgramHistoricalSelfDestructTest {
   private static final class DepthFailureCollector implements VmCallTraceCollector {
 
     private int opCode;
+    private byte[] input;
+    private boolean precompile;
     private String error;
     private boolean closed;
 
     @Override
     public TraceScope enter(int enteredOpCode, byte[] from, byte[] to, byte[] input,
-        long energy, BigInteger value, boolean precompile) {
+        long energy, BigInteger value, boolean enteredPrecompile) {
       opCode = enteredOpCode;
+      this.input = input.clone();
+      precompile = enteredPrecompile;
       assertNotNull(from);
       assertNotNull(to);
-      assertFalse(precompile);
       return new TraceScope() {
         @Override
         public void complete(byte[] output, long energyUsed, boolean reverted,
@@ -331,9 +398,20 @@ public class ProgramHistoricalSelfDestructTest {
       };
     }
 
-    private void assertFailure(int expectedOpCode) {
+    private void assertFailure(
+        int expectedOpCode, boolean expectedPrecompile, String expectedError) {
       assertEquals(expectedOpCode, opCode);
-      assertEquals("max call depth exceeded", error);
+      assertArrayEquals(new byte[] {0}, input);
+      assertEquals(expectedPrecompile, precompile);
+      assertEquals(expectedError, error);
+      assertTrue(closed);
+    }
+
+    private void assertSuccess(int expectedOpCode, boolean expectedPrecompile) {
+      assertEquals(expectedOpCode, opCode);
+      assertArrayEquals(new byte[] {0}, input);
+      assertEquals(expectedPrecompile, precompile);
+      assertNull(error);
       assertTrue(closed);
     }
   }

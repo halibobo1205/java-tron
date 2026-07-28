@@ -451,6 +451,10 @@ public class Program {
     return memory.read(offset, size);
   }
 
+  private byte[] memoryPeek(int offset, int size) {
+    return memory.peek(offset, size);
+  }
+
   public void memoryCopy(int dst, int src, int size) {
     memory.copy(dst, src, size);
   }
@@ -857,16 +861,19 @@ public class Program {
   public void createContract(DataWord value, DataWord memStart, DataWord memSize) {
     returnDataBuffer = null; // reset return buffer right before the call
 
-    if (getCallDeep() == MAX_DEPTH && callTraceCollector == null) {
+    boolean rejectForDepth = getCallDeep() == MAX_DEPTH;
+    if (rejectForDepth && callTraceCollector == null) {
       stackPushZero();
       return;
     }
     // [1] FETCH THE CODE FROM THE MEMORY
-    byte[] programCode = memoryChunk(memStart.intValue(), memSize.intValue());
+    byte[] programCode = rejectForDepth
+        ? memoryPeek(memStart.intValue(), memSize.intValue())
+        : memoryChunk(memStart.intValue(), memSize.intValue());
 
     byte[] newAddress = TransactionUtil
         .generateContractAddress(rootTransactionId, nonce);
-    if (getCallDeep() == MAX_DEPTH) {
+    if (rejectForDepth) {
       traceCreateDepthFailure(value, programCode, newAddress, false);
       stackPushZero();
       return;
@@ -1115,7 +1122,10 @@ public class Program {
       callToAddressUntraced(msg, null, null);
       return;
     }
-    byte[] input = memoryChunk(msg.getInDataOffs().intValue(), msg.getInDataSize().intValue());
+    boolean rejectForDepth = getCallDeep() == MAX_DEPTH;
+    byte[] input = rejectForDepth
+        ? memoryPeek(msg.getInDataOffs().intValue(), msg.getInDataSize().intValue())
+        : memoryChunk(msg.getInDataOffs().intValue(), msg.getInDataSize().intValue());
     long energyBefore = getResult().getEnergyUsed();
     VmCallTraceCollector.TraceScope traceScope = callTraceCollector.enter(
         msg.getOpCode(), getContextAddress(), msg.getCodeAddress().toTronAddress(), input,
@@ -1127,7 +1137,8 @@ public class Program {
     ProgramResult callResult = null;
     NestedCallTraceOutcome traceOutcome = new NestedCallTraceOutcome();
     try {
-      callResult = callToAddressUntraced(msg, input, traceOutcome);
+      callResult = callToAddressUntraced(
+          msg, rejectForDepth ? null : input, traceOutcome);
     } catch (RuntimeException | Error failure) {
       executionFailure = failure;
       throw failure;
@@ -1835,7 +1846,9 @@ public class Program {
     } else {
       senderAddress = getCallerAddress().toTronAddress();
     }
-    byte[] programCode = memoryChunk(memStart.intValue(), memSize.intValue());
+    byte[] programCode = rejectForDepth
+        ? memoryPeek(memStart.intValue(), memSize.intValue())
+        : memoryChunk(memStart.intValue(), memSize.intValue());
 
     byte[] contractAddress = WalletUtil
         .generateContractAddress2(senderAddress, salt.getData(), programCode);
@@ -1868,7 +1881,8 @@ public class Program {
       callToPrecompiledAddressUntraced(msg, contract, null, null);
       return;
     }
-    byte[] input = memoryChunk(msg.getInDataOffs().intValue(), msg.getInDataSize().intValue());
+    byte[] input = memoryPeek(
+        msg.getInDataOffs().intValue(), msg.getInDataSize().intValue());
     long energyBefore = getResult().getEnergyUsed();
     VmCallTraceCollector.TraceScope traceScope = callTraceCollector.enter(
         msg.getOpCode(), getContextAddress(), msg.getCodeAddress().toTronAddress(), input,
@@ -1938,9 +1952,13 @@ public class Program {
       refundEnergy(msg.getEnergy().longValue(), REFUND_ENERGY_FROM_MESSAGE_CALL);
       return;
     }
-    byte[] data = tracedInput == null
-        ? memoryChunk(msg.getInDataOffs().intValue(), msg.getInDataSize().intValue())
-        : tracedInput;
+    byte[] data;
+    if (tracedInput == null) {
+      data = memoryChunk(msg.getInDataOffs().intValue(), msg.getInDataSize().intValue());
+    } else {
+      memory.extend(msg.getInDataOffs().intValue(), msg.getInDataSize().intValue());
+      data = tracedInput;
+    }
 
     // Charge for endowment - is not reversible by rollback
     if (!ArrayUtils.isEmpty(senderAddress) && !ArrayUtils.isEmpty(contextAddress)

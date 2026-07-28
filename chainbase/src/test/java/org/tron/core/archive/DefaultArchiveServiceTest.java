@@ -2202,6 +2202,44 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
+  public void userVmTransitionFailsClosedOutsideBlockCapture() {
+    DefaultArchiveService service = new DefaultArchiveService(
+        true, new InMemoryArchiveTxNumIndex(), new ArchiveExecutionContext(),
+        new InMemoryArchiveTemporalStore(), new InMemoryArchiveInFlightStore(),
+        new DefaultArchiveDomainRegistry(), new DefaultArchiveDomainCatalog(),
+        ArchiveLifecycle.Phase.RUNNING, ArchiveQueryLimits.unlimited(), false, true);
+    try {
+      ArchiveException failure =
+          assertThrows(ArchiveException.class, service::beginUserVmTx);
+
+      assertTrue(failure.getMessage().contains("active user transaction"));
+    } finally {
+      service.close();
+    }
+  }
+
+  @Test
+  public void userVmTransitionStillFailsClosedInsideActiveBlockWithoutUserTx() {
+    DefaultArchiveService service = new DefaultArchiveService(
+        true, new InMemoryArchiveTxNumIndex(), new ArchiveExecutionContext(),
+        new InMemoryArchiveTemporalStore(), new InMemoryArchiveInFlightStore(),
+        new DefaultArchiveDomainRegistry(), new DefaultArchiveDomainCatalog(),
+        ArchiveLifecycle.Phase.RUNNING, ArchiveQueryLimits.unlimited(), false, true);
+    BlockCapsule block = blockWithParentSeed(0L, (byte) 0);
+    try {
+      service.beginBlock(block, ArchiveSource.NORMAL);
+
+      ArchiveException failure =
+          assertThrows(ArchiveException.class, service::beginUserVmTx);
+
+      assertTrue(failure.getMessage().contains("active user transaction"));
+    } finally {
+      service.abortBlock(block);
+      service.close();
+    }
+  }
+
+  @Test
   public void transactionReaderProviderDoesNotInheritQueryAccounting()
       throws Exception {
     InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
@@ -3997,25 +4035,29 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
-  public void repairMarkerFailureKeepsFatalDeliveryDisabled() {
+  public void repairMarkerFailureKeepsFatalDeliveryDisabled() throws Exception {
     FailingRepairArchiveTxNumIndex index = new FailingRepairArchiveTxNumIndex();
     DefaultArchiveService service = new DefaultArchiveService(
         true, index, new ArchiveExecutionContext());
     CountDownLatch delivered = new CountDownLatch(1);
     service.setFatalFailureHandler(ignored -> delivered.countDown());
+    ArchiveFatalController controller =
+        ReflectUtils.getFieldValue(service, "fatalController");
     try {
       ArchiveException fatal = new ArchiveException("primary fatal");
 
       invokeMarkFatal(service, fatal);
 
-      ArchiveFatalController controller =
-          ReflectUtils.getFieldValue(service, "fatalController");
       assertSame(fatal, controller.getFailure());
       assertFalse(ReflectUtils.getFieldValue(controller, "deliveryEnabled"));
       assertEquals(1, fatal.getSuppressed().length);
       assertSame(index.failure, fatal.getSuppressed()[0]);
       assertEquals(1L, delivered.getCount());
     } finally {
+      // The production watchdog must remain armed when the repair marker cannot be persisted.
+      // Open the test-only delivery barrier after the assertion so this shared test JVM can close.
+      controller.deliver();
+      assertTrue(delivered.await(1L, TimeUnit.SECONDS));
       service.close();
     }
   }
