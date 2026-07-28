@@ -1318,6 +1318,8 @@ public class Manager {
           MetricLabels.Gauge.QUEUE_POPPED);
 
     } catch (ItemNotFoundException | BadItemException e) {
+      // Failing here is mandatory: returning would make switchFork retry the unchanged head
+      // forever. The existing ARCHIVE_RUNTIME code routes this rewind failure to fatal handling.
       throw new TronError(
           "cannot load canonical head while erasing a fork block",
           e, TronError.ErrCode.ARCHIVE_RUNTIME);
@@ -2125,9 +2127,7 @@ public class Manager {
     consumeBandwidth(trxCap, trace);
     consumeMultiSignFee(trxCap, trace);
     consumeMemoFee(trxCap, trace);
-    if (Objects.nonNull(blockCap)
-        && (contract.getType() == Contract.ContractType.TriggerSmartContract
-        || contract.getType() == Contract.ContractType.CreateSmartContract)) {
+    if (shouldBeginArchiveUserVmTx(blockCap, contract.getType())) {
       archiveService.beginUserVmTx();
     }
 
@@ -2198,6 +2198,14 @@ public class Manager {
     }
     Metrics.histogramObserve(requestTimer);
     return transactionInfo.getInstance();
+  }
+
+  static boolean shouldBeginArchiveUserVmTx(
+      BlockCapsule blockCap, Contract.ContractType contractType) {
+    return blockCap != null
+        && blockCap.hasWitnessSignature()
+        && (contractType == Contract.ContractType.TriggerSmartContract
+        || contractType == Contract.ContractType.CreateSmartContract);
   }
 
   /**

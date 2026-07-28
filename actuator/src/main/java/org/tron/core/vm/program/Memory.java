@@ -57,6 +57,35 @@ public class Memory implements ProgramListenerAware {
     return data;
   }
 
+  /**
+   * Reads the currently materialized bytes without extending TVM memory.
+   */
+  public byte[] peek(int address, int size) {
+    if (size <= 0) {
+      return EMPTY_BYTE_ARRAY;
+    }
+
+    byte[] data = new byte[size];
+    if (address < 0 || address >= softSize) {
+      return data;
+    }
+
+    int chunkIndex = address / CHUNK_SIZE;
+    int chunkOffset = address % CHUNK_SIZE;
+    int toGrab = min(size, softSize - address, VMConfig.disableJavaLangMath());
+    int start = 0;
+
+    while (toGrab > 0) {
+      int copied = grabMax(chunkIndex, chunkOffset, toGrab, data, start);
+      ++chunkIndex;
+      chunkOffset = 0;
+      toGrab -= copied;
+      start += copied;
+    }
+
+    return data;
+  }
+
   public void write(int address, byte[] data, int dataSize, boolean limited) {
 
     if (data.length < dataSize) {

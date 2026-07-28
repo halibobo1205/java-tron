@@ -167,26 +167,28 @@ public final class HistoricalDebugTraceSupport {
       throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
       JsonRpcInternalException {
     requireEnabledAndAvailable();
+    Transaction transaction = wallet.getTransactionById(ByteString.copyFrom(txId));
+    TransactionCapsule trxCap =
+        transaction == null ? null : new TransactionCapsule(transaction);
+    if (trxCap != null && !Arrays.equals(trxCap.getTransactionId().getBytes(), txId)) {
+      throw new JsonRpcInternalException("archive transaction identity mismatch");
+    }
+    HistoricalCallTraceSpec callSpec = transaction == null ? null : callSpec(transaction);
     BlockCapsule[] resolvedBlock = new BlockCapsule[1];
     try {
       ArchiveStateReader admittedReader = archiveService.openTransactionReader(
           txId, blockNum -> resolveCanonicalBlockHash(blockNum, resolvedBlock));
       Throwable readerFailure = null;
       try {
-        Transaction transaction = wallet.getTransactionById(ByteString.copyFrom(txId));
         if (transaction == null) {
-          throw new JsonRpcInvalidParamsException("transaction not found");
+          throw new JsonRpcInternalException(
+              "archived transaction payload is missing");
         }
         contractResult expectedResult = requireRecordedContractResult(transaction);
         if (expectedResult == contractResult.OUT_OF_TIME) {
           throw new JsonRpcInvalidParamsException(
               "OUT_OF_TIME transactions cannot be replayed deterministically");
         }
-        TransactionCapsule trxCap = new TransactionCapsule(transaction);
-        if (!Arrays.equals(trxCap.getTransactionId().getBytes(), txId)) {
-          throw new JsonRpcInternalException("archive transaction identity mismatch");
-        }
-        HistoricalCallTraceSpec callSpec = callSpec(transaction);
         return runTrace(
             admittedReader, resolvedBlock[0], trxCap, callSpec, null, options, false, null);
       } catch (JsonRpcInvalidParamsException | ContractValidateException
