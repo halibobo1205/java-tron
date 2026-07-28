@@ -251,39 +251,6 @@ public class AbiUtil {
     return privateKey.toString();
   }
 
-  public static void main(String[] args) {
-    String method = "test(string,int2,string)";
-    String params = "asdf,3123,adf";
-
-    String arrayMethod1 = "test(uint,uint256[3])";
-    String arrayMethod2 = "test(uint,uint256[])";
-    String arrayMethod3 = "test(uint,address[])";
-    String byteMethod1 = "test(bytes32,bytes11)";
-    String tokenMethod = "test(trcToken,uint256)";
-    String tokenParams = "\"nmb\",111";
-
-    System.out.println("token:" + parseMethod(tokenMethod, tokenParams));
-
-    String method1 = "test(uint256,string,string,uint256[])";
-    String expected1 = "db103cf30000000000000000000000000000000000000000000000000000000000000005000"
-        + "0000000000000000000000000000000000000000000000000000000000080000000000000000000000000000"
-        + "00000000000000000000000000000000000c0000000000000000000000000000000000000000000000000000"
-        + "0000000000100000000000000000000000000000000000000000000000000000000000000000142000000000"
-        + "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
-        + "0000000000000000000000000000143000000000000000000000000000000000000000000000000000000000"
-        + "0000000000000000000000000000000000000000000000000000000000000000000030000000000000000000"
-        + "0000000000000000000000000000000000000000000010000000000000000000000000000000000000000000"
-        + "0000000000000000000020000000000000000000000000000000000000000000000000000000000000003";
-    String method2 = "test(uint256,string,string,uint256[3])";
-    String listString = "1 ,\"B\",\"C\", [1, 2, 3]";
-    System.out.println(parseMethod(method1, listString));
-    System.out.println(parseMethod(method2, listString));
-
-    String bytesValue1 = "\"0112313\",112313";
-
-    System.out.println(parseMethod(byteMethod1, bytesValue1));
-  }
-
   abstract static class Coder {
 
     boolean dynamic = false;
