@@ -1,6 +1,8 @@
 package org.tron.core.archive.temporal;
 
+import java.util.List;
 import java.util.Optional;
+import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
 
@@ -23,6 +25,16 @@ public interface ArchiveTemporalReadView extends AutoCloseable {
 
   /** As {@link ArchiveTemporalStore#latest}, but against this frozen view. */
   Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey);
+
+  /**
+   * Returns canonical keys represented in latest whose length is exactly
+   * {@code canonicalKeyLength} and whose bytes start with {@code canonicalPrefix}. Implementations
+   * must resolve the scan against this view's frozen snapshot and return defensive key copies.
+   */
+  default List<byte[]> scanLatestCanonicalKeys(ArchiveDomain domain,
+      int canonicalKeyLength, byte[] canonicalPrefix) {
+    throw new ArchiveException("archive temporal latest-key scan is unsupported");
+  }
 
   @Override
   void close();
@@ -47,6 +59,12 @@ public interface ArchiveTemporalReadView extends AutoCloseable {
       @Override
       public Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey) {
         return store.latest(domain, canonicalKey);
+      }
+
+      @Override
+      public List<byte[]> scanLatestCanonicalKeys(ArchiveDomain domain,
+          int canonicalKeyLength, byte[] canonicalPrefix) {
+        return store.scanLatestCanonicalKeys(domain, canonicalKeyLength, canonicalPrefix);
       }
 
       @Override

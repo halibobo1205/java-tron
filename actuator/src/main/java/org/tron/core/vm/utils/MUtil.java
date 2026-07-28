@@ -1,5 +1,7 @@
 package org.tron.core.vm.utils;
 
+import java.nio.charset.StandardCharsets;
+import java.util.Map;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.exception.ContractValidateException;
 import org.tron.core.vm.VMUtils;
@@ -27,8 +29,9 @@ public class MUtil {
 
   public static void transferAllToken(Repository deposit, byte[] fromAddress, byte[] toAddress) {
     if (deposit.isHistoricalArchive()) {
-      throw ArchiveRepositoryAdapter.unsupportedHistoricalOperation(
-          "SELFDESTRUCT TRC10 sweep");
+      transferAllToken(
+          deposit, fromAddress, toAddress, deposit.getTokenBalances(fromAddress));
+      return;
     }
     AccountCapsule fromAccountCap = deposit.getAccount(fromAddress);
     Protocol.Account.Builder fromBuilder = fromAccountCap.getInstance().toBuilder();
@@ -42,6 +45,28 @@ public class MUtil {
 
     deposit.putAccountValue(fromAddress, new AccountCapsule(fromBuilder.build()));
     deposit.putAccountValue(toAddress, new AccountCapsule(toBuilder.build()));
+  }
+
+  /** Transfers a caller-provided immutable balance snapshot on the historical archive path. */
+  public static void transferAllToken(Repository deposit, byte[] fromAddress, byte[] toAddress,
+      Map<String, Long> balances) {
+    if (!deposit.isHistoricalArchive()) {
+      transferAllToken(deposit, fromAddress, toAddress);
+      return;
+    }
+    if (balances == null) {
+      throw ArchiveRepositoryAdapter.unsupportedHistoricalOperation(
+          "SELFDESTRUCT TRC10 balance enumeration");
+    }
+    balances.forEach((tokenId, amount) -> {
+      if (tokenId == null || tokenId.isEmpty() || amount == null || amount <= 0L) {
+        throw ArchiveRepositoryAdapter.unsupportedHistoricalOperation(
+            "SELFDESTRUCT TRC10 balance enumeration");
+      }
+      byte[] tokenIdBytes = tokenId.getBytes(StandardCharsets.US_ASCII);
+      deposit.addTokenBalance(toAddress, tokenIdBytes, amount);
+      deposit.addTokenBalance(fromAddress, tokenIdBytes, -amount);
+    });
   }
 
   public static void transferToken(Repository deposit, byte[] fromAddress, byte[] toAddress,

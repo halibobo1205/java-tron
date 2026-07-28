@@ -1,6 +1,7 @@
 package org.tron.core.archive.temporal;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.EnumMap;
@@ -21,6 +22,8 @@ import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
+import org.tron.core.archive.query.QueryContext;
+import org.tron.core.archive.query.QueryContextHolder;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.db2.common.WrappedByteArray;
 
@@ -159,6 +162,12 @@ public final class InMemoryArchiveTemporalStore implements ArchiveTemporalStore 
   }
 
   @Override
+  public List<byte[]> scanLatestCanonicalKeys(ArchiveDomain domain,
+      int canonicalKeyLength, byte[] canonicalPrefix) {
+    return scanLatestCanonicalKeys(byDomain, domain, canonicalKeyLength, canonicalPrefix);
+  }
+
+  @Override
   public ArchiveTemporalReadView openReadView() {
     // Isolated point-in-time view over a deep copy of the in-memory state (test-only store, so the
     // copy cost is irrelevant); later store mutations create new entries and never touch the copy.
@@ -172,6 +181,13 @@ public final class InMemoryArchiveTemporalStore implements ArchiveTemporalStore 
       @Override
       public Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey) {
         return resolveLatest(snapshot, domain, canonicalKey);
+      }
+
+      @Override
+      public List<byte[]> scanLatestCanonicalKeys(ArchiveDomain domain,
+          int canonicalKeyLength, byte[] canonicalPrefix) {
+        return InMemoryArchiveTemporalStore.scanLatestCanonicalKeys(
+            snapshot, domain, canonicalKeyLength, canonicalPrefix);
       }
 
       @Override
@@ -204,6 +220,54 @@ public final class InMemoryArchiveTemporalStore implements ArchiveTemporalStore 
       byte[] canonicalKey) {
     KeyState state = stateOf(byDomain, domain, canonicalKey);
     return Optional.ofNullable(state == null ? null : state.latest);
+  }
+
+  private static List<byte[]> scanLatestCanonicalKeys(
+      Map<ArchiveDomain, Map<WrappedByteArray, KeyState>> byDomain,
+      ArchiveDomain domain, int canonicalKeyLength, byte[] canonicalPrefix) {
+    if (domain == null) {
+      throw new NullPointerException("domain");
+    }
+    if (canonicalPrefix == null) {
+      throw new NullPointerException("canonicalPrefix");
+    }
+    if (canonicalKeyLength < canonicalPrefix.length) {
+      throw new IllegalArgumentException(
+          "canonical key length must cover the canonical prefix");
+    }
+    QueryContext queryContext = QueryContextHolder.current();
+    if (queryContext != null) {
+      queryContext.recordBackendRead();
+    }
+    Map<WrappedByteArray, KeyState> domainMap = byDomain.get(domain);
+    if (domainMap == null || domainMap.isEmpty()) {
+      return Collections.emptyList();
+    }
+    List<byte[]> matches = new ArrayList<>();
+    for (Map.Entry<WrappedByteArray, KeyState> entry : domainMap.entrySet()) {
+      byte[] key = entry.getKey().getBytes();
+      if (entry.getValue().latest != null
+          && key.length == canonicalKeyLength && startsWith(key, canonicalPrefix)) {
+        if (queryContext != null) {
+          queryContext.recordBackendRead();
+        }
+        matches.add(Arrays.copyOf(key, key.length));
+      }
+    }
+    matches.sort(InMemoryArchiveTemporalStore::compareBytes);
+    return matches;
+  }
+
+  private static boolean startsWith(byte[] value, byte[] prefix) {
+    if (value.length < prefix.length) {
+      return false;
+    }
+    for (int i = 0; i < prefix.length; i++) {
+      if (value[i] != prefix[i]) {
+        return false;
+      }
+    }
+    return true;
   }
 
   private static Map<ArchiveDomain, Map<WrappedByteArray, KeyState>> deepCopy(

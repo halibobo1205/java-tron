@@ -68,6 +68,22 @@ public final class ArchiveTemporalCodec {
         canonicalKey);
   }
 
+  static byte[] latestKeyPrefix(ArchiveDomain domain, int canonicalKeyLength,
+      byte[] canonicalPrefix) {
+    if (domain == null) {
+      throw new NullPointerException("domain");
+    }
+    if (canonicalPrefix == null) {
+      throw new NullPointerException("canonicalPrefix");
+    }
+    if (canonicalKeyLength < canonicalPrefix.length) {
+      throw new IllegalArgumentException(
+          "canonical key length must cover the canonical prefix");
+    }
+    return Bytes.concat(new byte[] {LATEST_PREFIX}, domainId(domain),
+        Ints.toByteArray(canonicalKeyLength), canonicalPrefix);
+  }
+
   /** Prefix shared by all history entries of a (domain, key); a history key starts with it. */
   static byte[] historyPrefix(ArchiveDomain domain, byte[] canonicalKey) {
     return Bytes.concat(new byte[] {HISTORY_PREFIX}, domainId(domain), keyLength(canonicalKey),

@@ -2,6 +2,7 @@ package org.tron.core.archive.temporal;
 
 import java.util.List;
 import java.util.Optional;
+import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
@@ -76,6 +77,16 @@ public interface ArchiveTemporalStore {
   /** The most recent value of {@code (domain, key)} across all txNums; empty if never written.
    * May be a tombstone when the most recent change was a delete. */
   Optional<DomainValue> latest(ArchiveDomain domain, byte[] canonicalKey);
+
+  /**
+   * Returns canonical keys represented in latest whose length is exactly
+   * {@code canonicalKeyLength} and whose bytes start with {@code canonicalPrefix}. This internal
+   * query primitive exists for bounded, snapshot-consistent enumeration of composite-key domains.
+   */
+  default List<byte[]> scanLatestCanonicalKeys(ArchiveDomain domain,
+      int canonicalKeyLength, byte[] canonicalPrefix) {
+    throw new ArchiveException("archive temporal latest-key scan is unsupported");
+  }
 
   /**
    * Open an isolated, point-in-time read view for {@code getAsOf} / {@code latest}. Real stores
