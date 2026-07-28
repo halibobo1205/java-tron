@@ -14,6 +14,8 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
+import java.util.ArrayList;
+import java.util.List;
 import org.junit.After;
 import org.junit.Test;
 import org.tron.common.utils.ByteArray;
@@ -44,10 +46,24 @@ import org.tron.protos.Protocol.Block;
  */
 public class ArchiveJsonRpcStateAdapterTest {
 
+  private final List<DefaultArchiveService> archiveServices = new ArrayList<>();
+
   @After
-  public void clearCaptureHolder() {
-    // An enabled DefaultArchiveService installs a static capture engine; clear between tests.
-    ArchiveCaptureHolder.clear();
+  public void closeArchiveServices() {
+    try {
+      for (DefaultArchiveService archiveService : archiveServices) {
+        archiveService.close();
+      }
+    } finally {
+      // An enabled DefaultArchiveService installs a static capture engine; clear between tests.
+      ArchiveCaptureHolder.clear();
+    }
+  }
+
+  private DefaultArchiveService newArchiveService() {
+    DefaultArchiveService archiveService = new DefaultArchiveService(true);
+    archiveServices.add(archiveService);
+    return archiveService;
   }
 
   @Test
@@ -62,7 +78,7 @@ public class ArchiveJsonRpcStateAdapterTest {
   @Test
   public void enabledArchiveBypassesLatestButRoutesHistorical() {
     ArchiveJsonRpcStateAdapter adapter =
-        new ArchiveJsonRpcStateAdapter(null, new DefaultArchiveService(true));
+        new ArchiveJsonRpcStateAdapter(null, newArchiveService());
     // latest stays on live state regardless of case.
     assertFalse(adapter.shouldUseArchive("latest"));
     assertFalse(adapter.shouldUseArchive("LATEST"));
@@ -74,7 +90,7 @@ public class ArchiveJsonRpcStateAdapterTest {
 
   @Test
   public void midChainArchiveRejectsMissingStateWithoutReadingLatest() throws Exception {
-    DefaultArchiveService svc = new DefaultArchiveService(true);
+    DefaultArchiveService svc = newArchiveService();
     svc.getTxNumIndex().beginBlock(5, ArchiveSource.NORMAL);
     svc.getTxNumIndex().allocateSystemTx(5, ArchivePhase.BLOCK_PREPARE);
     svc.getTxNumIndex().allocateSystemTx(5, ArchivePhase.BLOCK_FINALIZE);
@@ -102,7 +118,7 @@ public class ArchiveJsonRpcStateAdapterTest {
 
   @Test
   public void genesisCompleteTombstoneRendersAsDefaultZeroNotError() throws Exception {
-    DefaultArchiveService svc = new DefaultArchiveService(true);
+    DefaultArchiveService svc = newArchiveService();
     byte[] addr = ByteArray.fromHexString("41abd4b9367799eaa3197fecb144eb71de1e049abc");
     BlockCapsule b0 = blockCapsule(0);
     svc.beginBlock(b0, ArchiveSource.NORMAL);
@@ -125,7 +141,7 @@ public class ArchiveJsonRpcStateAdapterTest {
 
   @Test
   public void midChainArchiveRejectsBlocksBeforeCoverage() {
-    DefaultArchiveService svc = new DefaultArchiveService(true);
+    DefaultArchiveService svc = newArchiveService();
     svc.getTxNumIndex().beginBlock(5, ArchiveSource.NORMAL);
     svc.getTxNumIndex().allocateSystemTx(5, ArchivePhase.BLOCK_PREPARE);
     svc.getTxNumIndex().allocateSystemTx(5, ArchivePhase.BLOCK_FINALIZE);
@@ -143,7 +159,7 @@ public class ArchiveJsonRpcStateAdapterTest {
 
   @Test
   public void historicalStateUsesPublishedRangeWithoutCanonicalBlockReads() throws Exception {
-    DefaultArchiveService svc = new DefaultArchiveService(true);
+    DefaultArchiveService svc = newArchiveService();
     commitGenesisRange(svc, 1L);
     Wallet wallet = mock(Wallet.class);
     ArchiveJsonRpcStateAdapter adapter = new ArchiveJsonRpcStateAdapter(wallet, svc);
@@ -222,7 +238,7 @@ public class ArchiveJsonRpcStateAdapterTest {
 
   @Test
   public void historicalGetterRejectsRequestedBlockHashMismatch() {
-    DefaultArchiveService svc = new DefaultArchiveService(true);
+    DefaultArchiveService svc = newArchiveService();
     commitGenesisRange(svc, 1L);
     Wallet wallet = mock(Wallet.class);
     ArchiveJsonRpcStateAdapter adapter = new ArchiveJsonRpcStateAdapter(wallet, svc);
@@ -237,7 +253,7 @@ public class ArchiveJsonRpcStateAdapterTest {
 
   @Test
   public void historicalRpcFailsClosedAfterArchiveFatalError() {
-    DefaultArchiveService svc = new DefaultArchiveService(true);
+    DefaultArchiveService svc = newArchiveService();
     BlockCapsule archiveBlock = blockCapsule(5);
     svc.beginBlock(archiveBlock, ArchiveSource.NORMAL);
     svc.beginSystemTx(archiveBlock, ArchivePhase.BLOCK_PREPARE);
@@ -256,7 +272,7 @@ public class ArchiveJsonRpcStateAdapterTest {
   @Test
   public void nullStorageSlotRejectedLikeLatestPath() {
     ArchiveJsonRpcStateAdapter adapter =
-        new ArchiveJsonRpcStateAdapter(null, new DefaultArchiveService(true));
+        new ArchiveJsonRpcStateAdapter(null, newArchiveService());
     // A null slot must be rejected as invalid params (like TronJsonRpcImpl.getStorageAt), not
     // silently read as slot 0. normalizeSlot runs before the reader opens, so no Wallet is needed.
     assertThrows(JsonRpcInvalidParamsException.class,

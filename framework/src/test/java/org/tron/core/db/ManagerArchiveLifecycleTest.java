@@ -60,6 +60,13 @@ public class ManagerArchiveLifecycleTest extends BaseMethodTest {
   private DefaultArchiveService archiveService;
 
   @Override
+  protected void beforeDestroy() {
+    if (archiveService != null) {
+      archiveService.close();
+    }
+  }
+
+  @Override
   protected void afterInit() {
     Args.getInstance().setNodeListenPort(11000 + PORT.incrementAndGet());
     BlockGenerate.setManager(dbManager);
