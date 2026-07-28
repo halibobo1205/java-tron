@@ -4,7 +4,6 @@ import com.google.common.primitives.Bytes;
 import com.google.common.primitives.Longs;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Parser;
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Iterator;
@@ -16,6 +15,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.LongFunction;
 import org.tron.common.math.StrictMathWrapper;
 import org.tron.core.archive.ArchiveException;
+import org.tron.core.archive.codec.AccountAssetKeyCodec;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
 import org.tron.core.archive.domain.ArchiveDomainCatalog;
@@ -50,7 +50,8 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
   private static final int ADDRESS_LEN = 21;
   private static final int SLOT_LEN = 32;
   private static final int MAX_STORAGE_VALUE_LEN = 32;
-  private static final int MAX_TRC10_ID_LEN = 19;
+  private static final long ACCOUNT_ASSET_TEMPORARY_OVERHEAD_BYTES = 48L;
+  private static final long ACCOUNT_ASSET_RETAINED_OVERHEAD_BYTES = 112L;
   private static final int DEFAULT_MAX_MEMO_ENTRIES = 4_096;
   private static final long DEFAULT_MAX_MEMO_BYTES = 4L * 1024 * 1024;
 
@@ -243,11 +244,14 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
     }
     Map<String, Long> balances = new LinkedHashMap<>();
     try (QueryContextHolder.Scope ignored = QueryContextHolder.attach(queryContext)) {
-      for (int assetIdLength = 1; assetIdLength <= MAX_TRC10_ID_LEN; assetIdLength++) {
+      for (int assetIdLength = 1;
+          assetIdLength <= AccountAssetKeyCodec.MAX_ASSET_ID_LEN; assetIdLength++) {
         List<byte[]> candidates = temporalView.scanLatestCanonicalKeys(
             ArchiveDomain.ACCOUNT_ASSET, ADDRESS_LEN + assetIdLength, address);
         for (byte[] canonicalKey : candidates) {
           byte[] assetId = accountAssetId(address, canonicalKey);
+          queryContext.recordVmOverlayBytes(addSaturated(
+              ACCOUNT_ASSET_TEMPORARY_OVERHEAD_BYTES, assetId.length * 3L));
           String assetIdText = canonicalTrc10Id(assetId);
           RawLookup lookup = getLookup(ArchiveDomain.ACCOUNT_ASSET, canonicalKey);
           if (!lookup.isPresent()) {
@@ -264,6 +268,7 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
             throw new ArchiveReaderException(ArchiveReaderException.Reason.CORRUPT_VALUE,
                 "archive account-asset balance must be positive");
           }
+          queryContext.recordVmOverlayBytes(ACCOUNT_ASSET_RETAINED_OVERHEAD_BYTES);
           if (balances.put(assetIdText, balance) != null) {
             throw new ArchiveReaderException(ArchiveReaderException.Reason.CORRUPT_INDEX,
                 "archive account-asset enumeration returned a duplicate token ID");
@@ -517,30 +522,12 @@ public final class DefaultArchiveStateReader implements ArchiveStateReader {
   }
 
   private static String canonicalTrc10Id(byte[] assetId) throws ArchiveReaderException {
-    if (assetId.length == 0 || assetId.length > MAX_TRC10_ID_LEN
-        || assetId[0] == '0') {
-      throw invalidTrc10Id();
-    }
-    for (byte value : assetId) {
-      if (value < '0' || value > '9') {
-        throw invalidTrc10Id();
-      }
-    }
-    String text = new String(assetId, StandardCharsets.US_ASCII);
     try {
-      if (Long.parseLong(text) <= 0L) {
-        throw invalidTrc10Id();
-      }
-    } catch (NumberFormatException e) {
+      return AccountAssetKeyCodec.decodeAssetId(assetId);
+    } catch (ArchiveException e) {
       throw new ArchiveReaderException(ArchiveReaderException.Reason.CORRUPT_INDEX,
-          "archive account-asset token ID is outside the positive long range", e);
+          "archive account-asset token ID is not canonical", e);
     }
-    return text;
-  }
-
-  private static ArchiveReaderException invalidTrc10Id() {
-    return new ArchiveReaderException(ArchiveReaderException.Reason.CORRUPT_INDEX,
-        "archive account-asset token ID is not canonical");
   }
 
   private static boolean startsWith(byte[] value, byte[] prefix) {

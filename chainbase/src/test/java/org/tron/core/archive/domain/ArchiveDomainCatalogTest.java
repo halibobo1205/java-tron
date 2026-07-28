@@ -70,12 +70,15 @@ public class ArchiveDomainCatalogTest {
     ArchiveDomainDescriptor d = catalog.descriptorFor(ArchiveDomain.ACCOUNT_ASSET);
     byte[] key = new byte[22];
     key[0] = 0x41;
+    key[21] = '1';
 
     assertArrayEquals(key, d.getKeyCodec().normalize(key));
     assertArrayEquals(Longs.toByteArray(7L),
         d.getValueCodec().normalizePut(Longs.toByteArray(7L)).getValue());
     assertTrue(d.getValueCodec().normalizePut(Longs.toByteArray(0L)).isDeleted());
     assertThrows(ArchiveException.class, () -> d.getKeyCodec().normalize(new byte[21]));
+    key[21] = 'x';
+    assertThrows(ArchiveException.class, () -> d.getKeyCodec().normalize(key));
     assertThrows(ArchiveException.class, () -> d.getValueCodec().normalizePut(new byte[7]));
   }
 

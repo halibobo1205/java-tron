@@ -1,8 +1,12 @@
 package org.tron.core.services.jsonrpc;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -114,7 +118,8 @@ public class TronJsonRpcArchiveRoutingTest {
   }
 
   @Test
-  public void ethCallRejectsRequireCanonicalObjectParamBeforeWalletLookup() throws Exception {
+  public void ethCallAcceptsFalseRequireCanonicalBeforeArchiveAvailabilityCheck()
+      throws Exception {
     Wallet wallet = mock(Wallet.class);
     TronJsonRpcImpl rpc = new TronJsonRpcImpl(null, wallet);
     ReflectUtils.setFieldValue(rpc, "historicalEthCallSupport",
@@ -124,10 +129,109 @@ public class TronJsonRpcArchiveRoutingTest {
       blockParam.put("blockHash", ZERO_HASH);
       blockParam.put("requireCanonical", Boolean.FALSE);
 
+      JsonRpcInternalException ex = assertThrows(JsonRpcInternalException.class,
+          () -> rpc.getCall(null, blockParam));
+
+      assertTrue(ex.getMessage().contains("archive is not available"));
+      verifyNoInteractions(wallet);
+    } finally {
+      rpc.close();
+    }
+  }
+
+  @Test
+  public void ethCallRejectsNonBooleanRequireCanonicalBeforeWalletLookup() throws Exception {
+    Wallet wallet = mock(Wallet.class);
+    TronJsonRpcImpl rpc = new TronJsonRpcImpl(null, wallet);
+    ReflectUtils.setFieldValue(rpc, "historicalEthCallSupport",
+        new HistoricalEthCallSupport(wallet, NoopArchiveService.INSTANCE));
+    try {
+      java.util.Map<String, Object> blockParam = new java.util.HashMap<>();
+      blockParam.put("blockHash", ZERO_HASH);
+      blockParam.put("requireCanonical", "true");
+
       JsonRpcInvalidParamsException ex = assertThrows(JsonRpcInvalidParamsException.class,
           () -> rpc.getCall(null, blockParam));
 
       assertTrue(ex.getMessage().contains("invalid json request"));
+      verifyNoInteractions(wallet);
+    } finally {
+      rpc.close();
+    }
+  }
+
+  @Test
+  public void ethCallAcceptsTrueRequireCanonicalBeforeArchiveAvailabilityCheck() throws Exception {
+    Wallet wallet = mock(Wallet.class);
+    TronJsonRpcImpl rpc = new TronJsonRpcImpl(null, wallet);
+    ReflectUtils.setFieldValue(rpc, "historicalEthCallSupport",
+        new HistoricalEthCallSupport(wallet, NoopArchiveService.INSTANCE));
+    try {
+      java.util.Map<String, Object> blockParam = new java.util.HashMap<>();
+      blockParam.put("blockHash", ZERO_HASH);
+      blockParam.put("requireCanonical", Boolean.TRUE);
+
+      JsonRpcInternalException ex = assertThrows(JsonRpcInternalException.class,
+          () -> rpc.getCall(null, blockParam));
+
+      assertTrue(ex.getMessage().contains("archive is not available"));
+      verifyNoInteractions(wallet);
+    } finally {
+      rpc.close();
+    }
+  }
+
+  @Test
+  public void debugTraceCallRoutesCanonicalCreateAndExplicitGas() throws Exception {
+    Wallet wallet = mock(Wallet.class);
+    HistoricalDebugTraceSupport support = mock(HistoricalDebugTraceSupport.class);
+    Object expected = new Object();
+    when(support.isEnabled()).thenReturn(true);
+    when(support.traceCall(
+        any(byte[].class), isNull(), eq(0L), any(byte[].class), eq(Long.valueOf(2L)),
+        isNull(), any(byte[].class), any(DebugTraceOptions.class))).thenReturn(expected);
+    TronJsonRpcImpl rpc = new TronJsonRpcImpl(null, wallet);
+    ReflectUtils.setFieldValue(rpc, "historicalDebugTraceSupport", support);
+    try {
+      CallArguments call = new CallArguments();
+      call.setInput("0x00");
+      call.setGas("0x2");
+      java.util.Map<String, Object> blockParam = new java.util.HashMap<>();
+      blockParam.put("blockHash", ZERO_HASH);
+      blockParam.put("requireCanonical", Boolean.TRUE);
+
+      Object actual = rpc.debugTraceCall(call, blockParam);
+
+      assertSame(expected, actual);
+      verify(support).traceCall(
+          any(byte[].class), isNull(), eq(0L), eq(new byte[] {0}), eq(Long.valueOf(2L)),
+          isNull(), eq(new byte[32]), any(DebugTraceOptions.class));
+      verifyNoInteractions(wallet);
+    } finally {
+      rpc.close();
+    }
+  }
+
+  @Test
+  public void debugTraceCallRejectsExplicitEmptyToInsteadOfCreatingContract() throws Exception {
+    Wallet wallet = mock(Wallet.class);
+    HistoricalDebugTraceSupport support = mock(HistoricalDebugTraceSupport.class);
+    when(support.isEnabled()).thenReturn(true);
+    TronJsonRpcImpl rpc = new TronJsonRpcImpl(null, wallet);
+    ReflectUtils.setFieldValue(rpc, "historicalDebugTraceSupport", support);
+    try {
+      CallArguments call = new CallArguments();
+      call.setTo("0x");
+      call.setInput("0x00");
+      java.util.Map<String, Object> blockParam = new java.util.HashMap<>();
+      blockParam.put("blockHash", ZERO_HASH);
+
+      JsonRpcInvalidParamsException failure = assertThrows(
+          JsonRpcInvalidParamsException.class, () -> rpc.debugTraceCall(call, blockParam));
+
+      assertTrue(failure.getMessage().contains("invalid address"));
+      verify(support).isEnabled();
+      verifyNoMoreInteractions(support);
       verifyNoInteractions(wallet);
     } finally {
       rpc.close();

@@ -1665,6 +1665,34 @@ public class UnifiedArchiveBackendTest {
 
   @Test
   public void transactionSelectorUsesOneThreeRowIndexResolution() throws Exception {
+    service = unifiedServiceWithVmPreState();
+    BlockCapsule block = canonicalBlock(0L);
+    TransactionCapsule transaction =
+        new TransactionCapsule(Transaction.getDefaultInstance());
+
+    service.beginBlock(block, ArchiveSource.NORMAL);
+    service.beginSystemTx(block, ArchivePhase.BLOCK_PREPARE);
+    service.endTx();
+    service.beginUserTx(block, 0, transaction);
+    service.beginUserVmTx();
+    service.endTx();
+    service.beginSystemTx(block, ArchivePhase.BLOCK_FINALIZE);
+    service.endTx();
+    ArchiveJournalToken token = service.commitBlockJournaled(block, 1);
+    service.acknowledgeCanonicalCommit(token);
+    service.publishSolidifiedBlocks(0L);
+
+    assertNotNull(db.get(
+        UnifiedArchiveColumnFamily.INDEX, blockIndexKey(0L, 0)));
+    try (ArchiveStateReader reader = service.openTransactionReader(
+        transaction.getTransactionId().getBytes(), 0L, block.getBlockId().getBytes())) {
+      // Three coverage reads + txId/position/range + snapshot range recheck + temporal marker.
+      assertEquals(8L, reader.getQueryContext().getBackendReads());
+    }
+  }
+
+  @Test
+  public void fixedShapeBlockUsesArithmeticBlockIndexWithoutPersistedRow() {
     service = unifiedService();
     BlockCapsule block = canonicalBlock(0L);
     TransactionCapsule transaction =
@@ -1674,6 +1702,7 @@ public class UnifiedArchiveBackendTest {
     service.beginSystemTx(block, ArchivePhase.BLOCK_PREPARE);
     service.endTx();
     service.beginUserTx(block, 0, transaction);
+    service.beginUserVmTx();
     service.endTx();
     service.beginSystemTx(block, ArchivePhase.BLOCK_FINALIZE);
     service.endTx();
@@ -1681,11 +1710,55 @@ public class UnifiedArchiveBackendTest {
     service.acknowledgeCanonicalCommit(token);
     service.publishSolidifiedBlocks(0L);
 
-    try (ArchiveStateReader reader = service.openTransactionReader(
-        transaction.getTransactionId().getBytes(), 0L, block.getBlockId().getBytes())) {
-      // Three coverage reads + txId/position/range + snapshot range recheck + temporal marker.
-      assertEquals(8L, reader.getQueryContext().getBackendReads());
-    }
+    assertNull(db.get(
+        UnifiedArchiveColumnFamily.INDEX, blockIndexKey(0L, 0)));
+    assertEquals(1L, index.findTxNumByBlockAndIndex(0L, 0).getAsLong());
+    assertEquals(1L, index.findTxNumByTxId(
+        transaction.getTransactionId().getBytes()).getAsLong());
+    backend.validateStartup(true, false);
+  }
+
+  @Test
+  public void vmPreStateJournalSurvivesRestartAndFullStartupValidation() {
+    service = unifiedServiceWithVmPreState();
+    BlockCapsule block = canonicalBlock(0L);
+    TransactionCapsule transaction =
+        new TransactionCapsule(Transaction.getDefaultInstance());
+
+    service.beginBlock(block, ArchiveSource.NORMAL);
+    service.beginSystemTx(block, ArchivePhase.BLOCK_PREPARE);
+    service.endTx();
+    service.beginUserTx(block, 0, transaction);
+    service.beginUserVmTx();
+    service.endTx();
+    service.beginSystemTx(block, ArchivePhase.BLOCK_FINALIZE);
+    service.endTx();
+    ArchiveJournalToken token = service.commitBlockJournaled(block, 1);
+    service.acknowledgeCanonicalCommit(token);
+
+    service.close();
+    service = null;
+    index = null;
+    db = UnifiedArchiveDb.open(dbPath, schemaChecksum);
+    wire(true);
+    backend.validateStartup(true, false);
+
+    List<ArchiveInFlightBlock> recoveredBlocks = inFlight.loadBlocks();
+    assertEquals(1, recoveredBlocks.size());
+    ArchiveInFlightBlock recovered = recoveredBlocks.get(0);
+    assertEquals(4, recovered.getPositions().size());
+    assertEquals(ArchivePhase.USER_TX, recovered.getPositions().get(1).getPhase());
+    assertEquals(ArchivePhase.USER_TX_VM, recovered.getPositions().get(2).getPhase());
+
+    backend.publishBlock(recovered);
+    inFlight.onBlockPublished(0L);
+    backend.validateStartup(true, false);
+
+    assertEquals(1L, index.findTxNumByBlockAndIndex(0L, 0).getAsLong());
+    ArchiveTransactionLocation location = index.findTransactionByTxId(
+        transaction.getTransactionId().getBytes()).orElseThrow(AssertionError::new);
+    assertEquals(2L, location.getPosition().getTxNum());
+    assertEquals(ArchivePhase.USER_TX_VM, location.getPosition().getPhase());
   }
 
   @Test
@@ -1725,7 +1798,7 @@ public class UnifiedArchiveBackendTest {
 
   @Test
   public void unboundCompositeSelectorsUseOneSnapshotEach() throws Exception {
-    service = unifiedService();
+    service = unifiedServiceWithVmPreState();
     BlockCapsule block = canonicalBlock(0L);
     TransactionCapsule transaction =
         new TransactionCapsule(Transaction.getDefaultInstance());
@@ -1734,6 +1807,7 @@ public class UnifiedArchiveBackendTest {
     service.beginSystemTx(block, ArchivePhase.BLOCK_PREPARE);
     service.endTx();
     service.beginUserTx(block, 0, transaction);
+    service.beginUserVmTx();
     service.endTx();
     service.beginSystemTx(block, ArchivePhase.BLOCK_FINALIZE);
     service.endTx();
@@ -1758,7 +1832,8 @@ public class UnifiedArchiveBackendTest {
           transaction.getTransactionId().getBytes()).orElseThrow(AssertionError::new);
 
       assertEquals(0L, location.getRange().getBlockNum());
-      assertEquals(1L, location.getPosition().getTxNum());
+      assertEquals(2L, location.getPosition().getTxNum());
+      assertEquals(ArchivePhase.USER_TX_VM, location.getPosition().getPhase());
       verify(observed, times(1)).getSnapshot();
 
       clearInvocations(observed);
@@ -3000,7 +3075,16 @@ public class UnifiedArchiveBackendTest {
     return unifiedService(ArchiveQueryLimits.unlimited());
   }
 
+  private DefaultArchiveService unifiedServiceWithVmPreState() {
+    return unifiedService(ArchiveQueryLimits.unlimited(), true);
+  }
+
   private DefaultArchiveService unifiedService(ArchiveQueryLimits queryLimits) {
+    return unifiedService(queryLimits, false);
+  }
+
+  private DefaultArchiveService unifiedService(
+      ArchiveQueryLimits queryLimits, boolean captureVmPreState) {
     ArchiveDomainRegistry registry = new DefaultArchiveDomainRegistry();
     ArchivePublisherConfig publisherConfig = new ArchivePublisherConfig(
         false, false, 32, 64, 1024L * 1024L, 2L * 1024L * 1024L,
@@ -3008,7 +3092,7 @@ public class UnifiedArchiveBackendTest {
     return new DefaultArchiveService(true, index, new ArchiveExecutionContext(),
         temporal, inFlight, registry, catalog,
         ArchiveLifecycle.Phase.RUNNING, queryLimits, publisherConfig,
-        () -> backend.validateStartup(false, true), backend);
+        () -> backend.validateStartup(false, true), backend, captureVmPreState);
   }
 
   private void assertJournalCorruptionRejectedBeforeConsumer(
@@ -3143,6 +3227,14 @@ public class UnifiedArchiveBackendTest {
     return ByteBuffer.allocate(1 + Long.BYTES)
         .put((byte) 0x10)
         .putLong(blockNum)
+        .array();
+  }
+
+  private static byte[] blockIndexKey(long blockNum, int txIndex) {
+    return ByteBuffer.allocate(1 + Long.BYTES + Integer.BYTES)
+        .put((byte) 0x13)
+        .putLong(blockNum)
+        .putInt(txIndex)
         .array();
   }
 

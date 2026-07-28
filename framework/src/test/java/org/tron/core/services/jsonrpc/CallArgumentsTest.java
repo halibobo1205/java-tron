@@ -48,6 +48,17 @@ public class CallArgumentsTest extends BaseTest {
   }
 
   @Test
+  public void parseOptionalGasDistinguishesOmittedAndExplicitZero()
+      throws JsonRpcInvalidParamsException {
+    CallArguments args = new CallArguments();
+    Assert.assertNull(args.parseOptionalGas());
+    args.setGas("0x0");
+    Assert.assertEquals(Long.valueOf(0L), args.parseOptionalGas());
+    args.setGas("0x10");
+    Assert.assertEquals(Long.valueOf(16L), args.parseOptionalGas());
+  }
+
+  @Test
   public void resolveData_inputOnly_returnsInput() throws JsonRpcInvalidParamsException {
     CallArguments args = new CallArguments();
     args.setInput("0xdeadbeef");

@@ -7,9 +7,11 @@ import static org.junit.Assert.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import org.junit.Test;
+import org.tron.common.parameter.CommonParameter;
 import org.tron.core.actuator.VMActuator;
 import org.tron.core.archive.query.ArchiveQueryLimits;
 import org.tron.core.archive.query.HistoricalQueryLimitException;
@@ -61,6 +63,35 @@ public class HistoricalDebugTraceExecutorTest {
     assertNull(QueryContextHolder.current());
   }
 
+  @Test
+  public void explicitZeroGasOverridesDefaultConstantCallLimit() throws Exception {
+    QueryContext queryContext = new QueryContext(ArchiveQueryLimits.unlimited());
+    HistoricalQueryLimitException terminal = limitFailure();
+    VMActuator vmActuator = mockActuator(terminal);
+    HistoricalDebugTraceExecutor executor =
+        new HistoricalDebugTraceExecutor(() -> vmActuator);
+
+    assertThrows(HistoricalQueryLimitException.class,
+        () -> execute(executor, queryContext, 0L));
+
+    verify(vmActuator).setConstantCallMaxEnergyLimit(0L);
+  }
+
+  @Test
+  public void requestedGasCannotExceedConfiguredConstantCallLimit() throws Exception {
+    QueryContext queryContext = new QueryContext(ArchiveQueryLimits.unlimited());
+    HistoricalQueryLimitException terminal = limitFailure();
+    VMActuator vmActuator = mockActuator(terminal);
+    HistoricalDebugTraceExecutor executor =
+        new HistoricalDebugTraceExecutor(() -> vmActuator);
+
+    assertThrows(HistoricalQueryLimitException.class,
+        () -> execute(executor, queryContext, Long.MAX_VALUE));
+
+    verify(vmActuator).setConstantCallMaxEnergyLimit(
+        CommonParameter.getInstance().maxEnergyLimitForConstant);
+  }
+
   private static VMActuator mockActuator(Throwable executionFailure) throws Exception {
     VMActuator vmActuator = mock(VMActuator.class);
     when(vmActuator.getProgram()).thenReturn(mock(Program.class));
@@ -70,6 +101,11 @@ public class HistoricalDebugTraceExecutorTest {
 
   private static void execute(HistoricalDebugTraceExecutor executor,
       QueryContext queryContext) throws Exception {
+    execute(executor, queryContext, null);
+  }
+
+  private static void execute(HistoricalDebugTraceExecutor executor,
+      QueryContext queryContext, Long energyLimit) throws Exception {
     ArchiveStateReader reader = mock(ArchiveStateReader.class);
     when(reader.getQueryContext()).thenReturn(queryContext);
     executor.execute(
@@ -81,7 +117,8 @@ public class HistoricalDebugTraceExecutorTest {
         true,
         null,
         null,
-        null);
+        null,
+        energyLimit);
   }
 
   private static HistoricalQueryLimitException limitFailure() {

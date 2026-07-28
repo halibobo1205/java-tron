@@ -2,6 +2,7 @@ package org.tron.core.services.jsonrpc;
 
 import java.math.BigInteger;
 import java.util.ArrayDeque;
+import java.util.Arrays;
 import java.util.Deque;
 import org.tron.core.services.jsonrpc.types.CallTraceFrame;
 import org.tron.core.vm.Op;
@@ -11,6 +12,8 @@ import org.tron.core.vm.trace.VmCallTraceCollector;
 final class ArchiveCallTraceCollector implements VmCallTraceCollector {
 
   private static final long BASE_FRAME_BYTES = 320L;
+  private static final byte[] PANIC_SELECTOR =
+      new byte[] {0x4e, 0x48, 0x7b, 0x71};
   private static final TraceScope NOOP_SCOPE = new TraceScope() {
     @Override
     public void complete(byte[] output, long energyUsed, boolean reverted, String error) {
@@ -40,7 +43,7 @@ final class ArchiveCallTraceCollector implements VmCallTraceCollector {
       return NOOP_SCOPE;
     }
     budget.reserve(estimatedFrameBytes(from, to, input));
-    String type = Op.getNameOf(opCode);
+    String type = opCode == Op.SUICIDE ? "SELFDESTRUCT" : Op.getNameOf(opCode);
     if (type == null) {
       type = "CALL";
     }
@@ -110,7 +113,44 @@ final class ArchiveCallTraceCollector implements VmCallTraceCollector {
 
   private static String decodeRevertReason(byte[] output) {
     String decoded = TronJsonRpcImpl.tryDecodeRevertReason(output);
-    return decoded.startsWith(": ") ? decoded.substring(2) : null;
+    if (decoded.startsWith(": ")) {
+      return decoded.substring(2);
+    }
+    if (output.length < 36
+        || output[0] != PANIC_SELECTOR[0]
+        || output[1] != PANIC_SELECTOR[1]
+        || output[2] != PANIC_SELECTOR[2]
+        || output[3] != PANIC_SELECTOR[3]) {
+      return null;
+    }
+    BigInteger code = new BigInteger(1, Arrays.copyOfRange(output, 4, 36));
+    if (code.bitLength() < Integer.SIZE) {
+      switch (code.intValue()) {
+        case 0x00:
+          return "generic panic";
+        case 0x01:
+          return "assert(false)";
+        case 0x11:
+          return "arithmetic underflow or overflow";
+        case 0x12:
+          return "division or modulo by zero";
+        case 0x21:
+          return "enum overflow";
+        case 0x22:
+          return "invalid encoded storage byte array accessed";
+        case 0x31:
+          return "out-of-bounds array access; popping on an empty array";
+        case 0x32:
+          return "out-of-bounds access of an array or bytesN";
+        case 0x41:
+          return "out of memory";
+        case 0x51:
+          return "uninitialized function";
+        default:
+          break;
+      }
+    }
+    return "unknown panic code: 0x" + code.toString(16);
   }
 
   private static long estimatedFrameBytes(byte[] from, byte[] to, byte[] input) {

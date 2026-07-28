@@ -17,10 +17,10 @@ public final class ArchiveTransactionLocation {
         || position.getTxNum() < range.getFirstTxNum()
         || position.getTxNum() > range.getLastTxNum()
         || position.getSource() != range.getSource()
-        || position.getPhase() != ArchivePhase.USER_TX
+        || (position.getPhase() != ArchivePhase.USER_TX
+            && position.getPhase() != ArchivePhase.USER_TX_VM)
         || position.getTxIndex() < 0
         || position.getTxIndex() >= range.getUserTxCount()
-        || position.getTxNum() != range.getFirstTxNum() + 1L + position.getTxIndex()
         || position.getTxId().length != ArchiveBlockRange.BLOCK_HASH_LENGTH) {
       throw new ArchiveException("archive transaction location is outside its block range");
     }

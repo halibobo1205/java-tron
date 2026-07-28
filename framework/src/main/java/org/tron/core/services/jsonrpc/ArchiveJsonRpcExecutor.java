@@ -33,6 +33,7 @@ public final class ArchiveJsonRpcExecutor implements AutoCloseable {
 
   private final boolean enabled;
   private final long shutdownWaitMs;
+  private final int debugTracePendingCapacity;
   private final AtomicBoolean closed = new AtomicBoolean();
   private final ThreadPoolExecutor executor;
   private final ThreadPoolExecutor debugTraceExecutor;
@@ -63,6 +64,7 @@ public final class ArchiveJsonRpcExecutor implements AutoCloseable {
           "archive debug trace pending count must be non-negative");
     }
     this.enabled = true;
+    this.debugTracePendingCapacity = maxPendingTraces;
     this.shutdownWaitMs = queryDeadlineMs == ArchiveQueryLimits.UNLIMITED
         ? MAX_SHUTDOWN_WAIT_MS
         : StrictMathWrapper.min(MAX_SHUTDOWN_WAIT_MS, StrictMathWrapper.max(1L, queryDeadlineMs));
@@ -81,6 +83,7 @@ public final class ArchiveJsonRpcExecutor implements AutoCloseable {
   private ArchiveJsonRpcExecutor() {
     this.enabled = false;
     this.shutdownWaitMs = 0L;
+    this.debugTracePendingCapacity = 0;
     this.executor = null;
     this.debugTraceExecutor = null;
   }
@@ -90,13 +93,17 @@ public final class ArchiveJsonRpcExecutor implements AutoCloseable {
     if (task == null) {
       throw new NullPointerException("task");
     }
+    if (!enabled) {
+      task.run();
+      return;
+    }
     int classification = classifyRequests(request);
     boolean debugTraceRequest = (classification & DEBUG_REQUEST) != 0;
     boolean historicalRequest =
         (classification & (HISTORICAL_DEBUG_REQUEST | ORDINARY_HISTORICAL_REQUEST)) != 0;
     boolean ordinaryHistoricalRequest =
         (classification & ORDINARY_HISTORICAL_REQUEST) != 0;
-    if (!enabled || !historicalRequest
+    if (!historicalRequest
         || debugTraceRequest && debugTraceExecutor == null && !ordinaryHistoricalRequest) {
       task.run();
       return;
@@ -147,6 +154,10 @@ public final class ArchiveJsonRpcExecutor implements AutoCloseable {
 
   static boolean containsDebugTraceRequest(JsonNode request) {
     return (classifyRequests(request) & DEBUG_REQUEST) != 0;
+  }
+
+  boolean isEnabled() {
+    return enabled;
   }
 
   private static int classifyRequests(JsonNode request) {
@@ -203,9 +214,10 @@ public final class ArchiveJsonRpcExecutor implements AutoCloseable {
       debugTraceExecutor.shutdown();
     }
     try {
-      boolean queryStopped = executor.awaitTermination(shutdownWaitMs, TimeUnit.MILLISECONDS);
+      long gracefulDeadline = deadlineAfter(shutdownWaitMs, TimeUnit.MILLISECONDS);
+      boolean queryStopped = awaitUntil(executor, gracefulDeadline);
       boolean traceStopped = debugTraceExecutor == null
-          || debugTraceExecutor.awaitTermination(shutdownWaitMs, TimeUnit.MILLISECONDS);
+          || awaitUntil(debugTraceExecutor, gracefulDeadline);
       if (queryStopped && traceStopped) {
         return;
       }
@@ -213,9 +225,10 @@ public final class ArchiveJsonRpcExecutor implements AutoCloseable {
       if (debugTraceExecutor != null) {
         cancelQueued(debugTraceExecutor.shutdownNow());
       }
-      queryStopped = executor.awaitTermination(1L, TimeUnit.SECONDS);
+      long forcedDeadline = deadlineAfter(1L, TimeUnit.SECONDS);
+      queryStopped = awaitUntil(executor, forcedDeadline);
       traceStopped = debugTraceExecutor == null
-          || debugTraceExecutor.awaitTermination(1L, TimeUnit.SECONDS);
+          || awaitUntil(debugTraceExecutor, forcedDeadline);
       if (!queryStopped || !traceStopped) {
         logger.warn("archive JSON-RPC workers did not terminate after interruption");
       }
@@ -228,20 +241,38 @@ public final class ArchiveJsonRpcExecutor implements AutoCloseable {
     }
   }
 
+  private static long deadlineAfter(long duration, TimeUnit unit) {
+    long now = System.nanoTime();
+    long delay = unit.toNanos(duration);
+    return now > Long.MAX_VALUE - delay ? Long.MAX_VALUE : now + delay;
+  }
+
+  private static boolean awaitUntil(ThreadPoolExecutor target, long deadlineNanos)
+      throws InterruptedException {
+    if (target.isTerminated()) {
+      return true;
+    }
+    long remainingNanos = deadlineNanos - System.nanoTime();
+    return remainingNanos > 0L
+        ? target.awaitTermination(remainingNanos, TimeUnit.NANOSECONDS)
+        : target.isTerminated();
+  }
+
   private HistoricalQueryLimitException executionCapacityExceeded(boolean debugTrace,
       ThreadPoolExecutor selectedExecutor) {
     int active = selectedExecutor.getActiveCount();
     int queued = selectedExecutor.getQueue().size();
+    boolean pendingCapacityExceeded = debugTrace && debugTracePendingCapacity > 0;
     int capacity = selectedExecutor.getMaximumPoolSize()
-        + queued + selectedExecutor.getQueue().remainingCapacity();
+        + (pendingCapacityExceeded ? debugTracePendingCapacity : 0);
     String work = debugTrace ? "archive debug trace" : "historical JSON-RPC";
     return new HistoricalQueryLimitException(
         HistoricalQueryLimitException.Reason.RESOURCE_EXHAUSTED,
-        queued > 0
+        pendingCapacityExceeded
             ? HistoricalQueryLimitException.Limit.PENDING_QUERIES
             : HistoricalQueryLimitException.Limit.CONCURRENT_QUERIES,
         capacity,
-        active + queued + 1L,
+        capacity + 1L,
         work + " execution capacity reached: active=" + active + ", queued=" + queued);
   }
 

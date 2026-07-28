@@ -4,7 +4,9 @@ import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -30,11 +32,15 @@ import org.tron.core.capsule.ContractStateCapsule;
 import org.tron.core.capsule.VotesCapsule;
 import org.tron.core.store.DelegationStore;
 import org.tron.core.store.VmDynamicProperties;
+import org.tron.core.vm.Op;
 import org.tron.core.vm.OperationRegistry;
+import org.tron.core.vm.PrecompiledContracts;
 import org.tron.core.vm.VM;
 import org.tron.core.vm.archive.ArchiveRepositoryAdapter;
 import org.tron.core.vm.config.VMConfig;
 import org.tron.core.vm.program.invoke.ProgramInvoke;
+import org.tron.core.vm.repository.Repository;
+import org.tron.core.vm.trace.VmCallTraceCollector;
 import org.tron.protos.Protocol;
 
 public class ProgramHistoricalSelfDestructTest {
@@ -53,7 +59,8 @@ public class ProgramHistoricalSelfDestructTest {
     historical.allowTvmTransferTrc10 = true;
     historical.allowTvmConstantinople = true;
     historical.allowTvmSolidity059 = true;
-    Program program = runSelfDestruct(repository, owner, inheritor, historical);
+    RecordingCallCollector collector = new RecordingCallCollector();
+    Program program = runSelfDestruct(repository, owner, inheritor, historical, collector);
 
     assertNull(program.getResult().getException());
     assertFalse(program.getResult().isRevert());
@@ -73,6 +80,7 @@ public class ProgramHistoricalSelfDestructTest {
     assertEquals(Collections.singletonMap(TOKEN_ID, TOKEN_BALANCE),
         program.getResult().getInternalTransactions().get(0).getTokenInfo());
     assertTrue(reader.enumeratedAssets);
+    collector.assertSuccessfulSelfDestruct(owner, inheritor, 900L);
   }
 
   @Test
@@ -89,7 +97,8 @@ public class ProgramHistoricalSelfDestructTest {
     historical.allowTvmSolidity059 = true;
     historical.allowTvmSelfdestructRestriction = true;
 
-    Program program = runSelfDestruct(repository, owner, inheritor, historical);
+    RecordingCallCollector collector = new RecordingCallCollector();
+    Program program = runSelfDestruct(repository, owner, inheritor, historical, collector);
 
     assertNull(program.getResult().getException());
     assertEquals(0L, program.getContractState().getBalance(owner));
@@ -103,6 +112,7 @@ public class ProgramHistoricalSelfDestructTest {
     assertTrue(program.getResult().getDeleteAccounts().isEmpty());
     assertEquals(Collections.singletonMap(TOKEN_ID, TOKEN_BALANCE),
         program.getResult().getInternalTransactions().get(0).getTokenInfo());
+    collector.assertSuccessfulSelfDestruct(owner, inheritor, 900L);
   }
 
   @Test
@@ -173,8 +183,85 @@ public class ProgramHistoricalSelfDestructTest {
     assertTrue(program.getContractState().getAccount(owner).getVotesList().isEmpty());
   }
 
+  @Test
+  public void historicalProgramsDoNotShareJumpDestinationAnalysis() throws Exception {
+    byte[] owner = address(0x41);
+    ArchiveRepositoryAdapter repository = new ArchiveRepositoryAdapter(
+        new HistoricalReader(owner, 1L), mock(VmDynamicProperties.class),
+        true, address(0x00));
+    byte[] code = new byte[] {(byte) 0x5b, 0x00};
+
+    Program first = newProgram(repository, owner, code);
+    Program second = newProgram(repository, owner, code);
+
+    assertTrue(first.usesIsolatedExecutionHelpers());
+    assertTrue(second.usesIsolatedExecutionHelpers());
+    assertNotSame(first.getProgramPrecompile(), second.getProgramPrecompile());
+  }
+
+  @Test
+  public void canonicalProgramsRetainSharedJumpDestinationCache() throws Exception {
+    byte[] owner = address(0x42);
+    Repository repository = mock(Repository.class);
+    byte[] code = new byte[] {(byte) 0x5b, 0x00};
+
+    Program first = newProgram(repository, owner, code);
+    Program second = newProgram(repository, owner, code);
+
+    assertFalse(first.usesIsolatedExecutionHelpers());
+    assertFalse(second.usesIsolatedExecutionHelpers());
+    assertSame(first.getProgramPrecompile(), second.getProgramPrecompile());
+  }
+
+  @Test
+  public void isolatedPrecompileFactoryNeverReturnsSharedSingleton() {
+    PrecompiledContracts.PrecompiledContract singleton =
+        PrecompiledContracts.getContractForAddress(new DataWord(4L));
+    PrecompiledContracts.PrecompiledContract first =
+        PrecompiledContracts.newIsolatedContract(singleton);
+    PrecompiledContracts.PrecompiledContract second =
+        PrecompiledContracts.newIsolatedContract(singleton);
+
+    assertNotSame(singleton, first);
+    assertNotSame(singleton, second);
+    assertNotSame(first, second);
+  }
+
+  @Test
+  public void createDepthFailuresRemainVisibleToCallTracer() throws Exception {
+    byte[] owner = address(0x43);
+    Repository repository = mock(Repository.class);
+    VMConfig.Snapshot snapshot = new VMConfig.Snapshot();
+    snapshot.allowTvmCompatibleEvm = true;
+    VMConfig.setLocalSnapshot(snapshot);
+    try {
+      DepthFailureCollector createCollector = new DepthFailureCollector();
+      Program create = newProgram(repository, owner, new byte[0], 64);
+      create.setRootTransactionId(new byte[32]);
+      create.setCallTraceCollector(createCollector);
+      create.createContract(DataWord.ZERO(), DataWord.ZERO(), DataWord.ZERO());
+      createCollector.assertFailure(Op.CREATE);
+
+      DepthFailureCollector create2Collector = new DepthFailureCollector();
+      Program create2 = newProgram(repository, owner, new byte[0], 64);
+      create2.setRootTransactionId(new byte[32]);
+      create2.setCallTraceCollector(create2Collector);
+      create2.createContract2(
+          DataWord.ZERO(), DataWord.ZERO(), DataWord.ZERO(), DataWord.ZERO());
+      create2Collector.assertFailure(Op.CREATE2);
+    } finally {
+      VMConfig.clearLocalSnapshot();
+    }
+  }
+
   private static Program runSelfDestruct(ArchiveRepositoryAdapter repository,
       byte[] owner, byte[] inheritor, VMConfig.Snapshot historical) throws Exception {
+    return runSelfDestruct(repository, owner, inheritor, historical, null);
+  }
+
+  private static Program runSelfDestruct(ArchiveRepositoryAdapter repository,
+      byte[] owner, byte[] inheritor, VMConfig.Snapshot historical,
+      VmCallTraceCollector collector) throws Exception {
     ProgramInvoke invoke = mock(ProgramInvoke.class);
     when(invoke.getContractAddress()).thenReturn(new DataWord(owner));
     when(invoke.getDeposit()).thenReturn(repository);
@@ -186,6 +273,7 @@ public class ProgramHistoricalSelfDestructTest {
         Protocol.Transaction.getDefaultInstance(),
         InternalTransaction.TrxType.TRX_UNKNOWN_TYPE));
     program.setRootTransactionId(new byte[32]);
+    program.setCallTraceCollector(collector);
 
     VMConfig.setLocalSnapshot(historical);
     try {
@@ -194,6 +282,107 @@ public class ProgramHistoricalSelfDestructTest {
       VMConfig.clearLocalSnapshot();
     }
     return program;
+  }
+
+  private static Program newProgram(Repository repository, byte[] owner, byte[] code)
+      throws Exception {
+    return newProgram(repository, owner, code, 0);
+  }
+
+  private static Program newProgram(
+      Repository repository, byte[] owner, byte[] code, int callDepth) throws Exception {
+    ProgramInvoke invoke = mock(ProgramInvoke.class);
+    when(invoke.getContractAddress()).thenReturn(new DataWord(owner));
+    when(invoke.getCallerAddress()).thenReturn(new DataWord(owner));
+    when(invoke.getDeposit()).thenReturn(repository);
+    when(invoke.getCallDeep()).thenReturn(callDepth);
+    when(invoke.getEnergyLimit()).thenReturn(1_000_000L);
+    return new Program(code, owner, invoke, new InternalTransaction(
+        Protocol.Transaction.getDefaultInstance(),
+        InternalTransaction.TrxType.TRX_UNKNOWN_TYPE));
+  }
+
+  private static final class DepthFailureCollector implements VmCallTraceCollector {
+
+    private int opCode;
+    private String error;
+    private boolean closed;
+
+    @Override
+    public TraceScope enter(int enteredOpCode, byte[] from, byte[] to, byte[] input,
+        long energy, BigInteger value, boolean precompile) {
+      opCode = enteredOpCode;
+      assertNotNull(from);
+      assertNotNull(to);
+      assertFalse(precompile);
+      return new TraceScope() {
+        @Override
+        public void complete(byte[] output, long energyUsed, boolean reverted,
+            String failure) {
+          assertEquals(0L, energyUsed);
+          assertFalse(reverted);
+          error = failure;
+        }
+
+        @Override
+        public void close() {
+          closed = true;
+        }
+      };
+    }
+
+    private void assertFailure(int expectedOpCode) {
+      assertEquals(expectedOpCode, opCode);
+      assertEquals("max call depth exceeded", error);
+      assertTrue(closed);
+    }
+  }
+
+  private static final class RecordingCallCollector implements VmCallTraceCollector {
+
+    private int opCode;
+    private byte[] from;
+    private byte[] to;
+    private BigInteger value;
+    private boolean completed;
+    private boolean closed;
+
+    @Override
+    public TraceScope enter(int enteredOpCode, byte[] enteredFrom, byte[] enteredTo, byte[] input,
+        long energy, BigInteger enteredValue, boolean precompile) {
+      opCode = enteredOpCode;
+      from = enteredFrom.clone();
+      to = enteredTo.clone();
+      value = enteredValue;
+      assertEquals(0, input.length);
+      assertEquals(0L, energy);
+      assertFalse(precompile);
+      return new TraceScope() {
+        @Override
+        public void complete(byte[] output, long energyUsed, boolean reverted, String error) {
+          assertEquals(0, output.length);
+          assertEquals(0L, energyUsed);
+          assertFalse(reverted);
+          assertNull(error);
+          completed = true;
+        }
+
+        @Override
+        public void close() {
+          closed = true;
+        }
+      };
+    }
+
+    private void assertSuccessfulSelfDestruct(byte[] expectedFrom, byte[] expectedTo,
+        long expectedValue) {
+      assertEquals(org.tron.core.vm.Op.SUICIDE, opCode);
+      assertArrayEquals(expectedFrom, from);
+      assertArrayEquals(expectedTo, to);
+      assertEquals(BigInteger.valueOf(expectedValue), value);
+      assertTrue(completed);
+      assertTrue(closed);
+    }
   }
 
   private static byte[] selfDestructCode(byte[] inheritor) {

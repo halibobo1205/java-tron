@@ -222,7 +222,7 @@ public final class ArchiveServiceFactory {
       return new DefaultArchiveService(true, txNumIndex,
           ArchiveExecutionContextHolder.get(), temporalStore, inFlightStore, registry,
           catalog, ArchiveLifecycle.Phase.RECOVERING, queryLimits, publisherConfig,
-          startupValidator, backend);
+          startupValidator, backend, config.getDebug().isEnable());
     } catch (RuntimeException | Error e) {
       if (e instanceof ArchivePersistentStateCorruptionException && db != null) {
         try {

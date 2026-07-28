@@ -49,6 +49,7 @@ public class DebugTraceOptionsTest {
     assertInvalid(singleton("tracer", "javascriptTracer"));
     assertInvalid(singleton("timeout", "5s"));
     assertInvalid(singleton("limit", 1.5d));
+    assertInvalid(singleton("limit", 1.0d));
 
     Map<String, Object> tracerConfig = new HashMap<>();
     tracerConfig.put("withLog", true);

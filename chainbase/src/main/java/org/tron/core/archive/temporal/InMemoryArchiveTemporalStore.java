@@ -41,6 +41,7 @@ public final class InMemoryArchiveTemporalStore implements ArchiveTemporalStore 
 
   private static final Comparator<ArchiveChangeRecord> RECORD_ORDER =
       InMemoryArchiveTemporalStore::compareRecords;
+  private static final long SCAN_RESULT_KEY_OVERHEAD_BYTES = 48L;
 
   /** Per (domain, key) state: txNum -> pre-change value (history), plus the current value. */
   private static final class KeyState {
@@ -245,11 +246,15 @@ public final class InMemoryArchiveTemporalStore implements ArchiveTemporalStore 
     }
     List<byte[]> matches = new ArrayList<>();
     for (Map.Entry<WrappedByteArray, KeyState> entry : domainMap.entrySet()) {
+      if (queryContext != null) {
+        queryContext.checkDeadline();
+      }
       byte[] key = entry.getKey().getBytes();
       if (entry.getValue().latest != null
           && key.length == canonicalKeyLength && startsWith(key, canonicalPrefix)) {
         if (queryContext != null) {
           queryContext.recordBackendRead();
+          queryContext.recordVmOverlayBytes(SCAN_RESULT_KEY_OVERHEAD_BYTES + key.length);
         }
         matches.add(Arrays.copyOf(key, key.length));
       }

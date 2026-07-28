@@ -8,6 +8,7 @@ package org.tron.core.archive;
 public enum ArchivePhase {
   BLOCK_PREPARE,
   USER_TX,
+  USER_TX_VM,
   BLOCK_FINALIZE,
   UNWIND
 }

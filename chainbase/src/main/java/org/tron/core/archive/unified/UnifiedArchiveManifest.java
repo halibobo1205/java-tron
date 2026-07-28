@@ -16,10 +16,10 @@ public final class UnifiedArchiveManifest {
       "tron-archive-unified|layout=UNIFIED_V1|layout-schema="
           .getBytes(StandardCharsets.US_ASCII);
   private static final byte[] CURRENT_LAYOUT_SCHEMA_PREFIX =
-      "tron-archive-unified|layout=UNIFIED_V1|layout-schema=6|"
+      "tron-archive-unified|layout=UNIFIED_V1|layout-schema=7|"
           .getBytes(StandardCharsets.US_ASCII);
   private static final byte[] VALUE_PREFIX =
-      ("tron-archive-unified|layout=UNIFIED_V1|layout-schema=6"
+      ("tron-archive-unified|layout=UNIFIED_V1|layout-schema=7"
           + "|column-families=meta,inflight,index,latest,history,changeset,temporal-payload,"
           + "block-marker,commitment"
           + "|archive-schema=").getBytes(StandardCharsets.US_ASCII);
@@ -59,7 +59,7 @@ public final class UnifiedArchiveManifest {
     if (startsWith(persisted, LAYOUT_SCHEMA_PREFIX)
         && !startsWith(persisted, CURRENT_LAYOUT_SCHEMA_PREFIX)) {
       throw new ArchiveException(
-          "UNIFIED_V1 archive layout schema mismatch; expected layout-schema=6; "
+          "UNIFIED_V1 archive layout schema mismatch; expected layout-schema=7; "
               + "restore a canonical/archive backup compatible with this build, or rebuild "
               + "canonical and archive together from empty directories");
     }

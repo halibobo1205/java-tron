@@ -1,6 +1,6 @@
 package org.tron.core.services.jsonrpc;
 
-import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Set;
@@ -139,11 +139,17 @@ final class DebugTraceOptions {
     if (value == null) {
       return defaultValue;
     }
-    if (!(value instanceof Number)) {
+    if (!(value instanceof Byte)
+        && !(value instanceof Short)
+        && !(value instanceof Integer)
+        && !(value instanceof Long)
+        && !(value instanceof BigInteger)) {
       throw invalid(key + " must be a non-negative integer");
     }
     try {
-      long parsed = new BigDecimal(value.toString()).longValueExact();
+      long parsed = value instanceof BigInteger
+          ? ((BigInteger) value).longValueExact()
+          : ((Number) value).longValue();
       if (parsed < 0L || parsed > Integer.MAX_VALUE) {
         throw invalid(key + " is outside the supported range");
       }

@@ -1101,11 +1101,14 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
     requireHistoricalCallDataWithinLimit(transactionCall.getInput());
     requireHistoricalCallDataWithinLimit(transactionCall.getData());
     DebugTraceOptions options = DebugTraceOptions.parse(traceOptions);
+    byte[] contractAddress = transactionCall.getTo() == null
+        ? null : addressCompatibleToByteArray(transactionCall.getTo());
     return historicalDebugTraceSupport.traceCall(
         addressCompatibleToByteArray(transactionCall.getFrom()),
-        addressCompatibleToByteArray(transactionCall.getTo()),
+        contractAddress,
         transactionCall.parseValue(),
         ByteArray.fromHexString(transactionCall.resolveData()),
+        transactionCall.parseOptionalGas(),
         blockNumOrTag,
         blockParam.getRequestedBlockHash(),
         options);
@@ -1246,7 +1249,10 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
   private void validateRequireCanonical(Map<?, ?> paramMap)
       throws JsonRpcInvalidParamsException {
     if (paramMap.containsKey("requireCanonical")) {
-      throw new JsonRpcInvalidParamsException(JSON_ERROR);
+      Object requireCanonical = paramMap.get("requireCanonical");
+      if (!(requireCanonical instanceof Boolean)) {
+        throw new JsonRpcInvalidParamsException(JSON_ERROR);
+      }
     }
   }
 

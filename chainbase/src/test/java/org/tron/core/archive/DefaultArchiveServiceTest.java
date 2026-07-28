@@ -2176,7 +2176,7 @@ public class DefaultArchiveServiceTest {
         true, index, new ArchiveExecutionContext(), new InMemoryArchiveTemporalStore(),
         new InMemoryArchiveInFlightStore(), new DefaultArchiveDomainRegistry(),
         new DefaultArchiveDomainCatalog(),
-        ArchiveLifecycle.Phase.RUNNING, ArchiveQueryLimits.unlimited());
+        ArchiveLifecycle.Phase.RUNNING, ArchiveQueryLimits.unlimited(), false, true);
     try {
       BlockCapsule block = blockWithParentSeed(0L, (byte) 0);
       TransactionCapsule transaction =
@@ -2185,6 +2185,7 @@ public class DefaultArchiveServiceTest {
       service.beginSystemTx(block, ArchivePhase.BLOCK_PREPARE);
       service.endTx();
       service.beginUserTx(block, 0, transaction);
+      service.beginUserVmTx();
       service.endTx();
       service.beginSystemTx(block, ArchivePhase.BLOCK_FINALIZE);
       service.endTx();
@@ -2208,7 +2209,7 @@ public class DefaultArchiveServiceTest {
         true, index, new ArchiveExecutionContext(), new InMemoryArchiveTemporalStore(),
         new InMemoryArchiveInFlightStore(), new DefaultArchiveDomainRegistry(),
         new DefaultArchiveDomainCatalog(), ArchiveLifecycle.Phase.RUNNING,
-        ArchiveQueryLimits.unlimited());
+        ArchiveQueryLimits.unlimited(), false, true);
     try {
       BlockCapsule block = blockWithParentSeed(0L, (byte) 0);
       TransactionCapsule transaction =
@@ -2217,6 +2218,7 @@ public class DefaultArchiveServiceTest {
       service.beginSystemTx(block, ArchivePhase.BLOCK_PREPARE);
       service.endTx();
       service.beginUserTx(block, 0, transaction);
+      service.beginUserVmTx();
       service.endTx();
       service.beginSystemTx(block, ArchivePhase.BLOCK_FINALIZE);
       service.endTx();
@@ -2230,6 +2232,89 @@ public class DefaultArchiveServiceTest {
           })) {
         assertEquals(5L, reader.getQueryContext().getBackendReads());
       }
+    } finally {
+      service.close();
+    }
+  }
+
+  @Test
+  public void transactionReaderUsesStateAfterPrechargesAndBeforeVmWrites() throws Exception {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    DefaultArchiveService service = new DefaultArchiveService(
+        true, index, new ArchiveExecutionContext(), new InMemoryArchiveTemporalStore(),
+        new InMemoryArchiveInFlightStore(), new DefaultArchiveDomainRegistry(),
+        new DefaultArchiveDomainCatalog(), ArchiveLifecycle.Phase.RUNNING,
+        ArchiveQueryLimits.unlimited(), false, true);
+    byte[] address = new byte[21];
+    address[0] = 0x41;
+    BlockCapsule block = blockWithParentSeed(0L, (byte) 0);
+    TransactionCapsule transaction =
+        new TransactionCapsule(Transaction.getDefaultInstance());
+    try {
+      service.beginBlock(block, ArchiveSource.NORMAL);
+      service.beginSystemTx(block, ArchivePhase.BLOCK_PREPARE);
+      service.endTx();
+      service.beginUserTx(block, 0, transaction);
+      service.getCaptureEngine().capturePut("account", address, null, account(20L));
+      service.beginUserVmTx();
+      service.getCaptureEngine().capturePut(
+          "account", address, account(20L), account(30L));
+      service.endTx();
+      service.beginSystemTx(block, ArchivePhase.BLOCK_FINALIZE);
+      service.endTx();
+      service.commitBlock(block, 1);
+      service.publishSolidifiedBlocks(0L);
+
+      ArchiveTransactionLocation location = index.findTransactionByTxId(
+          transaction.getTransactionId().getBytes()).orElseThrow(AssertionError::new);
+      assertEquals(ArchivePhase.USER_TX_VM, location.getPosition().getPhase());
+      assertEquals(1L, index.findTxNumByBlockAndIndex(0L, 0).getAsLong());
+      try (ArchiveStateReader reader = service.openTransactionReader(
+          transaction.getTransactionId().getBytes(),
+          0L, block.getBlockId().getBytes())) {
+        ArchiveReadResult<AccountCapsule> result = reader.getAccount(address);
+        assertTrue(result.isPresent());
+        assertEquals(20L, result.getValue().getBalance());
+      }
+    } finally {
+      service.close();
+    }
+  }
+
+  @Test
+  public void transactionReaderFailsClosedWhenVmPreStateCaptureWasDisabled() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    DefaultArchiveService service = new DefaultArchiveService(
+        true, index, new ArchiveExecutionContext(), new InMemoryArchiveTemporalStore(),
+        new InMemoryArchiveInFlightStore(), new DefaultArchiveDomainRegistry(),
+        new DefaultArchiveDomainCatalog(), ArchiveLifecycle.Phase.RUNNING,
+        ArchiveQueryLimits.unlimited(), false, false);
+    BlockCapsule block = blockWithParentSeed(0L, (byte) 0);
+    TransactionCapsule transaction =
+        new TransactionCapsule(Transaction.getDefaultInstance());
+    try {
+      service.beginBlock(block, ArchiveSource.NORMAL);
+      service.beginSystemTx(block, ArchivePhase.BLOCK_PREPARE);
+      service.endTx();
+      service.beginUserTx(block, 0, transaction);
+      service.beginUserVmTx();
+      service.endTx();
+      service.beginSystemTx(block, ArchivePhase.BLOCK_FINALIZE);
+      service.endTx();
+      service.commitBlock(block, 1);
+      service.publishSolidifiedBlocks(0L);
+
+      ArchiveTransactionLocation location = index.findTransactionByTxId(
+          transaction.getTransactionId().getBytes()).orElseThrow(AssertionError::new);
+      assertEquals(ArchivePhase.USER_TX, location.getPosition().getPhase());
+      assertEquals(2L, index.getBlockRange(0L)
+          .orElseThrow(AssertionError::new).getLastTxNum());
+      ArchiveReaderException failure = assertThrows(ArchiveReaderException.class,
+          () -> service.openTransactionReader(
+              transaction.getTransactionId().getBytes(),
+              0L, block.getBlockId().getBytes()));
+      assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, failure.getReason());
+      assertTrue(failure.getMessage().contains("VM pre-state was not captured"));
     } finally {
       service.close();
     }
@@ -4329,6 +4414,11 @@ public class DefaultArchiveServiceTest {
     @Override
     public ArchiveTxPosition allocateUserTx(long blockNum, int txIndex, byte[] txId) {
       return delegate.allocateUserTx(blockNum, txIndex, txId);
+    }
+
+    @Override
+    public ArchiveTxPosition allocateUserVmTx(long blockNum, int txIndex, byte[] txId) {
+      return delegate.allocateUserVmTx(blockNum, txIndex, txId);
     }
 
     @Override

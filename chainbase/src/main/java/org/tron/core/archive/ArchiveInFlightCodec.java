@@ -345,7 +345,7 @@ final class ArchiveInFlightCodec {
       throw new ArchiveException("archive in-flight position block hash must be empty or "
           + ArchiveBlockRange.BLOCK_HASH_LENGTH + " bytes: actual=" + blockHashBytes);
     }
-    if (phase == ArchivePhase.USER_TX) {
+    if (phase == ArchivePhase.USER_TX || phase == ArchivePhase.USER_TX_VM) {
       if (txIdBytes != ArchiveBlockRange.BLOCK_HASH_LENGTH) {
         throw new ArchiveException(
             "archive in-flight position user txId must be a 32-byte txId");
@@ -573,7 +573,7 @@ final class ArchiveInFlightCodec {
   }
 
   private static void requirePositionTxId(ArchivePhase phase, int txIdSize, String what) {
-    if (phase == ArchivePhase.USER_TX) {
+    if (phase == ArchivePhase.USER_TX || phase == ArchivePhase.USER_TX_VM) {
       if (txIdSize != ArchiveBlockRange.BLOCK_HASH_LENGTH) {
         throw new ArchiveException(what + " user txId must be a 32-byte txId");
       }

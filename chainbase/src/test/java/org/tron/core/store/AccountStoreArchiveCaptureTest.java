@@ -83,11 +83,11 @@ public class AccountStoreArchiveCaptureTest {
   public void ordinaryPutReadsPreviousOnceAndCapturesSortedEffectiveBalances() throws Exception {
     byte[] address = address();
     AccountCapsule oldAccount = account(address, true,
-        "a", 5L, "both", 1L);
+        "1000001", 5L, "1000003", 1L);
     AccountCapsule newAccount = account(address, true,
-        "b", 8L, "both", 2L, "zero", 0L);
+        "1000002", 8L, "1000003", 2L, "1000004", 0L);
     Map<String, Long> physical = balances(
-        "a", 7L, "b", 6L, "zero", 9L);
+        "1000001", 7L, "1000002", 6L, "1000004", 9L);
     AccountAssetStore assetStore = mock(AccountAssetStore.class);
     when(assetStore.getBalance(any(byte[].class), any(byte[].class)))
         .thenAnswer(invocation -> physical.get(ascii((byte[]) invocation.getArgument(1))));
@@ -104,15 +104,16 @@ public class AccountStoreArchiveCaptureTest {
         any(byte[].class), any(AccountAssetStore.PhysicalAssetConsumer.class));
     ArgumentCaptor<byte[]> assetIds = ArgumentCaptor.forClass(byte[].class);
     verify(assetStore, times(3)).getBalance(same(address), assetIds.capture());
-    assertEquals(Arrays.asList("a", "b", "zero"), ascii(assetIds.getAllValues()));
+    assertEquals(Arrays.asList("1000001", "1000002", "1000004"),
+        ascii(assetIds.getAllValues()));
 
     List<ArchiveChangeRecord> records = engine.records();
     assertEquals(5, records.size());
     assertAccountPut(records.get(0), address);
-    assertAsset(records.get(1), address, "a", 5L, 7L);
-    assertAsset(records.get(2), address, "b", 6L, 8L);
-    assertAsset(records.get(3), address, "both", 1L, 2L);
-    assertAsset(records.get(4), address, "zero", 9L, 0L);
+    assertAsset(records.get(1), address, "1000001", 5L, 7L);
+    assertAsset(records.get(2), address, "1000002", 6L, 8L);
+    assertAsset(records.get(3), address, "1000003", 1L, 2L);
+    assertAsset(records.get(4), address, "1000004", 9L, 0L);
     assertFalse(engine.failure().isPresent());
   }
 
@@ -195,7 +196,7 @@ public class AccountStoreArchiveCaptureTest {
   @Test
   public void unchangedAssetStateSkipsAssetPlanningAndPhysicalReads() throws Exception {
     byte[] address = address();
-    AccountCapsule oldAccount = account(address, true, "asset", 7L);
+    AccountCapsule oldAccount = account(address, true, "1000001", 7L);
     AccountCapsule newAccount = new AccountCapsule(oldAccount.getInstance().toBuilder()
         .setBalance(99L)
         .build());
@@ -219,7 +220,7 @@ public class AccountStoreArchiveCaptureTest {
   public void storeLoadedAccountCapturesOnlyTouchedAssetAndRebasesHint() throws Exception {
     byte[] address = address();
     AccountCapsule oldAccount = account(address, false,
-        "asset-a", 1L, "asset-b", 2L, "asset-c", 3L);
+        "1000001", 1L, "1000002", 2L, "1000003", 3L);
     AccountAssetStore assetStore = mock(AccountAssetStore.class);
     IRevokingDB revokingDb = mock(IRevokingDB.class);
     when(revokingDb.getUnchecked(same(address))).thenReturn(oldAccount.getData());
@@ -227,9 +228,9 @@ public class AccountStoreArchiveCaptureTest {
     ArchiveCaptureEngine engine = startCapture();
 
     AccountCapsule updated = store.get(address);
-    updated.addAssetMapV2(Collections.singletonMap("asset-b", 9L));
+    updated.addAssetMapV2(Collections.singletonMap("1000002", 9L));
     assertTrue(updated.hasCompleteAssetV2ChangeTracking());
-    assertEquals(Collections.singleton("asset-b"), updated.snapshotModifiedAssetV2());
+    assertEquals(Collections.singleton("1000002"), updated.snapshotModifiedAssetV2());
 
     store.put(address, updated);
 
@@ -240,14 +241,14 @@ public class AccountStoreArchiveCaptureTest {
     verify(assetStore, never()).getBalance(any(byte[].class), any(byte[].class));
     assertEquals(2, engine.records().size());
     assertAccountPut(engine.records().get(0), address);
-    assertAsset(engine.records().get(1), address, "asset-b", 2L, 9L);
+    assertAsset(engine.records().get(1), address, "1000002", 2L, 9L);
     assertFalse(engine.failure().isPresent());
   }
 
   @Test
   public void staleStoreLoadedHintFallsBackToActualPreviousVersion() throws Exception {
     byte[] address = address();
-    AccountCapsule oldAccount = account(address, false, "asset", 1L);
+    AccountCapsule oldAccount = account(address, false, "1000001", 1L);
     AtomicReference<byte[]> canonical = new AtomicReference<>(oldAccount.getData());
     AccountAssetStore assetStore = mock(AccountAssetStore.class);
     IRevokingDB revokingDb = mock(IRevokingDB.class);
@@ -263,7 +264,7 @@ public class AccountStoreArchiveCaptureTest {
 
     AccountCapsule stale = store.get(address);
     AccountCapsule assetWriter = store.get(address);
-    assetWriter.addAssetMapV2(Collections.singletonMap("asset", 9L));
+    assetWriter.addAssetMapV2(Collections.singletonMap("1000001", 9L));
     store.put(address, assetWriter);
 
     stale.setBalance(99L);
@@ -276,14 +277,14 @@ public class AccountStoreArchiveCaptureTest {
       }
     }
     assertEquals(1, assetRecords.size());
-    assertAsset(assetRecords.get(0), address, "asset", 1L, 1L);
+    assertAsset(assetRecords.get(0), address, "1000001", 1L, 1L);
     assertFalse(engine.failure().isPresent());
   }
 
   @Test
   public void lazyImportedAssetTracksPhysicalVersionWhenAccountRowIsUnchanged() throws Exception {
     byte[] address = address();
-    byte[] assetId = bytes("asset");
+    byte[] assetId = bytes("1000001");
     AccountCapsule canonicalAccount = account(address, true);
     AccountAssetStore assetStore = mock(AccountAssetStore.class);
     when(assetStore.getBalance(any(Account.class), any(byte[].class))).thenReturn(1L);
@@ -298,8 +299,8 @@ public class AccountStoreArchiveCaptureTest {
     ArchiveCaptureEngine engine = startCapture();
 
     AccountCapsule stale = store.get(address);
-    assertEquals(1L, stale.getAssetV2("asset"));
-    assertEquals(Collections.singleton("asset"), stale.snapshotModifiedAssetV2());
+    assertEquals(1L, stale.getAssetV2("1000001"));
+    assertEquals(Collections.singleton("1000001"), stale.snapshotModifiedAssetV2());
     stale.setBalance(99L);
     store.put(address, stale);
 
@@ -310,14 +311,14 @@ public class AccountStoreArchiveCaptureTest {
     assertEquals(2, engine.records().size());
     assertEquals(ArchiveDomain.ACCOUNT, engine.records().get(0).getDomain());
     assertArrayEquals(address, engine.records().get(0).getCanonicalKey());
-    assertAsset(engine.records().get(1), address, "asset", 9L, 1L);
+    assertAsset(engine.records().get(1), address, "1000001", 9L, 1L);
     assertFalse(engine.failure().isPresent());
   }
 
   @Test
   public void wholeAccountReplacementInvalidatesHintAndFallsBackToValueDiff() throws Exception {
     byte[] address = address();
-    AccountCapsule oldAccount = account(address, false, "asset-a", 1L, "asset-b", 2L);
+    AccountCapsule oldAccount = account(address, false, "1000001", 1L, "1000002", 2L);
     AccountAssetStore assetStore = mock(AccountAssetStore.class);
     IRevokingDB revokingDb = mock(IRevokingDB.class);
     when(revokingDb.getUnchecked(same(address))).thenReturn(oldAccount.getData());
@@ -325,20 +326,20 @@ public class AccountStoreArchiveCaptureTest {
     ArchiveCaptureEngine engine = startCapture();
 
     AccountCapsule updated = store.get(address);
-    updated.setInstance(updated.getInstance().toBuilder().putAssetV2("asset-a", 7L).build());
+    updated.setInstance(updated.getInstance().toBuilder().putAssetV2("1000001", 7L).build());
     assertFalse(updated.hasCompleteAssetV2ChangeTracking());
 
     store.put(address, updated);
 
     assertEquals(2, engine.records().size());
-    assertAsset(engine.records().get(1), address, "asset-a", 1L, 7L);
+    assertAsset(engine.records().get(1), address, "1000001", 1L, 7L);
     assertFalse(engine.failure().isPresent());
   }
 
   @Test
   public void storeReadOutsideArchiveCaptureDoesNotEnableAssetTracking() throws Exception {
     byte[] address = address();
-    AccountCapsule oldAccount = account(address, false, "asset", 1L);
+    AccountCapsule oldAccount = account(address, false, "1000001", 1L);
     AccountAssetStore assetStore = mock(AccountAssetStore.class);
     IRevokingDB revokingDb = mock(IRevokingDB.class);
     when(revokingDb.getUnchecked(same(address))).thenReturn(oldAccount.getData());
@@ -354,10 +355,10 @@ public class AccountStoreArchiveCaptureTest {
   public void deleteScansPhysicalAssetsAndCapturesOverlayAndOrphan() throws Exception {
     byte[] address = address();
     AccountCapsule oldAccount = account(address, true,
-        "overlay", 8L, "zero", 0L);
+        "1000001", 8L, "1000003", 0L);
     AccountAssetStore assetStore = mock(AccountAssetStore.class);
     stubPhysicalScan(assetStore, address, balances(
-        "orphan", 7L, "overlay", 5L, "zero", 4L));
+        "1000002", 7L, "1000001", 5L, "1000003", 4L));
     IRevokingDB revokingDb = mock(IRevokingDB.class);
     when(revokingDb.getUnchecked(same(address))).thenReturn(oldAccount.getData());
     AccountStore store = accountStore(assetStore, revokingDb);
@@ -374,8 +375,8 @@ public class AccountStoreArchiveCaptureTest {
     List<ArchiveChangeRecord> records = engine.records();
     assertEquals(3, records.size());
     assertAccountDelete(records.get(0), address);
-    assertAsset(records.get(1), address, "orphan", 7L, 0L);
-    assertAsset(records.get(2), address, "overlay", 8L, 0L);
+    assertAsset(records.get(1), address, "1000001", 8L, 0L);
+    assertAsset(records.get(2), address, "1000002", 7L, 0L);
     assertFalse(engine.failure().isPresent());
   }
 
@@ -383,19 +384,19 @@ public class AccountStoreArchiveCaptureTest {
   public void optimizedToUnoptimizedScansPrefixAndExplicitZeroWins() throws Exception {
     byte[] address = address();
     AccountAssetStore assetStore = mock(AccountAssetStore.class);
-    stubPhysicalScan(assetStore, address, balances("orphan", 7L, "zero", 9L));
+    stubPhysicalScan(assetStore, address, balances("1000001", 7L, "1000002", 9L));
     AccountStore store = plannerStore(assetStore);
     ArchiveCaptureEngine engine = startCapture();
 
     capturePlannedTransitions(store, address,
-        account(address, true, "zero", 0L).getData(),
+        account(address, true, "1000002", 0L).getData(),
         account(address, false).getData());
 
     verify(assetStore, times(1)).scanPhysicalAssets(
         same(address), any(AccountAssetStore.PhysicalAssetConsumer.class));
     verify(assetStore, never()).getBalance(any(byte[].class), any(byte[].class));
     assertEquals(1, engine.records().size());
-    assertAsset(engine.records().get(0), address, "orphan", 7L, 0L);
+    assertAsset(engine.records().get(0), address, "1000001", 7L, 0L);
     assertFalse(engine.failure().isPresent());
   }
 
@@ -403,19 +404,19 @@ public class AccountStoreArchiveCaptureTest {
   public void unoptimizedToOptimizedScansPrefixAndUsesPhysicalFallback() throws Exception {
     byte[] address = address();
     AccountAssetStore assetStore = mock(AccountAssetStore.class);
-    stubPhysicalScan(assetStore, address, balances("orphan", 7L, "zero", 9L));
+    stubPhysicalScan(assetStore, address, balances("1000001", 7L, "1000002", 9L));
     AccountStore store = plannerStore(assetStore);
     ArchiveCaptureEngine engine = startCapture();
 
     capturePlannedTransitions(store, address,
         account(address, false).getData(),
-        account(address, true, "zero", 0L).getData());
+        account(address, true, "1000002", 0L).getData());
 
     verify(assetStore, times(1)).scanPhysicalAssets(
         same(address), any(AccountAssetStore.PhysicalAssetConsumer.class));
     verify(assetStore, never()).getBalance(any(byte[].class), any(byte[].class));
     assertEquals(1, engine.records().size());
-    assertAsset(engine.records().get(0), address, "orphan", 0L, 7L);
+    assertAsset(engine.records().get(0), address, "1000001", 0L, 7L);
     assertFalse(engine.failure().isPresent());
   }
 
@@ -424,19 +425,19 @@ public class AccountStoreArchiveCaptureTest {
     byte[] address = address();
     AccountAssetStore assetStore = mock(AccountAssetStore.class);
     stubPhysicalScan(assetStore, address, balances(
-        "mapped", 2L, "orphan", 13L, "zero", 9L));
+        "1000001", 2L, "1000002", 13L, "1000003", 9L));
     AccountStore store = plannerStore(assetStore);
     ArchiveCaptureEngine engine = startCapture();
 
     capturePlannedTransitions(store, address, null,
-        account(address, true, "mapped", 4L, "zero", 0L).getData());
+        account(address, true, "1000001", 4L, "1000003", 0L).getData());
 
     verify(assetStore, times(1)).scanPhysicalAssets(
         same(address), any(AccountAssetStore.PhysicalAssetConsumer.class));
     verify(assetStore, never()).getBalance(any(byte[].class), any(byte[].class));
     assertEquals(2, engine.records().size());
-    assertAsset(engine.records().get(0), address, "mapped", 0L, 4L);
-    assertAsset(engine.records().get(1), address, "orphan", 0L, 13L);
+    assertAsset(engine.records().get(0), address, "1000001", 0L, 4L);
+    assertAsset(engine.records().get(1), address, "1000002", 0L, 13L);
     assertFalse(engine.failure().isPresent());
   }
 
@@ -451,7 +452,7 @@ public class AccountStoreArchiveCaptureTest {
           AccountAssetStore.PhysicalAssetConsumer consumer = invocation.getArgument(1);
           for (int i = 0; i < 100; i++) {
             visited.incrementAndGet();
-            consumer.accept(bytes(String.format("%03d", i)), i + 1L);
+            consumer.accept(bytes(String.valueOf(1_000_000 + i)), i + 1L);
           }
           return 100L;
         });
@@ -491,8 +492,8 @@ public class AccountStoreArchiveCaptureTest {
     AccountAssetStore assetStore = mock(AccountAssetStore.class);
     AccountStore store = plannerStore(assetStore);
     ArchiveCaptureEngine engine = startCapture();
-    byte[] oldAccount = account(address, true, "asset", 7L).getData();
-    byte[] newAccount = account(address, true, "asset", 7L).getData();
+    byte[] oldAccount = account(address, true, "1000001", 7L).getData();
+    byte[] newAccount = account(address, true, "1000001", 7L).getData();
 
     capturePlannedTransitions(store, address, oldAccount, newAccount);
     capturePlannedTransitions(store, address, oldAccount, newAccount);

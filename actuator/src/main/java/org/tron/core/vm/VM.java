@@ -120,6 +120,9 @@ public class VM {
           program.setPreviouslyExecutedOp((byte) op.getOpcode());
         } catch (RuntimeException e) {
           logger.info("VM halted: [{}]", e.getMessage());
+          if (structuredTraceListener != null) {
+            structuredTraceListener.captureFault(program, e);
+          }
           if (!(e instanceof TransferException)) {
             program.spendAllEnergy();
           }

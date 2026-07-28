@@ -20,6 +20,7 @@ import org.tron.core.archive.ArchiveSource;
  *   <li>range key: {@code 0x10 || blockNum(8, BE)} -&gt; encoded {@link ArchiveBlockRange}</li>
  *   <li>txId key: {@code 0x11 || txIdLen(4) || txId} -&gt; txNum</li>
  *   <li>position key: {@code 0x12 || txNum(8, BE)} -&gt; encoded {@link ArchiveTxPosition}</li>
+ *   <li>block-index key: {@code 0x13 || blockNum(8, BE) || txIndex(4, BE)} -&gt; txNum</li>
  *   <li>meta key: {@code 0x01 || asciiName} -&gt; cursor/repair metadata</li>
  *   <li>range value: version || block/txNum fields || userTxCount || source ||
  *       blockHashLen/blockHash || schemaChecksumLen/schemaChecksum</li>
@@ -33,6 +34,7 @@ public final class ArchiveBlockRangeCodec {
   static final byte TXNUM_BLOCK_PREFIX = 0x10;
   static final byte TXNUM_BY_TXID_PREFIX = 0x11;
   static final byte TXNUM_META_PREFIX = 0x12;
+  static final byte TXNUM_BY_BLOCK_INDEX_PREFIX = 0x13;
   static final int TX_ID_LENGTH = ArchiveBlockRange.BLOCK_HASH_LENGTH;
   static final int RANGE_VALUE_LENGTH = 1 + Long.BYTES * 5 + Integer.BYTES + 1
       + Integer.BYTES + ArchiveBlockRange.BLOCK_HASH_LENGTH
@@ -68,6 +70,17 @@ public final class ArchiveBlockRangeCodec {
     return Bytes.concat(new byte[] {TXNUM_BY_TXID_PREFIX}, Ints.toByteArray(txId.length), txId);
   }
 
+  static byte[] blockIndexKey(long blockNum, int txIndex) {
+    ArchiveCoordinates.requireBlockNum(blockNum, "archive block-index block number");
+    if (txIndex < 0) {
+      throw new ArchiveException("archive block-index transaction index must be non-negative");
+    }
+    return Bytes.concat(
+        new byte[] {TXNUM_BY_BLOCK_INDEX_PREFIX},
+        Longs.toByteArray(blockNum),
+        Ints.toByteArray(txIndex));
+  }
+
   static long blockNumFromRangeKey(byte[] key) {
     if (key == null || key.length != 1 + Long.BYTES
         || key[0] != TXNUM_BLOCK_PREFIX) {
@@ -88,6 +101,22 @@ public final class ArchiveBlockRangeCodec {
     return txNum;
   }
 
+  static long blockNumFromBlockIndexKey(byte[] key) {
+    requireBlockIndexKey(key);
+    long blockNum = longAt(key, 1);
+    ArchiveCoordinates.requireBlockNum(blockNum, "archive block-index key block number");
+    return blockNum;
+  }
+
+  static int txIndexFromBlockIndexKey(byte[] key) {
+    requireBlockIndexKey(key);
+    int txIndex = intAt(key, 1 + Long.BYTES);
+    if (txIndex < 0) {
+      throw new ArchiveException("archive block-index key has a negative transaction index");
+    }
+    return txIndex;
+  }
+
   static byte[] txIdFromKey(byte[] key) {
     if (key == null || key.length < 1 + Integer.BYTES
         || key[0] != TXNUM_BY_TXID_PREFIX) {
@@ -102,6 +131,14 @@ public final class ArchiveBlockRangeCodec {
 
   private static byte[] metaKey(String name) {
     return Bytes.concat(new byte[] {META_PREFIX}, name.getBytes(StandardCharsets.US_ASCII));
+  }
+
+  private static void requireBlockIndexKey(byte[] key) {
+    if (key == null
+        || key.length != 1 + Long.BYTES + Integer.BYTES
+        || key[0] != TXNUM_BY_BLOCK_INDEX_PREFIX) {
+      throw new ArchiveException("archive block-index key is invalid");
+    }
   }
 
   static byte[] encodeRange(ArchiveBlockRange range) {
@@ -289,7 +326,7 @@ public final class ArchiveBlockRangeCodec {
   }
 
   private static void requirePositionTxIdSize(ArchivePhase phase, int txIdSize, String what) {
-    if (phase == ArchivePhase.USER_TX) {
+    if (phase == ArchivePhase.USER_TX || phase == ArchivePhase.USER_TX_VM) {
       if (txIdSize != TX_ID_LENGTH) {
         throw new ArchiveException(what + " user txId must be a 32-byte txId");
       }

@@ -33,7 +33,7 @@ public class CallArguments {
   private String to;
   @Getter
   @Setter
-  private String gas = ""; //not used
+  private String gas = "";
   @Getter
   @Setter
   private String gasPrice = ""; //not used
@@ -107,5 +107,10 @@ public class CallArguments {
 
   public long parseValue() throws JsonRpcInvalidParamsException {
     return parseQuantityValue(value);
+  }
+
+  /** Returns the requested call energy limit, or null when the JSON-RPC field was omitted. */
+  public Long parseOptionalGas() throws JsonRpcInvalidParamsException {
+    return StringUtils.isEmpty(gas) ? null : parseQuantityValue(gas);
   }
 }

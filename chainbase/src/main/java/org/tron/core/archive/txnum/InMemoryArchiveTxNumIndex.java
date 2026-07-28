@@ -114,6 +114,26 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
   }
 
   @Override
+  public synchronized ArchiveTxPosition allocateUserVmTx(
+      long blockNum, int txIndex, byte[] txId) {
+    requirePending(blockNum);
+    ArchiveBlockRangeCodec.requireTxId(txId, "archive user VM transaction");
+    ArchiveTxPosition userPosition = pendingPositions.isEmpty()
+        ? null : pendingPositions.get(pendingPositions.size() - 1);
+    if (userPosition == null
+        || userPosition.getPhase() != ArchivePhase.USER_TX
+        || userPosition.getTxIndex() != txIndex
+        || !Arrays.equals(userPosition.getTxId(), txId)) {
+      throw new ArchiveException(
+          "archive user VM position must immediately follow its user transaction");
+    }
+    ArchiveTxPosition position = new ArchiveTxPosition(
+        allocateNextTxNum(), blockNum, ArchivePhase.USER_TX_VM, pendingSource, txIndex, txId);
+    pendingPositions.add(position);
+    return position;
+  }
+
+  @Override
   public synchronized ArchiveBlockRange commitBlock(long blockNum, int userTxCount) {
     return commitBlock(blockNum, new byte[0], userTxCount);
   }
@@ -179,7 +199,7 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
     }
     for (ArchiveTxPosition position : pendingPositions) {
       positionsByTxNum.put(position.getTxNum(), position);
-      if (position.getTxIndex() >= 0) {
+      if (position.getPhase() == ArchivePhase.USER_TX) {
         txNumByBlockAndIndex.put(
             blockIndexKey(blockNum, position.getTxIndex()), position.getTxNum());
       }
@@ -250,7 +270,7 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
     blockRanges.remove(range.getBlockNum());
     for (long txNum = range.getFirstTxNum(); txNum <= range.getLastTxNum(); txNum++) {
       ArchiveTxPosition position = positionsByTxNum.remove(txNum);
-      if (position.getTxIndex() >= 0) {
+      if (position.getPhase() == ArchivePhase.USER_TX) {
         txNumByBlockAndIndex.remove(
             blockIndexKey(range.getBlockNum(), position.getTxIndex()));
       }
@@ -407,28 +427,44 @@ public final class InMemoryArchiveTxNumIndex implements ArchiveTxNumIndex {
     if (finalizeTxNum != lastTxNum) {
       throw new ArchiveException("archive finalize txNum must be last for block " + blockNum);
     }
-    long expectedSpan = (long) userTxCount + 2L;
     long actualSpan = lastTxNum - firstTxNum + 1L;
-    if (actualSpan != expectedSpan) {
+    long minimumSpan = (long) userTxCount + 2L;
+    long maximumSpan = (long) userTxCount * 2L + 2L;
+    if (actualSpan < minimumSpan || actualSpan > maximumSpan) {
       throw new ArchiveException("archive txNum span does not match user tx count for block "
           + blockNum);
     }
+    int expectedTxIndex = 0;
+    ArchiveTxPosition previous = null;
     for (ArchiveTxPosition position : pendingPositions) {
       if (position.getPhase() == ArchivePhase.USER_TX) {
-        long expectedTxNum = firstTxNum + 1L + position.getTxIndex();
-        if (position.getTxNum() != expectedTxNum
-            || position.getTxIndex() < 0
-            || position.getTxIndex() >= userTxCount) {
+        if (position.getTxIndex() != expectedTxIndex++) {
           throw new ArchiveException("archive user tx-position order mismatch for block "
               + blockNum);
         }
+      } else if (position.getPhase() == ArchivePhase.USER_TX_VM) {
+        if (previous == null
+            || previous.getPhase() != ArchivePhase.USER_TX
+            || position.getTxIndex() != previous.getTxIndex()
+            || !Arrays.equals(position.getTxId(), previous.getTxId())) {
+          throw new ArchiveException("archive user VM position order mismatch for block "
+              + blockNum);
+        }
       }
+      previous = position;
+    }
+    if (expectedTxIndex != userTxCount) {
+      throw new ArchiveException("archive user tx-position count mismatch for block "
+          + blockNum);
     }
   }
 
   private void validatePendingTxIds(long blockNum) {
     Set<String> seen = new HashSet<>();
     for (ArchiveTxPosition position : pendingPositions) {
+      if (position.getPhase() == ArchivePhase.USER_TX_VM) {
+        continue;
+      }
       byte[] txId = position.getTxId();
       if (txId.length == 0) {
         continue;

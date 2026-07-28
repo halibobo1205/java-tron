@@ -62,6 +62,48 @@ public class ArchiveTxNumIndexTest {
   }
 
   @Test
+  public void vmPreStatePositionOwnsTxIdLookupWithoutMovingBlockIndex() {
+    ArchiveTxNumIndex idx = new InMemoryArchiveTxNumIndex();
+    idx.beginBlock(1, ArchiveSource.NORMAL);
+    idx.allocateSystemTx(1, ArchivePhase.BLOCK_PREPARE);
+    assertEquals(1L, idx.allocateUserTx(1, 0, TX_A).getTxNum());
+    assertEquals(2L, idx.allocateUserVmTx(1, 0, TX_A).getTxNum());
+    assertEquals(3L, idx.allocateUserTx(1, 1, TX_B).getTxNum());
+    idx.allocateSystemTx(1, ArchivePhase.BLOCK_FINALIZE);
+
+    ArchiveBlockRange range = idx.commitBlock(1, 2);
+
+    assertEquals(4L, range.getLastTxNum());
+    assertEquals(1L, idx.findTxNumByBlockAndIndex(1, 0).getAsLong());
+    assertEquals(3L, idx.findTxNumByBlockAndIndex(1, 1).getAsLong());
+    assertEquals(2L, idx.findTxNumByTxId(TX_A).getAsLong());
+    assertEquals(3L, idx.findTxNumByTxId(TX_B).getAsLong());
+    ArchiveTransactionLocation location =
+        idx.findTransactionByTxId(TX_A).orElseThrow(AssertionError::new);
+    assertEquals(ArchivePhase.USER_TX_VM, location.getPosition().getPhase());
+
+    idx.unwindBlock(1);
+    assertFalse(idx.getBlockRange(1).isPresent());
+    assertFalse(idx.findTxNumByBlockAndIndex(1, 0).isPresent());
+    assertFalse(idx.findTxNumByTxId(TX_A).isPresent());
+    assertFalse(idx.findTxNumByTxId(TX_B).isPresent());
+    assertEquals(0L, idx.getNextTxNum());
+  }
+
+  @Test
+  public void vmPreStatePositionMustImmediatelyFollowMatchingUserTransaction() {
+    ArchiveTxNumIndex idx = new InMemoryArchiveTxNumIndex();
+    idx.beginBlock(1, ArchiveSource.NORMAL);
+    idx.allocateSystemTx(1, ArchivePhase.BLOCK_PREPARE);
+    idx.allocateUserTx(1, 0, TX_A);
+
+    ArchiveException failure = assertThrows(
+        ArchiveException.class, () -> idx.allocateUserVmTx(1, 0, TX_B));
+
+    assertTrue(failure.getMessage().contains("immediately follow"));
+  }
+
+  @Test
   public void txIdLookupRejectsMalformedNonEmptyTxId() {
     ArchiveTxNumIndex idx = new InMemoryArchiveTxNumIndex();
 
