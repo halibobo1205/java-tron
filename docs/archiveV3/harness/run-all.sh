@@ -59,7 +59,9 @@ have_fn die  || die()  { err "$*"; exit 2; }
 # ---------------------------------------------------------------------------
 # Declared run order. smoke runs first: it is the cheap environment check, and there is no
 # point spending ~40 minutes on the fault scenarios if the node cannot even start here.
-SUITE_ORDER="smoke fork-reorg kill-matrix resource-faults concurrency-under-fault"
+# history-accuracy runs second, before any fault is injected: if the archive returns a WRONG
+# value on a chain where nothing went wrong, "it survived a SIGKILL" is not worth measuring.
+SUITE_ORDER="smoke history-accuracy fork-reorg kill-matrix resource-faults concurrency-under-fault"
 
 JAR=""
 OUT_DIR=""
