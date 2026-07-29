@@ -6,6 +6,8 @@ import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -52,6 +54,51 @@ public class ManagerGenesisArchiveTest {
     manager.initGenesis();
 
     verify(archiveService, never()).reconcileInFlightOnStartup(anyLong(), anyLong(), any());
+  }
+
+  @Test
+  public void startupAcceptsArchivePublishedAheadOfRecoveredSolidified() throws Exception {
+    Manager manager = new Manager();
+    ChainBaseManager chainBaseManager = mock(ChainBaseManager.class);
+    ArchiveService archiveService = mock(ArchiveService.class);
+    DynamicPropertiesStore dynamicPropertiesStore = mock(DynamicPropertiesStore.class);
+    BlockCapsule canonicalHead =
+        new BlockCapsule(14L, Sha256Hash.ZERO_HASH, 0L, ByteString.EMPTY);
+    when(archiveService.isEnabled()).thenReturn(true);
+    when(chainBaseManager.getDynamicPropertiesStore()).thenReturn(dynamicPropertiesStore);
+    when(dynamicPropertiesStore.getLatestSolidifiedBlockNum()).thenReturn(13L);
+    when(dynamicPropertiesStore.getLatestBlockHeaderNumber()).thenReturn(14L);
+    ReflectUtils.setFieldValue(manager, "chainBaseManager", chainBaseManager);
+    ReflectUtils.setFieldValue(manager, "archiveService", archiveService);
+
+    manager.reconcileArchiveOnStartup(canonicalHead);
+
+    verify(archiveService).reconcilePublishedHeadOnStartup(14L);
+    verify(archiveService).reconcileInFlightOnStartup(eq(13L), eq(14L), any());
+    verify(archiveService, never()).validateCanonicalHead(any());
+  }
+
+  @Test
+  public void startupArchiveFailureEscalatesToArchiveRuntime() {
+    Manager manager = new Manager();
+    ChainBaseManager chainBaseManager = mock(ChainBaseManager.class);
+    ArchiveService archiveService = mock(ArchiveService.class);
+    DynamicPropertiesStore dynamicPropertiesStore = mock(DynamicPropertiesStore.class);
+    BlockCapsule canonicalHead =
+        new BlockCapsule(14L, Sha256Hash.ZERO_HASH, 0L, ByteString.EMPTY);
+    ArchiveException failure = new ArchiveException("published archive hash mismatch");
+    when(archiveService.isEnabled()).thenReturn(true);
+    when(chainBaseManager.getDynamicPropertiesStore()).thenReturn(dynamicPropertiesStore);
+    when(dynamicPropertiesStore.getLatestSolidifiedBlockNum()).thenReturn(13L);
+    doThrow(failure).when(archiveService).reconcilePublishedHeadOnStartup(14L);
+    ReflectUtils.setFieldValue(manager, "chainBaseManager", chainBaseManager);
+    ReflectUtils.setFieldValue(manager, "archiveService", archiveService);
+
+    TronError error = assertThrows(TronError.class,
+        () -> manager.reconcileArchiveOnStartup(canonicalHead));
+
+    assertEquals(TronError.ErrCode.ARCHIVE_RUNTIME, error.getErrCode());
+    assertEquals(failure, error.getCause());
   }
 
   @Test

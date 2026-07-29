@@ -1470,6 +1470,60 @@ public class DefaultArchiveServiceTest {
   }
 
   @Test
+  public void startupAllowsPublishedHeadAheadOfRecoveredSolidifiedWhenStillCanonical() {
+    InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    BlockCapsule published = blockWithParentSeed(5, (byte) 5);
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    commitEmptyBlock(service, published);
+    service.publishSolidifiedBlocks(5L);
+    service.close();
+
+    DefaultArchiveService restarted = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    try {
+      restarted.reconcilePublishedHeadOnStartup(5L);
+      restarted.reconcileInFlightOnStartup(4L, 5L,
+          blockNum -> blockNum == 5L ? published : null);
+
+      assertTrue(index.getBlockRange(5L).isPresent());
+      assertTrue(inFlightStore.loadBlocks().isEmpty());
+      restarted.validateAvailable();
+    } finally {
+      restarted.close();
+    }
+  }
+
+  @Test
+  public void startupRejectsPublishedTailHashMismatchWithoutPendingJournals() {
+    TrackingArchiveTxNumIndex index = new TrackingArchiveTxNumIndex();
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    InMemoryArchiveInFlightStore inFlightStore = new InMemoryArchiveInFlightStore();
+    BlockCapsule published = blockWithParentSeed(5, (byte) 5);
+    BlockCapsule canonical = blockWithParentSeed(5, (byte) 0x55);
+    DefaultArchiveService service = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    commitEmptyBlock(service, published);
+    service.publishSolidifiedBlocks(5L);
+    service.close();
+
+    DefaultArchiveService restarted = serviceWithInFlightStore(
+        index, new ArchiveExecutionContext(), temporal, inFlightStore);
+    try {
+      ArchiveException error = assertThrows(ArchiveException.class,
+          () -> restarted.reconcileInFlightOnStartup(4L, 5L, ignored -> canonical));
+
+      assertTrue(error.getMessage().contains("hash mismatch with canonical block"));
+      assertTrue(index.repairReason.contains("hash mismatch with canonical block"));
+      assertThrows(ArchiveException.class, restarted::validateAvailable);
+    } finally {
+      restarted.close();
+    }
+  }
+
+  @Test
   public void startupReconcileRejectsPublishedBlocksAfterCanonicalHead() {
     InMemoryArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
     InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
@@ -1523,7 +1577,7 @@ public class DefaultArchiveServiceTest {
     DefaultArchiveService restarted = serviceWithInFlightStore(
         index, new ArchiveExecutionContext(), temporal, inFlightStore);
     try {
-      restarted.reconcileInFlightOnStartup(0, 0, blockNum -> null);
+      restarted.reconcileInFlightOnStartup(0, 5, blockNum -> b5);
 
       assertTrue(index.getBlockRange(5).isPresent());
     } finally {
@@ -3279,7 +3333,8 @@ public class DefaultArchiveServiceTest {
         index, new ArchiveExecutionContext(), temporal, inFlightStore);
     try {
       ArchiveException ex = assertThrows(ArchiveException.class,
-          () -> restarted.reconcileInFlightOnStartup(4, 5, blockNum -> b5));
+          () -> restarted.reconcileInFlightOnStartup(
+              4, 5, blockNum -> blockNum == 4L ? b4 : b5));
 
       assertTrue(ex.getMessage().contains("in-flight journal missing"));
       assertThrows(ArchiveException.class, restarted::validateAvailable);
