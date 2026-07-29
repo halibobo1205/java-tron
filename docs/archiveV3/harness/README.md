@@ -670,3 +670,23 @@ GET  :9527/metrics                  Prometheus
 There is **no** `/wallet/gettransactionsign` servlet — signing is client side via `java/Sign.java`.
 `visible:true` ⇒ base58 addresses; omit it ⇒ hex41. Never mix the two in one request, and never
 send an empty `function_selector` (`JsonFormat$ParseException`).
+
+## Known issue: fork-reorg fails only inside run-all (port reuse)
+
+`scenario-fork-reorg.sh` passes standalone (19 PASS + 1 INFO) but exits 2 with
+`HARNESS_ERROR node B never became ready` when run as the third scenario of `run-all.sh`.
+Node B dies on a netty bind failure (`ServerSocketChannelImpl.bind`) in its own `logs/tron.log`.
+Node A (p2p 16666) starts; node B (p2p 16667, http 8190) is the one that cannot bind, so the
+collision is on one of B's other listeners rather than on its p2p port. The preceding scenario
+(`history-accuracy`) uses the shared lib.sh port set (16666/8090/50051/8545/9527); the `ah_*`
+template that fork-reorg uses derives only some of its ports per node.
+
+Two things to fix, both harness-side:
+1. Give every `ah_*` node a fully distinct port set (rpc, jsonrpc, metrics — not just http), and
+   have `run-all.sh` assert every port it is about to use is free before starting a scenario,
+   waiting for TIME_WAIT release rather than failing immediately.
+2. `run-all.sh` grades exit 2 / `HARNESS_ERROR` as `FAIL`. Per the scenario exit contract that
+   status means "could not run — no verdict about the product", so it should be reported as
+   `INCONCLUSIVE`, still making the suite non-green but never reading as a product defect.
+
+Until then, treat a fork-reorg failure inside the suite as inconclusive and re-run it standalone.
