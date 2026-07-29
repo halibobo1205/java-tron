@@ -31,6 +31,12 @@ if [ "${HS_LIB_SOURCED:-0}" = "1" ]; then
 fi
 HS_LIB_SOURCED=1
 
+# The port map lives in ports.sh so lib.sh, scenario-common.sh, the standalone
+# concurrency scenario and run-all.sh all derive every port from ONE table.
+# Sourced first because hs_init consults it.
+# shellcheck source=ports.sh disable=SC1091
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)/ports.sh"
+
 # ---------------------------------------------------------------------------
 # Exit codes
 # ---------------------------------------------------------------------------
@@ -590,6 +596,14 @@ hs_init() {
   HS_HARNESS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)" \
     || hs_die "cannot resolve the harness directory"
 
+  # Bind this scenario's port band before any node exists. Every port the
+  # scenario binds is derived from HS_PORT_BASE, so no two scenarios -- and no
+  # two nodes -- can share one.
+  ah_port_space_check || hs_die "the harness port space is unusable (diagnosis above)"
+  HS_PORT_BASE="$(ah_port_band "$HS_SCENARIO_NAME")"
+  HS_PORT_BAND_LO="$HS_PORT_BASE"
+  HS_PORT_BAND_HI=$(( HS_PORT_BASE + AH_PORT_BAND_WIDTH - 1 ))
+
   hs_require_tools
   hs_repo_root >/dev/null
 
@@ -608,6 +622,7 @@ hs_init() {
   hs_log "scenario: $HS_SCENARIO_NAME"
   hs_log "repo    : $(hs_repo_root)"
   hs_log "run dir : $HS_RUN_DIR"
+  hs_log "ports   : band $HS_PORT_BAND_LO-$HS_PORT_BAND_HI (see ports.sh)"
 }
 
 hs_on_exit() {
@@ -644,26 +659,35 @@ hs_require_free_ports() {
 
 # hs_assign_ports <node_dir> <slot>
 #
-# slot 0 -> the documented defaults; slot N -> every port +100*N so a
-# multi-node topology never collides. Writes <node_dir>/ports.env.
+# ALL of a node's ports come from one per-node base, so a node can never
+# partially collide with another: node_base = <this scenario's band> + 10*slot,
+# then p2p/http/rpc/jsonrpc/metrics/jdwp at +0..+5. See ports.sh for the map and
+# for why nothing lives in the ephemeral range any more.
+# Writes <node_dir>/ports.env.
 hs_assign_ports() {
-  local node_dir="$1" slot="${2:-0}"
-  local off=$((slot * 100))
-  HS_PORT_P2P=$((16666 + off))
-  HS_PORT_HTTP=$((8090 + off))
-  HS_PORT_RPC=$((50051 + off))
-  HS_PORT_JSONRPC=$((8545 + off))
-  HS_PORT_PROM=$((9527 + off))
+  local node_dir="$1" slot="${2:-0}" base
+  [ -n "${HS_PORT_BASE:-}" ] || hs_die "hs_assign_ports before hs_init (no port band bound)"
+  base="$(ah_port_node_base "$HS_SCENARIO_NAME" "$slot")" \
+    || hs_die "cannot assign ports for slot $slot (diagnosis above)"
+  HS_PORT_NODE_BASE=$base
+  HS_PORT_P2P=$((base + 0))
+  HS_PORT_HTTP=$((base + 1))
+  HS_PORT_RPC=$((base + 2))
+  HS_PORT_JSONRPC=$((base + 3))
+  HS_PORT_PROM=$((base + 4))
+  HS_PORT_JDWP=$((base + 5))
   mkdir -p "$node_dir"
   cat >"$node_dir/ports.env" <<EOF
+HS_PORT_NODE_BASE=$HS_PORT_NODE_BASE
 HS_PORT_P2P=$HS_PORT_P2P
 HS_PORT_HTTP=$HS_PORT_HTTP
 HS_PORT_RPC=$HS_PORT_RPC
 HS_PORT_JSONRPC=$HS_PORT_JSONRPC
 HS_PORT_PROM=$HS_PORT_PROM
+HS_PORT_JDWP=$HS_PORT_JDWP
 EOF
   hs_require_free_ports "$HS_PORT_P2P" "$HS_PORT_HTTP" "$HS_PORT_RPC" \
-    "$HS_PORT_JSONRPC" "$HS_PORT_PROM"
+    "$HS_PORT_JSONRPC" "$HS_PORT_PROM" "$HS_PORT_JDWP"
 }
 
 hs_load_ports() {
@@ -1026,10 +1050,24 @@ hs_node_start() {
   rm -f "$node_dir/node.pid" "$node_dir/node.exit"
 
   local jvm_opts="${HS_JVM_OPTS:--Xms1g -Xmx2g}"
-  local jdwp=""
+  local jdwp="" jdwp_port=""
+  rm -f "$node_dir/jdwp.port"
   if [ -n "${HS_JDWP_PORT:-}" ]; then
-    jdwp="-agentlib:jdwp=transport=dt_socket,server=y,suspend=${HS_JDWP_SUSPEND:-n},address=127.0.0.1:${HS_JDWP_PORT}"
-    hs_log "JDWP on 127.0.0.1:${HS_JDWP_PORT} (suspend=${HS_JDWP_SUSPEND:-n})"
+    # "auto" (the default the scenarios use) takes the debugger port from THIS
+    # node's own block, so two nodes debugged in one scenario cannot fight over
+    # one hard-coded port. An explicit number is still honoured for a human
+    # attaching from an IDE.
+    if [ "$HS_JDWP_PORT" = auto ]; then
+      hs_load_ports "$node_dir"
+      jdwp_port="${HS_PORT_JDWP:-}"
+      [ -n "$jdwp_port" ] \
+        || hs_die "HS_JDWP_PORT=auto but $node_dir/ports.env has no HS_PORT_JDWP"
+    else
+      jdwp_port="$HS_JDWP_PORT"
+    fi
+    printf '%s\n' "$jdwp_port" >"$node_dir/jdwp.port"
+    jdwp="-agentlib:jdwp=transport=dt_socket,server=y,suspend=${HS_JDWP_SUSPEND:-n},address=127.0.0.1:${jdwp_port}"
+    hs_log "JDWP on 127.0.0.1:${jdwp_port} (suspend=${HS_JDWP_SUSPEND:-n})"
   fi
 
   # The wrapper subshell owns the JVM so its exit status lands in a FILE.
@@ -2397,19 +2435,36 @@ hs_relay_stop() {
 # the fallback is the existing JUnit driver
 # framework/src/test/java/org/tron/core/archive/ManagerArchiveSwitchForkTest.java.
 #
-# The anchors below are RESOLVED FROM SOURCE at run time by
-# scenario-kill-matrix.sh; the line numbers here are documentation only and are
-# never used to place a breakpoint.
+# NO ANCHOR LINE NUMBERS LIVE IN THIS FILE, and none should be added. Every
+# breakpoint location is a SEMANTIC descriptor in anchor.sh (km.w2..km.w6,
+# cfk.flush), resolved at run time from the current source and cross-checked
+# against the current jar's LineNumberTable; hs_jdb_break_and_kill is handed a
+# location that is already in JAR coordinates. Run `./anchor.sh` to see what
+# each descriptor currently resolves to, or `./anchor.sh --list` to see what
+# statement each one names.
 #
-# Anchors (java-tron @ 3ae4d79f5c):
-#   org.tron.core.db.Manager:1994               after journal put / before canonical commit
-#   org.tron.core.db.Manager:2010               after canonical commit / before ack
-#   org.tron.core.db.Manager:2013               after ack / before publish
-#   org.tron.core.archive.UnifiedArchiveBackend:120   mid publish batch
-#   org.tron.core.db.Manager:754                genesis: after commitToRoot,
-#                                               before the COMMITTED marker
-#   org.tron.core.db.Manager:1657               fork-replay journal/commit/ack
+# The one location with no descriptor yet is the fork-replay
+# journal/commit/ack sequence in Manager (formerly documented as :1657); no
+# scenario arms it, so nothing resolves it.
 # ===========================================================================
+
+# hs_jdwp_port <node_dir> -- the debugger port hs_node_start actually used for
+# THIS node. Written by hs_node_start, so an "auto" port resolves the same way
+# for every attacher. Returns 1 when the node was not started under JDWP.
+hs_jdwp_port() {
+  local node_dir="$1"
+  if [ -s "$node_dir/jdwp.port" ]; then
+    cat "$node_dir/jdwp.port"
+    return 0
+  fi
+  # A node started before this file existed, or a caller that pinned the port
+  # by hand without going through hs_node_start.
+  if [ -n "${HS_JDWP_PORT:-}" ] && [ "${HS_JDWP_PORT}" != auto ]; then
+    printf '%s\n' "$HS_JDWP_PORT"
+    return 0
+  fi
+  return 1
+}
 
 # hs_jdb_log_path <node_dir> <class:line> -- THE canonical jdb transcript path.
 #
@@ -2428,7 +2483,8 @@ hs_jdb_log_path() {
 # Echoes "HIT" or "MISS"; the transcript is at hs_jdb_log_path <node_dir> <location>.
 hs_jdb_break_and_kill() {
   local node_dir="$1" location="$2" timeout="${3:-180}"
-  [ -n "${HS_JDWP_PORT:-}" ] \
+  local jdwp_port
+  jdwp_port="$(hs_jdwp_port "$node_dir")" \
     || hs_die "hs_jdb_break_and_kill needs HS_JDWP_PORT set before hs_node_start"
   local jdb_bin=""
   jdb_bin="$(command -v jdb 2>/dev/null || true)"
@@ -2448,7 +2504,7 @@ hs_jdb_break_and_kill() {
       sleep 1
       i=$((i + 1))
     done
-  ) | "$jdb_bin" -attach "127.0.0.1:${HS_JDWP_PORT}" >"$out" 2>&1 &
+  ) | "$jdb_bin" -attach "127.0.0.1:${jdwp_port}" >"$out" 2>&1 &
   local jdb_pid=$!
 
   local deadline=$(( $(date +%s) + timeout ))

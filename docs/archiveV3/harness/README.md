@@ -41,8 +41,22 @@ docs/archiveV3/harness/
   lib.sh                        the shared foundation -- all `hs_*` helpers
   scenario-common.sh            companion `ah_*` layer, sourced AFTER lib.sh; every helper is
                                 guarded by `declare -F`, so a lib.sh implementation always wins
+  ports.sh                      THE port map -- one 400-port band per scenario, one 10-port
+                                block per node. Sourced by lib.sh, scenario-common.sh, the
+                                standalone concurrency scenario and run-all.sh, so there is
+                                exactly one table and no scenario can invent its own. See §12.
+  anchor.sh                     THE anchor registry -- every JDWP breakpoint as a SEMANTIC
+                                descriptor (class + method + "the statement matching R"),
+                                resolved at run time against the current source AND jar.
+                                Both a sourced library (`hs_anchor_*`) and a CLI
+                                (`./anchor.sh`, `--list`, `--selftest`). See §10.
+  anchor_resolve.py             the resolver anchor.sh shells out to: stdlib-only Python 3,
+                                masks comments/literals, brace-matches the method body,
+                                cross-checks javap's line table and solves the jar-vs-source
+                                line offset. The harness's only `python3` dependency.
   README.md                     this file
-  run-all.sh                    suite driver (discovery, ordering, per-scenario timeout, roll-up)
+  run-all.sh                    suite driver (discovery, ordering, per-scenario timeout,
+                                port pre-flight, roll-up)
 
   scenario-smoke.sh             foundation self-test AND the worked template for A-D
   scenario-history-accuracy.sh  (E) historical ACCURACY on a healthy 27-SR chain: normal
@@ -52,6 +66,9 @@ docs/archiveV3/harness/
   scenario-kill-matrix.sh       (B) the six SIGKILL durability windows
   scenario-resource-faults.sh   (C) ENOSPC, read-only archive dir, truncated MANIFEST
   scenario-concurrency-under-fault.sh  (D) query storm across clean stop / SIGKILL / reorg
+  scenario-catchup-batch-flush-kill.sh (F) SIGKILL inside a BATCHED SnapshotManager.flush on a
+                                26+1 split chain, then catch-up: the batch window is entered
+                                deterministically via the `cfk.flush` anchor
 
   ArchiveProbe.java             offline RocksDB probe: ranges, txNum gaps, span violations,
                                 stale in-flight rows, the repair-required META key.
@@ -62,8 +79,13 @@ docs/archiveV3/harness/
   java/Sign.java                txID -> 65-byte signature (there is NO server-side signing servlet)
 ```
 
-`run-all.sh` treats the **executable bit** as what distinguishes a scenario from a sourced
-library, so `scenario-common.sh` must stay non-executable and every real scenario must stay `+x`.
+`run-all.sh` discovers scenarios with **two** filters, and both matter: the filename must match
+`scenario-*.sh`, *and* the file must be executable. The glob is what keeps the sourced libraries
+out of the suite regardless of their mode bits — which is why `anchor.sh` can be `+x` (it is also
+a CLI) without ever being mistaken for a scenario. The executable bit is the second filter, and it
+is what separates a real scenario from shared plumbing *within* that glob: `scenario-common.sh`
+must stay non-executable and every real scenario must stay `+x`. A `scenario-*.sh` without the bit
+is reported as "not run", never silently dropped.
 
 `HarnessSigner.java` and `java/{Addr,Sign}.java` overlap: the `ah_*` scenarios use the former,
 `lib.sh` the latter. Both are kept because collapsing them would mean re-verifying the address
@@ -80,11 +102,12 @@ under `set -euo pipefail`.
 * **macOS or Linux.** The ENOSPC / device-disappearance helpers (`hs_make_small_volume`,
   `hs_detach_volume`) are `hdiutil`-based and macOS-only; everything else is portable.
 * **JDK 17+** on `PATH` (`java`, `javac`). Verified on Temurin `17.0.17+10`, arm64.
-* `curl`, `jq`, `python3`, `shasum`, `awk`, `sed`, `grep`, `df`, `dd`. `lsof` is used for the
-  port preflight when present. `jdb` is needed only for the scenario-B durability windows.
-* **Free TCP ports.** Node slot *N* uses `16666+100N` (p2p), `8090+100N` (HTTP),
-  `50051+100N` (gRPC), `8545+100N` (JSON-RPC), `9527+100N` (Prometheus). Every port is
-  preflighted; a busy port is a harness error, never a silent reassignment.
+* `curl`, `jq`, `python3`, `shasum`, `awk`, `sed`, `grep`, `df`, `dd`. `lsof` and `netstat` are
+  used for the port preflight when present. `jdb` is needed only for the scenario-B windows.
+* **Free TCP ports in 21000–24199.** Each scenario owns a 400-port band and each node a 10-port
+  block inside it — `+0` p2p, `+1` HTTP, `+2` gRPC, `+3` JSON-RPC, `+4` Prometheus, `+5` JDWP.
+  Every port is preflighted; a busy port is a harness error, never a silent reassignment. The
+  full map, and why nothing may live above 49152, is §12.
 * **Disk**: a few hundred MB per node under `$TMPDIR`.
 * No `sudo`, no root, no network access. The generated config pins
   `node.fastForward = [ ]` and `seed.node.ip.list = [ ]` so nodes never dial the internet.
@@ -142,9 +165,13 @@ Three outcomes, deliberately distinct — "the harness could not run" must never
 |-----:|---------|------------|
 | **0** | Scenario passed; every gating check held. | `hs_finish` with zero failures |
 | **1** | **The product misbehaved.** At least one check failed. | `hs_finish` with failures, or `hs_abort` |
-| **2** | **Harness / environment error** — inconclusive, no verdict about the product. Missing tool, wrong JDK, busy port, build failure, unreachable jar. | `hs_die` |
+| **2** | **Harness / environment error** — inconclusive, no verdict about the product. Missing tool, wrong JDK, busy port, build failure, unreachable jar. | `hs_die` / `ah_fatal` |
+| **77** | Scenario decided it is not applicable on this host. | scenario-specific |
 
-Never treat exit 2 as a pass or a fail. Fix the environment and re-run.
+Never treat exit 2 as a pass or a fail. Fix the environment and re-run. A scenario exiting 2 also
+prints a `HARNESS_ERROR <reason>` line, which is deliberately **not** in the `_OK`/`_FAIL`/`_SKIPPED`
+marker grammar: it is not a verdict about the product. `run-all.sh` maps exit 2 (and a
+`HARNESS_ERROR` line without any verdict marker) to the suite verdict `INCONCLUSIVE` — see §13.
 
 ---
 
@@ -170,6 +197,7 @@ FORK_E2E_FAIL checks=17 failures=2 depth=12
 | `scenario-kill-matrix.sh` | `KILL_MATRIX_OK` / `_FAIL` | `PHASE_VERDICT window=… mode=… verdict=…` |
 | `scenario-resource-faults.sh` | `FAULT_E2E_OK` / `_FAIL` | `CHECK [PASS] fault.<case>.<name>` lines |
 | `scenario-concurrency-under-fault.sh` | `CONCURRENCY_E2E_OK` / `_FAIL` | `PHASE_VERDICT phase=… verdict=…` |
+| `scenario-catchup-batch-flush-kill.sh` | `CATCHUP_BATCH_FLUSH_KILL_OK` / `_FAIL` | `CHECK …` lines |
 | `run-all.sh` | `PRIVATE_CHAIN_FAULT_SUITE_OK` / `_FAIL` | the per-scenario summary table |
 
 Grep for `_OK$`/`_FAIL` or just check the exit code — they always agree. Two `_FAIL` reasons mean
@@ -179,7 +207,14 @@ Grep for `_OK$`/`_FAIL` or just check the exit code — they always agree. Two `
 * `reason=nothing-proven` — every verdict was `SKIP` or `INFO`; nothing was actually observed.
 
 `run-all.sh` applies the same rule at suite level: **exit 0 with no `_OK` marker is a FAIL**, and an
-all-skipped suite is `reason=nothing-validated`.
+all-skipped suite is `reason=nothing-validated`. Its final line always carries all four counters:
+
+```
+PRIVATE_CHAIN_FAULT_SUITE_OK   scenarios=7 passed=7 failed=0 inconclusive=0 skipped=0 elapsed=…s
+PRIVATE_CHAIN_FAULT_SUITE_FAIL scenarios=7 passed=5 failed=1 inconclusive=1 skipped=0 elapsed=…s
+```
+
+`failed` and `inconclusive` mean different things and are never merged — see §13.
 
 ### The three-way startup verdict — do not judge fail-stop by exit code alone
 
@@ -582,17 +617,21 @@ Be precise about this when reporting results. "Written and reviewed" is not "exe
 | `scenario-fork-reorg.sh` | **Executed green after the multi-witness restart fix** with strict reorg deltas and `FORK_ASSERT_RESTART=1`: `FORK_E2E_OK checks=20 passed=19 depth=6 switches=1`; node A restarted cleanly at head 24. |
 | `scenario-resource-faults.sh` | **Executed green** for `enospc` + `permission` and for opt-in `truncation`. **Re-run required**: fail-stop now demands a breadcrumb, and the probe now demands `opened == true` and `rangeCount > 0`. |
 | `scenario-concurrency-under-fault.sh` | **Executed green twice**, all 5 phases including a real 7-block reorg. The only change from review is the new "no value oracles" gate, which only fires on a chain that never published. |
-| `run-all.sh` | Verdict matrix exercised with fake scenarios; driven a real scenario to `PRIVATE_CHAIN_FAULT_SUITE_OK`. Discovery and `--list` re-verified after this review. |
-| `scenario-kill-matrix.sh` | **NEVER EXECUTED END TO END.** Anchor resolution, the `javap` jar/source guard, the `jdb` attach→breakpoint→kill mechanism and the probe JSON parsing were each tested in isolation; the full boot → kill → restart → classify cycle has not run. |
+| `run-all.sh` | **Whole suite executed green after the port-isolation fix**: `PRIVATE_CHAIN_FAULT_SUITE_OK scenarios=7 passed=7 failed=0 inconclusive=0 skipped=0 elapsed=1940s`, with `fork-reorg` passing *in suite position 3* — the position it used to die in (§12). Both new mechanisms were also exercised for real, not just with fakes: an earlier run of the same suite hit a genuinely busy `kill-matrix` band (a concurrent session in the same worktree), waited the full 120s, named the holding PID, and recorded `INCONCLUSIVE` — final line `PRIVATE_CHAIN_FAULT_SUITE_FAIL scenarios=7 passed=6 failed=0 inconclusive=1 skipped=0`, exit 1. The verdict matrix (PASS / FAIL / INCONCLUSIVE / OK-line / exit codes) is additionally covered with fake scenarios. |
+| `ports.sh` | Band, block, aux and role arithmetic verified for all seven scenarios; the slot>38 overflow guard, the unregistered-scenario sandbox band, and `ah_port_space_check`'s refusal of an offset that reaches the ephemeral range all verified to fail closed. Generated `node.conf` and `ports.env` confirmed to carry the derived ports on a live run. |
+| `scenario-kill-matrix.sh` | **Executed green end to end** on a 27-SR chain (`HS_CFG_WITNESS_COUNT=27`): `KILL_MATRIX_OK checks=6 windows=6`. All five JDWP windows ran `mode=deterministic` — w2/w3/w4/w5 `RECOVERED`, w6 `FAILSTOP` (exit 1 `ARCHIVE_RUNTIME`, probe `repair=true`), w1 `RECOVERED`. **No window degraded to the probabilistic path.** w5 previously degraded on every run: its descriptor named `publishBlock()` while the statement lives in `publishBlockLocked()`, so the jar guard refused it. It now breaks at `UnifiedArchiveBackend:120` on the `archive-publisher` thread, which the jdb transcript confirms (`...publishBlockLocked(), line=120 bci=285`). |
 | `ArchiveProbe.java`, `HarnessSigner.java`, `java/{Addr,Sign}.java` | Compile cleanly against `framework/build/libs/FullNode.jar` (re-verified). `ArchiveProbe` verified against a synthetic RocksDB with the real CF layout. |
-| All eight shell files | `bash -n` clean on bash 3.2 (macOS system bash); no bash-4 constructs. |
+| Every shell file in this directory | `bash -n` clean on bash 3.2 (macOS system bash); no bash-4 constructs. `anchor.sh` is both a sourced library and a CLI; its companion `anchor_resolve.py` is stdlib-only Python 3 (the anchor resolver is the only `python3` dependency, and a missing `python3` degrades a window rather than failing the run). |
 
 ### Do this on the first real run, in this order
 
-1. **Rebuild the jar.** `./gradlew :framework:buildFullNodeJar`. The checked-in jar is *stale*:
-   `pushBlock()` in it spans source lines 1815–1986 while the current source puts the w2/w3/w4
-   anchors at 1994/2010/2013. The `javap` guard correctly rejects this and silently degrades
-   w2–w5 to the probabilistic path — a correct outcome that proves far less than intended.
+1. **Check the anchors first — `./anchor.sh`.** It resolves every descriptor against the current
+   source *and* the current jar in about a second, and exits non-zero if any fails. A non-zero
+   `delta` column just means the working tree has moved on from the jar and the resolver corrected
+   for it; the breakpoint still lands on the same compiled statement. Only a `FAIL` line needs
+   action, and it names the descriptor. If the method body itself was rewritten, no consistent
+   offset exists and the resolver says so — then rebuild with
+   `./gradlew :framework:buildFullNodeJar`.
 2. **Smoke-test exactly one kill-matrix window** before trusting the matrix:
    `./scenario-kill-matrix.sh --windows w3 --prob-iters 1`. `w3` has the simplest anchor.
    If `jdb` proves unworkable, the fallback is the JUnit driver
@@ -623,23 +662,99 @@ Be precise about this when reporting results. "Written and reviewed" is not "exe
   node was created. Do not change that variable between creating nodes with different archive
   directories in one scenario.
 
-The anchors below are documentation only — `scenario-kill-matrix.sh` re-resolves every one of them
-from the current source at run time and never places a breakpoint on a hardcoded line
-(java-tron @ `3ae4d79f5c`):
+### Semantic anchors (`anchor.sh`)
 
-| Window | Breakpoint |
-|---|---|
-| after journal put / before canonical commit | `org.tron.core.db.Manager:1994` |
-| after canonical commit / before ack | `org.tron.core.db.Manager:2010` |
-| after ack / before publish | `org.tron.core.db.Manager:2013` |
-| mid publish batch | `org.tron.core.archive.UnifiedArchiveBackend:120` |
-| genesis: after `commitToRoot`, before the COMMITTED marker | `org.tron.core.db.Manager:754` |
-| fork-replay journal/commit/ack | `org.tron.core.db.Manager:1657` |
+Breakpoints are placed by `CLASS:LINE`, but **a line number is not a name for a statement**. One
+inserted line above a method moves every anchor inside it, and the harness would then suspend the
+JVM at the wrong statement — or, with the old `javap` membership guard, degrade the window to the
+probabilistic path *exactly when the code under test changed*, which is the worst possible moment
+to stop testing it deterministically.
 
-Startup validation a recovery step should assert (`Manager.java:545-575`):
-`validateArchiveGenesisCommitMarkerPresence` (:547) · `reconcilePublishedHeadOnStartup` (:552) ·
-`reconcileInFlightOnStartup` (:553) · `validateCanonicalHead` (:569) ·
-`validateGenesisArchiveCoverage` (:572).
+`anchor.sh` therefore holds ONE registry of **semantic descriptors**, shared by
+`scenario-kill-matrix.sh` and `scenario-catchup-batch-flush-kill.sh`. A descriptor names
+
+> class · source method · *(optionally)* “after this statement” · “the statement matching *R*”
+
+and it is resolved at run time in two stages, with a third guard at runtime:
+
+1. **Source.** The current working-tree file is parsed with comments and string/char literals
+   masked, the named method’s body is brace-matched (all overloads), and the descriptor must
+   select **exactly one** statement. Zero or two matches is a **hard error** — an ambiguous anchor
+   is never silently resolved to “the first one”, and a match can never land inside a comment.
+2. **Jar.** `javap -p -l` on the jar under test supplies the `LineNumberTable` for that method
+   *and for its compiler-synthesized `lambda$<method>$N` bodies* — a statement containing a lambda
+   compiles into two methods and both are legitimate locations for it. The resolver then solves
+   for the single line offset `delta` between working-tree source and jar
+   (`jarline = srcline − delta`). A `delta` is accepted only when every compiled method is
+   cleanly on one side of the line: each maps **either** entirely onto real code lines of this
+   source body **or** entirely outside it (that second case is a different overload — overloads
+   share a name and their lambdas are numbered class-wide, so `kin` legitimately spans several
+   bodies). A method that *partially* overlaps the body means the body was rewritten rather than
+   shifted, and no offset can be right — refuse. The anchor itself must land on an actual table
+   entry of a method that belongs to this body. `delta = 0` always wins; two viable offsets is a
+   hard error.
+   **The breakpoint is emitted in jar coordinates**, the only coordinate system `jdb` understands
+   — that is what makes an anchor survive an edit above the method with no rebuild.
+3. **Runtime.** `hs_anchor_assert_hit()` requires the method *and* the line `jdb` reports to match
+   the resolved anchor before a kill is credited.
+
+Degradation to the probabilistic path now happens **only** when a descriptor genuinely cannot be
+resolved (method renamed or gone, statement deleted or duplicated, body rewritten so no consistent
+offset exists, `python3`/`javap` missing), and the note **names the descriptor that failed**.
+
+Re-check every anchor without running a scenario — this is the drift check:
+
+```
+./anchor.sh              # resolve all; exit 1 if any failed
+./anchor.sh km.w5        # just one
+./anchor.sh --list       # names + what each points at
+./anchor.sh --selftest   # prove the resolver still REFUSES what it must refuse
+```
+
+`--selftest` is the guard on the guard. A resolver that quietly picked the first of two candidates
+would still make every window pass, so “ambiguous is a hard error” is asserted against the real
+production sources rather than assumed: zero matches, two matches in one method, an ambiguous
+`after`, a missing method, a match that exists only inside a comment, and a class absent from the
+jar must each be refused — then every registered descriptor must resolve. Ends
+`ANCHOR_SELFTEST_OK` / `ANCHOR_SELFTEST_FAIL`.
+
+| Descriptor | Window | Anchored statement (the breakpoint suspends *before* it runs) |
+|---|---|---|
+| `km.w2` | after journal put / before canonical commit | `Manager.pushBlock`: the `tmpSession.commit()` **after** the archive journal write |
+| `km.w3` | after canonical commit / before ack | `Manager.pushBlock`: the `acknowledgeArchiveJournalOrFailStop(` **after** that commit |
+| `km.w4` | after ack / before publish | `Manager.pushBlock`: the `publishArchiveSolidifiedOrFailStop(` **after** that ack |
+| `km.w5` | mid publish batch | `UnifiedArchiveBackend.publishBlockLocked`: the call site of `db.publishBlockAtomically(` |
+| `km.w6` | genesis: after `commitToRoot`, before the COMMITTED marker | `Manager.initGenesis`: the `saveArchiveGenesisCommitComplete(` **after** `genesisSession.commitToRoot()` |
+| `cfk.flush` | catch-up batch flush | `SnapshotManager.flush`: the `refresh()` **after** the durable `createCheckpoint()` |
+
+`km.w5` is why the *enclosing method* matters: the statement lives in `publishBlockLocked()`, while
+`publishBlock()` only takes the publication lock and delegates. Naming `publishBlock()` kept that
+window **permanently degraded** — the jar guard correctly saw the resolved line belonged to a
+different method and refused the anchor rather than breaking in the wrong place.
+
+Not migrated: the fork-replay journal/commit/ack site in `Manager.switchFork` — the
+`archiveService.beginBlock(item.getBlk(), ArchiveSource.REPLAY)` that opens each replayed block —
+has no descriptor, because no scenario currently arms it. Add a `km.fork*` descriptor to
+`anchor.sh` if one ever does; do not reintroduce a line number.
+
+**Startup validation a recovery step should assert.** Named by method, not by line, for the reason
+this whole section exists — these are prose references, but a stale line number is misleading in a
+document that tells you not to trust them. There are **two** distinct paths and they are easy to
+confuse:
+
+* `Manager.initInternal()` — the *empty-archive* branch, taken when the canonical store has no
+  blocks: `validateArchiveGenesisCommitMarkerPresence(canonicalHasBlocks)`, then
+  `archiveService.reconcilePublishedHeadOnStartup(-1L)` and
+  `archiveService.reconcileInFlightOnStartup(-1L, -1L, …)` with sentinel arguments.
+* `Manager.reconcileArchiveOnStartup(canonicalHead)` — the *real* recovery path on a chain that
+  has blocks: `reconcilePublishedHeadOnStartup(canonicalHead.getNum())`,
+  `reconcileInFlightOnStartup(solidifiedNum, canonicalHead.getNum(), …)`, then
+  `validateGenesisArchiveCoverage()`.
+
+`validateCanonicalHead` is **not** called from `Manager` at all — it is an `ArchiveService` method
+(`ArchiveService` default / `DefaultArchiveService`, which delegates to
+`ArchiveTxNumIndex.validateCanonicalHead(headNum, headHash)`). An earlier version of this README
+listed all five as consecutive lines of one `Manager` block; they are not.
 
 ---
 
@@ -664,29 +779,175 @@ POST /wallet/deploycontract         contract deploy
 POST /wallet/triggersmartcontract   contract call (sign .transaction.txID, broadcast .transaction)
 POST /wallet/getcontractinfo        runtimecode
 POST /jsonrpc                       JSON-RPC (POST only)
-GET  :9527/metrics                  Prometheus
+GET  :<metrics-port>/metrics        Prometheus (the node's block base +4 — see §12)
 ```
 
 There is **no** `/wallet/gettransactionsign` servlet — signing is client side via `java/Sign.java`.
 `visible:true` ⇒ base58 addresses; omit it ⇒ hex41. Never mix the two in one request, and never
 send an empty `function_selector` (`JsonFormat$ParseException`).
 
-## Known issue: fork-reorg fails only inside run-all (port reuse)
+---
 
-`scenario-fork-reorg.sh` passes standalone (19 PASS + 1 INFO) but exits 2 with
-`HARNESS_ERROR node B never became ready` when run as the third scenario of `run-all.sh`.
-Node B dies on a netty bind failure (`ServerSocketChannelImpl.bind`) in its own `logs/tron.log`.
-Node A (p2p 16666) starts; node B (p2p 16667, http 8190) is the one that cannot bind, so the
-collision is on one of B's other listeners rather than on its p2p port. The preceding scenario
-(`history-accuracy`) uses the shared lib.sh port set (16666/8090/50051/8545/9527); the `ah_*`
-template that fork-reorg uses derives only some of its ports per node.
+## 12. The port map (`ports.sh`)
 
-Two things to fix, both harness-side:
-1. Give every `ah_*` node a fully distinct port set (rpc, jsonrpc, metrics — not just http), and
-   have `run-all.sh` assert every port it is about to use is free before starting a scenario,
-   waiting for TIME_WAIT release rather than failing immediately.
-2. `run-all.sh` grades exit 2 / `HARNESS_ERROR` as `FAIL`. Per the scenario exit contract that
-   status means "could not run — no verdict about the product", so it should be reported as
-   `INCONCLUSIVE`, still making the suite non-green but never reading as a product defect.
+`ports.sh` is the **single source of truth** for every TCP port the harness binds. `lib.sh`,
+`scenario-common.sh`, `scenario-concurrency-under-fault.sh` and `run-all.sh` all source it, so no
+scenario can invent a private layout and half-collide with its neighbour.
 
-Until then, treat a fork-reorg failure inside the suite as inconclusive and re-run it standalone.
+### The two rules
+
+1. **Nothing lives in the kernel's ephemeral range.** The whole space sits below
+   `AH_PORT_EPHEMERAL_FLOOR = 49152` (macOS `net.inet.ip.portrange.first`; Linux never allocates
+   below 32768 either). `ah_port_space_check` refuses to run if an offset would push it up there.
+2. **Every port of a node derives from one per-node base**, so a node can never get four of its
+   five listeners from one family and the fifth from another.
+
+### Layout
+
+Space base `21000` (`ARCHIVE_HARNESS_PORT_SPACE_BASE`), shifted by
+`ARCHIVE_HARNESS_PORT_OFFSET` (default `0`) so two harness runs can coexist on one machine.
+
+One **band** per scenario, 400 ports = 40 node blocks:
+
+| Band | Scenario | Range |
+|---:|---|---|
+| 0 | `smoke` | 21000–21399 |
+| 1 | `history-accuracy` | 21400–21799 |
+| 2 | `fork-reorg` | 21800–22199 |
+| 3 | `kill-matrix` | 22200–22599 |
+| 4 | `resource-faults` | 22600–22999 |
+| 5 | `concurrency-under-fault` | 23000–23399 |
+| 6 | `catchup-batch-flush-kill` | 23400–23799 |
+| 7 | any unregistered scenario (with a warning) | 23800–24199 |
+
+One **block** per node inside a band, 10 ports wide, slot `0..38`:
+
+```
+node_base = band + 10 * slot
+  +0  p2p listen     node.listen.port
+  +1  http fullnode  node.http.fullNodePort
+  +2  rpc (gRPC)     node.rpc.port
+  +3  jsonrpc        node.jsonrpc.httpFullNodePort
+  +4  prometheus     node.metrics.prometheus.port
+  +5  JDWP agent     -agentlib:jdwp address
+  +6..+9  reserved (never bound)
+```
+
+Slot **39** is the band's **aux** block, for listeners that belong to no node — `+0` is the TCP
+relay used by `fork-reorg` and `concurrency-under-fault`. A slot above 38 is a hard error, not a
+silent spill into the next scenario's band.
+
+The nodes each scenario actually creates:
+
+| Scenario | Node | Slot | p2p / http / rpc / jsonrpc / metrics / jdwp | Relay |
+|---|---|---:|---|---|
+| `smoke` | `a` | 0 | 21000 / 21001 / 21002 / 21003 / 21004 / 21005 | — |
+| `history-accuracy` | `a` | 0 | 21400 / 21401 / 21402 / 21403 / 21404 / 21405 | — |
+| `fork-reorg` | A | 0 | 21800 / 21801 / 21802 / 21803 / 21804 / 21805 | 22190 |
+| `fork-reorg` | B | 1 | 21810 / 21811 / 21812 / 21813 / 21814 / 21815 | |
+| `kill-matrix` | `km-*` | 1..N | 22210, 22220, … one block per booted node | — |
+| `resource-faults` | N | 0 | 22600 / 22601 / 22602 / 22603 / 22604 / 22605 | — |
+| `concurrency-under-fault` | primary | 0 | 23000 / 23001 / 23002 / 23003 / 23004 / 23005 | 23390 |
+| `concurrency-under-fault` | fork-a | 1 | 23010 / 23011 / 23012 / 23013 / 23014 / 23015 | |
+| `concurrency-under-fault` | fork-b | 2 | 23020 / 23021 / 23022 / 23023 / 23024 / 23025 | |
+| `catchup-batch-flush-kill` | source | 0 | 23400 / 23401 / 23402 / 23403 / 23404 / 23405 | — |
+| `catchup-batch-flush-kill` | archive-sr27 | 1 | 23410 / 23411 / 23412 / 23413 / 23414 / 23415 | |
+
+`kill-matrix` boots one node per window plus up to three per degraded window, taking slots
+`1, 2, 3, …`; the worst case is ~25 of the 39 available blocks.
+
+### JDWP is per node, not per scenario
+
+`kill-matrix --jdwp-port` and `CFK_JDWP_PORT` default to `auto`: `hs_node_start` takes the debugger
+port from **that node's own** block (`+5`) and records it in `<node_dir>/jdwp.port`.
+`hs_jdwp_port <node_dir>` is what every attacher reads, so two debugged nodes in one scenario can
+never fight over one hard-coded port. An explicit number still works for attaching an IDE.
+
+### `run-all.sh` pre-flight
+
+Before starting a scenario the driver asserts that its **entire band** is free — not merely
+"nothing is listening", but no socket in any state:
+
+* `lsof -nP -iTCP:<lo>-<hi>` finds process-owned sockets and names the holding PID;
+* `netstat -an -p tcp` finds orphaned `TIME_WAIT` / `FIN_WAIT_2` entries, which have no owning
+  process and are invisible to `lsof` yet still make `bind()` fail.
+
+A busy band is **waited out** (`ARCHIVE_HARNESS_PORT_WAIT_SECS`, default 120s, polled every 3s)
+rather than failing on sight, because `TIME_WAIT` is transient. Only if it is still busy at the
+deadline is the scenario recorded `INCONCLUSIVE` — never started, with the holder named:
+
+```
+PORT PRE-FLIGHT FAILED for fork-reorg (band 21800-22199)
+still busy after 120s:
+  held  Python pid=62616 127.0.0.1:21902 (LISTEN)
+HARNESS_ERROR ports 21800-22199 not free; the scenario was never started
+```
+
+### Resolved: fork-reorg failing only inside `run-all.sh`
+
+`scenario-fork-reorg.sh` used to pass standalone but exit 2 with
+`HARNESS_ERROR node B never became ready` as the third scenario of the suite. Node B's
+`logs/tron.log` showed `RpcApiService starting on 50151`, then
+`Failed to bind to address 0.0.0.0/0.0.0.0:50151` → `java.net.BindException: Address already in use`
+→ `ExitManager: API_SERVER_INIT(1)`. Two independent harness-side defects:
+
+1. **The old gRPC ports were inside the ephemeral range.** The map put node rpc at
+   `50051 + 100*slot` — 50051, 50151, 50251 — all inside macOS's 49152–65535 allocation window.
+   The scenario's own preflight saw 50151 free at `14:54:43`; ten seconds later the kernel had
+   handed 50151 to another process's *outbound* connection and the bind failed. No preflight can
+   close that race — the port must simply not be in the ephemeral range. This was the real cause,
+   and it is why the collision landed on rpc rather than p2p: p2p (16667) is outside the window.
+2. **Node B was only partially derived.** Its p2p came from a hand-picked `16666+1` while its
+   http/rpc/jsonrpc/metrics came from the `+100` family (8190/50151/8645/9627), so its port set was
+   neither disjoint from nor aligned with anyone else's.
+
+Both are fixed by the map above: every node's six ports come from one base, and the whole space is
+below 49152. The driver's band pre-flight is the backstop for a genuinely stale process, and
+`INCONCLUSIVE` (§13) is how such a run is now reported.
+
+One more gap was closed while auditing: `scenario-concurrency-under-fault.sh` bound `A_RPC` and
+`B_RPC` for its two fork nodes but never included them in its own `check_ports` call.
+
+---
+
+## 13. Suite grading: PASS / FAIL / INCONCLUSIVE / SKIPPED / TIMEOUT
+
+`run-all.sh` keeps "the product is broken" and "we could not look" in **separate counters**,
+because conflating them turns every flaky environment into a false regression report.
+
+| Verdict | When | Counter | Blocks a green suite? |
+|---|---|---|---|
+| `PASS` | exit 0 **and** an `<NAME>_OK` marker | `passed` | — |
+| `FAIL` | exit 1 (or any other nonzero that is not a harness error), or exit 0 with no marker | `failed` | yes |
+| `INCONCLUSIVE` | exit 2; or a *nonzero* exit after a `HARNESS_ERROR` line with no verdict marker; or the port pre-flight refused to start it | `inconclusive` | yes |
+| `SKIPPED` | exit 77 or an `<NAME>_SKIPPED` marker | `skipped` | no |
+| `TIMEOUT` | exceeded `--timeout` and was terminated | `failed` | yes |
+
+`TIMEOUT` counts as `failed`, **not** `inconclusive`, on purpose: a hang is one of the product
+defects this suite exists to catch (see the `HUNG` startup verdict in §6), so it must never be
+excused as "could not run".
+
+Exit **0** is graded before the `HARNESS_ERROR` check, so a scenario that prints `HARNESS_ERROR`
+and then exits 0 anyway is `FAIL` ("exit 0 but no `_OK` marker"), not `INCONCLUSIVE` — claiming
+success while reporting it could not run is itself a harness bug worth failing on. The exit
+contract in §5 is what keeps this from mattering: a harness error must exit 2.
+
+`INCONCLUSIVE` keeps the suite non-green — the final line is `PRIVATE_CHAIN_FAULT_SUITE_FAIL` and
+the exit code is 1, so CI still notices — but it never reads as a product defect. It has its own
+column in the summary table and its own counter in the tally line and the final marker:
+
+```
+SCENARIO                   VERDICT       SECONDS  MARKER
+-------------------------- ------------ --------  --------------------
+smoke                      PASS               55  SMOKE_E2E_OK
+fork-reorg                 INCONCLUSIVE      120  -
+kill-matrix                FAIL              521  KILL_MATRIX_FAIL
+-------------------------- ------------ --------  --------------------
+TALLY                      passed=1 failed=1 inconclusive=1 skipped=0
+
+PRIVATE_CHAIN_FAULT_SUITE_FAIL scenarios=3 passed=1 failed=1 inconclusive=1 skipped=0 elapsed=696s
+```
+
+**Reading the result:** `failed>0` means a regression to investigate. `failed=0` with
+`inconclusive>0` means the suite never reached a verdict about the product — re-run it, do not file
+a bug. A green suite requires `failed=0` **and** `inconclusive=0` **and** `passed>0`.
