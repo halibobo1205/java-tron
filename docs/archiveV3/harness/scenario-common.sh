@@ -252,6 +252,40 @@ if ! declare -F ah_conf_reset >/dev/null 2>&1; then
     AH_CONF_HARD_MIN_FREE=16777216
     AH_CONF_TRX_REFERENCE=solid
     AH_CONF_DEBUG_TRACE=true
+    # Multi-SR chains: a no-op at the default count of 1, so the two literals
+    # above stay the generated config's only witness source in that case.
+    ah_apply_witness_count
+  }
+fi
+
+# ah_apply_witness_count -- honour HS_CFG_WITNESS_COUNT (default 1) in this template.
+#
+# WHY: a one-witness chain has solid == head (DposService.updateSolidBlock takes
+# index (int)(1 * 0.3) == 0), so the archive's in-flight window -- blocks
+# journaled but not yet solidified -- degenerates to ~2 blocks and a fault
+# injected here lands on an almost empty window. With 27 SRs on the same single
+# node solid trails head by 18 and the window is ~20 blocks, which is the state
+# these scenarios are meant to exercise.
+#
+# Key derivation and address rendering are NOT repeated here: lib.sh's
+# hs_witness_conf_blocks (which is hs_witness_key_at + hs_base58_of_priv) owns
+# both, so this template and hs_new_node build the same chain from the same keys.
+if ! declare -F ah_apply_witness_count >/dev/null 2>&1; then
+  ah_apply_witness_count() {
+    local count="${HS_CFG_WITNESS_COUNT:-1}"
+    if [ "$count" = "1" ]; then
+      return 0
+    fi
+    declare -F hs_witness_conf_blocks >/dev/null 2>&1 \
+      || ah_fatal "HS_CFG_WITNESS_COUNT=$count needs lib.sh, which is not sourced"
+    # AH_CLASSES_DIR is set by ah_compile_helpers and is inside the run directory;
+    # before that call there is nowhere run-local to put Addr.class, and every
+    # scenario compiles its helpers during preflight.
+    [ -n "${AH_CLASSES_DIR:-}" ] \
+      || ah_fatal "ah_apply_witness_count: call ah_compile_helpers before requesting a multi-SR chain"
+    hs_witness_conf_blocks "$AH_JAR" "$AH_CLASSES_DIR"
+    AH_CONF_WITNESS_KEY="$HS_WITNESS_LOCAL_BLOCK"
+    AH_CONF_GENESIS_WITNESSES="$HS_WITNESS_GENESIS_BLOCK"
   }
 fi
 

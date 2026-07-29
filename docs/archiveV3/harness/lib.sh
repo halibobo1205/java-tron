@@ -463,6 +463,101 @@ hs_witness_base58_at() {
   hs_base58_of_priv "$(hs_witness_key_at "$1")"
 }
 
+# hs_witness_count -- echo the validated HS_CFG_WITNESS_COUNT (default 1).
+# Prints a diagnosis and returns non-zero on a bad value; callers turn that into
+# hs_die/ah_fatal in THEIR shell, because this runs inside $( ) where an exit
+# would only leave the subshell.
+hs_witness_count() {
+  local n="${HS_CFG_WITNESS_COUNT:-1}"
+  case "$n" in
+    ''|*[!0-9]*)
+      printf 'HS_CFG_WITNESS_COUNT must be an integer, got %s\n' "'$n'" >&2
+      return 1 ;;
+  esac
+  if [ "$n" -lt 1 ]; then
+    printf 'HS_CFG_WITNESS_COUNT must be >= 1, got %s\n' "$n" >&2
+    return 1
+  fi
+  if [ "$n" -gt "$HS_MAX_WITNESSES" ]; then
+    printf 'HS_CFG_WITNESS_COUNT=%s exceeds MAX_ACTIVE_WITNESS_NUM=%s (Parameter.java:66); DposService.updateWitness() would silently truncate the set\n' \
+      "$n" "$HS_MAX_WITNESSES" >&2
+    return 1
+  fi
+  printf '%s\n' "$n"
+}
+
+# hs_bind_addr_helper <fullnode-jar> <scratch-dir>
+#
+# Points hs_addr_of_priv (and therefore hs_base58_of_priv / hs_witness_base58_at)
+# at a jar plus a compiled java/Addr for callers that never run the full
+# hs_init -> hs_build_jar -> hs_build_java_helpers path. The fault scenarios are
+# exactly those callers: they own their own jar variable and their own run
+# directory, so they pass both in. Idempotent; the address cache is shared with
+# the normal path so a repeated derivation never restarts a JVM.
+hs_bind_addr_helper() {
+  local jar="$1" dir="$2" harness_dir="$HS_HARNESS_DIR"
+  [ -n "$jar" ] && [ -f "$jar" ] || hs_die "hs_bind_addr_helper: no FullNode jar at '$jar'"
+  [ -n "$dir" ] || hs_die "hs_bind_addr_helper: empty scratch directory"
+  if [ -z "$harness_dir" ]; then
+    harness_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)" \
+      || hs_die "hs_bind_addr_helper: cannot resolve the harness directory"
+  fi
+  mkdir -p "$dir" || hs_die "hs_bind_addr_helper: cannot create $dir"
+  if [ ! -f "$dir/Addr.class" ]; then
+    javac -nowarn -cp "$jar" -d "$dir" "$harness_dir/java/Addr.java" \
+      || hs_die "cannot compile $harness_dir/java/Addr.java against $jar"
+  fi
+  HS_JAR="$jar"
+  HS_CLASSES="$dir"
+  HS_ADDR_CACHE="$dir/addr.cache"
+  [ -f "$HS_ADDR_CACHE" ] || : >"$HS_ADDR_CACHE"
+}
+
+# hs_witness_conf_blocks <fullnode-jar> <scratch-dir>
+#
+# The fault scenarios render their own node.conf instead of going through
+# hs_new_node, but they must honour the same HS_CFG_WITNESS_COUNT knob. This
+# formats the witness set for THAT template shape. The key scheme still lives
+# only in hs_witness_key_at and the address rendering only in hs_base58_of_priv,
+# so there is still exactly one derivation path in the harness.
+#
+# Sets two globals:
+#   HS_WITNESS_GENESIS_BLOCK  the body of genesis.block.witnesses -- one
+#                             four-space-indented entry per line, comma
+#                             separated, with no trailing comma
+#   HS_WITNESS_LOCAL_BLOCK    the body of localwitness -- the FIRST key carries
+#                             no indent, because both scenario templates already
+#                             print two spaces ahead of the expansion
+#
+# At count 1 this reproduces the historical single-witness literals byte for byte
+# and never starts a JVM (witness 1 is HS_KEY_WITNESS1 / HS_ADDR_WITNESS1, a pair
+# hs_verify_key_table asserts).
+HS_WITNESS_GENESIS_BLOCK=""
+HS_WITNESS_LOCAL_BLOCK=""
+hs_witness_conf_blocks() {
+  local jar="$1" scratch="$2" count idx priv addr
+  count="$(hs_witness_count)" \
+    || hs_die "invalid HS_CFG_WITNESS_COUNT (diagnosis above)"
+  HS_WITNESS_GENESIS_BLOCK="    { address: $HS_ADDR_WITNESS1, url = \"http://sr1.local\", voteCount = $HS_WITNESS_VOTES }"
+  HS_WITNESS_LOCAL_BLOCK="$HS_KEY_WITNESS1"
+  if [ "$count" -eq 1 ]; then
+    return 0
+  fi
+  hs_bind_addr_helper "$jar" "$scratch"
+  idx=2
+  while [ "$idx" -le "$count" ]; do
+    priv="$(hs_witness_key_at "$idx")"
+    addr="$(hs_base58_of_priv "$priv")"
+    [ -n "$addr" ] || hs_die "could not derive the address of witness $idx"
+    HS_WITNESS_GENESIS_BLOCK="$HS_WITNESS_GENESIS_BLOCK,
+    { address: $addr, url = \"http://sr$idx.local\", voteCount = $HS_WITNESS_VOTES }"
+    HS_WITNESS_LOCAL_BLOCK="$HS_WITNESS_LOCAL_BLOCK,
+  $priv"
+    idx=$((idx + 1))
+  done
+  hs_log "multi-SR chain: $count witnesses on one node (expect solid to trail head by $((count - 1 - count * 30 / 100)) blocks once every SR has produced)"
+}
+
 # hs_verify_key_table -- assert every hard-coded key/address pair still binds.
 hs_verify_key_table() {
   local pair got want
@@ -641,14 +736,9 @@ hs_write_node_config() {
   local node_dir="$1"
   hs_load_ports "$node_dir"
 
-  local witness_count="${HS_CFG_WITNESS_COUNT:-1}"
-  case "$witness_count" in
-    ''|*[!0-9]*) hs_die "HS_CFG_WITNESS_COUNT must be an integer, got '$witness_count'" ;;
-  esac
-  [ "$witness_count" -ge 1 ] \
-    || hs_die "HS_CFG_WITNESS_COUNT must be >= 1, got $witness_count"
-  [ "$witness_count" -le "$HS_MAX_WITNESSES" ] \
-    || hs_die "HS_CFG_WITNESS_COUNT=$witness_count exceeds MAX_ACTIVE_WITNESS_NUM=$HS_MAX_WITNESSES (Parameter.java:66); DposService.updateWitness() would silently truncate the set"
+  local witness_count
+  witness_count="$(hs_witness_count)" \
+    || hs_die "invalid HS_CFG_WITNESS_COUNT (diagnosis above)"
 
   local witness_key="${HS_CFG_WITNESS_KEY:-$HS_KEY_WITNESS1}"
   local genesis_witnesses="${HS_CFG_GENESIS_WITNESSES:-$HS_ADDR_WITNESS1:100}"
