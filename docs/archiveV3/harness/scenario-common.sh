@@ -333,6 +333,10 @@ node {
   p2p { version = ${AH_CONF_P2P_VERSION} }
   active = ${AH_CONF_ACTIVE_LIST}
   passive = []
+  # MANDATORY isolation: reference.conf:342 defaults node.fastForward to two PUBLIC
+  # mainnet addresses, so an unset value makes every harness node dial the internet
+  # in a loop. Keep this empty.
+  fastForward = []
 
   http    { fullNodeEnable = true, fullNodePort = ${AH_CONF_HTTP_PORT}, solidityEnable = false, PBFTEnable = false }
   rpc     { enable = true, port = ${AH_CONF_RPC_PORT}, minEffectiveConnection = 0, solidityEnable = false, PBFTEnable = false }
