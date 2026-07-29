@@ -807,6 +807,10 @@ node {
   p2p { version = 20260728 }
   active = [ ${CONF_ACTIVE} ]
   passive = []
+  # MANDATORY isolation: reference.conf:342 defaults node.fastForward to two PUBLIC
+  # mainnet addresses, so an unset value makes every harness node dial the internet
+  # in a loop. Keep this empty.
+  fastForward = []
   http { fullNodeEnable = true, fullNodePort = ${CONF_HTTP_PORT}, solidityEnable = false, PBFTEnable = false }
   rpc { enable = true, port = ${CONF_RPC_PORT}, minEffectiveConnection = 0, solidityEnable = false, PBFTEnable = false }
   jsonrpc { httpFullNodeEnable = true, httpFullNodePort = ${CONF_JSONRPC_PORT}, httpSolidityEnable = false, httpPBFTEnable = false }
