@@ -49,7 +49,7 @@
 #   ./scenario-concurrency-under-fault.sh [options]
 #     --jar PATH           FullNode.jar to exercise (default: repo framework/build/libs)
 #     --run-dir DIR        run artifacts (default: $TMPDIR/java-tron-archive-harness/<ts>-concurrency)
-#     --port-base N        base port block, needs ~40 free ports (default 18600)
+#     --port-base N        base of the 400-port band (default: this scenario's band in ports.sh)
 #     --workers N          storm threads (default 24)
 #     --pre-fault SECS     storm warm-up before the fault (default 5)
 #     --post-fault SECS    storm continuation after the fault (default 6)
@@ -89,6 +89,18 @@ else
   printf 'WARN  %s/lib.sh not found; using built-in fallbacks\n' "${HARNESS_DIR}" >&2
 fi
 
+# ports.sh is THE port map for the whole harness and is NOT optional: running with a private
+# guess at the port layout is how a scenario ends up half-colliding with its neighbour. It is
+# dependency-free and guards against double-sourcing, so this is safe after lib.sh.
+if [ -f "${HARNESS_DIR}/ports.sh" ]; then
+  # shellcheck source=ports.sh disable=SC1091
+  . "${HARNESS_DIR}/ports.sh"
+else
+  printf 'FATAL %s/ports.sh not found; the port map is unavailable\n' "${HARNESS_DIR}" >&2
+  printf 'HARNESS_ERROR ports.sh missing -- no verdict about the product\n'
+  exit 2
+fi
+
 have_fn() { declare -F "$1" >/dev/null 2>&1; }
 
 have_fn log  || log()  { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*" >&2; }
@@ -118,7 +130,8 @@ have_fn port_free || port_free() {
 # ---------------------------------------------------------------------------
 JAR=""
 RUN_DIR=""
-PORT_BASE=18600
+# This scenario's reserved band (ports.sh). --port-base still overrides it for a side-by-side run.
+PORT_BASE="$(ah_port_band "${SCENARIO_NAME}")"
 WORKERS=24
 PRE_FAULT_SECS=5
 POST_FAULT_SECS=6
@@ -144,7 +157,8 @@ underneath them, and asserts that no query ever returns a wrong value.
 Options:
   --jar PATH          FullNode.jar to exercise (default: repo framework/build/libs)
   --run-dir DIR       run artifacts (default: $TMPDIR/java-tron-archive-harness/<ts>-...)
-  --port-base N       base port block, needs ~40 free ports (default 18600)
+  --port-base N       base of this scenario's 400-port band (default: the band ports.sh
+                      reserves for concurrency-under-fault; keep it below 49152)
   --workers N         storm threads (default 24)
   --pre-fault SECS    storm warm-up before the fault (default 5)
   --post-fault SECS   storm continuation after the fault (default 6)
@@ -288,15 +302,24 @@ fi
 mkdir -p "${RUN_DIR}" || die "cannot create run dir ${RUN_DIR}"
 RUN_DIR="$(cd "${RUN_DIR}" && pwd)"
 
-# port map -- every phase gets its own block so a leftover process from another
-# scenario cannot be mistaken for this node.
-P_HTTP=$((PORT_BASE + 0));  P_RPC=$((PORT_BASE + 1));  P_JSONRPC=$((PORT_BASE + 2))
-P_METRICS=$((PORT_BASE + 3)); P_P2P=$((PORT_BASE + 4))
-A_HTTP=$((PORT_BASE + 10)); A_RPC=$((PORT_BASE + 11)); A_JSONRPC=$((PORT_BASE + 12))
-A_METRICS=$((PORT_BASE + 13)); A_P2P=$((PORT_BASE + 14))
-B_HTTP=$((PORT_BASE + 20)); B_RPC=$((PORT_BASE + 21)); B_JSONRPC=$((PORT_BASE + 22))
-B_METRICS=$((PORT_BASE + 23)); B_P2P=$((PORT_BASE + 24))
-RELAY_PORT=$((PORT_BASE + 30))
+# Port map (ports.sh layout): node slots 0/1/2 are 10-port blocks inside this scenario's band,
+# each node's five listeners at +0 p2p / +1 http / +2 rpc / +3 jsonrpc / +4 metrics.  The relay
+# belongs to no node and lives in the band's aux block.
+#
+# The block stride and the aux-slot index come from ports.sh rather than being written out again
+# here, so that widening a node block stays a one-line change in ports.sh.  The arithmetic (rather
+# than ah_port_node_base / ah_port_aux) is what keeps --port-base working: this scenario may be
+# pointed at an arbitrary base for a side-by-side run, and the helpers only know the fixed band.
+P_BASE=$((PORT_BASE + 0 * AH_PORT_NODE_STRIDE))
+A_BASE=$((PORT_BASE + 1 * AH_PORT_NODE_STRIDE))
+B_BASE=$((PORT_BASE + 2 * AH_PORT_NODE_STRIDE))
+P_P2P=$((P_BASE + 0)); P_HTTP=$((P_BASE + 1)); P_RPC=$((P_BASE + 2))
+P_JSONRPC=$((P_BASE + 3)); P_METRICS=$((P_BASE + 4))
+A_P2P=$((A_BASE + 0)); A_HTTP=$((A_BASE + 1)); A_RPC=$((A_BASE + 2))
+A_JSONRPC=$((A_BASE + 3)); A_METRICS=$((A_BASE + 4))
+B_P2P=$((B_BASE + 0)); B_HTTP=$((B_BASE + 1)); B_RPC=$((B_BASE + 2))
+B_JSONRPC=$((B_BASE + 3)); B_METRICS=$((B_BASE + 4))
+RELAY_PORT=$((PORT_BASE + AH_PORT_AUX_SLOT * AH_PORT_NODE_STRIDE + 0))
 
 check_ports() {
   local p busy=""
@@ -305,9 +328,13 @@ check_ports() {
   done
   [ -z "${busy}" ] || die "port(s) already in use:${busy} (use --port-base)"
 }
-check_ports "${P_HTTP}" "${P_RPC}" "${P_JSONRPC}" "${P_METRICS}" "${P_P2P}"
-[ "${WITH_FORK}" -eq 1 ] && check_ports "${A_HTTP}" "${A_JSONRPC}" "${A_METRICS}" "${A_P2P}" \
-  "${B_HTTP}" "${B_JSONRPC}" "${B_METRICS}" "${B_P2P}" "${RELAY_PORT}"
+check_ports "${P_P2P}" "${P_HTTP}" "${P_RPC}" "${P_JSONRPC}" "${P_METRICS}"
+# A_RPC / B_RPC were missing here: the two fork nodes' gRPC listeners were the only ports the
+# scenario bound without ever preflighting them.
+if [ "${WITH_FORK}" -eq 1 ]; then
+  check_ports "${A_P2P}" "${A_HTTP}" "${A_RPC}" "${A_JSONRPC}" "${A_METRICS}" \
+              "${B_P2P}" "${B_HTTP}" "${B_RPC}" "${B_JSONRPC}" "${B_METRICS}" "${RELAY_PORT}"
+fi
 
 log "scenario   : ${SCENARIO_NAME}"
 log "jar        : ${JAR}"

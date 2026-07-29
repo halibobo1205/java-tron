@@ -14,19 +14,31 @@
 #   ./run-all.sh concurrency -- --no-fork # everything after -- goes to each scenario
 #
 # VERDICTS
-#   PASS     exit 0 and the scenario printed its own <NAME>_OK marker
-#   FAIL     nonzero exit, or exit 0 with no marker (a silent pass is not a pass)
-#   SKIPPED  exit 77, or the scenario printed a <NAME>_SKIPPED marker
-#   TIMEOUT  the scenario exceeded --timeout and was terminated
+#   PASS          exit 0 and the scenario printed its own <NAME>_OK marker
+#   FAIL          the PRODUCT misbehaved: exit 1 (or any other nonzero that is not a harness
+#                 error), or exit 0 with no marker (a silent pass is not a pass)
+#   INCONCLUSIVE  the scenario COULD NOT RUN: exit 2 / a HARNESS_ERROR line, or this driver's
+#                 port pre-flight refused to start it. This is NOT a statement about the
+#                 product -- nothing was measured -- but it still keeps the suite non-green,
+#                 because an unmeasured scenario is not a passing scenario.
+#   SKIPPED       exit 77, or the scenario printed a <NAME>_SKIPPED marker
+#   TIMEOUT       the scenario exceeded --timeout and was terminated. Graded with FAIL, not
+#                 INCONCLUSIVE, on purpose: a hang is one of the product defects this suite
+#                 exists to catch, so it must never be filed under "could not run".
 #
 # FINAL LINE (machine-checkable)
-#   PRIVATE_CHAIN_FAULT_SUITE_OK   scenarios=<n> passed=<n> skipped=<n>       -> exit 0
-#   PRIVATE_CHAIN_FAULT_SUITE_FAIL scenarios=<n> passed=<n> failed=<n> ...    -> exit 1
+#   PRIVATE_CHAIN_FAULT_SUITE_OK   scenarios=<n> passed=<n> failed=0 inconclusive=0 skipped=<n>
+#                                                                                    -> exit 0
+#   PRIVATE_CHAIN_FAULT_SUITE_FAIL scenarios=<n> passed=<n> failed=<n> inconclusive=<n> ...
+#                                                                                    -> exit 1
 #   exit 2 = usage or precondition error (nothing ran)
+#
+# A green suite requires failed=0 AND inconclusive=0 AND passed>0.
 #
 # CONTRACT EXPECTED OF EACH SCENARIO
 #   - exits 0 on success and prints a line matching ^[A-Z0-9_]+_OK\b
-#   - exits nonzero on failure and prints ^[A-Z0-9_]+_FAIL\b
+#   - exits 1 on a product failure and prints ^[A-Z0-9_]+_FAIL\b
+#   - exits 2 when the harness/environment could not run it, printing ^HARNESS_ERROR
 #   - exits 77 when it decides the scenario is not applicable on this host
 #   - picks up the jar from FULLNODE_JAR or ARCHIVE_HARNESS_JAR, and the artifact root from
 #     HARNESS_RUN_ROOT, ARCHIVE_HARNESS_RUN_ROOT or HS_WORK_ROOT (this is how --jar and
@@ -46,6 +58,17 @@ if [ -f "${HARNESS_DIR}/lib.sh" ]; then
   . "${HARNESS_DIR}/lib.sh"
 else
   printf 'WARN  %s/lib.sh not found; using built-in fallbacks\n' "${HARNESS_DIR}" >&2
+fi
+
+# ports.sh is THE port map. It is dependency-free and guards against double-sourcing, so this
+# is safe whether or not lib.sh already pulled it in. Without it the pre-flight below cannot
+# know which ports a scenario is about to bind, so it is a hard requirement.
+if [ -f "${HARNESS_DIR}/ports.sh" ]; then
+  # shellcheck source=ports.sh disable=SC1091
+  . "${HARNESS_DIR}/ports.sh"
+else
+  printf 'ERROR %s/ports.sh not found; cannot pre-flight scenario ports\n' "${HARNESS_DIR}" >&2
+  exit 2
 fi
 
 have_fn() { declare -F "$1" >/dev/null 2>&1; }
@@ -287,10 +310,84 @@ RESULT_LOGS=""
 TOTAL=0
 PASSED=0
 FAILED=0
+INCONCLUSIVE=0
 SKIPPED=0
 
 CURRENT_CHILD=""
 CURRENT_TAIL=""
+
+# ---------------------------------------------------------------------------
+# port pre-flight
+# ---------------------------------------------------------------------------
+# Every scenario owns a 400-port band (ports.sh). Before starting one, prove the whole band is
+# free -- not just "no listener", but no socket of any state, because a TIME_WAIT left behind by
+# the previous scenario's curl storm is exactly the kind of thing that makes the next scenario
+# fail for reasons that have nothing to do with the product.
+#
+# TIME_WAIT is transient, so a busy band is WAITED OUT rather than treated as fatal on sight.
+# Only if it is still busy after the budget does the scenario go down as INCONCLUSIVE, naming
+# the PID that holds the port.
+PORT_WAIT_SECS="${ARCHIVE_HARNESS_PORT_WAIT_SECS:-120}"
+PORT_POLL_SECS=3
+
+# band_sockets LO HI -- one line per socket touching the band, "<state> <detail>".
+# Two sources because neither alone is complete on macOS:
+#   lsof     process-owned sockets (LISTEN / ESTABLISHED / CLOSE_WAIT) WITH the owning pid
+#   netstat  orphaned states (TIME_WAIT, FIN_WAIT_2) that have no process and are invisible
+#            to lsof, yet still make bind() fail
+band_sockets() {
+  local lo="$1" hi="$2" have_lsof=0
+  if command -v lsof >/dev/null 2>&1; then
+    have_lsof=1
+    lsof -nP -iTCP:"${lo}"-"${hi}" 2>/dev/null \
+      | awk 'NR > 1 { printf "held  %s pid=%s %s %s\n", $1, $2, $9, $10 }'
+  fi
+  if command -v netstat >/dev/null 2>&1; then
+    # skip=1 only when lsof already listed the process-owned states, so dropping lsof from the
+    # host degrades the diagnosis but never the detection.
+    netstat -an -p tcp 2>/dev/null | awk -v lo="${lo}" -v hi="${hi}" -v skip="${have_lsof}" '
+      $1 ~ /^tcp/ {
+        n = split($4, a, ".")
+        p = a[n] + 0
+        state = (NF >= 6 ? $6 : "?")
+        if (p < lo || p > hi) next
+        if (skip == 1 && (state == "LISTEN" || state == "ESTABLISHED")) next
+        printf "lingering %s local=%s\n", state, $4
+      }'
+  fi
+}
+
+# preflight_ports SLUG LOGPATH -- 0 when the band is free, 1 when it is still busy after the wait.
+# Appends its own diagnosis to LOGPATH so an INCONCLUSIVE verdict is never silent.
+preflight_ports() {
+  local slug="$1" log_path="$2" range lo hi waited busy
+  range="$(ah_port_band_range "${slug}")"
+  lo="${range% *}"
+  hi="${range#* }"
+
+  waited=0
+  while :; do
+    busy="$(band_sockets "${lo}" "${hi}")"
+    [ -n "${busy}" ] || break
+    if [ "${waited}" -ge "${PORT_WAIT_SECS}" ]; then
+      {
+        printf 'PORT PRE-FLIGHT FAILED for %s (band %s-%s)\n' "${slug}" "${lo}" "${hi}"
+        printf 'still busy after %ss:\n' "${PORT_WAIT_SECS}"
+        printf '%s\n' "${busy}" | sed 's/^/  /'
+        printf 'HARNESS_ERROR ports %s-%s not free; the scenario was never started\n' "${lo}" "${hi}"
+      } | tee -a "${log_path}"
+      return 1
+    fi
+    if [ "${waited}" -eq 0 ]; then
+      log "${slug}: band ${lo}-${hi} busy, waiting up to ${PORT_WAIT_SECS}s for release"
+      printf '%s\n' "${busy}" | sed 's/^/  /' >&2
+    fi
+    sleep "${PORT_POLL_SECS}"
+    waited=$((waited + PORT_POLL_SECS))
+  done
+  [ "${waited}" -eq 0 ] || log "${slug}: band ${lo}-${hi} free after ${waited}s"
+  return 0
+}
 
 # kill_tree PID SIGNAL -- signal the scenario's whole process group, falling back to the
 # single pid when it has no group of its own.
@@ -319,6 +416,9 @@ record() { # slug verdict duration marker log
   case "$2" in
     PASS) PASSED=$((PASSED + 1)) ;;
     SKIPPED) SKIPPED=$((SKIPPED + 1)) ;;
+    # INCONCLUSIVE is counted apart from FAILED so the summary never presents "the harness
+    # could not run this" as "the product is broken". It still blocks a green suite.
+    INCONCLUSIVE) INCONCLUSIVE=$((INCONCLUSIVE + 1)) ;;
     *) FAILED=$((FAILED + 1)) ;;
   esac
 }
@@ -329,6 +429,12 @@ record() { # slug verdict duration marker log
 marker_in() {
   grep -hE '^[A-Z][A-Z0-9_]*_(OK|FAIL|SKIPPED)([[:space:]]|$)' "$1" 2>/dev/null \
     | tail -1 | awk '{print $1}'
+}
+
+# harness_error_in LOG -> 0 when the scenario declared it could not run. HARNESS_ERROR is
+# deliberately NOT in marker_in's pattern: it is not a verdict about the product.
+harness_error_in() {
+  grep -qE '^HARNESS_ERROR([[:space:]]|$)' "$1" 2>/dev/null
 }
 
 # run_scenario SLUG -> sets SCENARIO_RC and SCENARIO_TIMED_OUT
@@ -417,16 +523,39 @@ while IFS= read -r slug; do
   printf '=============================================================\n'
 
   started=$(date +%s)
+
+  # Refuse to start a scenario onto ports somebody else still holds. A collision here produces
+  # a node that dies on bind and a verdict that describes the harness, not the product -- which
+  # is precisely what INCONCLUSIVE exists to avoid asserting.
+  : >"${log_file}"
+  if ! preflight_ports "${slug}" "${log_file}"; then
+    elapsed=$(( $(date +%s) - started ))
+    log "${slug}: INCONCLUSIVE (port pre-flight failed, ${elapsed}s)"
+    record "${slug}" INCONCLUSIVE "${elapsed}" "-" "${log_file}"
+    if [ "${FAIL_FAST}" -eq 1 ]; then
+      warn "--fail-fast: stopping after ${slug}"
+      break
+    fi
+    continue
+  fi
+
   run_scenario "${slug}"
   elapsed=$(( $(date +%s) - started ))
   marker="$(marker_in "${log_file}")"
 
   if [ "${SCENARIO_TIMED_OUT}" -eq 1 ]; then
+    # A hang is a candidate product defect, so it stays in the FAIL bucket rather than being
+    # excused as "could not run".
     verdict=TIMEOUT
     detail="exceeded ${PER_SCENARIO_TIMEOUT}s"
   elif [ "${SCENARIO_RC}" -eq 77 ]; then
     verdict=SKIPPED
     detail="scenario reported not-applicable"
+  elif [ "${SCENARIO_RC}" -eq 2 ]; then
+    # The documented harness-error exit. No node behaviour was graded, so this must not be
+    # reported as a product failure.
+    verdict=INCONCLUSIVE
+    detail="exit 2 (harness could not run it)"
   elif [ "${SCENARIO_RC}" -eq 0 ]; then
     case "${marker}" in
       *_OK) verdict=PASS; detail="${marker}" ;;
@@ -436,6 +565,11 @@ while IFS= read -r slug; do
       # not demonstrated anything.
       *) verdict=FAIL; detail="exit 0 but no _OK marker" ;;
     esac
+  elif [ -z "${marker}" ] && harness_error_in "${log_file}"; then
+    # Killed or crashed after declaring a harness error and before printing any verdict --
+    # e.g. exit 137 from an external kill. Still no verdict about the product.
+    verdict=INCONCLUSIVE
+    detail="exit ${SCENARIO_RC} after HARNESS_ERROR"
   else
     verdict=FAIL
     detail="exit ${SCENARIO_RC}"
@@ -460,17 +594,22 @@ SUITE_ELAPSED=$(( $(date +%s) - SUITE_STARTED ))
 printf '\n=============================================================\n'
 printf 'SUITE SUMMARY\n'
 printf '=============================================================\n'
-printf '%-26s %-8s %8s  %s\n' "SCENARIO" "VERDICT" "SECONDS" "MARKER"
-printf '%-26s %-8s %8s  %s\n' "--------------------------" "--------" "--------" "--------------------"
+printf '%-26s %-12s %8s  %s\n' "SCENARIO" "VERDICT" "SECONDS" "MARKER"
+printf '%-26s %-12s %8s  %s\n' "--------------------------" "------------" "--------" "--------------------"
 index=1
 while [ "${index}" -le "${TOTAL}" ]; do
   s="$(printf '%s' "${RESULT_SLUGS}" | sed -n "${index}p")"
   v="$(printf '%s' "${RESULT_VERDICTS}" | sed -n "${index}p")"
   d="$(printf '%s' "${RESULT_DURATIONS}" | sed -n "${index}p")"
   m="$(printf '%s' "${RESULT_MARKERS}" | sed -n "${index}p")"
-  printf '%-26s %-8s %8s  %s\n' "${s}" "${v}" "${d}" "${m}"
+  printf '%-26s %-12s %8s  %s\n' "${s}" "${v}" "${d}" "${m}"
   index=$((index + 1))
 done
+printf '%-26s %-12s %8s  %s\n' "--------------------------" "------------" "--------" "--------------------"
+# INCONCLUSIVE is its own column, never folded into FAILED: it means "not measured", and the
+# difference between "the product is broken" and "we could not look" is the whole point.
+printf '%-26s passed=%d failed=%d inconclusive=%d skipped=%d\n' \
+  "TALLY" "${PASSED}" "${FAILED}" "${INCONCLUSIVE}" "${SKIPPED}"
 
 # Per-window / per-phase sub-verdicts, so a KILL_MATRIX or concurrency run shows which
 # durability window or phase actually failed without opening the logs. The pattern matches
@@ -495,17 +634,20 @@ done
 printf '\nlogs: %s\n' "${OUT_DIR}"
 printf 'total: %ss\n\n' "${SUITE_ELAPSED}"
 
-if [ "${FAILED}" -eq 0 ] && [ "${PASSED}" -gt 0 ]; then
-  printf 'PRIVATE_CHAIN_FAULT_SUITE_OK scenarios=%d passed=%d skipped=%d elapsed=%ds\n' \
+if [ "${FAILED}" -eq 0 ] && [ "${INCONCLUSIVE}" -eq 0 ] && [ "${PASSED}" -gt 0 ]; then
+  printf 'PRIVATE_CHAIN_FAULT_SUITE_OK scenarios=%d passed=%d failed=0 inconclusive=0 skipped=%d elapsed=%ds\n' \
     "${TOTAL}" "${PASSED}" "${SKIPPED}" "${SUITE_ELAPSED}"
   exit 0
 fi
-if [ "${FAILED}" -eq 0 ] && [ "${PASSED}" -eq 0 ]; then
+if [ "${FAILED}" -eq 0 ] && [ "${INCONCLUSIVE}" -eq 0 ] && [ "${PASSED}" -eq 0 ]; then
   # Everything skipped: nothing was validated, so this is not a green suite.
-  printf 'PRIVATE_CHAIN_FAULT_SUITE_FAIL scenarios=%d passed=0 failed=0 skipped=%d reason=nothing-validated\n' \
+  printf 'PRIVATE_CHAIN_FAULT_SUITE_FAIL scenarios=%d passed=0 failed=0 inconclusive=0 skipped=%d reason=nothing-validated\n' \
     "${TOTAL}" "${SKIPPED}"
   exit 1
 fi
-printf 'PRIVATE_CHAIN_FAULT_SUITE_FAIL scenarios=%d passed=%d failed=%d skipped=%d elapsed=%ds\n' \
-  "${TOTAL}" "${PASSED}" "${FAILED}" "${SKIPPED}" "${SUITE_ELAPSED}"
+# Nonzero for both FAIL and INCONCLUSIVE so CI notices either way; the counters say which.
+# inconclusive>0 with failed=0 means the suite never reached a verdict about the product --
+# read it as "re-run needed", not "regression found".
+printf 'PRIVATE_CHAIN_FAULT_SUITE_FAIL scenarios=%d passed=%d failed=%d inconclusive=%d skipped=%d elapsed=%ds\n' \
+  "${TOTAL}" "${PASSED}" "${FAILED}" "${INCONCLUSIVE}" "${SKIPPED}" "${SUITE_ELAPSED}"
 exit 1

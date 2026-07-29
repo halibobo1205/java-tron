@@ -106,13 +106,19 @@ KEY_W2=5555555555555555555555555555555555555555555555555555555555555555
 KEY_P1=1111111111111111111111111111111111111111111111111111111111111111
 KEY_ORPHAN=7777777777777777777777777777777777777777777777777777777777777777
 
-A_P2P=$(( 16666 + AH_PORT_OFFSET )); A_HTTP=$(( 8090 + AH_PORT_OFFSET ))
-A_RPC=$(( 50051 + AH_PORT_OFFSET )); A_JSONRPC=$(( 8545 + AH_PORT_OFFSET ))
-A_METRICS=$(( 9527 + AH_PORT_OFFSET ))
-B_P2P=$(( 16667 + AH_PORT_OFFSET )); B_HTTP=$(( 8190 + AH_PORT_OFFSET ))
-B_RPC=$(( 50151 + AH_PORT_OFFSET )); B_JSONRPC=$(( 8645 + AH_PORT_OFFSET ))
-B_METRICS=$(( 9627 + AH_PORT_OFFSET ))
-RELAY_PORT=$(( 26666 + AH_PORT_OFFSET ))
+# Ports. Node A is slot 0 and node B is slot 1 of this scenario's band; ports.sh derives all six
+# of each node's listeners from that one base, so B can no longer take p2p from one family and
+# rpc/jsonrpc/metrics from another. RELAY_PORT is the band's aux block, owned by no node.
+AH_SCENARIO_SLUG=fork-reorg
+A_BASE="$(ah_port_node_base "$AH_SCENARIO_SLUG" 0)" || exit "$AH_EXIT_HARNESS"
+B_BASE="$(ah_port_node_base "$AH_SCENARIO_SLUG" 1)" || exit "$AH_EXIT_HARNESS"
+RELAY_PORT="$(ah_port_aux "$AH_SCENARIO_SLUG" 0)"   || exit "$AH_EXIT_HARNESS"
+A_P2P=$(( A_BASE + 0 )); A_HTTP=$(( A_BASE + 1 ))
+A_RPC=$(( A_BASE + 2 )); A_JSONRPC=$(( A_BASE + 3 ))
+A_METRICS=$(( A_BASE + 4 ))
+B_P2P=$(( B_BASE + 0 )); B_HTTP=$(( B_BASE + 1 ))
+B_RPC=$(( B_BASE + 2 )); B_JSONRPC=$(( B_BASE + 3 ))
+B_METRICS=$(( B_BASE + 4 ))
 
 RUN_DIR=""
 RELAY_PID=""
@@ -323,8 +329,7 @@ GENESIS_WITNESSES='    { address: TEDapYSVvAZ3aYH7w8N9tMEEFKaNKUD5Bp, url = "htt
     { address: TWa5cxQFesyCQUm17usvHrVkKce6rMCV4H, url = "http://sr2.local", voteCount = 99 }'
 
 ah_conf_reset
-AH_CONF_P2P_PORT=$A_P2P; AH_CONF_HTTP_PORT=$A_HTTP; AH_CONF_RPC_PORT=$A_RPC
-AH_CONF_JSONRPC_PORT=$A_JSONRPC; AH_CONF_METRICS_PORT=$A_METRICS
+ah_use_node_ports 0
 AH_CONF_WITNESS_KEY=$KEY_W1
 AH_CONF_GENESIS_WITNESSES="$GENESIS_WITNESSES"
 AH_CONF_ACTIVE_LIST='[]'
@@ -334,8 +339,7 @@ AH_CONF_TRX_REFERENCE=head
 ah_write_node_conf "$RUN_DIR/a/node.conf"
 
 ah_conf_reset
-AH_CONF_P2P_PORT=$B_P2P; AH_CONF_HTTP_PORT=$B_HTTP; AH_CONF_RPC_PORT=$B_RPC
-AH_CONF_JSONRPC_PORT=$B_JSONRPC; AH_CONF_METRICS_PORT=$B_METRICS
+ah_use_node_ports 1
 AH_CONF_WITNESS_KEY=$KEY_W2
 AH_CONF_GENESIS_WITNESSES="$GENESIS_WITNESSES"
 AH_CONF_ACTIVE_LIST="[\"127.0.0.1:$RELAY_PORT\"]"
@@ -756,8 +760,7 @@ ah_check fork.node_a_shutdown INFO "node A exited with status $A_EXIT after the 
 if [ "$FORK_ASSERT_RESTART" = "1" ]; then
   ah_log "phase 10: restart node A after the reorg (identity.initialize=false)"
   ah_conf_reset
-  AH_CONF_P2P_PORT=$A_P2P; AH_CONF_HTTP_PORT=$A_HTTP; AH_CONF_RPC_PORT=$A_RPC
-  AH_CONF_JSONRPC_PORT=$A_JSONRPC; AH_CONF_METRICS_PORT=$A_METRICS
+  ah_use_node_ports 0
   AH_CONF_WITNESS_KEY=$KEY_W1
   AH_CONF_GENESIS_WITNESSES="$GENESIS_WITNESSES"
   AH_CONF_ACTIVE_LIST='[]'

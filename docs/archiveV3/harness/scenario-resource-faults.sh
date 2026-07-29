@@ -104,9 +104,13 @@ PUBLISH_TIMEOUT=180
 FAULT_SOFT_MIN_FREE=16777216
 FAULT_HARD_MIN_FREE=8388608
 
-N_P2P=$(( 16666 + AH_PORT_OFFSET )); N_HTTP=$(( 8090 + AH_PORT_OFFSET ))
-N_RPC=$(( 50051 + AH_PORT_OFFSET )); N_JSONRPC=$(( 8545 + AH_PORT_OFFSET ))
-N_METRICS=$(( 9527 + AH_PORT_OFFSET ))
+# Ports: one node, slot 0 of this scenario's band. All five listeners derive from one base
+# (ports.sh), and nothing lands in the kernel's ephemeral range.
+AH_SCENARIO_SLUG=resource-faults
+N_BASE="$(ah_port_node_base "$AH_SCENARIO_SLUG" 0)" || exit "$AH_EXIT_HARNESS"
+N_P2P=$(( N_BASE + 0 )); N_HTTP=$(( N_BASE + 1 ))
+N_RPC=$(( N_BASE + 2 )); N_JSONRPC=$(( N_BASE + 3 ))
+N_METRICS=$(( N_BASE + 4 ))
 
 RUN_DIR=""
 NODE_PID=""
@@ -165,8 +169,7 @@ too loaded to grade a storage fault. Re-run on an idle machine, or raise FAULT_M
 start_case() {
   local name="$1" archive_dir="$2" identity_init="$3" datadir="${4:-$RUN_DIR/$1/data}"
   ah_conf_reset
-  AH_CONF_P2P_PORT=$N_P2P; AH_CONF_HTTP_PORT=$N_HTTP; AH_CONF_RPC_PORT=$N_RPC
-  AH_CONF_JSONRPC_PORT=$N_JSONRPC; AH_CONF_METRICS_PORT=$N_METRICS
+  ah_use_node_ports 0
   AH_CONF_ARCHIVE_DIR="$archive_dir"
   AH_CONF_IDENTITY_INIT="$identity_init"
   AH_CONF_SOFT_MIN_FREE=$FAULT_SOFT_MIN_FREE

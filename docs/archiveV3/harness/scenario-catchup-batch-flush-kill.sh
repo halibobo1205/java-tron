@@ -15,7 +15,7 @@
 #   CFK_SOURCE_HEIGHT       backlog height before target starts (default 50)
 #   CFK_MAX_FLUSH_COUNT     configured batch size (default 5, must be >1)
 #   CFK_BP_TIMEOUT          seconds to wait for the flush breakpoint (default 300)
-#   CFK_JDWP_PORT           debugger port (default 5105)
+#   CFK_JDWP_PORT           debugger port (default "auto": the target's own +5 port)
 #   CFK_CATCHUP_TIMEOUT     restart/catch-up timeout (default 360)
 #   HS_FORCE_BUILD=1        rebuild FullNode.jar
 #   HS_KEEP_WORKDIR=1       retain all node data and transcripts
@@ -25,11 +25,13 @@ set -uo pipefail
 CFK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 # shellcheck source=lib.sh disable=SC1091
 . "$CFK_DIR/lib.sh"
+# shellcheck source=anchor.sh disable=SC1091
+. "$CFK_DIR/anchor.sh"
 
 CFK_SOURCE_HEIGHT="${CFK_SOURCE_HEIGHT:-50}"
 CFK_MAX_FLUSH_COUNT="${CFK_MAX_FLUSH_COUNT:-5}"
 CFK_BP_TIMEOUT="${CFK_BP_TIMEOUT:-300}"
-CFK_JDWP_PORT="${CFK_JDWP_PORT:-5105}"
+CFK_JDWP_PORT="${CFK_JDWP_PORT:-auto}"
 CFK_CATCHUP_TIMEOUT="${CFK_CATCHUP_TIMEOUT:-360}"
 
 cfk_positive_int() {
@@ -48,45 +50,39 @@ cfk_local_witness_count() {
   ' "$1/node.conf"
 }
 
-cfk_resolve_flush_anchor() {
-  awk '
-    /public void flush\(\)/ { inside = 1 }
-    inside && /refresh\(\);/ { print NR; exit }
-  ' "$(hs_repo_root)/chainbase/src/main/java/org/tron/core/db2/core/SnapshotManager.java"
-}
+# The flush anchor is a SEMANTIC descriptor (`cfk.flush` in anchor.sh), not a line number and not
+# an awk scan pinned to one signature spelling: "the refresh() that follows the durable
+# createCheckpoint(), inside SnapshotManager.flush()". anchor.sh resolves it against the current
+# source, cross-checks it against the current jar's LineNumberTable, and returns the breakpoint in
+# JAR coordinates, so an edit above flush() does not move it. An ambiguous or missing descriptor
+# is a hard error there, which becomes hs_die here -- this scenario has no probabilistic fallback
+# and must never pretend it observed a batch it could not stop inside.
 
-cfk_verify_flush_anchor() {
-  local line="$1" dump
-  dump="$(javap -p -l -cp "$HS_JAR" org.tron.core.db2.core.SnapshotManager 2>/dev/null)" \
-    || return 1
-  printf '%s\n' "$dump" | awk '
-    /^  public void flush\(\);/ { inside = 1; next }
-    inside && /^  (public|private|protected)/ { exit }
-    inside { print }
-  ' | grep -q "line $line:"
-}
-
-# cfk_break_inspect_kill <node> <class:line> <expected-max> <timeout>
+# cfk_break_inspect_kill <node> <class:jarline> <expected-max> <timeout> <owners-csv>
 #
 # Uses a FIFO so commands can be sent after the breakpoint. This gives direct
 # runtime evidence that the effective SnapshotManager batch is greater than 1;
 # config-file evidence alone is insufficient because Manager temporarily
 # forces maxFlushCount back to 1 when processing near-head blocks.
+# <owners-csv> is the set of jar methods that own <jarline>, straight from the anchor resolver.
 CFK_OBSERVED_FLUSH_COUNT=""
 CFK_OBSERVED_MAX_FLUSH_COUNT=""
 CFK_JDB_LOG=""
 cfk_break_inspect_kill() {
-  local node_dir="$1" location="$2" expected_max="$3" timeout="$4"
-  local jdb_bin fifo jdb_pid deadline hit_line
+  local node_dir="$1" location="$2" expected_max="$3" timeout="$4" owners="$5"
+  local jdb_bin fifo jdb_pid deadline hit_why jdwp_port
   jdb_bin="$(command -v jdb 2>/dev/null || true)"
   [ -n "$jdb_bin" ] || hs_die "jdb is required for deterministic batch-flush injection"
+  # The port hs_node_start actually used for THIS node, never a scenario-wide constant.
+  jdwp_port="$(hs_jdwp_port "$node_dir")" \
+    || hs_die "target was not started under JDWP (no $node_dir/jdwp.port)"
 
   CFK_JDB_LOG="$(hs_jdb_log_path "$node_dir" "$location")"
   fifo="$node_dir/jdb-input.fifo"
   rm -f "$fifo"
   mkfifo "$fifo" || hs_die "cannot create jdb FIFO at $fifo"
 
-  "$jdb_bin" -attach "127.0.0.1:${CFK_JDWP_PORT}" \
+  "$jdb_bin" -attach "127.0.0.1:${jdwp_port}" \
     <"$fifo" >"$CFK_JDB_LOG" 2>&1 &
   jdb_pid=$!
   exec 9>"$fifo"
@@ -138,16 +134,17 @@ cfk_break_inspect_kill() {
     sleep 0.25
   done
 
-  hit_line="$(grep -m1 'Breakpoint hit' "$CFK_JDB_LOG" 2>/dev/null || true)"
-  case "$hit_line" in
-    *".flush(),"*) : ;;
-    *)
-      exec 9>&-
-      kill "$jdb_pid" 2>/dev/null || true
-      rm -f "$fifo"
-      hs_log "breakpoint fired outside SnapshotManager.flush(): $hit_line"
-      return 1 ;;
-  esac
+  # RUNTIME anchor guard: require the method AND the line jdb reported to be the ones the
+  # resolved descriptor asked for. `owners` comes from the jar's own line table, so a statement
+  # that the compiler split into a lambda is still accepted while anything else is not.
+  hit_why="$(hs_anchor_assert_hit "$CFK_JDB_LOG" "$owners" "${location##*:}")"
+  if [ -n "$hit_why" ]; then
+    exec 9>&-
+    kill "$jdb_pid" 2>/dev/null || true
+    rm -f "$fifo"
+    hs_log "flush anchor (cfk.flush) did not fire where it was resolved: $hit_why"
+    return 1
+  fi
 
   if [ "$CFK_OBSERVED_MAX_FLUSH_COUNT" != "$expected_max" ] \
       || [ -z "$CFK_OBSERVED_FLUSH_COUNT" ] \
@@ -172,7 +169,7 @@ cfk_break_inspect_kill() {
 cfk_positive_int CFK_SOURCE_HEIGHT "$CFK_SOURCE_HEIGHT"
 cfk_positive_int CFK_MAX_FLUSH_COUNT "$CFK_MAX_FLUSH_COUNT"
 cfk_positive_int CFK_BP_TIMEOUT "$CFK_BP_TIMEOUT"
-cfk_positive_int CFK_JDWP_PORT "$CFK_JDWP_PORT"
+[ "$CFK_JDWP_PORT" = auto ] || cfk_positive_int CFK_JDWP_PORT "$CFK_JDWP_PORT"
 cfk_positive_int CFK_CATCHUP_TIMEOUT "$CFK_CATCHUP_TIMEOUT"
 [ "$CFK_SOURCE_HEIGHT" -ge 35 ] \
   || hs_die "CFK_SOURCE_HEIGHT must be >=35 so catch-up blocks are older than 60 seconds"
@@ -238,17 +235,21 @@ else
 fi
 
 hs_step "starting SR27 in catch-up mode and killing inside a confirmed batch flush"
-FLUSH_LINE="$(cfk_resolve_flush_anchor)"
-[ -n "$FLUSH_LINE" ] || hs_die "cannot resolve SnapshotManager.flush refresh anchor"
-cfk_verify_flush_anchor "$FLUSH_LINE" \
-  || hs_die "FullNode.jar line table does not match SnapshotManager.java line $FLUSH_LINE"
-FLUSH_LOCATION="org.tron.core.db2.core.SnapshotManager:$FLUSH_LINE"
+FLUSH_ANCHOR="$(hs_anchor_resolve cfk.flush "$HS_JAR")" \
+  || hs_die "flush anchor unresolvable: ${FLUSH_ANCHOR#FAIL }"
+FLUSH_LINE="$(hs_anchor_field "$FLUSH_ANCHOR" jarline)"
+FLUSH_OWNERS="$(hs_anchor_field "$FLUSH_ANCHOR" owners)"
+FLUSH_LOCATION="$(hs_anchor_field "$FLUSH_ANCHOR" class):$FLUSH_LINE"
+hs_log "flush anchor cfk.flush -> $FLUSH_LOCATION" \
+  "(src $(hs_anchor_field "$FLUSH_ANCHOR" src):$(hs_anchor_field "$FLUSH_ANCHOR" srcline)," \
+  "jar-vs-source line offset $(hs_anchor_field "$FLUSH_ANCHOR" delta))" \
+  "-- $(hs_anchor_describe cfk.flush)"
 
 export HS_JDWP_PORT="$CFK_JDWP_PORT"
 export HS_JDWP_SUSPEND=y
 hs_node_start "$TARGET_NODE"
 if ! cfk_break_inspect_kill "$TARGET_NODE" "$FLUSH_LOCATION" \
-    "$CFK_MAX_FLUSH_COUNT" "$CFK_BP_TIMEOUT"; then
+    "$CFK_MAX_FLUSH_COUNT" "$CFK_BP_TIMEOUT" "$FLUSH_OWNERS"; then
   hs_abort "could not prove and kill the target inside a maxFlushCount=$CFK_MAX_FLUSH_COUNT batch"
 fi
 unset HS_JDWP_PORT HS_JDWP_SUSPEND
