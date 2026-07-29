@@ -212,6 +212,7 @@ Config knobs, all optional, set before `hs_new_node`:
 
 | Variable | Default | Notes |
 |---|---|---|
+| `HS_CFG_WITNESS_COUNT` | `1` | SRs held by this **one** node, `1..27` — see “Multi-SR chains” below. Mutually exclusive with the next two knobs (the harness dies rather than pick a winner) |
 | `HS_CFG_WITNESS_KEY` | witness 1 | |
 | `HS_CFG_GENESIS_WITNESSES` | `<W1>:100` | `addr:votes[,addr:votes...]` — two entries for the fork topology |
 | `HS_CFG_ACTIVE_PEERS` | empty | `ip:port[,...]` → `node.active` |
@@ -223,6 +224,63 @@ Config knobs, all optional, set before `hs_new_node`:
 | `HS_CFG_HARD_MIN_FREE_BYTES` | 16 MiB | production default is 1 GiB |
 | `HS_CFG_QUERY_WORKERS` | `2` | the batch admission limit behind `-32005 … limit=2` |
 | `HS_CFG_COMMITTEE` | see §8 | startup governance flags |
+
+#### Multi-SR chains (`HS_CFG_WITNESS_COUNT`)
+
+A one-witness chain makes `solid == head`, which collapses the archive's whole reason to exist:
+the in-flight window (blocks journaled but not yet published) never grows, so every durability
+window a kill test aims at is measured in a degenerate state. Measured on this repo, same node,
+same jar, steady state:
+
+| | `head` vs `solid` | `inflight_blocks` | `inflight_records` | `captured` / `published` |
+|---|---|---|---|---|
+| `HS_CFG_WITNESS_COUNT=1` | `solid == head`, lag **0** | **2** | 14 | 57 / 55 |
+| `HS_CFG_WITNESS_COUNT=27` | `solid == head - 18` | **20** | 140 | 57 / 37 |
+
+(Both rows are the same node, same jar, `head=56` after the same wall time — the extra SRs cost
+nothing in block rate, they only stop `solid` from chasing `head`.)
+
+`DposService.updateSolidBlock()` (`consensus/src/main/java/org/tron/consensus/dpos/DposService.java:159`)
+sorts each active witness's `latestBlockNum` and takes index `P = (int)(N * (1 - 70/100))`. For
+`N = 1` that index is `0`, i.e. head itself. For `N = 27` it is `8`; in steady state the sorted
+list runs `head-26 … head`, so solid settles on `head - (N - 1 - P)` = **`head - 18`**.
+
+One node can hold every SR — `localwitness` is a **list**: `Args.java:919` →
+`WitnessInitializer.initFromCFGPrivateKey()` keeps all keys, and
+`ConsensusService.java:56-69` turns each into its own `Miner`, so `DposTask.java:116` always finds
+a local miner for the scheduled slot. No second process is needed.
+
+```bash
+HS_CFG_WITNESS_COUNT=27 ./scenario-kill-matrix.sh
+```
+
+**Reach**: the knob lives in `hs_write_node_config`, so it applies to the scenarios that
+materialize nodes through `hs_new_node` — `scenario-smoke.sh` and `scenario-kill-matrix.sh`.
+`scenario-resource-faults.sh`, `scenario-fork-reorg.sh` and `scenario-concurrency-under-fault.sh`
+emit their own `node.conf` from the `ah_*` templates (`scenario-common.sh:327`,
+`scenario-concurrency-under-fault.sh:824`) and are **not** affected; the fork scenario deliberately
+runs its own two-witness topology anyway.
+
+Witness 1 is `HS_KEY_WITNESS1` verbatim and `HS_CFG_WITNESS_COUNT=1` regenerates a
+**byte-identical** `node.conf`, so existing scenarios are untouched. Witnesses 2..N come from
+`HS_WITNESS_KEY_PREFIX` + the 8-hex index (`hs_witness_key_at` / `hs_witness_base58_at`).
+
+What changes for a caller at `N = 27`:
+
+* **Block rate is unchanged** — still one block per 3 s slot, because every miner is local.
+* **`solid` trails `head` by ~18 blocks (~54 s).** Anything gated on `hs_wait_solidified`,
+  `hs_wait_archive_drained`, or `hs_wait_hist_available` needs that much more headroom; the
+  240 s defaults still fit, but tight per-step timeouts do not.
+* **Longer warmup.** Index 8 of the sorted list is still `0` until `27 - 8 = 19` *distinct*
+  witnesses have produced, so **solid is pinned at 0 until block 19** (~1 min after readiness) and
+  only then locks onto `head - 18`. Measured: `head=18 solid=0`, then `head=20 solid=2`. A scenario
+  that captures oracles immediately after `hs_node_wait_ready` is reading a chain whose solid
+  pointer has not started moving yet.
+* **First config generation costs one JVM per new key** (`Addr`, ~0.3 s each, ~8 s for 27). The
+  result is cached in `$HS_RUN_DIR/addr.cache`, so restarts and extra nodes are free.
+* `HS_CFG_WITNESS_COUNT > 27` is refused: `MAX_ACTIVE_WITNESS_NUM` is 27
+  (`common/src/main/java/org/tron/core/config/Parameter.java:66`) and
+  `DposService.updateWitness()` would silently truncate the set.
 
 ### Lifecycle
 
@@ -374,35 +432,27 @@ things that silently produce a wrong verdict.
     the branches re-solidify. Partition with `hs_relay_start`/`hs_relay_stop` (kill the relay) and
     deepen a branch with `hs_node_suspend` — never by restarting a node (see the blocker below).
 
-### Open product blocker the harness must design around
+### Multi-witness restart regression
 
-**An archive startup-validation failure inside `Manager.initInternal` does not exit — the JVM hangs
-alive.** Reproduced: after a plain `SIGTERM` of a witness in the two-node topology, restart failed
-with `ArchiveException: archive head block N does not match canonical head block N-1`
-(`UnifiedArchiveTxNumIndex.java:206`, thrown from `Manager.java:569 validateCanonicalHead`).
-`ArchiveException` is a plain `RuntimeException`, not a `TronError`, so `ExitManager.findTronError`
-returns empty, no `System.exit` runs, and the **non-daemon Prometheus HTTP server**
-(`FullNode.java:51`, started before the Spring context) keeps the process alive indefinitely. A
-second start attempt then dies with `PROMETHEUS_INIT(1) Address already in use`.
+The first two-witness run exposed a startup brick: the published archive head could legitimately be
+one block ahead of the solidified metadata recovered from the canonical root, but startup required
+both heights to be equal. The resulting plain `ArchiveException` also left the JVM alive behind the
+non-daemon Prometheus server.
 
-Contrast: corruption reaching `DefaultConfig.archiveService()` *is* wrapped in
-`TronError(ARCHIVE_RUNTIME)` (`DefaultConfig.java:60`) and exits 1. The `Manager.initInternal` path
-has no such wrapper.
+The remediation validates the published tail's hash against the canonical block at that tail's own
+height, retains strict coverage and parent-link checks for every in-flight block, and wraps startup
+archive failures in `TronError(ARCHIVE_RUNTIME)`. `FORK_ASSERT_RESTART=1` is the permanent regression
+gate for both the clean-restart and live-but-dead failure modes.
 
-Consequences the harness encodes, and that scenario authors must respect:
+Consequences the harness encodes:
 
 * `hs_node_await_startup` has the `HUNG` verdict and a readiness timeout — never judge fail-stop
   by exit code alone.
-* On a ≥2-witness chain `solid < head`, so archive publication can outrun the canonical DB's
-  restart-recoverable head and a plain `SIGTERM` reproducibly bricks the restart. Assert a
-  "restart-clean" precondition before each scenario and treat this exact mismatch as a first-class
-  `KILL_MATRIX` case, **not** harness flake.
+* On a ≥2-witness chain `solid < head`, a published archive block can remain ahead of the recovered
+  solidified metadata while still matching the durable canonical chain. This is a valid restart
+  state, not corruption.
 * On the single-witness chain (`solid == head`) a `SIGTERM` restart is clean — verified by
   `scenario-smoke.sh`.
-
-This looks like a live recurrence of the defect recorded as fixed in
-`20260716-archive-private-chain-e2e-results.md:106-108` and should be reported to the archive
-source owners.
 
 ---
 
@@ -446,7 +496,7 @@ Be precise about this when reporting results. "Written and reviewed" is not "exe
 | Component | Status |
 |---|---|
 | `scenario-smoke.sh` | **Executed green** against a real archive chain: `SMOKE_E2E_OK checks=23 oracles=5 finalHeight=8`. |
-| `scenario-fork-reorg.sh` | **Executed green** (`FORK_E2E_OK checks=19 depth=5 switches=1`), and executed red on purpose with `FORK_ASSERT_RESTART=1`. **Re-run required** after this review: the reorg-evidence checks are now deltas against a pre-heal baseline, and several oracle comparisons that previously accepted transport errors now fail. Expect a *different, stricter* verdict. |
+| `scenario-fork-reorg.sh` | **Executed green after the multi-witness restart fix** with strict reorg deltas and `FORK_ASSERT_RESTART=1`: `FORK_E2E_OK checks=20 passed=19 depth=6 switches=1`; node A restarted cleanly at head 24. |
 | `scenario-resource-faults.sh` | **Executed green** for `enospc` + `permission` and for opt-in `truncation`. **Re-run required**: fail-stop now demands a breadcrumb, and the probe now demands `opened == true` and `rangeCount > 0`. |
 | `scenario-concurrency-under-fault.sh` | **Executed green twice**, all 5 phases including a real 7-block reorg. The only change from review is the new "no value oracles" gate, which only fires on a chain that never published. |
 | `run-all.sh` | Verdict matrix exercised with fake scenarios; driven a real scenario to `PRIVATE_CHAIN_FAULT_SUITE_OK`. Discovery and `--list` re-verified after this review. |
