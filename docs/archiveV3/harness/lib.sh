@@ -62,6 +62,41 @@ HS_ADDR_SUN="TBvJUBXorwBPzqvV38vjDgegj5Eh6g2Tsq"
 HS_ADDR_BLACKHOLE="TDvSsdrNM5eeXNL3czpa6AxLDHZA9nwe9K"
 
 # ---------------------------------------------------------------------------
+# Multi-SR key scheme (HS_CFG_WITNESS_COUNT).
+#
+# WHY THIS EXISTS: on a one-witness chain DposService.updateSolidBlock()
+# (consensus/src/main/java/org/tron/consensus/dpos/DposService.java:159) sorts
+# the ONE active witness's latestBlockNum and takes index
+# (int)(1 * (1 - 70/100)) == 0 -- so solid == head and the archive's in-flight
+# window (blocks journaled but not yet solidified) degenerates to ~1 block.
+# With N witnesses the index is P = (int)(N * 0.3) and, in steady state, the
+# sorted latestBlockNum list is head-(N-1) .. head, so solid lands on
+# head - (N - 1 - P). MEASURED at N=27: P=8, lag=18 (~54 s at the 3 s slot).
+#
+# ONE node can hold every witness: `localwitness` is a LIST, Args.java:919 ->
+# WitnessInitializer.initFromCFGPrivateKey() keeps all of them, and
+# ConsensusService.java:56-69 turns each private key into its own Miner, so
+# DposTask.java:116 finds a local miner for every scheduled slot.
+#
+# Witness 1 is HS_KEY_WITNESS1 VERBATIM, so a 1-witness chain -- i.e. every
+# pre-existing scenario -- keeps a byte-identical node.conf. Witness i > 1 is
+# this 56-hex-char prefix plus the 8-hex-char index: distinct by construction,
+# always a valid secp256k1 scalar (0 < 0xa5a5... < curve order n, whose top
+# limb is 0xffffffff), and -- because it starts with a letter -- always
+# tokenized by HOCON as unquoted text rather than a number.
+HS_WITNESS_KEY_PREFIX="a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
+
+# Vote count handed to every generated witness. Equal votes are fine: ties in
+# ConsensusDelegate.sortWitness() break on the address bytes, so the schedule
+# is still deterministic across restarts.
+HS_WITNESS_VOTES="100"
+
+# MAX_ACTIVE_WITNESS_NUM (common/src/main/java/org/tron/core/config/Parameter.java:66).
+# DposService.updateWitness() truncates anything past this, so a larger count
+# would silently produce a chain whose real SR set is 27.
+HS_MAX_WITNESSES=27
+
+# ---------------------------------------------------------------------------
 # Minimal storage contract used by the state oracles.
 #
 # Hand-assembled so the harness needs no solc. Uses only frontier-era opcodes,
@@ -405,6 +440,29 @@ hs_eth_of_priv() {
   hs_eth_of_hex41 "$(hs_hex41_of_priv "$1")"
 }
 
+# hs_witness_key_at <index> -- the deterministic private key of the <index>'th
+# harness witness (1-based). Index 1 is HS_KEY_WITNESS1, so the single-witness
+# configuration is unchanged; see the HS_WITNESS_KEY_PREFIX block above.
+hs_witness_key_at() {
+  local idx="$1"
+  case "$idx" in
+    ''|*[!0-9]*) hs_die "hs_witness_key_at: not a non-negative integer: '$idx'" ;;
+  esac
+  [ "$idx" -ge 1 ] || hs_die "hs_witness_key_at: index is 1-based, got $idx"
+  if [ "$idx" -eq 1 ]; then
+    printf '%s\n' "$HS_KEY_WITNESS1"
+    return 0
+  fi
+  [ "${#HS_WITNESS_KEY_PREFIX}" -eq 56 ] \
+    || hs_die "HS_WITNESS_KEY_PREFIX must be 56 hex chars, is ${#HS_WITNESS_KEY_PREFIX}"
+  printf '%s%08x\n' "$HS_WITNESS_KEY_PREFIX" "$idx"
+}
+
+# hs_witness_base58_at <index> -- base58check address of hs_witness_key_at.
+hs_witness_base58_at() {
+  hs_base58_of_priv "$(hs_witness_key_at "$1")"
+}
+
 # hs_verify_key_table -- assert every hard-coded key/address pair still binds.
 hs_verify_key_table() {
   local pair got want
@@ -547,6 +605,10 @@ hs_p2p_port() {
 # hs_new_node <name> [slot] -- fresh data dir + config. Echoes the node dir.
 #
 # Overridable before the call (all optional):
+#   HS_CFG_WITNESS_COUNT          SRs on this ONE node, 1..27     (default 1)
+#                                 >1 derives the whole set and drives BOTH
+#                                 genesis.block.witnesses and localwitness;
+#                                 mutually exclusive with the two knobs below
 #   HS_CFG_WITNESS_KEY            witness private key            (default W1)
 #   HS_CFG_GENESIS_WITNESSES      "addr:votes[,addr:votes...]"   (default W1:100)
 #   HS_CFG_ACTIVE_PEERS           "ip:port[,ip:port...]" -> node.active
@@ -579,8 +641,20 @@ hs_write_node_config() {
   local node_dir="$1"
   hs_load_ports "$node_dir"
 
+  local witness_count="${HS_CFG_WITNESS_COUNT:-1}"
+  case "$witness_count" in
+    ''|*[!0-9]*) hs_die "HS_CFG_WITNESS_COUNT must be an integer, got '$witness_count'" ;;
+  esac
+  [ "$witness_count" -ge 1 ] \
+    || hs_die "HS_CFG_WITNESS_COUNT must be >= 1, got $witness_count"
+  [ "$witness_count" -le "$HS_MAX_WITNESSES" ] \
+    || hs_die "HS_CFG_WITNESS_COUNT=$witness_count exceeds MAX_ACTIVE_WITNESS_NUM=$HS_MAX_WITNESSES (Parameter.java:66); DposService.updateWitness() would silently truncate the set"
+
   local witness_key="${HS_CFG_WITNESS_KEY:-$HS_KEY_WITNESS1}"
   local genesis_witnesses="${HS_CFG_GENESIS_WITNESSES:-$HS_ADDR_WITNESS1:100}"
+  # Single line, two-space indent -- the historical shape of the localwitness
+  # body. Multi-SR replaces it below; count==1 must stay byte-identical.
+  local witness_key_block="  $witness_key"
   local active_peers="${HS_CFG_ACTIVE_PEERS:-}"
   local archive_enable="${HS_CFG_ARCHIVE_ENABLE:-true}"
   local identity_init="${HS_CFG_ARCHIVE_IDENTITY_INIT:-true}"
@@ -602,6 +676,32 @@ hs_write_node_config() {
   # activates the TVM proposal chain the contract oracles depend on.
   local committee_block="${HS_CFG_COMMITTEE:-$HS_DEFAULT_COMMITTEE}"
   local HS_COMMITTEE_BLOCK="$committee_block"
+
+  # Multi-SR: derive the whole set and feed it to BOTH lists. The genesis list
+  # is built in the same "addr:votes,addr:votes" form the loop below already
+  # consumes, so there is exactly one place that renders a witness entry.
+  if [ "$witness_count" -gt 1 ]; then
+    if [ -n "${HS_CFG_WITNESS_KEY:-}" ] || [ -n "${HS_CFG_GENESIS_WITNESSES:-}" ]; then
+      hs_die "HS_CFG_WITNESS_COUNT=$witness_count cannot be combined with an explicit HS_CFG_WITNESS_KEY / HS_CFG_GENESIS_WITNESSES -- pick one witness source"
+    fi
+    local w_i=1 w_priv w_addr
+    genesis_witnesses=""
+    witness_key_block=""
+    while [ "$w_i" -le "$witness_count" ]; do
+      w_priv="$(hs_witness_key_at "$w_i")"
+      w_addr="$(hs_base58_of_priv "$w_priv")"
+      if [ "$w_i" -eq 1 ]; then
+        genesis_witnesses="$w_addr:$HS_WITNESS_VOTES"
+        witness_key_block="  $w_priv"
+      else
+        genesis_witnesses="$genesis_witnesses,$w_addr:$HS_WITNESS_VOTES"
+        witness_key_block="$witness_key_block,
+  $w_priv"
+      fi
+      w_i=$((w_i + 1))
+    done
+    hs_log "multi-SR chain: $witness_count witnesses on one node (expect solid to trail head by $((witness_count - 1 - witness_count * 30 / 100)) blocks once every SR has produced)"
+  fi
 
   local old_ifs="$IFS"
   local witness_block="" active_block="" entry addr votes
@@ -719,7 +819,7 @@ genesis.block = {
 }
 
 localwitness = [
-  $witness_key
+$witness_key_block
 ]
 
 block = {
@@ -746,7 +846,7 @@ $HS_COMMITTEE_BLOCK
 
 event.subscribe = { enable = false }
 EOF
-  hs_log "wrote $node_dir/node.conf (archive=$archive_enable identity.initialize=$identity_init)"
+  hs_log "wrote $node_dir/node.conf (archive=$archive_enable identity.initialize=$identity_init witnesses=$witness_count)"
 }
 
 # hs_config_set_identity_init <node_dir> <true|false>
@@ -1123,8 +1223,17 @@ hs_node_exit_reason() {
 }
 
 # hs_node_has_archive_failstop <node_dir> -- ExitManager.java:49 breadcrumb.
+#
+# ARCHIVE_RUNTIME is the general archive fail-stop code, but an archive-caused refusal may carry a
+# more specific pre-existing TronError classification. The genesis fence is the known case: a
+# canonical genesis without a matching COMMITTED marker exits as GENESIS_BLOCK_INIT (see
+# Manager.archiveGenesisCanonicalStateError). Grading only ARCHIVE_RUNTIME scores that correct,
+# well-classified fail-stop as a harness ERROR, so accept either code and require the reason text
+# to name the archive.
 hs_node_has_archive_failstop() {
-  hs_log_has "$1" 'Shutting down with code: ARCHIVE_RUNTIME'
+  hs_log_has "$1" 'Shutting down with code: ARCHIVE_RUNTIME' && return 0
+  hs_log_has "$1" 'Shutting down with code: GENESIS_BLOCK_INIT' \
+    && hs_log_has "$1" 'archive'
 }
 
 # hs_node_has_watchdog_halt <node_dir> -- ArchiveFatalController.java:224
