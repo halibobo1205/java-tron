@@ -73,6 +73,11 @@
 #     FAULT_IMAGE_MB             size of the ENOSPC disk image (default 256)
 #     FAULT_MIN_HEAD             blocks to produce before injecting a fault (default 6)
 #     FAULT_FAILSTOP_TIMEOUT     seconds to wait for a fail-stop after injection (default 240)
+#     HS_CFG_WITNESS_COUNT       SRs on the single node, 1..27 (default 1).  At 1, solid == head
+#                                and the archive's in-flight window is ~2 blocks, so the fault
+#                                lands on a nearly empty window; at 27 solid trails head by 18
+#                                and the window is ~20 blocks.  Solidification-gated waits then
+#                                take ~54 s longer, which the timeouts below already allow for.
 #
 #   Exit 0 + `FAULT_E2E_OK checks=N ...`; exit 1 + `FAULT_E2E_FAIL checks=N failures=M ...`;
 #   exit 2 + `HARNESS_ERROR` (the scenario could not run — no verdict about the product).
@@ -149,9 +154,14 @@ too loaded to grade a storage fault. Re-run on an idle machine, or raise FAULT_M
 }
 
 # start_case NAME ARCHIVE_DIR IDENTITY_INIT [DATADIR]
-#   Writes a config for a single-witness chain and starts the node.  A single witness keeps
-#   solid == head, so the archive publishes promptly and a plain SIGTERM restart is clean; that
-#   isolates this scenario's variable to the injected storage fault.
+#   Writes a config and starts the node.  The witness set follows HS_CFG_WITNESS_COUNT
+#   (ah_apply_witness_count in scenario-common.sh), which defaults to 1.
+#
+#   At the default, a single witness keeps solid == head, so the archive publishes promptly and a
+#   plain SIGTERM restart is clean; that isolates this scenario's variable to the injected storage
+#   fault.  HS_CFG_WITNESS_COUNT=27 puts 27 SRs on this same single node instead, which makes solid
+#   trail head by 18 and gives the archive the realistic ~20-block in-flight window; every wait
+#   that depends on solidification then takes ~54 s longer, which the timeouts above already allow.
 start_case() {
   local name="$1" archive_dir="$2" identity_init="$3" datadir="${4:-$RUN_DIR/$1/data}"
   ah_conf_reset

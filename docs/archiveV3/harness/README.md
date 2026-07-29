@@ -252,18 +252,36 @@ a local miner for the scheduled slot. No second process is needed.
 
 ```bash
 HS_CFG_WITNESS_COUNT=27 ./scenario-kill-matrix.sh
+HS_CFG_WITNESS_COUNT=27 ./scenario-resource-faults.sh
+HS_CFG_WITNESS_COUNT=27 ./scenario-concurrency-under-fault.sh
 ```
 
-**Reach**: the knob lives in `hs_write_node_config`, so it applies to the scenarios that
-materialize nodes through `hs_new_node` — `scenario-smoke.sh` and `scenario-kill-matrix.sh`.
-`scenario-resource-faults.sh`, `scenario-fork-reorg.sh` and `scenario-concurrency-under-fault.sh`
-emit their own `node.conf` from the `ah_*` templates (`scenario-common.sh:327`,
-`scenario-concurrency-under-fault.sh:824`) and are **not** affected; the fork scenario deliberately
-runs its own two-witness topology anyway.
+**Reach**: every single-node scenario honours the knob.
+
+* `scenario-smoke.sh` and `scenario-kill-matrix.sh` materialize nodes through `hs_new_node` →
+  `hs_write_node_config`.
+* `scenario-resource-faults.sh` renders its own `node.conf` from the `ah_*` template
+  (`ah_write_node_conf` in `scenario-common.sh`), which takes its witness set from
+  `ah_apply_witness_count`.
+* `scenario-concurrency-under-fault.sh` renders its own `write_node_conf`, whose single-node
+  phases (setup / baseline / clean-stop / sigkill) take theirs from `apply_witness_count`.
+
+The two scenario-local templates share `hs_witness_conf_blocks`, and all three paths bottom out in
+the same `hs_witness_key_at` (key scheme) and `hs_base58_of_priv` (address rendering), so neither
+is written twice anywhere in the harness. Only the *formatting* differs: `hs_write_node_config`
+labels each SR `http://<addr>.local`, the scenario templates `http://sr<N>.local`. Both are
+cosmetic `url` fields the node never dials.
+
+Two places deliberately ignore the knob, because their fork comes from a *different* mechanism —
+two separately stalled nodes make `solid` the MIN of both `latestBlockNum`s, which is what makes
+an arbitrarily deep fork legal: all of `scenario-fork-reorg.sh`, and the `reorg` phase of
+`scenario-concurrency-under-fault.sh` (`fork_write_conf` → `dual_witness_block`). Both keep their
+2-node / 2-witness partition topology at any `HS_CFG_WITNESS_COUNT`.
 
 Witness 1 is `HS_KEY_WITNESS1` verbatim and `HS_CFG_WITNESS_COUNT=1` regenerates a
-**byte-identical** `node.conf`, so existing scenarios are untouched. Witnesses 2..N come from
-`HS_WITNESS_KEY_PREFIX` + the 8-hex index (`hs_witness_key_at` / `hs_witness_base58_at`).
+**byte-identical** `node.conf` on all three paths, so existing scenarios are untouched. Witnesses
+2..N come from `HS_WITNESS_KEY_PREFIX` + the 8-hex index (`hs_witness_key_at` /
+`hs_witness_base58_at`).
 
 What changes for a caller at `N = 27`:
 

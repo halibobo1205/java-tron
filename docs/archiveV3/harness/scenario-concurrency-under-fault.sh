@@ -61,6 +61,14 @@
 #     --keep-going         run every phase even after one fails (default: stop at first FAIL)
 #     -h|--help            this help
 #
+#   Environment:
+#     HS_CFG_WITNESS_COUNT  SRs on the single node, 1..27 (default 1). At 1, solid == head and
+#                           the archive's in-flight window is ~2 blocks, so the faults land on a
+#                           nearly empty window; at 27 solid trails head by 18 and the window is
+#                           ~20 blocks. Solidification-gated waits then take ~54 s longer -- the
+#                           timeouts below already allow for it. The reorg phase is unaffected:
+#                           it needs its own 2-node partition and keeps its 2-witness topology.
+#
 set -uo pipefail
 
 SCENARIO_NAME="concurrency-under-fault"
@@ -840,6 +848,34 @@ single_witness_block() {
   printf '    { address: %s, url = "http://sr1.local", voteCount = 100 }' "${W1_B58}"
 }
 
+# apply_witness_count -- fill CONF_GENESIS_WITNESSES / CONF_LOCAL_WITNESS for the
+# SINGLE-NODE phases, honouring HS_CFG_WITNESS_COUNT (default 1).
+#
+# WHY IT MATTERS HERE: with one SR, solid == head, so the archive's in-flight
+# window (journaled but not yet solidified) is ~2 blocks and every fault lands on
+# a near-empty window. At 27 SRs on this one node solid trails head by 18 and the
+# window is ~20 blocks -- the state the storm phases are supposed to fault.
+#
+# The reorg phase keeps its own deliberate 2-node / 2-witness partition topology
+# (see fork_write_conf): the fork is only legal because solid is the MIN of two
+# separately stalled nodes, which is a different mechanism from this knob.
+#
+# Key derivation and address rendering live in lib.sh (hs_witness_key_at /
+# hs_base58_of_priv via hs_witness_conf_blocks); nothing is re-derived here.
+apply_witness_count() {
+  local count="${HS_CFG_WITNESS_COUNT:-1}"
+  if [ "${count}" = "1" ]; then
+    CONF_GENESIS_WITNESSES="$(single_witness_block)"
+    CONF_LOCAL_WITNESS="${W1_KEY}"
+    return 0
+  fi
+  have_fn hs_witness_conf_blocks \
+    || die "HS_CFG_WITNESS_COUNT=${count} needs lib.sh, which was not sourced"
+  hs_witness_conf_blocks "${JAR}" "${ASSET_DIR}/classes"
+  CONF_GENESIS_WITNESSES="${HS_WITNESS_GENESIS_BLOCK}"
+  CONF_LOCAL_WITNESS="${HS_WITNESS_LOCAL_BLOCK}"
+}
+
 dual_witness_block() {
   printf '    { address: %s, url = "http://sr1.local", voteCount = 100 },\n' "${W1_B58}"
   printf '    { address: %s, url = "http://sr2.local", voteCount = 99 }' "${W2_B58}"
@@ -1204,8 +1240,7 @@ write_single_conf() { # identity_init
   CONF_JSONRPC_PORT="${P_JSONRPC}"
   CONF_METRICS_PORT="${P_METRICS}"
   CONF_ACTIVE=""
-  CONF_GENESIS_WITNESSES="$(single_witness_block)"
-  CONF_LOCAL_WITNESS="${W1_KEY}"
+  apply_witness_count
   write_node_conf "${NODE_CONF}"
 }
 
@@ -1227,7 +1262,7 @@ start_single_node() { # identity_init label
 }
 
 phase_setup() {
-  log "== setup: fresh single-SR chain with archive enabled =="
+  log "== setup: fresh ${HS_CFG_WITNESS_COUNT:-1}-SR chain with archive enabled =="
   if ! start_single_node true "setup"; then
     record_phase setup FAIL "node-never-ready:${NODE_OUTCOME:-unknown}"
     return 1
