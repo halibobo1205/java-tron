@@ -1058,7 +1058,7 @@ public final class DefaultArchiveService implements ArchiveService {
         validatePendingPublishedJournals(
             canonicalHeadNum, canonicalBlockProvider, canonicalHeadKnown);
         BlockCapsule previousCanonical = validatePublishedTailBeforeJournals(
-            blocks, canonicalHeadNum, canonicalBlockProvider, canonicalHeadKnown);
+            canonicalHeadNum, canonicalBlockProvider, canonicalHeadKnown);
         int retained = 0;
         if (!canonicalHeadKnown || canonicalHeadNum >= 0) {
           for (ArchiveInFlightBlock block : blocks) {
@@ -1413,11 +1413,8 @@ public final class DefaultArchiveService implements ArchiveService {
   }
 
   private BlockCapsule validatePublishedTailBeforeJournals(
-      List<ArchiveInFlightBlock> blocks, long canonicalHeadNum,
-      LongFunction<BlockCapsule> canonicalBlockProvider, boolean canonicalHeadKnown) {
-    if (blocks.isEmpty() && pendingPublishedJournals.isEmpty()) {
-      return null;
-    }
+      long canonicalHeadNum, LongFunction<BlockCapsule> canonicalBlockProvider,
+      boolean canonicalHeadKnown) {
     long publishedHead = txNumIndex.getLastArchivedBlock();
     if (publishedHead < 0) {
       if (!pendingPublishedJournals.isEmpty()) {

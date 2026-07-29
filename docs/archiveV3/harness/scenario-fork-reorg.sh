@@ -69,20 +69,17 @@
 #     FORK_DIVERGE_BLOCKS        orphan blocks to produce on A while partitioned (default 4)
 #     FORK_LEAD_BLOCKS           how far B must get ahead of A before healing (default 8)
 #     FORK_ASSERT_RESTART=1      additionally restart node A after the reorg and grade the restart
-#                                (off by default: restart durability is target B's kill matrix, and
-#                                a 2-witness chain has a known restart brick — see the note below)
+#                                (off by default because restart durability is target B's kill
+#                                matrix; enable it for the multi-witness restart regression)
 #
 #   Exit 0 + `FORK_E2E_OK checks=N ...`; exit 1 + `FORK_E2E_FAIL checks=N failures=M ...`;
 #   exit 2 + `HARNESS_ERROR` (the scenario could not run — no verdict about the product).
 #
-# KNOWN PRODUCT DEFECT this scenario deliberately does not gate on:
-#   restarting a node of a >=2-witness chain can fail archive startup validation with
-#   `archive head block N does not match canonical head block N-1`
-#   (chainbase/.../txnum/UnifiedArchiveTxNumIndex.java:206 via Manager.java:569).  ArchiveException
-#   is a plain RuntimeException, not a TronError, so ExitManager.findTronError finds nothing, no
-#   System.exit runs, and the JVM stays alive forever on the non-daemon Prometheus HTTP server
-#   started at FullNode.java:51.  With FORK_ASSERT_RESTART=1 this scenario grades that window and
-#   reports HUNG as a failure.
+# REGRESSION TARGET:
+#   A published archive head may legitimately be ahead of the recovered solidified metadata after
+#   batched canonical snapshots are flushed. The restart must validate that published block at its
+#   own canonical height, not require equality with the recovered solidified height. Any genuine
+#   startup mismatch must exit through ARCHIVE_RUNTIME rather than leave a live-but-dead JVM.
 
 set -uo pipefail
 
@@ -785,7 +782,7 @@ if [ "$FORK_ASSERT_RESTART" = "1" ]; then
     fi
   else
     ah_check fork.restart_after_reorg FAIL \
-      "HUNG: node A is alive, never served HTTP, and never exited — archive startup validation in Manager.initInternal throws a plain ArchiveException that ExitManager cannot turn into an exit; $(ah_archive_error_summary "$RUN_DIR/a-restart")"
+      "HUNG: node A is alive, never served HTTP, and never exited after archive startup validation; $(ah_archive_error_summary "$RUN_DIR/a-restart")"
     kill -KILL "$A_PID" 2>/dev/null; A_PID=""
   fi
 fi

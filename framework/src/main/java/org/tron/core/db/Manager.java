@@ -558,20 +558,7 @@ public class Manager {
       BlockCapsule canonicalHead = chainBaseManager.getBlockById(
           getDynamicPropertiesStore().getLatestBlockHeaderHash());
       this.khaosDb.start(canonicalHead);
-      if (archiveService.isEnabled()) {
-        long solidifiedNum = StrictMathWrapper.min(
-            getDynamicPropertiesStore().getLatestSolidifiedBlockNum(), canonicalHead.getNum());
-        archiveService.reconcilePublishedHeadOnStartup(canonicalHead.getNum());
-        archiveService.reconcileInFlightOnStartup(solidifiedNum, canonicalHead.getNum(),
-            blockNum -> getArchiveCanonicalBlock(blockNum, canonicalHead));
-        BlockCapsule archiveValidationHead = solidifiedNum == canonicalHead.getNum()
-            ? canonicalHead
-            : chainBaseManager.getBlockByNum(solidifiedNum);
-        archiveService.validateCanonicalHead(archiveValidationHead);
-        // Validate genesis coverage only after reconcile has republished any solidified in-flight
-        // genesis, so a recoverable archive is not mis-read as "genesis not captured" and bricked.
-        validateGenesisArchiveCoverage();
-      }
+      reconcileArchiveOnStartup(canonicalHead);
     } catch (ItemNotFoundException e) {
       logger.error(
           "Can not find Dynamic highest block from DB! \nnumber={} \nhash={}",
@@ -915,6 +902,31 @@ public class Manager {
     } catch (ItemNotFoundException | BadItemException e) {
       throw new IllegalStateException("cannot load canonical block " + blockNum
           + " for archive startup reconciliation", e);
+    }
+  }
+
+  void reconcileArchiveOnStartup(BlockCapsule canonicalHead) {
+    try {
+      if (!archiveService.isEnabled()) {
+        return;
+      }
+      long solidifiedNum = StrictMathWrapper.min(
+          getDynamicPropertiesStore().getLatestSolidifiedBlockNum(), canonicalHead.getNum());
+      archiveService.reconcilePublishedHeadOnStartup(canonicalHead.getNum());
+      // Reconcile validates the published tail at its own canonical height. It must not require
+      // equality with recovered solidifiedNum: a published block and its canonical root can be
+      // durable while the later finality update that made it publishable is lost with snapshots.
+      archiveService.reconcileInFlightOnStartup(solidifiedNum, canonicalHead.getNum(),
+          blockNum -> getArchiveCanonicalBlock(blockNum, canonicalHead));
+      // Validate genesis coverage only after reconcile has republished any solidified in-flight
+      // genesis, so a recoverable archive is not mis-read as "genesis not captured" and bricked.
+      validateGenesisArchiveCoverage();
+    } catch (TronError e) {
+      throw e;
+    } catch (RuntimeException | Error e) {
+      throw new TronError(
+          "fatal archive startup reconciliation failure",
+          e, TronError.ErrCode.ARCHIVE_RUNTIME);
     }
   }
 
