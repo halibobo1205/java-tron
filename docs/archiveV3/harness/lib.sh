@@ -700,12 +700,15 @@ hs_p2p_port() {
 # hs_new_node <name> [slot] -- fresh data dir + config. Echoes the node dir.
 #
 # Overridable before the call (all optional):
-#   HS_CFG_WITNESS_COUNT          SRs on this ONE node, 1..27     (default 1)
-#                                 >1 derives the whole set and drives BOTH
-#                                 genesis.block.witnesses and localwitness;
-#                                 mutually exclusive with the two knobs below
+#   HS_CFG_WITNESS_COUNT          genesis SR count, 1..27         (default 1)
+#                                 >1 derives the whole genesis set; local keys
+#                                 are selected by FIRST/LAST below and cannot be
+#                                 combined with the two explicit witness knobs
+#   HS_CFG_LOCAL_WITNESS_FIRST    first local SR key, inclusive   (default 1)
+#   HS_CFG_LOCAL_WITNESS_LAST     last local SR key, inclusive    (default count)
 #   HS_CFG_WITNESS_KEY            witness private key            (default W1)
 #   HS_CFG_GENESIS_WITNESSES      "addr:votes[,addr:votes...]"   (default W1:100)
+#   HS_CFG_MAX_FLUSH_COUNT        storage.snapshot.maxFlushCount  (default 1)
 #   HS_CFG_ACTIVE_PEERS           "ip:port[,ip:port...]" -> node.active
 #   HS_CFG_ARCHIVE_ENABLE         true|false                     (default true)
 #   HS_CFG_ARCHIVE_IDENTITY_INIT  true|false                     (default true)
@@ -742,6 +745,9 @@ hs_write_node_config() {
 
   local witness_key="${HS_CFG_WITNESS_KEY:-$HS_KEY_WITNESS1}"
   local genesis_witnesses="${HS_CFG_GENESIS_WITNESSES:-$HS_ADDR_WITNESS1:100}"
+  local local_witness_first="${HS_CFG_LOCAL_WITNESS_FIRST:-1}"
+  local local_witness_last="${HS_CFG_LOCAL_WITNESS_LAST:-$witness_count}"
+  local max_flush_count="${HS_CFG_MAX_FLUSH_COUNT:-1}"
   # Single line, two-space indent -- the historical shape of the localwitness
   # body. Multi-SR replaces it below; count==1 must stay byte-identical.
   local witness_key_block="  $witness_key"
@@ -761,6 +767,20 @@ hs_write_node_config() {
   local query_workers="${HS_CFG_QUERY_WORKERS:-2}"
   local max_concurrent="${HS_CFG_MAX_CONCURRENT_QUERIES:-8}"
   local p2p_version="${HS_CFG_P2P_VERSION:-20260728}"
+
+  case "$local_witness_first:$local_witness_last:$max_flush_count" in
+    *[!0-9:]*)
+      hs_die "local witness bounds and maxFlushCount must be positive integers" ;;
+  esac
+  if [ "$local_witness_first" -lt 1 ] || [ "$local_witness_first" -gt "$witness_count" ] \
+      || [ "$local_witness_last" -lt "$local_witness_first" ] \
+      || [ "$local_witness_last" -gt "$witness_count" ]; then
+    hs_die "invalid local witness range $local_witness_first..$local_witness_last" \
+      "for witness count $witness_count"
+  fi
+  if [ "$max_flush_count" -lt 1 ] || [ "$max_flush_count" -gt 500 ]; then
+    hs_die "HS_CFG_MAX_FLUSH_COUNT must be in 1..500, got $max_flush_count"
+  fi
 
   # Governance flags. HS_CFG_COMMITTEE overrides the whole block; the default
   # activates the TVM proposal chain the contract oracles depend on.
@@ -782,15 +802,22 @@ hs_write_node_config() {
       w_addr="$(hs_base58_of_priv "$w_priv")"
       if [ "$w_i" -eq 1 ]; then
         genesis_witnesses="$w_addr:$HS_WITNESS_VOTES"
-        witness_key_block="  $w_priv"
       else
         genesis_witnesses="$genesis_witnesses,$w_addr:$HS_WITNESS_VOTES"
-        witness_key_block="$witness_key_block,
+      fi
+      if [ "$w_i" -ge "$local_witness_first" ] && [ "$w_i" -le "$local_witness_last" ]; then
+        if [ -z "$witness_key_block" ]; then
+          witness_key_block="  $w_priv"
+        else
+          witness_key_block="$witness_key_block,
   $w_priv"
+        fi
       fi
       w_i=$((w_i + 1))
     done
-    hs_log "multi-SR chain: $witness_count witnesses on one node (expect solid to trail head by $((witness_count - 1 - witness_count * 30 / 100)) blocks once every SR has produced)"
+    [ -n "$witness_key_block" ] || hs_die "local witness range selected no keys"
+    hs_log "multi-SR chain: $witness_count genesis witnesses, local SRs" \
+      "$local_witness_first..$local_witness_last"
   fi
 
   local old_ifs="$IFS"
@@ -823,6 +850,7 @@ net { }
 storage {
   db.engine = "LEVELDB"
   db.directory = "database"
+  snapshot.maxFlushCount = $max_flush_count
 
   # Archive block per
   # docs/archiveV3/20260714-archive-from0-production-validation-runbook.md.
@@ -936,7 +964,9 @@ $HS_COMMITTEE_BLOCK
 
 event.subscribe = { enable = false }
 EOF
-  hs_log "wrote $node_dir/node.conf (archive=$archive_enable identity.initialize=$identity_init witnesses=$witness_count)"
+  hs_log "wrote $node_dir/node.conf (archive=$archive_enable identity.initialize=$identity_init" \
+    "witnesses=$witness_count local=$local_witness_first..$local_witness_last" \
+    "maxFlushCount=$max_flush_count)"
 }
 
 # hs_config_set_identity_init <node_dir> <true|false>
