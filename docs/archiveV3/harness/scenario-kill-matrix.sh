@@ -52,30 +52,41 @@
 #   w6  genesis commitToRoot -> COMMITTED marker  DETERMINISTIC via JDWP, else PROBABILISTIC.
 #                                    First boot of an empty data dir only.
 #
-# w2..w6 are hit by suspending the JVM on a breakpoint at the exact source anchor and killing it
-# while suspended (hs_jdb_break_and_kill). When a window cannot be armed -- no jdb, --no-jdwp, an
-# unresolvable anchor, or a jar/source mismatch -- the window AUTOMATICALLY degrades to a
-# randomized-timing loop of --prob-iters iterations. Degraded windows are labelled
-# `probabilistic(n)` in the verdict table, in every PHASE_VERDICT line, and in the run summary.
-# A probabilistic window can never prove it entered the target window; it can only prove that no
-# iteration produced a silent half state.
+# w2..w6 are hit by suspending the JVM on a breakpoint at a SEMANTIC anchor and killing it while
+# suspended (hs_jdb_break_and_kill). When a window cannot be armed -- no jdb, --no-jdwp, or a
+# descriptor that genuinely cannot be resolved -- the window AUTOMATICALLY degrades to a
+# randomized-timing loop of --prob-iters iterations, and the degradation note NAMES the descriptor
+# that failed. Degraded windows are labelled `probabilistic(n)` in the verdict table, in every
+# PHASE_VERDICT line, and in the run summary. A probabilistic window can never prove it entered
+# the target window; it can only prove that no iteration produced a silent half state.
 #
 # ==============================================================================================
 # JAR/SOURCE DRIFT -- a verified trap; do not remove the preflight
 # ==============================================================================================
-# Breakpoints are set by SOURCE LINE. A jar whose line tables no longer match the working tree
-# will place the breakpoint in a DIFFERENT METHOD, and the run would report "hit" for a window it
-# never reached. This is not hypothetical: at the time of writing, the checked-in
-# framework/build/libs/FullNode.jar had pushBlock() spanning source lines 1815-1986, so the
-# documented anchors at 1994/2010/2013 resolved into blockTrigger().
+# Breakpoints are placed by CLASS:LINE, but a line number is not a name for a statement: one
+# inserted line anywhere above a method moves every anchor inside it, and the breakpoint then
+# suspends the JVM at the wrong statement. This is not hypothetical -- the checked-in
+# FullNode.jar once had pushBlock() spanning source lines 1815-1986 while the anchors documented
+# as 1994/2010/2013 resolved into blockTrigger().
 #
-# Three independent guards, all mandatory:
-#   1. Line numbers are never hardcoded -- km_resolve_anchor() greps the CURRENT source.
-#   2. STATIC:  km_verify_anchor() runs javap on the jar under test and requires the resolved
-#               line to appear in the target method's LineNumberTable.
-#   3. RUNTIME: jdb prints `Breakpoint hit: ... Class.method(), line=N`; km_assert_hit_method()
-#               requires the reported method to match before the kill is credited.
-# If guard 2 or 3 fails, the window degrades to probabilistic rather than reporting a false pass.
+# Anchors are therefore SEMANTIC, never positional. anchor.sh owns ONE registry of descriptors of
+# the form "class + source method + (optionally) after-this-statement + the-statement-matching-R"
+# and resolves each at run time. Read anchor.sh for the design; the guards it provides:
+#   1. SOURCE:  the descriptor must select EXACTLY ONE statement inside the named method's
+#               brace-matched body in the CURRENT working tree (comments and string literals are
+#               masked first). Zero or two matches is a HARD ERROR -- an ambiguous anchor is
+#               never silently resolved to "the first one".
+#   2. JAR:     javap -p -l on the jar UNDER TEST supplies the LineNumberTable for that method and
+#               for its compiler-synthesized lambda bodies. The breakpoint is emitted in JAR
+#               coordinates after solving for the one line offset between working-tree source and
+#               jar, so an edit ABOVE a method leaves the anchor exactly where it was, while a
+#               rewritten body has no consistent offset and is refused.
+#   3. RUNTIME: jdb prints `Breakpoint hit: ... Class.method(), line=N`; hs_anchor_assert_hit()
+#               requires BOTH the method (one of the jar's owners of that line) AND the line
+#               itself to match before the kill is credited.
+# Guard 1 or 2 failing degrades the window to probabilistic; guard 3 failing is an ERROR, because
+# by then the JVM has already been killed and the window cannot be honestly re-run in place.
+# Nothing here can report a false pass.
 #
 # ==============================================================================================
 # KNOWN PRODUCT DEFECT this matrix is expected to surface (do not paper over it)
@@ -106,13 +117,14 @@
 #     --prob-iters N       iterations for a degraded window (default 3)
 #     --height N           height to reach before killing (default 12)
 #     --bp-timeout SECS    breakpoint wait (default 180)
-#     --jdwp-port N        JDWP port (default 5005)
+#     --jdwp-port N        pin the JDWP port (default "auto": each node debugs on its own
+#                          block's +5 port, so two debugged nodes can never collide)
 #     --no-jdwp            force every window to the probabilistic path
 #     --allow-hung         accept HUNG as a passing outcome (documents the known defect)
 #     --strict             treat INCONCLUSIVE as a failure
 #     --keep               keep the run directory
 #
-# No production source is modified; it is only read to resolve line anchors.
+# No production source is modified; it is only read to resolve semantic anchors.
 
 set -uo pipefail
 
@@ -126,13 +138,23 @@ fi
 # shellcheck source=lib.sh disable=SC1091
 . "$KM_DIR/lib.sh"
 
+# anchor.sh is not optional. Without it every deterministic window would degrade, and a run that
+# quietly reports six probabilistic windows looks far greener than it is; refuse to start instead.
+if [ ! -f "$KM_DIR/anchor.sh" ]; then
+  printf 'FATAL %s/anchor.sh not found; semantic anchors cannot be resolved\n' "$KM_DIR" >&2
+  printf 'KILL_MATRIX_FAIL reason=missing-anchor-registry\n'
+  exit 2
+fi
+# shellcheck source=anchor.sh disable=SC1091
+. "$KM_DIR/anchor.sh"
+
 # ---------------------------------------------------------------------------------------- knobs
 
 KM_WINDOWS="w1 w2 w3 w4 w5 w6"
 KM_PROB_ITERS=3
 KM_HEIGHT=12
 KM_BP_TIMEOUT=180
-KM_JDWP_PORT=5005
+KM_JDWP_PORT=auto
 KM_NO_JDWP=0
 KM_ALLOW_HUNG=0
 KM_STRICT=0
@@ -148,13 +170,15 @@ while [ "$#" -gt 0 ]; do
     --allow-hung)  KM_ALLOW_HUNG=1; shift ;;
     --strict)      KM_STRICT=1; shift ;;
     --keep)        HS_KEEP_WORKDIR=1; export HS_KEEP_WORKDIR; shift ;;
-    -h|--help)     sed -n '2,115p' "$0"; exit 0 ;;
+    -h|--help)     sed -n '2,127p' "$0"; exit 0 ;;
     *) printf 'unknown option: %s\n' "$1" >&2; exit 2 ;;
   esac
 done
 
-KM_MANAGER_SRC="framework/src/main/java/org/tron/core/db/Manager.java"
-KM_BACKEND_SRC="chainbase/src/main/java/org/tron/core/archive/UnifiedArchiveBackend.java"
+# Source paths, classes and statements are NOT declared here. Every anchor this scenario uses is a
+# named descriptor in anchor.sh (km.w2 .. km.w6), so a production rename is fixed in one place and
+# the catch-up scenario shares the same registry.
+KM_ANCHOR_PREFIX="km."
 
 # ------------------------------------------------------------------- lib.sh compatibility
 #
@@ -203,7 +227,6 @@ KM_ROW_MODE=""
 KM_ROW_VERDICT=""
 KM_ROW_NOTE=""
 KM_SLOT=0
-KM_ANCHOR_WHY=""
 KM_VERDICT=""
 KM_NOTE=""
 
@@ -242,96 +265,33 @@ km_record() {
   hs_marker PHASE_VERDICT "window=$id" "mode=$mode" "verdict=$verdict" "detail=$detail"
 }
 
-# ------------------------------------------------------------------------------ source anchors
+# ---------------------------------------------------------------------------- semantic anchors
+#
+# Resolution, the jar cross-check and the runtime hit assertion all live in anchor.sh, which is
+# shared with scenario-catchup-batch-flush-kill.sh. This scenario only needs to (a) ask for a
+# window's descriptor, (b) log what it got, and (c) degrade -- naming the descriptor -- when it
+# cannot be had.
 
-# km_repo_root -- repo root, independent of hs_init ordering (anchors are resolved before the
-# harness is fully initialized in some paths, and hs_repo_root refuses to answer that early).
-km_repo_root() {
-  local root=""
-  if declare -F hs_repo_root >/dev/null 2>&1; then
-    root="$(hs_repo_root 2>/dev/null)" || root=""
+# km_anchor <window> -- echo the anchor.sh result line for that window ("OK ..." or "FAIL ...").
+# Echoed, not stored in a global: every caller runs this inside $( ).
+km_anchor() {
+  hs_anchor_resolve "${KM_ANCHOR_PREFIX}$1" "$HS_JAR"
+}
+
+# km_anchor_log <window> <resolve-line> -- one line of evidence for the transcript.
+km_anchor_log() {
+  local id="$1" res="$2" delta
+  delta="$(hs_anchor_field "$res" delta)"
+  hs_log "$id anchor: $(hs_anchor_field "$res" class):$(hs_anchor_field "$res" jarline)" \
+    "[$(hs_anchor_describe "${KM_ANCHOR_PREFIX}${id}")]"
+  hs_log "$id anchor source: $(hs_anchor_field "$res" src):$(hs_anchor_field "$res" srcline)" \
+    "jar-vs-source line offset=$delta; jar owners of that line: $(hs_anchor_field "$res" owners)"
+  if [ "$delta" != "0" ]; then
+    # Not an error -- the whole point of resolving in jar coordinates -- but it does mean the
+    # working tree has moved on from the jar under test, which is worth seeing in the log.
+    hs_log "$id NOTE: the working tree is $delta line(s) offset from $HS_JAR for this method;" \
+      "the breakpoint uses the JAR's line so it still lands on the same compiled statement"
   fi
-  [ -n "$root" ] || root="$(cd "$KM_DIR/../../.." >/dev/null 2>&1 && pwd)"
-  printf '%s\n' "$root"
-}
-
-# km_resolve_anchor <window> -> "<src> <line> <class> <method>"; empty when unresolvable.
-km_resolve_anchor() {
-  local w="$1" root line
-  root="$(km_repo_root)"
-  local m="$root/$KM_MANAGER_SRC" b="$root/$KM_BACKEND_SRC"
-
-  case "$w" in
-    w2)
-      # The canonical commit that immediately follows the durable journal write.
-      line="$(awk '/archiveJournalToken = journalArchiveBlockOnlyOrFailStop\(newBlock, "push block"\)/{f=NR}
-                   f && NR>f && /tmpSession\.commit\(\);/{print NR; exit}' "$m")"
-      [ -n "$line" ] && printf '%s %s %s %s\n' "$KM_MANAGER_SRC" "$line" org.tron.core.db.Manager pushBlock ;;
-    w3)
-      line="$(grep -n 'acknowledgeArchiveJournalOrFailStop(archiveJournalToken, newBlock, "push block");' "$m" \
-              | head -1 | cut -d: -f1)"
-      [ -n "$line" ] && printf '%s %s %s %s\n' "$KM_MANAGER_SRC" "$line" org.tron.core.db.Manager pushBlock ;;
-    w4)
-      line="$(awk '/acknowledgeArchiveJournalOrFailStop\(archiveJournalToken, newBlock, "push block"\);/{f=NR}
-                   f && NR>f && /publishArchiveSolidifiedOrFailStop\(/{print NR; exit}' "$m")"
-      [ -n "$line" ] && printf '%s %s %s %s\n' "$KM_MANAGER_SRC" "$line" org.tron.core.db.Manager pushBlock ;;
-    w5)
-      line="$(grep -n 'runPersistentMutation(() -> db.publishBlockAtomically(' "$b" | head -1 | cut -d: -f1)"
-      [ -n "$line" ] && printf '%s %s %s %s\n' "$KM_BACKEND_SRC" "$line" \
-        org.tron.core.archive.UnifiedArchiveBackend publishBlock ;;
-    w6)
-      # genesisSession.commitToRoot() has run; the COMMITTED marker has not been persisted yet.
-      line="$(grep -n 'saveArchiveGenesisCommitComplete(' "$m" | head -1 | cut -d: -f1)"
-      [ -n "$line" ] && printf '%s %s %s %s\n' "$KM_MANAGER_SRC" "$line" org.tron.core.db.Manager initGenesis ;;
-  esac
-}
-
-# km_verify_anchor <class> <method> <line> -- 0 when the jar under test agrees with the source.
-km_verify_anchor() {
-  local cls="$1" method="$2" line="$3" out
-  KM_ANCHOR_WHY=""
-  out="$(KM_JAR="$HS_JAR" KM_CLS="$cls" KM_MTH="$method" KM_LN="$line" python3 - <<'PYEOF' 2>/dev/null
-import os, re, subprocess, sys
-jar = os.environ["KM_JAR"]; cls = os.environ["KM_CLS"]
-method = os.environ["KM_MTH"]; line = int(os.environ["KM_LN"])
-try:
-    out = subprocess.run(["javap", "-p", "-l", "-cp", jar, cls],
-                         capture_output=True, text=True, check=True).stdout
-except Exception:
-    print("javap failed for " + cls); sys.exit(0)
-cur, table = None, {}
-for l in out.split("\n"):
-    if l.startswith("  ") and not l.startswith("   ") and "(" in l:
-        cur = l.strip(); table.setdefault(cur, set())
-    m = re.match(r"^\s+line (\d+): (\d+)$", l)
-    if m and cur:
-        table[cur].add(int(m.group(1)))
-hits = [k for k in table if re.search(r"\b" + re.escape(method) + r"\s*\(", k)]
-if not hits:
-    print("method %s not found in %s" % (method, cls)); sys.exit(0)
-if any(line in table[h] for h in hits):
-    print("OK"); sys.exit(0)
-owner = [k for k in table if line in table[k]]
-own = owner[0].split("(")[0].split()[-1] if owner else "no-method"
-rng = sorted(table[hits[0]])
-span = "%d-%d" % (rng[0], rng[-1]) if rng else "empty"
-print("line %d belongs to '%s'; %s covers %s (jar is stale vs source)" % (line, own, method, span))
-PYEOF
-)"
-  [ "$out" = "OK" ] && return 0
-  KM_ANCHOR_WHY="${out:-anchor verification produced no output}"
-  return 1
-}
-
-# km_assert_hit_method <jdb-log> <method> -- 0 when the breakpoint fired in the expected method.
-km_assert_hit_method() {
-  local log="$1" method="$2" hit
-  hit="$(grep -m1 'Breakpoint hit' "$log" 2>/dev/null)"
-  [ -n "$hit" ] || return 1
-  case "$hit" in
-    *".${method}("*) return 0 ;;
-    *) KM_ANCHOR_WHY="breakpoint fired outside $method: $hit"; return 1 ;;
-  esac
 }
 
 # ------------------------------------------------------------------------------ offline probe
@@ -627,29 +587,25 @@ km_run_w1() {
 # km_run_bp_window <id> <label>
 km_run_bp_window() {
   local id="$1" label="$2"
-  local anchor src line cls method node_dir oracle prehead hit jdb_log
+  local res loc owners node_dir oracle prehead hit jdb_log why
 
   hs_step "$id -- $label"
 
-  anchor="$(km_resolve_anchor "$id")"
-  if [ -z "$anchor" ]; then
-    km_run_probabilistic "$id" midchain "anchor not resolvable in the current source"
-    return
-  fi
-  set -- $anchor
-  src="$1"; line="$2"; cls="$3"; method="$4"
-  hs_log "$id anchor: $src:$line ($cls.$method)"
+  res="$(km_anchor "$id")"
+  case "$res" in
+    OK\ *) km_anchor_log "$id" "$res" ;;
+    *)
+      # The reason already names the descriptor (anchor.sh prints "FAIL descriptor=km.wN ...").
+      km_run_probabilistic "$id" midchain "${res#FAIL }"
+      return ;;
+  esac
+  loc="$(hs_anchor_field "$res" class):$(hs_anchor_field "$res" jarline)"
+  owners="$(hs_anchor_field "$res" owners)"
 
   if [ "$KM_NO_JDWP" -eq 1 ] || ! command -v jdb >/dev/null 2>&1; then
     km_run_probabilistic "$id" midchain "jdb unavailable or --no-jdwp"
     return
   fi
-  if ! km_verify_anchor "$cls" "$method" "$line"; then
-    hs_log "$id anchor rejected: $KM_ANCHOR_WHY"
-    km_run_probabilistic "$id" midchain "jar/source drift: $KM_ANCHOR_WHY"
-    return
-  fi
-  hs_log "$id anchor verified against $HS_JAR"
 
   HS_JDWP_PORT="$KM_JDWP_PORT"; HS_JDWP_SUSPEND=n
   export HS_JDWP_PORT HS_JDWP_SUSPEND
@@ -663,13 +619,13 @@ km_run_bp_window() {
   km_oracle_capture "$node_dir" "$oracle" "$KM_HEIGHT"
   prehead="$(km_head_now "$node_dir")"
 
-  hit="$(hs_jdb_break_and_kill "$node_dir" "$cls:$line" "$KM_BP_TIMEOUT")"
+  hit="$(hs_jdb_break_and_kill "$node_dir" "$loc" "$KM_BP_TIMEOUT")"
   unset HS_JDWP_PORT HS_JDWP_SUSPEND
 
   # The transcript path comes from lib.sh, never from a locally reconstructed name: an
-  # off-by-one-character guess makes km_assert_hit_method fail on EVERY successful hit and
+  # off-by-one-character guess makes the hit assertion fail on EVERY successful hit and
   # turns a working deterministic window into a permanent ERROR.
-  jdb_log="$(hs_jdb_log_path "$node_dir" "$cls:$line")"
+  jdb_log="$(hs_jdb_log_path "$node_dir" "$loc")"
   if [ "$hit" != "HIT" ]; then
     hs_node_kill9 "$node_dir" 2>/dev/null || true
     km_run_probabilistic "$id" midchain "breakpoint never fired within ${KM_BP_TIMEOUT}s"
@@ -679,8 +635,9 @@ km_run_bp_window() {
     km_record "$id" deterministic ERROR "jdb reported a hit but no transcript at $jdb_log; the method guard could not run"
     return
   fi
-  if ! km_assert_hit_method "$jdb_log" "$method"; then
-    km_record "$id" deterministic ERROR "$KM_ANCHOR_WHY"
+  why="$(hs_anchor_assert_hit "$jdb_log" "$owners" "$(hs_anchor_field "$res" jarline)")"
+  if [ -n "$why" ]; then
+    km_record "$id" deterministic ERROR "$why"
     return
   fi
 
@@ -699,26 +656,22 @@ km_run_bp_window() {
 # ------------------------------------------------------------------------------ w6: genesis
 
 km_run_w6() {
-  local anchor src line cls method node_dir hit jdb_log probe
+  local res loc owners node_dir hit jdb_log probe why
 
   hs_step "w6 -- SIGKILL between genesis commitToRoot and the COMMITTED marker (first boot)"
 
-  anchor="$(km_resolve_anchor w6)"
-  if [ -z "$anchor" ]; then
-    km_run_probabilistic w6 genesis "anchor not resolvable in the current source"
-    return
-  fi
-  set -- $anchor
-  src="$1"; line="$2"; cls="$3"; method="$4"
-  hs_log "w6 anchor: $src:$line ($cls.$method)"
+  res="$(km_anchor w6)"
+  case "$res" in
+    OK\ *) km_anchor_log w6 "$res" ;;
+    *)
+      km_run_probabilistic w6 genesis "${res#FAIL }"
+      return ;;
+  esac
+  loc="$(hs_anchor_field "$res" class):$(hs_anchor_field "$res" jarline)"
+  owners="$(hs_anchor_field "$res" owners)"
 
   if [ "$KM_NO_JDWP" -eq 1 ] || ! command -v jdb >/dev/null 2>&1; then
     km_run_probabilistic w6 genesis "jdb unavailable or --no-jdwp"
-    return
-  fi
-  if ! km_verify_anchor "$cls" "$method" "$line"; then
-    hs_log "w6 anchor rejected: $KM_ANCHOR_WHY"
-    km_run_probabilistic w6 genesis "jar/source drift: $KM_ANCHOR_WHY"
     return
   fi
 
@@ -732,10 +685,10 @@ km_run_w6() {
   export HS_JDWP_PORT HS_JDWP_SUSPEND
   hs_node_start "$node_dir"
 
-  hit="$(hs_jdb_break_and_kill "$node_dir" "$cls:$line" "$KM_BP_TIMEOUT")"
+  hit="$(hs_jdb_break_and_kill "$node_dir" "$loc" "$KM_BP_TIMEOUT")"
   unset HS_JDWP_PORT HS_JDWP_SUSPEND
 
-  jdb_log="$(hs_jdb_log_path "$node_dir" "$cls:$line")"
+  jdb_log="$(hs_jdb_log_path "$node_dir" "$loc")"
   if [ "$hit" != "HIT" ]; then
     hs_node_kill9 "$node_dir" 2>/dev/null || true
     km_run_probabilistic w6 genesis "genesis breakpoint never fired within ${KM_BP_TIMEOUT}s"
@@ -745,8 +698,9 @@ km_run_w6() {
     km_record w6 deterministic ERROR "jdb reported a hit but no transcript at $jdb_log"
     return
   fi
-  if ! km_assert_hit_method "$jdb_log" "$method"; then
-    km_record w6 deterministic ERROR "$KM_ANCHOR_WHY"
+  why="$(hs_anchor_assert_hit "$jdb_log" "$owners" "$(hs_anchor_field "$res" jarline)")"
+  if [ -n "$why" ]; then
+    km_record w6 deterministic ERROR "$why"
     return
   fi
 
@@ -875,12 +829,34 @@ main() {
   if [ "$KM_NO_JDWP" -eq 1 ]; then
     hs_log "--no-jdwp: every breakpoint window will run on the probabilistic path"
   elif command -v jdb >/dev/null 2>&1; then
-    hs_log "jdb found: w2..w6 will be armed deterministically via JDWP on port $KM_JDWP_PORT"
+    hs_log "jdb found: w2..w6 will be armed deterministically via JDWP (port $KM_JDWP_PORT)"
   else
     hs_log "jdb NOT found: w2..w6 will degrade to the probabilistic path"
   fi
   km_build_probe && hs_log "offline archive probe compiled" \
     || hs_log "WARNING: ArchiveProbe.java unavailable; structural checks will be skipped"
+
+  # Resolve every breakpoint anchor BEFORE the first node boots. A descriptor that no longer
+  # matches the production source costs a full boot+kill+restart cycle to discover otherwise, and
+  # printing them here makes "which statement did this run actually break on" answerable from the
+  # transcript alone rather than from the source at some later date.
+  local a res
+  hs_step "resolving semantic breakpoint anchors against $HS_JAR"
+  for a in $KM_WINDOWS; do
+    case "$a" in
+      w2|w3|w4|w5|w6) ;;
+      *) continue ;;
+    esac
+    res="$(km_anchor "$a")"
+    case "$res" in
+      OK\ *)
+        hs_log "$a -> $(hs_anchor_field "$res" class):$(hs_anchor_field "$res" jarline)" \
+          "(src $(hs_anchor_field "$res" src):$(hs_anchor_field "$res" srcline)," \
+          "offset $(hs_anchor_field "$res" delta)) -- $(hs_anchor_describe "$KM_ANCHOR_PREFIX$a")" ;;
+      *)
+        hs_log "$a -> UNRESOLVED: ${res#FAIL }" ;;
+    esac
+  done
 
   local w
   for w in $KM_WINDOWS; do

@@ -41,9 +41,11 @@ AH_JAR="${ARCHIVE_HARNESS_JAR:-$AH_REPO_ROOT/framework/build/libs/FullNode.jar}"
 AH_JVM_OPTS="${ARCHIVE_HARNESS_JVM_OPTS:--Xms1g -Xmx2g}"
 AH_CLASSES_DIR=""
 
-# Every listening port a scenario uses is shifted by this offset, so two harness runs (or a harness
-# run and an unrelated local node) can coexist on one machine.
-AH_PORT_OFFSET="${ARCHIVE_HARNESS_PORT_OFFSET:-0}"
+# THE port map (bands per scenario, 10-port blocks per node, nothing in the ephemeral range).
+# Shared with lib.sh and run-all.sh so there is exactly one table; ARCHIVE_HARNESS_PORT_OFFSET
+# still shifts the whole space so two harness runs can coexist on one machine.
+# shellcheck source=ports.sh disable=SC1091
+. "$AH_HARNESS_DIR/ports.sh"
 
 # Pre-declared so `set -u` never trips on a caller that reads them before a node has been started.
 AH_LAST_PID=""
@@ -234,13 +236,32 @@ fi
 #   * archive.identity.initialize must be true on the FIRST boot of an empty data dir and false on
 #     every restart (auto-claim is off by design).
 
+# ah_use_node_ports SLOT — point the config template at node SLOT's 10-port block inside this
+# scenario's band.  EVERY listener of the node comes from one base, so a node can never partially
+# collide with another (fork-reorg's node B used to take p2p from 16666+1 and the rest from the
+# +100 family, which is exactly how "only its gRPC port collides" happened).
+if ! declare -F ah_use_node_ports >/dev/null 2>&1; then
+  ah_use_node_ports() {
+    local slot="$1" base
+    [ -n "${AH_SCENARIO_SLUG:-}" ] \
+      || ah_fatal "AH_SCENARIO_SLUG must be set before ah_use_node_ports (it selects the port band)"
+    base="$(ah_port_node_base "$AH_SCENARIO_SLUG" "$slot")" \
+      || ah_fatal "cannot derive ports for $AH_SCENARIO_SLUG slot $slot (diagnosis above)"
+    AH_CONF_NODE_PORT_BASE=$base
+    AH_CONF_P2P_PORT=$((base + 0))
+    AH_CONF_HTTP_PORT=$((base + 1))
+    AH_CONF_RPC_PORT=$((base + 2))
+    AH_CONF_JSONRPC_PORT=$((base + 3))
+    AH_CONF_METRICS_PORT=$((base + 4))
+    AH_CONF_JDWP_PORT=$((base + 5))
+  }
+fi
+
 if ! declare -F ah_conf_reset >/dev/null 2>&1; then
   ah_conf_reset() {
-    AH_CONF_P2P_PORT=16666
-    AH_CONF_HTTP_PORT=8090
-    AH_CONF_RPC_PORT=50051
-    AH_CONF_JSONRPC_PORT=8545
-    AH_CONF_METRICS_PORT=9527
+    # Slot 0 is only a default; every scenario calls ah_use_node_ports for the node it is
+    # about to write, so a forgotten override cannot silently reuse another node's block.
+    ah_use_node_ports 0
     AH_CONF_P2P_VERSION=20260728
     AH_CONF_WITNESS_KEY=1234567890123456789012345678901234567890123456789012345678901234
     AH_CONF_GENESIS_WITNESSES='    { address: TEDapYSVvAZ3aYH7w8N9tMEEFKaNKUD5Bp, url = "http://sr1.local", voteCount = 100 }'
