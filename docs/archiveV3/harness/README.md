@@ -25,6 +25,7 @@ This harness exists to close the four gaps every prior audit round flagged as "n
 | **B** | `SIGKILL` durability matrix | At each durability window (journal put / canonical commit / ack / publish / genesis marker), does restart give **full recovery** or an **explicit fail-stop**? Silent acceptance of a half state is a FAILURE. |
 | **C** | Resource faults | ENOSPC, read-only archive dir, truncated files, device disappearance: fail-stop, never silent divergence. |
 | **D** | Concurrency under fault | Historical queries in flight during a reorg unwind and during a fail-stop. |
+| **E** | Historical **accuracy** on a healthy chain | When the archive *does* answer, is the answer **right**? A–D all ask whether the archive survives; E asks whether a surviving archive returns the value that was actually in force at height H, for normal transfers, contract state and system (SR-reward) writes — checked only against **independent** oracles (see §9). |
 
 **Not proven here:** mainnet-scale sync, multi-day soak, sustained production query load, or
 byte-level SST corruption. This is correctness-under-fault on a local private chain — it is not a
@@ -44,6 +45,9 @@ docs/archiveV3/harness/
   run-all.sh                    suite driver (discovery, ordering, per-scenario timeout, roll-up)
 
   scenario-smoke.sh             foundation self-test AND the worked template for A-D
+  scenario-history-accuracy.sh  (E) historical ACCURACY on a healthy 27-SR chain: normal
+                                transfers, contract storage/code/eth_call, SELFDESTRUCT and
+                                SR block rewards, each checked against an independent oracle
   scenario-fork-reorg.sh        (A) fork / reorg across a real Manager.switchFork
   scenario-kill-matrix.sh       (B) the six SIGKILL durability windows
   scenario-resource-faults.sh   (C) ENOSPC, read-only archive dir, truncated MANIFEST
@@ -101,7 +105,18 @@ cd docs/archiveV3/harness
 ./scenario-smoke.sh                  # foundation self-test, ~3 minutes
 HS_SKIP_BUILD=1 ./scenario-smoke.sh  # reuse the existing jar
 HS_KEEP_WORKDIR=1 ./scenario-smoke.sh  # keep the run dir for post-mortem
+
+HS_CFG_WITNESS_COUNT=27 ./scenario-history-accuracy.sh   # (E) accuracy, ~12 minutes
 ```
+
+`scenario-history-accuracy.sh` is the one scenario that defaults `HS_CFG_WITNESS_COUNT` to **27**
+rather than 1 (a one-SR chain has `solid == head`, so "historical" barely means anything), and the
+one that patches its OWN generated `node.conf` — `block.maintenanceTimeInterval` down to 30 s and a
+28th, initially dormant `localwitness` key. Both are needed only so a **non-genesis** witness can
+exist: `WithdrawBalanceActuator.java:112-120` refuses to let a genesis ("guard representative")
+witness withdraw, and `MaintenanceManager.java:103-129` only promotes a newly voted witness at a
+maintenance round. `lib.sh`'s shared defaults are untouched, so every other scenario is unaffected.
+It is also the only scenario that **deletes its run directory on a clean pass** (failures keep it).
 
 Each scenario is standalone and creates its own fresh run directory under
 `${HS_WORK_ROOT:-$TMPDIR/java-tron-archive-harness}/<scenario>-<timestamp>-<pid>/`, containing per
@@ -150,6 +165,7 @@ FORK_E2E_FAIL checks=17 failures=2 depth=12
 | Scenario | Marker | Sub-verdicts |
 |---|---|---|
 | `scenario-smoke.sh` | `SMOKE_E2E_OK` / `_FAIL` | — |
+| `scenario-history-accuracy.sh` | `HISTORY_ACCURACY_OK` / `_FAIL` | `CHECK [PASS\|FAIL\|INFO] <check> h=… src=…` lines, then a `VERDICT TABLE` |
 | `scenario-fork-reorg.sh` | `FORK_E2E_OK` / `_FAIL` | `CHECK [PASS] fork.<name>` lines |
 | `scenario-kill-matrix.sh` | `KILL_MATRIX_OK` / `_FAIL` | `PHASE_VERDICT window=… mode=… verdict=…` |
 | `scenario-resource-faults.sh` | `FAULT_E2E_OK` / `_FAIL` | `CHECK [PASS] fault.<case>.<name>` lines |
@@ -450,6 +466,25 @@ things that silently produce a wrong verdict.
     the branches re-solidify. Partition with `hs_relay_start`/`hs_relay_stop` (kill the relay) and
     deepen a branch with `hs_node_suspend` — never by restarting a node (see the blocker below).
 
+15. **`latest` is NOT "the state at the end of the head block" — it includes the PENDING pool.**
+    `Manager.pushTransaction` (`Manager.java:1264-1270`) executes a freshly broadcast transaction
+    inside a session and `tmpSession.merge()`s it into the head snapshot immediately, so
+    `eth_getBalance`/`eth_getStorageAt` at tag `latest` already reflect transactions that **no
+    block contains yet**. Any harness that records "the live value while head was H" is therefore
+    recording a value that was never in force at H, unless it first checks that the pool is empty.
+    *Measured:* `scenario-history-accuracy.sh` filed the post-transfer balances of block 72 under
+    height 71 and reported two FAILs against a **correct** archive. The fix is the pending guard in
+    `ha_sample_now`: refuse to sample unless `/wallet/getpendingsize` reports `0` both before and
+    after the read. Coverage cost is about one height per transaction, and those heights are still
+    pinned by the `tx`/`receipt` oracles.
+
+16. **`hs_wait_archive_drained` is meaningless while a multi-SR chain is producing.** It waits for
+    `tron:archive_state{type="oldest_inflight_block"} == -1`, i.e. an empty in-flight set — but at
+    27 SRs `solid == head - 18`, so ~19-20 blocks are journalled-but-unpublished at every instant
+    (measured: `inflight_blocks=19`, `oldest_inflight_block=55` at head 74). Draining only means
+    something once production has stopped. To gate on "is height H queryable", probe the read
+    path's own range check with `hs_wait_hist_available`.
+
 ### Multi-witness restart regression
 
 The first two-witness run exposed a startup brick: the published archive head could legitimately be
@@ -495,6 +530,35 @@ The rules, and where each is enforced:
 | An archive fail-stop requires the **breadcrumb**, not just exit 1 — a port clash exits 1 too. | `hs_assert_fail_stop`, `grade_failstop`, `grade_restart` |
 | An injected fault must be **confirmed injected** before its outcome is graded. | truncation size check; `storm_saw_fault` |
 
+### The no-circular-oracle contract (`scenario-history-accuracy.sh`)
+
+A previous audit round rejected a "differential" accuracy test whose expected values were rebuilt
+from the system under test's own output. Comparing one archive answer against another archive
+answer is vacuity in a different costume: a uniformly wrong archive passes it.
+
+`scenario-history-accuracy.sh` therefore admits exactly five oracle kinds, and every verdict row
+names the one it used in its `src=` column:
+
+| `src` | What the expected value is derived from |
+|---|---|
+| `tx` | The transaction's own semantics — the amount this script chose to send, the 32-byte word it chose to `SSTORE`, the runtime bytecode it chose to deploy. Known before the node ever ran. |
+| `receipt` / `rcpt` | `/wallet/gettransactioninfobyid`: `.fee`, `.withdraw_amount`. The node's own accounting from the **canonical** execution path, not the archive. |
+| `live@H` | The **live** (`"latest"`) answer recorded at the instant head was exactly `H`, long before `H` was historical. `shouldUseArchive` is false for `"latest"` (`ArchiveJsonRpcStateAdapter.java:41`), so this never touches the code under test. `ha_sample_now` guards it twice: head is read **before and after** each sample (a block produced mid-sample would otherwise file values under the wrong height), and the sample is refused unless the **pending pool is empty** at both ends — see trap 15 in §8, which cost two spurious FAILs against a correct archive before it was added. |
+| `arith` | Arithmetic over the three above (`pre − amount − fee == post`). |
+| `probe` | One structural check reads the committed txNum index off disk with `ArchiveProbe`, node stopped. Archive storage, but not the query path under test. |
+
+Two further rules the scenario enforces:
+
+* **A live precondition gates every contract claim.** A prior attempt used hand-rolled bytecode
+  whose runtime code was never persisted, so `eth_getCode` answered empty at every height and the
+  whole contract section passed vacuously. The scenario now asserts on the **live** chain that the
+  deployed runtime code equals the bytes it deployed and that the getter returns the expected word
+  *before* any historical claim — and fails with **exit 2 (inconclusive)**, not exit 1, if it does
+  not: a chain that cannot run the contract has said nothing about the archive.
+* **`INFO` is not `PASS`.** Anything the RPC surface cannot express is emitted as an `INFO` row
+  that states exactly what is unproven, and `INFO` rows never touch the `hs_pass`/`hs_fail`
+  counters, so they can never make a run green.
+
 ### The subshell trap that defeats all of this
 
 `$( )` runs a function in a **subshell**: globals it assigns are discarded, `hs_fail`'s counter
@@ -514,6 +578,7 @@ Be precise about this when reporting results. "Written and reviewed" is not "exe
 | Component | Status |
 |---|---|
 | `scenario-smoke.sh` | **Executed green** against a real archive chain: `SMOKE_E2E_OK checks=23 oracles=5 finalHeight=8`. |
+| `scenario-history-accuracy.sh` | **Executed green** on a real 27-SR chain: `HISTORY_ACCURACY_OK checks=61 pass=57 fail=0 info=4 witnesses=27 samples=1280 txs=17 withdrawProof=1 publishedHead=77`. All three transaction classes proved against independent oracles, including the full SR-reward loop (`WitnessCreateContract` → freeze → vote → promotion at maintenance → `WithdrawBalanceContract`), whose `eth_getBalance` delta across the withdrawal block matched `receipt.withdraw_amount` (18 000 000 000 sun) exactly. The 4 `INFO` rows are RPC-surface limits (`AccountCapsule.allowance` and the reward dynamic properties are not projected by any historical method), not skipped assertions. **The archive produced no wrong answer in any run**; the two FAILs seen along the way were both traced to the harness's own live oracle (see the pending-pool trap in §8). |
 | `scenario-fork-reorg.sh` | **Executed green after the multi-witness restart fix** with strict reorg deltas and `FORK_ASSERT_RESTART=1`: `FORK_E2E_OK checks=20 passed=19 depth=6 switches=1`; node A restarted cleanly at head 24. |
 | `scenario-resource-faults.sh` | **Executed green** for `enospc` + `permission` and for opt-in `truncation`. **Re-run required**: fail-stop now demands a breadcrumb, and the probe now demands `opened == true` and `rangeCount > 0`. |
 | `scenario-concurrency-under-fault.sh` | **Executed green twice**, all 5 phases including a real 7-block reorg. The only change from review is the new "no value oracles" gate, which only fires on a chain that never published. |
