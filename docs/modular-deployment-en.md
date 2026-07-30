@@ -43,9 +43,13 @@ java-tron-1.0.0/bin/FullNode -c config.conf -w
 
 ## JVM configuration
 
-JVM options can also be specified, located in `bin/java-tron.vmoptions`:
+java-tron requires JDK 8 or newer on x86_64 and JDK 17 or newer on ARM64. The
+packaged defaults use the JDK 17+ JVM options when built with JDK 17 or newer;
+otherwise they use the CMS options.
+
+JVM options can also be specified in `bin/java-tron.vmoptions`:
 ```
-# demo (compatible with JDK 8 / JDK 17)
+# demo for JDK versions below 17
 -Xms2g
 -Xmx9g
 -XX:+PrintGCDetails
