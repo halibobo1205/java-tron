@@ -8,9 +8,14 @@ apply plugin: 'checkstyle'
 def versions = [
         checkstyle: '8.7',
 ]
-mainClassName = 'org.tron.plugins.ArchiveManifest'
-group 'org.tron'
-version '1.0.0'
+application {
+    mainClass = 'org.tron.plugins.ArchiveManifest'
+    applicationDistribution.from(rootProject.archInfo.VMOptions) {
+        into "bin"
+    }
+}
+group = 'org.tron'
+version = '1.0.0'
 
 configurations {
     checkstyleConfig
@@ -102,7 +107,9 @@ tasks.matching { it instanceof Test }.all {
 }
 
 if (project.hasProperty("mainClass")) {
-    mainClassName = mainClass
+    application {
+        mainClass = project.property("mainClass")
+    }
 }
 
 test {
@@ -129,17 +136,17 @@ test {
 
 jacocoTestReport {
     reports {
-        xml.enabled true
-        csv.enabled false
-        html.destination file("${buildDir}/jacocoHtml")
+        xml.required = true
+        csv.required = false
+        html.outputLocation = file("${buildDir}/jacocoHtml")
     }
     getExecutionData().setFrom(fileTree('../framework/build/jacoco').include("**.exec"))
 }
 
 def binaryRelease(taskName, jarName, mainClass) {
     return tasks.create("${taskName}", Jar) {
-        baseName = jarName
-        version = null
+        archiveBaseName = jarName
+        archiveVersion = ""
         from(sourceSets.main.output) {
             include "/**"
         }
@@ -167,23 +174,22 @@ def binaryRelease(taskName, jarName, mainClass) {
     }
 }
 
-def createScript(project, mainClass, name) {
+def createScript(project, mainClassName, name) {
     project.tasks.create(name: name, type: CreateStartScripts) {
         outputDir = new File(project.buildDir, 'scripts')
-        mainClassName = mainClass
+        mainClass = mainClassName
         applicationName = name
         classpath = project.tasks[JavaPlugin.JAR_TASK_NAME].outputs.files + project.configurations.runtimeClasspath
     }
     project.tasks[name].dependsOn(project.jar)
-    project.applicationDistribution.with {
+    project.extensions.getByType(org.gradle.api.plugins.JavaApplication).applicationDistribution.with {
         into("bin") {
             from(project.tasks[name])
-            fileMode = 0755
+            filePermissions {
+                unix('rwxr-xr-x')
+            }
         }
     }
-}
-applicationDistribution.from(rootProject.archInfo.VMOptions) {
-    into "bin"
 }
 createScript(project, 'org.tron.plugins.ArchiveManifest', 'ArchiveManifest')
 createScript(project, 'org.tron.plugins.Toolkit', 'Toolkit')
