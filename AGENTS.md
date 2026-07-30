@@ -10,7 +10,7 @@ Guidance for AI coding assistants and new contributors working on java-tron: how
 
 ## Build & Test
 
-Supported platforms: **Linux** and **macOS** only. The JDK requirement is determined by CPU architecture: **JDK 8** on x86_64, **JDK 17** on ARM64/aarch64 (Apple Silicon, AWS Graviton). The build fails fast if the JDK major version does not match the architecture.
+Supported platforms: **Linux** and **macOS** only. The minimum JDK is determined by CPU architecture: **JDK 8** or newer on x86_64, **JDK 17** or newer on ARM64/aarch64 (Apple Silicon, AWS Graviton). The build fails fast if the JDK is older than that minimum; the compiled bytecode still targets Java 8.
 
 ```bash
 ./gradlew clean build -x test                # build without tests

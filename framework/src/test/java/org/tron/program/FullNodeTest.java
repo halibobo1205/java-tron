@@ -30,7 +30,6 @@ import org.newsclub.net.unix.AFUNIXSocketAddress;
 import org.tron.common.application.Application;
 import org.tron.common.application.ApplicationFactory;
 import org.tron.common.application.TronApplicationContext;
-import org.tron.common.arch.Arch;
 import org.tron.common.exit.ExitManager;
 import org.tron.common.log.LogService;
 import org.tron.common.parameter.CommonParameter;
@@ -49,7 +48,6 @@ public class FullNodeTest {
   @Test
   public void testAttachSkipsNodeInitialization() {
     try (MockedStatic<ExitManager> exitManager = Mockito.mockStatic(ExitManager.class);
-        MockedStatic<Arch> arch = Mockito.mockStatic(Arch.class);
         MockedStatic<Args> args = Mockito.mockStatic(Args.class);
         MockedStatic<LogService> logService = Mockito.mockStatic(LogService.class);
         MockedConstruction<IpcClient> ipcClients = Mockito.mockConstruction(IpcClient.class,
@@ -60,7 +58,6 @@ public class FullNodeTest {
       Assert.assertEquals(1, ipcClients.constructed().size());
       Mockito.verify(ipcClients.constructed().get(0)).start("help");
       exitManager.verifyNoInteractions();
-      arch.verifyNoInteractions();
       args.verifyNoInteractions();
       logService.verifyNoInteractions();
     }
@@ -72,7 +69,6 @@ public class FullNodeTest {
     parameter.logbackPath = "node-logback.xml";
     Application application = Mockito.mock(Application.class);
     try (MockedStatic<ExitManager> exitManager = Mockito.mockStatic(ExitManager.class);
-        MockedStatic<Arch> arch = Mockito.mockStatic(Arch.class);
         MockedStatic<Args> args = Mockito.mockStatic(Args.class);
         MockedStatic<CommonParameter> parameters = Mockito.mockStatic(CommonParameter.class);
         MockedStatic<LogService> logService = Mockito.mockStatic(LogService.class);
@@ -87,7 +83,6 @@ public class FullNodeTest {
       FullNode.main(new String[] {"--log-config", "node-logback.xml"});
 
       exitManager.verify(ExitManager::initExceptionHandler);
-      arch.verify(Arch::throwIfUnsupportedJavaVersion);
       args.verify(() -> Args.setParam(Mockito.argThat((CommandLineArguments parsed) ->
           "node-logback.xml".equals(parsed.getParameters().logbackPath)),
           Mockito.eq("config.conf")));
@@ -145,7 +140,7 @@ public class FullNodeTest {
   @Test
   public void testUnexpectedArgumentFailuresAreNotSuppressed() {
     for (Throwable failure : new Throwable[] {new IllegalStateException("unexpected failure"),
-        new TronError("unexpected node error", TronError.ErrCode.JDK_VERSION)}) {
+        new TronError("unexpected node error", TronError.ErrCode.ACTUATOR_REGISTER)}) {
       try (MockedConstruction<CommandLineArguments> arguments = Mockito.mockConstruction(
           CommandLineArguments.class, (parsed, context) ->
               Mockito.when(parsed.isAttachMode()).thenThrow(failure))) {
