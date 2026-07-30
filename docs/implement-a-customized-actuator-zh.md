@@ -58,19 +58,20 @@ service Wallet {
   ...
 };
 ```
-最后重新编译修改过 proto 文件，可自行编译也可直接通过编译 java-tron 项目来编译 proto 文件：
+最后重新编译修改过的 proto 文件，直接编译 java-tron 项目即可，Gradle protobuf 插件会自动重新生成：
 
 ```shell
 # 推荐方式 —— 直接编译项目，proto 文件会自动重新编译
 ./gradlew build -x test
 
-# 或者手动使用 protoc（版本需与 build.gradle 中声明的一致）
-protoc -I=src/main/protos -I=src/main/protos/core --java_out=src/main/java  Tron.proto
-protoc -I=src/main/protos/core/contract --java_out=src/main/java  math_contract.proto
-protoc -I=src/main/protos/api -I=src/main/protos/core -I=src/main/protos  --java_out=src/main/java api.proto
+# 或者只重新生成 protobuf/gRPC 源码
+./gradlew :protocol:generateProto
 ```
 
-编译之后会更新 java_out 目录中对应的 java 文件。
+执行 `generateProto` 后，生成的源码位于
+`protocol/build/generated/sources/proto/main/java`。之后 `compileJava` 会编译这些源码，
+正常构建也包含这一流程。请勿将生成的 java 文件放入 `protocol/src/main/java`：
+该目录不参与编译，并会在执行 `clean` 或 protobuf 代码生成任务实际运行时被清理。
 
 ## 实现 SumActuator
 

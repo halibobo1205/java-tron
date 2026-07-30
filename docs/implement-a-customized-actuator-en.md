@@ -56,19 +56,21 @@ service Wallet {
   ...
 };
 ```
-At last, recompile the modified proto files. Compiling the java-tron project directly will compile the proto files as well, `protoc` command is also supported.
+At last, recompile the modified proto files. Compiling the java-tron project directly recompiles the proto files automatically via the Gradle protobuf plugin.
 
 ```shell
 # recommended — also recompiles proto files automatically
 ./gradlew build -x test
 
-# or build via protoc (ensure the protoc version matches the one declared in build.gradle)
-protoc -I=src/main/protos -I=src/main/protos/core --java_out=src/main/java  Tron.proto
-protoc -I=src/main/protos/core/contract --java_out=src/main/java  math_contract.proto
-protoc -I=src/main/protos/api -I=src/main/protos/core -I=src/main/protos  --java_out=src/main/java api.proto
+# or regenerate the protobuf/gRPC sources only
+./gradlew :protocol:generateProto
 ```
 
-After compilation, the corresponding .class under the java_out directory will be updated.
+Running `generateProto` writes the generated sources to
+`protocol/build/generated/sources/proto/main/java`. The `compileJava` task compiles them
+afterwards, including during a normal build. Do not generate java files into
+`protocol/src/main/java`: that directory is excluded from compilation and is removed by
+`clean` or when protobuf code generation actually runs.
 
 ## Implement SumActuator
 
