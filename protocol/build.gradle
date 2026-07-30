@@ -30,16 +30,19 @@ sourceSets {
         proto {
             srcDir 'src/main/protos'
         }
+        // The protocol module has no hand-written java sources; anything under
+        // src/main/java is leftover output of builds that predate the codegen
+        // relocation to build/generated. Drop that srcDir (keeping the dirs the
+        // protobuf plugin registered) so leftovers can never shadow the
+        // generated classes, even when generateProto is UP-TO-DATE.
         java {
-            srcDir 'src/main/gen'
-            srcDir 'src/main/java'
+            srcDirs = srcDirs.findAll { it != file('src/main/java') }
         }
     }
 
 }
 
 protobuf {
-    generatedFilesBaseDir = "$projectDir/src/"
     protoc {
         artifact = "com.google.protobuf:protoc:${protobufVersion}"
     }
@@ -63,8 +66,16 @@ protobuf {
     }
 }
 
-clean.doFirst {
-    delete "src/main/java"
+// Disk hygiene only (correctness is handled by the srcDirs override above,
+// which also covers the case where generateProto is UP-TO-DATE and its
+// doFirst never runs): sweep pre-relocation codegen leftovers from src/.
+def purgeLegacyGeneratedSources = {
+    project.delete('src/main/java', 'src/main/gen')
 }
+generateProto.doFirst { purgeLegacyGeneratedSources() }
+clean.doFirst { purgeLegacyGeneratedSources() }
 
+// The srcDirs override above flattens the source set to plain files, losing
+// the builtBy dependency the protobuf plugin registered, so declare it here.
+compileJava.dependsOn(generateProto) // explicit_dependency
 processResources.dependsOn(generateProto) // explicit_dependency
