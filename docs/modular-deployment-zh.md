@@ -41,9 +41,13 @@ java-tron-1.0.0/bin/FullNode -c config.conf -w
 
 ## jvm参数配置
 
-java-tron 支持对 jvm 参数进行配置，配置文件为 bin 目录下的 java-tron.vmoptions 文件。
+java-tron 在 x86_64 架构上要求 JDK 8 及以上版本，在 ARM64 架构上要求 JDK 17
+及以上版本。使用 JDK 17 及以上版本构建时，发布包默认使用 JDK 17+ 的 JVM 参数；
+低于 JDK 17 时使用 CMS 参数。
+
+java-tron 支持在 bin 目录下的 java-tron.vmoptions 文件中配置 JVM 参数。
 ```
-# demo（兼容 JDK 8 / JDK 17）
+# JDK 17 以下版本示例
 -Xms2g
 -Xmx9g
 -XX:+PrintGCDetails
