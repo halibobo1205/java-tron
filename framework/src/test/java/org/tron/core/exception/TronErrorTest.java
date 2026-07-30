@@ -2,11 +2,8 @@ package org.tron.core.exception;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThrows;
-import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mockStatic;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 
 import ch.qos.logback.classic.LoggerContext;
 import ch.qos.logback.classic.util.ContextInitializer;
@@ -32,7 +29,6 @@ import org.mockito.Mockito;
 import org.mockito.junit.MockitoJUnitRunner;
 import org.slf4j.LoggerFactory;
 import org.tron.common.TestConstants;
-import org.tron.common.arch.Arch;
 import org.tron.common.log.LogService;
 import org.tron.common.parameter.RateLimiterInitialization;
 import org.tron.common.utils.ReflectUtils;
@@ -151,60 +147,6 @@ public class TronErrorTest {
         .withFallback(ConfigFactory.defaultReference());
     TronError thrown = assertThrows(TronError.class, () -> Args.applyConfigParams(config));
     assertEquals(TronError.ErrCode.AUTO_STOP_PARAMS, thrown.getErrCode());
-  }
-
-  @Test
-  public void testThrowIfUnsupportedJavaVersion() {
-    runArchTest("x86_64", "1.8", false);
-    runArchTest("x86_64", "11", true);
-    runArchTest("x86_64", "17", true);
-    runArchTest("aarch64", "17", false);
-    runArchTest("aarch64", "1.8", true);
-    runArchTest("aarch64", "11", true);
-  }
-
-  private void runArchTest(String osArch, String javaVersion, boolean expectThrow) {
-    try (MockedStatic<Arch> mocked = mockStatic(Arch.class)) {
-      boolean isX86 = "x86_64".equals(osArch);
-      boolean isArm64 = "aarch64".equals(osArch);
-
-      boolean isJava8 = "1.8".equals(javaVersion);
-      boolean isJava17 = "17".equals(javaVersion);
-
-      mocked.when(Arch::isX86).thenReturn(isX86);
-      mocked.when(Arch::isArm64).thenReturn(isArm64);
-
-      mocked.when(Arch::isJava8).thenReturn(isJava8);
-      mocked.when(Arch::isJava17).thenReturn(isJava17);
-
-      mocked.when(Arch::getOsArch).thenReturn(osArch);
-      mocked.when(Arch::javaSpecificationVersion).thenReturn(javaVersion);
-      mocked.when(Arch::withAll).thenReturn(String.format(
-          "Architecture: %s, Java Version: %s", osArch, javaVersion));
-
-      mocked.when(Arch::throwIfUnsupportedJavaVersion).thenCallRealMethod();
-
-      if (expectThrow) {
-        UnsupportedOperationException err = assertThrows(
-            UnsupportedOperationException.class,
-            Arch::throwIfUnsupportedJavaVersion);
-
-        String expectedJavaVersion = isX86 ? "1.8" : "17";
-        String expectedMessage = String.format(
-            "Java %s is required for %s architecture."
-                + " Detected version %s",
-            expectedJavaVersion, osArch, javaVersion);
-        assertEquals(expectedMessage, err.getMessage());
-        mocked.verify(Arch::withAll, times(1));
-      } else {
-        try {
-          Arch.throwIfUnsupportedJavaVersion();
-        } catch (Exception e) {
-          fail("Expected no exception, but got: " + e.getMessage());
-        }
-        mocked.verify(Arch::withAll, never());
-      }
-    }
   }
 
 }

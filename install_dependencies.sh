@@ -35,10 +35,10 @@ fi
 
 echo ""
 echo ">>> Tested platforms:"
-echo "    - macOS x86_64 (JDK 8)"
-echo "    - macOS arm64 (JDK 17)"
-echo "    - Linux x86_64 (generic, including Ubuntu) (JDK 8)"
-echo "    - Linux arm64/aarch64 (generic, including Ubuntu) (JDK 17)"
+echo "    - macOS x86_64 (JDK 8 or newer)"
+echo "    - macOS arm64 (JDK 17 or newer)"
+echo "    - Linux x86_64 (generic, including Ubuntu) (JDK 8 or newer)"
+echo "    - Linux arm64/aarch64 (generic, including Ubuntu) (JDK 17 or newer)"
 echo "    Note: Other platforms may require manual installation if errors occur"
 echo ""
 echo ">>> This script will install the following components if not already installed:"
@@ -50,15 +50,15 @@ else
 fi
 if [[ "$OS" == "Darwin" ]]; then
     if [[ "$ARCH" == "x86_64" ]]; then
-        echo "  3. OpenJDK 8 (required for x86_64 architecture)"
+        echo "  3. OpenJDK 8 (default installer choice for x86_64)"
     else
-        echo "  3. OpenJDK 17 (required for arm64 architecture)"
+        echo "  3. OpenJDK 17 (default installer choice for arm64)"
     fi
 else
     if [[ "$ARCH" == "x86_64" ]]; then
-        echo "  2. OpenJDK 8 (required for x86_64 architecture)"
+        echo "  2. OpenJDK 8 (default installer choice for x86_64)"
     else
-        echo "  2. OpenJDK 17 (required for arm64/aarch64 architecture)"
+        echo "  2. OpenJDK 17 (default installer choice for arm64/aarch64)"
     fi
 fi
 echo ""
@@ -75,49 +75,100 @@ ask_confirmation() {
     done
 }
 
-# Function to check Java version
-check_java_version() {
-    if command -v java &> /dev/null; then
-        local java_version=$(java -version 2>&1 | head -n 1 | cut -d'"' -f2)
-        echo "    Current Java version: $java_version"
-        
-        # Check if it's JDK 8 (version starts with 1.8)
-        if [[ "$java_version" =~ ^1\.8\. ]]; then
-            echo "    JDK 8 is installed."
-            return 0
-        # Check if it's JDK 17 (version starts with 17)
-        elif [[ "$java_version" =~ ^17\. ]]; then
-            echo "    JDK 17 is installed."
-            return 1
-        else
-            echo "    Different Java version detected: $java_version"
-            return 2
-        fi
-    else
-        return 3
+# Return success when javac ships with the installation the given java
+# launcher belongs to.
+has_javac() {
+    local java_cmd="$1"
+    local java_major="$2"
+
+    # An explicit JAVA_HOME must be a complete JDK on its own: that directory
+    # is what gradlew hands to the Gradle daemon.
+    if [[ -n "${JAVA_HOME:-}" ]]; then
+        [[ -x "$JAVA_HOME/bin/javac" ]]
+        return $?
     fi
+
+    local java_home
+    java_home=$("$java_cmd" -XshowSettings:properties -version 2>&1 \
+        | awk -F'= ' '/java\.home/ {print $2}')
+    if [[ -z "$java_home" ]]; then
+        return 1
+    fi
+    if [[ -x "$java_home/bin/javac" ]]; then
+        return 0
+    fi
+    # On JDK 8 java.home is the jre subdirectory of the JDK.
+    [[ "$java_major" == "8" && -x "$java_home/../bin/javac" ]]
+}
+
+# Return success when the installed JDK meets the architecture's minimum version.
+check_supported_java_version() {
+    local minimum_major="$1"
+
+    # Check the JVM gradlew would pick: JAVA_HOME wins over PATH. Callers
+    # report on the very same launcher through SELECTED_JAVA_CMD.
+    local java_cmd
+    SELECTED_JAVA_CMD=""
+    if [[ -n "${JAVA_HOME:-}" ]]; then
+        java_cmd="$JAVA_HOME/bin/java"
+        if [[ ! -x "$java_cmd" ]]; then
+            echo "    JAVA_HOME is set to an invalid directory: $JAVA_HOME"
+            return 1
+        fi
+    elif command -v java &> /dev/null; then
+        java_cmd="$(command -v java)"
+    else
+        return 2
+    fi
+    SELECTED_JAVA_CMD="$java_cmd"
+
+    local java_version
+    local java_major
+    java_version=$("$java_cmd" -version 2>&1 | head -n 1 | cut -d'"' -f2)
+    echo "    Current Java version: $java_version ($java_cmd)"
+
+    if [[ "$java_version" =~ ^1\.([0-9]+) ]]; then
+        java_major="${BASH_REMATCH[1]}"
+    else
+        java_major="${java_version%%.*}"
+    fi
+
+    if [[ "$java_major" =~ ^[0-9]+$ ]] && (( java_major >= minimum_major )); then
+        # A JRE-only installation passes the version check but cannot compile.
+        if ! has_javac "$java_cmd" "$java_major"; then
+            echo "    Found java $java_version but no javac in the same"
+            echo "    installation: building java-tron requires a full JDK."
+            return 1
+        fi
+        echo "    JDK $java_major is supported on $ARCH (minimum JDK $minimum_major)."
+        return 0
+    fi
+
+    echo "    Unsupported Java version detected: $java_version"
+    echo "    Minimum version for $ARCH: JDK $minimum_major"
+    return 1
 }
 
 # Function to ask for JDK installation confirmation
 ask_jdk_confirmation() {
     local current_version="$1"
-    local required_version="$2"
+    local recommended_version="$2"
     local arch="$3"
     
     echo ""
-    echo "JDK Version Mismatch Detected!"
+    echo "Unsupported JDK Version Detected!"
     echo "    Current version: $current_version"
-    echo "    Current installation path: $(which java 2>/dev/null || echo 'Not found')"
-    if command -v java &> /dev/null && [[ -n "$JAVA_HOME" ]]; then
+    echo "    Current installation path: ${SELECTED_JAVA_CMD:-Not found}"
+    if [[ -n "${JAVA_HOME:-}" ]]; then
         echo "    Current JAVA_HOME: $JAVA_HOME"
     fi
-    echo "    Required version for $arch: $required_version"
-    echo "    This script will install $required_version alongside your existing installation."
+    echo "    Recommended installation for $arch: $recommended_version"
+    echo "    This script will install $recommended_version alongside your existing installation."
     echo "    Your current Java installation will not be removed."
     echo ""
     
     while true; do
-        read -p "Do you want to install $required_version? (y/N): " yn
+        read -p "Do you want to install $recommended_version? (y/N): " yn
         case $yn in
             [Yy]* ) return 0;;
             [Nn]* | "" ) echo "JDK installation cancelled. Exiting."; exit 0;;
@@ -150,34 +201,34 @@ else
     INSTALL_GIT=false
 fi
 
-echo ""
-echo ">>> Checking existing Java installation..."
-set +e  # Temporarily disable exit on error
-check_java_version
-java_status=$?
-set -e  # Re-enable exit on error
-
-# Determine required JDK version based on architecture
+# Determine the minimum and default JDK for the current architecture.
 if [[ "$OS" == "Darwin" ]]; then
     if [[ "$ARCH" == "x86_64" ]]; then
-        required_jdk="JDK 8"
-        required_status=0
+        recommended_jdk="JDK 8"
+        minimum_java_major=8
     elif [[ "$ARCH" == "arm64" ]]; then
-        required_jdk="JDK 17"
-        required_status=1
+        recommended_jdk="JDK 17"
+        minimum_java_major=17
     fi
 elif [[ "$OS" == "Linux" ]]; then
     if [[ "$ARCH" == "x86_64" ]]; then
-        required_jdk="JDK 8"
-        required_status=0
+        recommended_jdk="JDK 8"
+        minimum_java_major=8
     elif [[ "$ARCH" == "aarch64" ]] || [[ "$ARCH" == "arm64" ]]; then
-        required_jdk="JDK 17"
-        required_status=1
+        recommended_jdk="JDK 17"
+        minimum_java_major=17
     fi
 fi
 
-# Check if correct JDK version is already installed
-if [[ $java_status -eq $required_status ]]; then
+echo ""
+echo ">>> Checking existing Java installation..."
+set +e  # Temporarily disable exit on error
+check_supported_java_version "$minimum_java_major"
+java_status=$?
+set -e  # Re-enable exit on error
+
+# Keep every existing JDK that meets the architecture's minimum version.
+if [[ $java_status -eq 0 ]]; then
     echo "    You can skip the Java installation part."
     echo ""
     if [[ "$INSTALL_GIT" == "false" ]]; then
@@ -188,16 +239,19 @@ if [[ $java_status -eq $required_status ]]; then
         echo ">>> Proceeding with Git installation only..."
         SKIP_JAVA_INSTALL=true
     fi
-elif [[ $java_status -eq 0 ]] || [[ $java_status -eq 1 ]] || [[ $java_status -eq 2 ]]; then
-    # Different JDK version is installed, ask for confirmation
-    current_version=$(java -version 2>&1 | head -n 1 | cut -d'"' -f2)
-    ask_jdk_confirmation "$current_version" "$required_jdk" "$ARCH"
+elif [[ $java_status -eq 1 ]]; then
+    # An older or unrecognized JDK is installed; offer a supported default.
+    current_version="Not found"
+    if [[ -n "${SELECTED_JAVA_CMD:-}" ]]; then
+        current_version=$("$SELECTED_JAVA_CMD" -version 2>&1 | head -n 1 | cut -d'"' -f2)
+    fi
+    ask_jdk_confirmation "$current_version" "$recommended_jdk" "$ARCH"
     SKIP_JAVA_INSTALL=false
 else
     # No Java installation found, ask for general confirmation
     echo ""
     echo "No Java installation detected!"
-    echo "    This script will install $required_jdk which is required for $ARCH architecture."
+    echo "    This script will install $recommended_jdk as the default for $ARCH."
     echo ""
     ask_confirmation
     SKIP_JAVA_INSTALL=false
@@ -547,22 +601,16 @@ install_macos() {
     fi
 
     if [[ "$ARCH" == "x86_64" ]]; then
-        echo ">>> Architecture is x86_64. Checking for JDK 8..."
+        echo ">>> Architecture is x86_64. Checking for a supported JDK..."
         set +e  # Temporarily disable exit on error
-        check_java_version
+        check_supported_java_version "$minimum_java_major"
         local java_status=$?
         set -e  # Re-enable exit on error
         
         if [[ $java_status -eq 0 ]]; then
-            echo ">>> JDK 8 is already installed. Skipping installation."
+            echo ">>> A supported JDK is already installed. Skipping installation."
         else
-            if [[ $java_status -eq 1 ]]; then
-                echo ">>> Installing JDK 8 alongside existing JDK 17..."
-            elif [[ $java_status -eq 2 ]]; then
-                echo ">>> Installing JDK 8 alongside existing Java installation..."
-            else
-                echo ">>> Installing JDK 8..."
-            fi
+            echo ">>> Installing JDK 8 alongside any existing Java installation..."
             if brew install openjdk@8; then
                 echo ">>> JDK 8 installation completed successfully."
                 
@@ -580,22 +628,16 @@ install_macos() {
         fi
         
     elif [[ "$ARCH" == "arm64" ]]; then
-        echo ">>> Architecture is arm64. Checking for JDK 17..."
+        echo ">>> Architecture is arm64. Checking for a supported JDK..."
         set +e  # Temporarily disable exit on error
-        check_java_version
+        check_supported_java_version "$minimum_java_major"
         local java_status=$?
         set -e  # Re-enable exit on error
         
-        if [[ $java_status -eq 1 ]]; then
-            echo ">>> JDK 17 is already installed. Skipping installation."
+        if [[ $java_status -eq 0 ]]; then
+            echo ">>> A supported JDK is already installed. Skipping installation."
         else
-            if [[ $java_status -eq 0 ]]; then
-                echo ">>> Installing JDK 17 alongside existing JDK 8..."
-            elif [[ $java_status -eq 2 ]]; then
-                echo ">>> Installing JDK 17 alongside existing Java installation..."
-            else
-                echo ">>> Installing JDK 17..."
-            fi
+            echo ">>> Installing JDK 17 alongside any existing Java installation..."
             if brew install openjdk@17; then
                 echo ">>> JDK 17 installation completed successfully."
 
@@ -704,22 +746,16 @@ install_linux() {
     }
 
     if [[ "$ARCH" == "x86_64" ]]; then
-        echo ">>> Architecture is x86_64. Checking for JDK 8..."
+        echo ">>> Architecture is x86_64. Checking for a supported JDK..."
         set +e  # Temporarily disable exit on error
-        check_java_version
+        check_supported_java_version "$minimum_java_major"
         local java_status=$?
         set -e  # Re-enable exit on error
         
         if [[ $java_status -eq 0 ]]; then
-            echo ">>> JDK 8 is already installed. Skipping installation."
+            echo ">>> A supported JDK is already installed. Skipping installation."
         else
-            if [[ $java_status -eq 1 ]]; then
-                echo ">>> Installing JDK 8 alongside existing JDK 17..."
-            elif [[ $java_status -eq 2 ]]; then
-                echo ">>> Installing JDK 8 alongside existing Java installation..."
-            else
-                echo ">>> Installing JDK 8..."
-            fi
+            echo ">>> Installing JDK 8 alongside any existing Java installation..."
             if [[ "$PKG_MANAGER" == "apt-get" ]]; then
                 if install_first_available "8" openjdk-8-jdk; then
                     install_result=0
@@ -805,22 +841,16 @@ install_linux() {
         fi
         
     elif [[ "$ARCH" == "aarch64" ]] || [[ "$ARCH" == "arm64" ]]; then
-        echo ">>> Architecture is arm64/aarch64. Checking for JDK 17..."
+        echo ">>> Architecture is arm64/aarch64. Checking for a supported JDK..."
         set +e  # Temporarily disable exit on error
-        check_java_version
+        check_supported_java_version "$minimum_java_major"
         local java_status=$?
         set -e  # Re-enable exit on error
-        
-        if [[ $java_status -eq 1 ]]; then
-            echo ">>> JDK 17 is already installed. Skipping installation."
+
+        if [[ $java_status -eq 0 ]]; then
+            echo ">>> A supported JDK is already installed. Skipping installation."
         else
-            if [[ $java_status -eq 0 ]]; then
-                echo ">>> Installing JDK 17 alongside existing JDK 8..."
-            elif [[ $java_status -eq 2 ]]; then
-                echo ">>> Installing JDK 17 alongside existing Java installation..."
-            else
-                echo ">>> Installing JDK 17..."
-            fi
+            echo ">>> Installing JDK 17 alongside any existing Java installation..."
             if [[ "$PKG_MANAGER" == "apt-get" ]]; then
                 if install_first_available "17" openjdk-17-jdk; then
                     install_result=0
@@ -926,32 +956,31 @@ else
 fi
 
 echo "----------------------------------------"
+
+# Re-run the same validator the build relies on, so the script never reports
+# success for an environment gradlew cannot build with.
+echo ">>> Verifying the Java environment..."
+set +e  # Temporarily disable exit on error
+check_supported_java_version "$minimum_java_major"
+final_java_status=$?
+set -e  # Re-enable exit on error
+
+if [[ $final_java_status -ne 0 ]]; then
+    echo ""
+    echo "✗ The current environment cannot build java-tron."
+    echo ""
+    echo ">>> Troubleshooting:"
+    echo "  - Load the JDK installed above: source ./tron_java_env.sh"
+    echo "  - Or point JAVA_HOME at a JDK $minimum_java_major or newer installation."
+    echo "  - For permanent configuration, follow the instructions shown above."
+    echo ""
+    exit 1
+fi
+
+echo ""
 echo "Installation completed successfully!"
 echo ""
 echo ">>> Verification Commands:"
 echo "  git --version"
 echo "  java -version"
-echo ""
-
-# Verify that Java is actually working
-echo ">>> Verifying Java installation..."
-if command -v java &> /dev/null; then
-    echo "  Java command found: $(which java)"
-    if java -version &> /dev/null; then
-        echo "  Java version: $(java -version 2>&1 | head -n 1)"
-    else
-        echo "  ✗ Java command exists but cannot run properly"
-        echo "  Please run: source ./tron_java_env.sh"
-    fi
-else
-    echo "  ✗ Java command not found in PATH"
-    echo "  Please run: source ./tron_java_env.sh"
-    echo "  If that doesn't work, check the Java environment configuration above."
-fi
-
-echo ""
-echo ">>> Troubleshooting:"
-echo "  - If 'java -version' shows incorrect version, run: source ./tron_java_env.sh"
-echo "  - For permanent configuration, follow the instructions shown above."
-echo ""
 echo ""
