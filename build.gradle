@@ -132,6 +132,7 @@ subprojects {
                 disableAllChecks = true
                 excludedPaths = '.*/generated/.*'
                 errorproneArgs.addAll([
+                        '-Xep:BigDecimalFloatingPointConstructor:ERROR',
                         '-Xep:SelfAssignment:ERROR',
                         '-Xep:StringCaseLocaleUsage:ERROR',
                         '-Xep:StringCaseLocaleUsageMethodRef:ERROR',
