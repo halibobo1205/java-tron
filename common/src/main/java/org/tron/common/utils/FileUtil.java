@@ -102,7 +102,7 @@ public class FileUtil {
     try (BufferedReader bufRead = new BufferedReader(new FileReader(file))) {
       len = bufRead.read(buf, 0, buf.length);
     } catch (IOException ex) {
-      ex.printStackTrace();
+      logger.warn("Failed to read data from file.", ex);
       return 0;
     }
     return len;
