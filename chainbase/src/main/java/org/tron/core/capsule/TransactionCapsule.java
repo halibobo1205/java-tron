@@ -786,8 +786,10 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
       getInstance().getRawData().getContractList().forEach(contract -> {
         toStringBuff.append("[" + i + "] ").append("type: ").append(contract.getType())
             .append("\n");
-        toStringBuff.append("from address=").append(getOwner(contract)).append("\n");
-        toStringBuff.append("to address=").append(getToAddress(contract)).append("\n");
+        toStringBuff.append("from address=")
+            .append(ByteArray.toHexString(getOwner(contract))).append("\n");
+        toStringBuff.append("to address=")
+            .append(ByteArray.toHexString(getToAddress(contract))).append("\n");
         if (contract.getType().equals(ContractType.TransferContract)) {
           TransferContract transferContract;
           try {
@@ -796,7 +798,7 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
             toStringBuff.append("transfer amount=").append(transferContract.getAmount())
                 .append("\n");
           } catch (InvalidProtocolBufferException e) {
-            e.printStackTrace();
+            logger.debug("Failed to unpack transfer contract.", e);
           }
         } else if (contract.getType().equals(ContractType.TransferAssetContract)) {
           TransferAssetContract transferAssetContract;
@@ -808,7 +810,7 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
             toStringBuff.append("transfer amount=").append(transferAssetContract.getAmount())
                 .append("\n");
           } catch (InvalidProtocolBufferException e) {
-            e.printStackTrace();
+            logger.debug("Failed to unpack transfer asset contract.", e);
           }
         }
         if (this.transaction.getSignatureList().size() >= i.get() + 1) {

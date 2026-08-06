@@ -637,6 +637,8 @@ public class Program {
                 case TRON_POWER:
                   inheritorCapsule.addFrozenForTronPowerV2(freezeV2.getAmount());
                   break;
+                case UNRECOGNIZED:
+                  break;
               }
             });
 

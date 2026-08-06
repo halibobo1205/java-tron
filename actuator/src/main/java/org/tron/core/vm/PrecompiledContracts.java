@@ -514,7 +514,7 @@ public class PrecompiledContracts {
       if (data == null) {
         return 15;
       }
-      return 15L + (data.length + 31) / 32 * 3;
+      return 15L + (data.length + 31L) / 32 * 3;
     }
 
     @Override
@@ -534,7 +534,7 @@ public class PrecompiledContracts {
       if (data == null) {
         return 60;
       }
-      return 60L + (data.length + 31) / 32 * 12;
+      return 60L + (data.length + 31L) / 32 * 12;
     }
 
     @Override
@@ -561,7 +561,7 @@ public class PrecompiledContracts {
       if (data == null) {
         return 600;
       }
-      return 600L + (data.length + 31) / 32 * 120;
+      return 600L + (data.length + 31L) / 32 * 120;
     }
 
     @Override
@@ -1043,7 +1043,7 @@ public class PrecompiledContracts {
 
     @Override
     public long getEnergyForData(byte[] data) {
-      long cnt = (data.length / WORD_SIZE - 5) / 5;
+      long cnt = ((long) data.length / WORD_SIZE - ABI_HEADER_WORDS) / ABI_ITEM_WORDS;
       // one sign 1500, half of ecrecover
       return cnt * ENGERYPERSIGN;
     }
@@ -1136,7 +1136,7 @@ public class PrecompiledContracts {
 
     @Override
     public long getEnergyForData(byte[] data) {
-      long cnt = (data.length / WORD_SIZE - 5) / 6;
+      long cnt = ((long) data.length / WORD_SIZE - ABI_HEADER_WORDS) / ABI_ITEM_WORDS;
       // one sign 1500, half of ecrecover
       return cnt * ENGERYPERSIGN;
     }

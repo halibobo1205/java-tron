@@ -141,7 +141,7 @@ public class BandwidthProcessor extends ResourceProcessor {
           long maxCreateAccountTxSize = dynamicPropertiesStore.getMaxCreateAccountTxSize();
           int signatureCount = trx.getInstance().getSignatureCount();
           long createAccountBytesSize = trx.getInstance().toBuilder().clearRet()
-              .build().getSerializedSize() - (signatureCount * PER_SIGN_LENGTH);
+              .build().getSerializedSize() - ((long) signatureCount * PER_SIGN_LENGTH);
           if (createAccountBytesSize > maxCreateAccountTxSize) {
             throw new TooBigTransactionException(String.format(
                 "Too big new account transaction, TxId %s, the size is %d bytes, maxTxSize %d",
@@ -547,5 +547,4 @@ public class BandwidthProcessor extends ResourceProcessor {
   }
 
 }
-
 

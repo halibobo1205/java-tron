@@ -125,18 +125,48 @@ subprojects {
             errorprone "com.google.errorprone:error_prone_core:${errorproneVersion}"
             errorprone rootProject.project(':errorprone')
         }
+        // Keep test compilation free of Error Prone so existing test code does not block builds.
         tasks.withType(JavaCompile).configureEach {
+            options.errorprone.enabled = false
+        }
+        tasks.named(sourceSets.main.compileJavaTaskName, JavaCompile).configure {
             options.errorprone {
                 enabled = true
                 disableWarningsInGeneratedCode = true
                 disableAllChecks = true
                 excludedPaths = '.*/generated/.*'
                 errorproneArgs.addAll([
+                        // Project-specific checks.
                         '-Xep:BigDecimalFloatingPointConstructor:ERROR',
                         '-Xep:SelfAssignment:ERROR',
                         '-Xep:StringCaseLocaleUsage:ERROR',
                         '-Xep:StringCaseLocaleUsageMethodRef:ERROR',
                         '-Xep:ForbidJavaLangMath:ERROR',
+
+                        // High-signal checks.
+                        '-Xep:ArrayEquals:ERROR',
+                        '-Xep:ArrayHashCode:ERROR',
+                        '-Xep:ArrayToString:ERROR',
+                        '-Xep:ArraysAsListPrimitiveArray:ERROR',
+                        '-Xep:BadShiftAmount:ERROR',
+                        '-Xep:CollectionIncompatibleType:ERROR',
+                        '-Xep:ConstantOverflow:ERROR',
+                        '-Xep:EqualsHashCode:ERROR',
+                        '-Xep:EqualsIncompatibleType:ERROR',
+                        '-Xep:FloatingPointLiteralPrecision:ERROR',
+                        '-Xep:GuardedBy:ERROR',
+                        '-Xep:JavaTimeDefaultTimeZone:ERROR',
+                        '-Xep:MathRoundIntLong:ERROR',
+                        '-Xep:NonAtomicVolatileUpdate:ERROR',
+                        '-Xep:ThreadJoinLoop:ERROR',
+                        '-Xep:UnicodeEscape:ERROR',
+                        '-Xep:XorPower:ERROR',
+
+                        // Small production baseline fixed in this change.
+                        '-Xep:IntLongMath:ERROR',
+                        '-Xep:LockNotBeforeTry:ERROR',
+                        '-Xep:MissingCasesInEnumSwitch:ERROR',
+                        '-Xep:CatchAndPrintStackTrace:ERROR',
                 ])
             }
         }

@@ -1078,7 +1078,7 @@ public class Manager {
       revokingStore.setMaxFlushCount(maxFlushCount);
       if (Args.getInstance().getShutdownBlockTime() != null
           && Args.getInstance().getShutdownBlockTime().getNextValidTimeAfter(
-            new Date(block.getTimeStamp() - maxFlushCount * 1000 * 3L))
+            new Date(block.getTimeStamp() - maxFlushCount * 1000L * 3))
           .compareTo(new Date(block.getTimeStamp())) <= 0) {
         revokingStore.setMaxFlushCount(SnapshotManager.DEFAULT_MIN_FLUSH_COUNT);
       }
@@ -2552,7 +2552,7 @@ public class Manager {
   }
 
   public long getPendingSize() {
-    long value = getPendingTransactions().size() + getRePushTransactions().size()
+    long value = (long) getPendingTransactions().size() + getRePushTransactions().size()
         + getPoppedTransactions().size();
     return value;
   }

@@ -53,8 +53,8 @@ public class PbftMsgHandler {
     msg.analyzeSignature();
     String key = buildKey(msg);
     Lock lock = striped.get(key);
+    lock.lock();
     try {
-      lock.lock();
       if (msgCache.getIfPresent(key) != null) {
         return;
       }
