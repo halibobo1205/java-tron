@@ -796,7 +796,7 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
             toStringBuff.append("transfer amount=").append(transferContract.getAmount())
                 .append("\n");
           } catch (InvalidProtocolBufferException e) {
-            e.printStackTrace();
+            logger.debug("Failed to unpack transfer contract.", e);
           }
         } else if (contract.getType().equals(ContractType.TransferAssetContract)) {
           TransferAssetContract transferAssetContract;
@@ -808,7 +808,7 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
             toStringBuff.append("transfer amount=").append(transferAssetContract.getAmount())
                 .append("\n");
           } catch (InvalidProtocolBufferException e) {
-            e.printStackTrace();
+            logger.debug("Failed to unpack transfer asset contract.", e);
           }
         }
         if (this.transaction.getSignatureList().size() >= i.get() + 1) {

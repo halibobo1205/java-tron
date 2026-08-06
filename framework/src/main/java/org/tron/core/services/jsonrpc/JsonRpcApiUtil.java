@@ -209,7 +209,7 @@ public class JsonRpcApiUtil {
       }
       return list;
     } catch (Exception ex) {
-      ex.printStackTrace();
+      logger.warn("Failed to extract transaction addresses.", ex);
     }
     return list;
   }
@@ -361,7 +361,7 @@ public class JsonRpcApiUtil {
       logger.warn("Exception happens when get amount from transactionInfo. Exception = [{}]",
           Throwables.getStackTraceAsString(e));
     } catch (Throwable t) {
-      t.printStackTrace();
+      logger.warn("Unexpected error when getting amount from transaction info.", t);
     }
     return amount;
   }
