@@ -4,6 +4,17 @@
 
 > **支持平台**：Linux 和 macOS。不支持 Windows。
 
+## 环境要求
+
+当前，构建和运行 java-tron 所需的 JDK 版本与 CPU 架构绑定，两个版本不能互换：
+
+| CPU 架构 | 所需 JDK |
+| :------- | :------- |
+| `x86_64` / `amd64` | JDK 8 |
+| `ARM64` / `aarch64` | JDK 17 |
+
+> **注意**：从 GreatVoyage-v4.8.1 开始支持 `ARM64` / `aarch64` 架构。
+
 ## 下载
 
 ```
@@ -41,17 +52,11 @@ java-tron-1.0.0/bin/FullNode -c config.conf -w
 
 ## jvm参数配置
 
-java-tron 在 x86_64 架构上要求 JDK 8 及以上版本，在 ARM64 架构上要求 JDK 17
-及以上版本。使用 JDK 17 及以上版本构建时，发布包默认使用 JDK 17+ 的 JVM 参数；
-低于 JDK 17 时使用 CMS 参数。
-
-java-tron 支持在 bin 目录下的 java-tron.vmoptions 文件中配置 JVM 参数。
+java-tron 支持对 jvm 参数进行配置，配置文件为 bin 目录下的 java-tron.vmoptions 文件。
 ```
-# JDK 17 以下版本示例
+# 堆大小自定义示例
 -Xms2g
 -Xmx9g
--XX:+PrintGCDetails
--Xloggc:./gc.log
--XX:+PrintGCDateStamps
--XX:ReservedCodeCacheSize=256m
 ```
+
+生成的 `java-tron.vmoptions` 文件已包含与构建架构及其所需 JDK 匹配的 GC 参数。调整堆大小时请保留这些架构专用参数，不要在 JDK 8 和 JDK 17 部署之间复制 GC 参数。
