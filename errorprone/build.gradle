@@ -1,5 +1,5 @@
-if (!JavaVersion.current().isJava11Compatible()) {
-    // ErrorProne core requires JDK 11+; skip this module on JDK 8
+if (!JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_17)) {
+    // ErrorProne core 2.42.0 ships Java 17 bytecode; skip below JDK 17
     tasks.withType(JavaCompile).configureEach { enabled = false }
     tasks.withType(Jar).configureEach { enabled = false }
     // No jar is produced, so the root maven-publish setup must not try to publish one
