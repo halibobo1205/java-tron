@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       job:
-        description: 'Job to run: all / macos / ubuntu / rockylinux / debian11'
+        description: 'Job to run: all / macos / ubuntu / ubuntu-jdk21 / rockylinux / debian11'
         required: false
         default: 'all'
 
@@ -29,7 +29,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - java: '17'
+          - java: '21'
             runner: macos-26
             arch: aarch64
 
@@ -102,8 +102,61 @@ jobs:
           java -jar "$JAR" db archive -h
           java -jar "$JAR" keystore --help
 
+  build-ubuntu-jdk21:
+    name: Build ubuntu24 (JDK 21 / ${{ matrix.arch }})
+    if: ${{ github.event_name == 'pull_request' || inputs.job == 'all' || inputs.job == 'ubuntu-jdk21' }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Check Java version
+        run: java -version
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ubuntu24-jdk21-${{ matrix.arch }}-gradle-${{ hashFiles('**/*.gradle', '**/gradle-wrapper.properties') }}
+          restore-keys: ubuntu24-jdk21-${{ matrix.arch }}-gradle-
+
+      - name: Build
+        run: ./gradlew clean build --no-daemon
+
+      - name: Toolkit jar smoke test
+        run: |
+          set -e
+          JAR=plugins/build/libs/Toolkit.jar
+          java -jar "$JAR" help
+          java -jar "$JAR" db --help
+          java -jar "$JAR" db archive -h
+          java -jar "$JAR" keystore --help
+
+      # ARM64 already runs the suite on RocksDB; x86_64 defaults to LevelDB, so
+      # cover the x86 RocksDB pin (5.15.10) on JDK 21 explicitly.
+      - name: Test with RocksDB engine
+        if: ${{ matrix.arch == 'x86_64' }}
+        run: ./gradlew :framework:testWithRocksDb --no-daemon
+
   docker-build-rockylinux:
-    name: Build rockylinux (JDK 8 / x86_64)
+    name: Build rockylinux (JDK 17 / x86_64)
     if: ${{ github.event_name == 'pull_request' || inputs.job == 'all' || inputs.job == 'rockylinux' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -117,17 +170,40 @@ jobs:
       LC_ALL: en_US.UTF-8
 
     steps:
-      - name: Install dependencies (Rocky 8 + JDK8)
+      - name: Install dependencies (Rocky 8 + JDK17)
         run: |
           set -euxo pipefail
-          dnf -y install java-1.8.0-openjdk-devel git wget unzip which jq bc curl glibc-langpack-en
+          dnf -y install java-17-openjdk-devel git wget unzip which jq bc curl glibc-langpack-en
           dnf -y groupinstall "Development Tools"
+
+      # "Development Tools" drags in java-1.8.0-openjdk-headless, and RHEL's
+      # alternatives priorities prefer the 1.8 family, so `java` would point
+      # at a JRE without javac. Pin JDK 17 explicitly.
+      - name: Force JDK 17 as default java
+        run: |
+          set -euxo pipefail
+          JAVA17_HOME="$(readlink -f /etc/alternatives/java_sdk_17)"
+          echo "JAVA_HOME=${JAVA17_HOME}" >> "$GITHUB_ENV"
+          echo "${JAVA17_HOME}/bin" >> "$GITHUB_PATH"
 
       - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Check Java version
-        run: java -version
+      - name: Verify JDK 17
+        run: |
+          set -euxo pipefail
+          printf 'JAVA_HOME=%s\n' "${JAVA_HOME}"
+          command -v java
+          command -v javac
+          test -x "${JAVA_HOME}/bin/java"
+          test -x "${JAVA_HOME}/bin/javac"
+
+          java_version="$(java -version 2>&1)"
+          javac_version="$(javac -version 2>&1)"
+          printf '%s\n' "${java_version}"
+          printf '%s\n' "${javac_version}"
+          printf '%s\n' "${java_version}" | grep -Eq 'version "17([.]|")'
+          printf '%s\n' "${javac_version}" | grep -Eq '^javac 17([.]|$)'
 
       - name: Cache Gradle
         uses: actions/cache@v5

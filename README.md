@@ -37,7 +37,7 @@ TRON is building the foundational infrastructure for the decentralized internet 
 Before building java-tron, make sure you have:
 - Hardware with at least 4 CPU cores, 16 GB RAM, 10 GB free disk space for a smooth compilation process.
 - Operating system: `Linux` or `macOS` (`Windows` is not supported).
-- Git and correct JDK (version `8` or `17`) installed based on your CPU architecture.
+- Git and a supported JDK: version `8` or newer on x86_64, or version `17` or newer on ARM64. The build output remains compatible with Java 8.
 
 There are two ways to install the required dependencies:
 
@@ -49,7 +49,7 @@ There are two ways to install the required dependencies:
   chmod +x install_dependencies.sh
   ./install_dependencies.sh
   ```
-  > **Note**: For production-grade stability with JDK 8 on x86_64 architecture, Oracle JDK 8 is strongly recommended (the script installs OpenJDK 8).
+  > **Note**: Existing compatible JDK installations are preserved. If Java is missing or too old, the script installs OpenJDK 8 on x86_64 or OpenJDK 17 on ARM64.
 
 - **Option 2: Manual installation**
 

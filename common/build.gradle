@@ -2,9 +2,11 @@ plugins {
     id 'java'
 }
 
-version '1.0.0'
+version = '1.0.0'
 
-sourceCompatibility = 1.8
+java {
+    sourceCompatibility = JavaVersion.VERSION_1_8
+}
 
 
 dependencies {
@@ -18,9 +20,9 @@ dependencies {
     api group: 'io.prometheus', name: 'simpleclient_hotspot', version: '0.15.0'
     // https://openjdk.org/jeps/396, JEP 396: Strongly Encapsulate JDK Internals by Default
     // https://eclipse.dev/aspectj/doc/latest/release/JavaVersionCompatibility.html
-    api 'org.aspectj:aspectjrt:1.9.8'
-    api 'org.aspectj:aspectjweaver:1.9.8'
-    api 'org.aspectj:aspectjtools:1.9.8'
+    api 'org.aspectj:aspectjrt:1.9.25'
+    api 'org.aspectj:aspectjweaver:1.9.25'
+    // aspectjtools 1.9.25 requires JDK 17 and is not used by java-tron.
     api group: 'io.github.tronprotocol', name: 'libp2p', version: '2.2.9',{
         exclude group: 'io.grpc', module: 'grpc-context'
         exclude group: 'io.grpc', module: 'grpc-core'
@@ -44,8 +46,8 @@ dependencies {
 
 jacocoTestReport {
     reports {
-        xml.enabled = true
-        html.enabled = true
+        xml.required = true
+        html.required = true
     }
     getExecutionData().setFrom(fileTree('../framework/build/jacoco').include("**.exec"))
     afterEvaluate {
