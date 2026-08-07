@@ -143,7 +143,7 @@ subprojects {
         testImplementation "net.bytebuddy:byte-buddy-agent:1.17.7"
     }
     if (project.name != 'protocol' && project.name != 'errorprone'
-            && javaVersion.isJava11Compatible()) {
+            && javaVersion.isCompatibleWith(JavaVersion.VERSION_17)) {
         apply plugin: 'net.ltgt.errorprone'
         dependencies {
             errorprone "com.google.errorprone:error_prone_core:${errorproneVersion}"
