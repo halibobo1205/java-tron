@@ -4,6 +4,7 @@ if (!JavaVersion.current().isJava11Compatible()) {
     tasks.withType(Jar).configureEach { enabled = false }
     // No jar is produced, so the root maven-publish setup must not try to publish one
     tasks.withType(AbstractPublishToMaven).configureEach { enabled = false }
+    tasks.withType(Test).configureEach { enabled = false }
 } else {
     dependencies {
         compileOnly "com.google.errorprone:error_prone_annotations:${errorproneVersion}"

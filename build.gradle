@@ -141,6 +141,7 @@ subprojects {
                         '-Xep:StringCaseLocaleUsage:ERROR',
                         '-Xep:StringCaseLocaleUsageMethodRef:ERROR',
                         '-Xep:ForbidJavaLangMath:ERROR',
+                        '-Xep:ComparatorNeverReturnsZero:ERROR',
                         '-Xep:CatchAndPrintStackTrace:ERROR',
                 ])
             }
