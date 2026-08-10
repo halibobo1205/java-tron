@@ -142,6 +142,7 @@ subprojects {
                         '-Xep:StringCaseLocaleUsage:ERROR',
                         '-Xep:StringCaseLocaleUsageMethodRef:ERROR',
                         '-Xep:ForbidJavaLangMath:ERROR',
+                        '-Xep:ComparatorNeverReturnsZero:ERROR',
 
                         // High-signal checks.
                         '-Xep:ArrayEquals:ERROR',

@@ -1,6 +1,7 @@
 package org.tron.core.store;
 
 import com.google.common.collect.Streams;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -31,9 +32,7 @@ public class ExchangeStore extends TronStoreWithRevoking<ExchangeCapsule> {
   public List<ExchangeCapsule> getAllExchanges() {
     return Streams.stream(iterator())
         .map(Map.Entry::getValue)
-        .sorted(
-            (ExchangeCapsule a, ExchangeCapsule b) -> a.getCreateTime() <= b.getCreateTime() ? 1
-                : -1)
+        .sorted(Comparator.comparingLong(ExchangeCapsule::getCreateTime).reversed())
         .collect(Collectors.toList());
   }
 }
