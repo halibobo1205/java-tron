@@ -2,6 +2,8 @@ package org.tron.core.jsonrpc;
 
 import static org.junit.Assert.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -198,7 +200,7 @@ public class JsonRpcCallAndEstimateGasTest {
                 .build();
           });
     } else {
-      when(mockWallet.triggerConstantContract(any(), any(), any(), any()))
+      when(mockWallet.triggerConstantContract(any(), any(), any(), any(), anyBoolean(), anyLong()))
           .thenAnswer(invocation -> {
             TransactionExtention.Builder extBuilder = invocation.getArgument(2);
             Return.Builder retBuilder = invocation.getArgument(3);
@@ -226,7 +228,7 @@ public class JsonRpcCallAndEstimateGasTest {
         .thenReturn(new TransactionCapsule(Protocol.Transaction.newBuilder().build()));
     when(mockWallet.getContract(any())).thenReturn(SmartContract.getDefaultInstance());
 
-    when(mockWallet.triggerConstantContract(any(), any(), any(), any()))
+    when(mockWallet.triggerConstantContract(any(), any(), any(), any(), anyBoolean(), anyLong()))
         .thenAnswer(invocation -> {
           TransactionExtention.Builder extBuilder = invocation.getArgument(2);
           for (byte[] bytes : constantResults) {
@@ -265,7 +267,7 @@ public class JsonRpcCallAndEstimateGasTest {
                 .build();
           });
     } else {
-      when(mockWallet.triggerConstantContract(any(), any(), any(), any()))
+      when(mockWallet.triggerConstantContract(any(), any(), any(), any(), anyBoolean(), anyLong()))
           .thenAnswer(invocation -> {
             TransactionExtention.Builder extBuilder = invocation.getArgument(2);
             extBuilder.setEnergyUsed(energyValue);

@@ -13,6 +13,7 @@ import org.tron.core.exception.ContractValidateException;
 import org.tron.core.state.WorldStateCallBack;
 import org.tron.core.state.trie.TrieImpl2;
 import org.tron.core.store.StoreFactory;
+import org.tron.core.vm.config.VMConfig;
 import org.tron.protos.Protocol;
 
 public class VmStateTestUtil {
@@ -30,8 +31,14 @@ public class VmStateTestUtil {
         StoreFactory.getInstance(), true, false);
     VMActuator vmActuator = new VMActuator(true);
 
-    vmActuator.validate(context);
-    vmActuator.execute(context);
+    try {
+      vmActuator.validate(context);
+      vmActuator.execute(context);
+    } finally {
+      // constant call installs a thread-local VM config view (ConfigLoader.load with
+      // isolate=true); drop it so it cannot leak into later tests on the same thread
+      VMConfig.clearLocalSnapshot();
+    }
     return context.getProgramResult();
   }
 

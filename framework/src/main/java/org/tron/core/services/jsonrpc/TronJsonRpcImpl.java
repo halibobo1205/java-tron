@@ -206,8 +206,9 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
   private Manager manager;
   private final String esName = "query-section";
 
-  private final boolean allowStateRoot = CommonParameter.getInstance().getStorage()
-      .isAllowStateRoot();
+  // storage is null when Args has not been initialized (e.g. lightweight unit tests)
+  private final boolean allowStateRoot = CommonParameter.getInstance().getStorage() != null
+      && CommonParameter.getInstance().getStorage().isAllowStateRoot();
 
   @Autowired
   public TronJsonRpcImpl(@Autowired NodeInfoService nodeInfoService, @Autowired Wallet wallet) {

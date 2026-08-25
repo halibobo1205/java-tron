@@ -36,6 +36,7 @@ import org.tron.core.state.store.AccountStateStore;
 import org.tron.core.state.trie.TrieImpl2;
 import org.tron.core.store.StoreFactory;
 import org.tron.core.vm.EnergyCost;
+import org.tron.core.vm.config.VMConfig;
 import org.tron.core.vm.repository.RepositoryImpl;
 import org.tron.protos.Protocol.AccountType;
 import org.tron.protos.Protocol.Transaction;
@@ -308,8 +309,14 @@ public class TransferToAccountTest extends BaseTest {
 
     VMActuator vmActuator = new VMActuator(true);
 
-    vmActuator.validate(context);
-    vmActuator.execute(context);
+    try {
+      vmActuator.validate(context);
+      vmActuator.execute(context);
+    } finally {
+      // constant call installs a thread-local VM config view; drop it so it cannot
+      // leak into later tests on the same thread
+      VMConfig.clearLocalSnapshot();
+    }
 
     ProgramResult result = context.getProgramResult();
 

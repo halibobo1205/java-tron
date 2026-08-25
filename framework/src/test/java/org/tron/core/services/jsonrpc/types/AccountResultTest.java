@@ -9,14 +9,29 @@ import java.util.Map;
 import java.util.Objects;
 
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 import org.tron.common.utils.ByteArray;
+import org.tron.common.utils.DecodeUtil;
+import org.tron.core.Constant;
 import org.tron.protos.Protocol;
 import org.tron.protos.contract.Common;
 
 import static org.tron.core.services.jsonrpc.types.Result.toHex;
 
 public class AccountResultTest {
+
+  @Before
+  public void setUp() {
+    // toEthHexAddress strips the 0x41 prefix only under the mainnet prefix byte;
+    // pin it so the test does not depend on what earlier tests in the fork set
+    DecodeUtil.addressPreFixByte = Constant.ADD_PRE_FIX_BYTE_MAINNET;
+  }
+
+  // eth-style form of a 0x41-prefixed tron address: prefix byte stripped
+  private static String toEthAddress(String tronHexAddress) {
+    return "0x" + tronHexAddress.substring(4);
+  }
 
   @Test
   public void testAccountResult() {
@@ -291,12 +306,12 @@ public class AccountResultTest {
 
     Assert.assertEquals(toHex(accountName), result.getAccountName());
     Assert.assertEquals(toHex(account.getType().getNumber()), result.getType());
-    Assert.assertEquals(address, result.getAddress());
+    Assert.assertEquals(toEthAddress(address), result.getAddress());
     Assert.assertEquals(toHex(balance), result.getBalance());
     Assert.assertEquals(2, result.getVotes().size());
-    Assert.assertEquals(sr1, result.getVotes().get(0).getVoteAddress());
+    Assert.assertEquals(toEthAddress(sr1), result.getVotes().get(0).getVoteAddress());
     Assert.assertEquals(toHex(amount1), result.getVotes().get(0).getVoteCount());
-    Assert.assertEquals(sr2, result.getVotes().get(1).getVoteAddress());
+    Assert.assertEquals(toEthAddress(sr2), result.getVotes().get(1).getVoteAddress());
     Assert.assertEquals(toHex(amount2), result.getVotes().get(1).getVoteCount());
     Assert.assertEquals(2, result.getAssetV2().size());
     Assert.assertEquals(toHex(Long.parseUnsignedLong(assetId1)), result.getAssetV2().get(0).getKey());
@@ -373,7 +388,7 @@ public class AccountResultTest {
     Assert.assertEquals(toHex(id), ownerPermission.getParentId());
     Assert.assertEquals(toHex(operation), ownerPermission.getOperations());
     Assert.assertEquals(1, ownerPermission.getKeys().size());
-    Assert.assertEquals(sr1, ownerPermission.getKeys().get(0).getAddress());
+    Assert.assertEquals(toEthAddress(sr1), ownerPermission.getKeys().get(0).getAddress());
     Assert.assertEquals(toHex(weight), ownerPermission.getKeys().get(0).getWeight());
 
     AccountResult.Permission witnessPermission = result.getWitnessPermission();
@@ -385,7 +400,7 @@ public class AccountResultTest {
     Assert.assertEquals(toHex(id), witnessPermission.getParentId());
     Assert.assertEquals(toHex(operation), witnessPermission.getOperations());
     Assert.assertEquals(1, witnessPermission.getKeys().size());
-    Assert.assertEquals(sr1, witnessPermission.getKeys().get(0).getAddress());
+    Assert.assertEquals(toEthAddress(sr1), witnessPermission.getKeys().get(0).getAddress());
     Assert.assertEquals(toHex(weight), witnessPermission.getKeys().get(0).getWeight());
 
     List<AccountResult.Permission> Permissions = result.getActivePermissions();
@@ -398,7 +413,7 @@ public class AccountResultTest {
     Assert.assertEquals(toHex(id), Permissions.get(0).getParentId());
     Assert.assertEquals(toHex(operation), Permissions.get(0).getOperations());
     Assert.assertEquals(1, Permissions.get(0).getKeys().size());
-    Assert.assertEquals(sr1, Permissions.get(0).getKeys().get(0).getAddress());
+    Assert.assertEquals(toEthAddress(sr1), Permissions.get(0).getKeys().get(0).getAddress());
     Assert.assertEquals(toHex(weight), Permissions.get(0).getKeys().get(0).getWeight());
     Assert.assertEquals(2, result.getFrozenV2().size());
     Assert.assertEquals(toHex(Common.ResourceCode.BANDWIDTH.getNumber()),

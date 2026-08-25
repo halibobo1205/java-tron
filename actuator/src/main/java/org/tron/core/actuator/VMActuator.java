@@ -98,8 +98,10 @@ public class VMActuator implements Actuator2 {
 
   private LogInfoTriggerParser logInfoTriggerParser;
 
-  private static final boolean isAllowStateRoot = CommonParameter.getInstance().getStorage()
-          .isAllowStateRoot();
+  // storage is null when Args has not been initialized (e.g. lightweight unit tests)
+  private static final boolean isAllowStateRoot =
+      CommonParameter.getInstance().getStorage() != null
+          && CommonParameter.getInstance().getStorage().isAllowStateRoot();
 
   public VMActuator(boolean isConstantCall) {
     this.isConstantCall = isConstantCall;
