@@ -12,6 +12,7 @@ import org.tron.core.actuator.VMActuator;
 import org.tron.core.db.TransactionContext;
 import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractValidateException;
+import org.tron.core.vm.config.VMConfig;
 import org.tron.core.vm.program.Program;
 import org.tron.core.vm.program.Program.BadJumpDestinationException;
 import org.tron.core.vm.program.Program.IllegalOperationException;
@@ -50,8 +51,17 @@ public class RuntimeImpl implements Runtime {
         actuatorList = ActuatorCreator.getINSTANCE().createActuator(context.getTrxCap());
     }
     if (actuator2 != null) {
-      actuator2.validate(context);
-      actuator2.execute(context);
+      try {
+        actuator2.validate(context);
+        actuator2.execute(context);
+      } finally {
+        if (context.isStatic()) {
+          // a static (constant) call installs a thread-local VM config view via
+          // ConfigLoader.load(isolate=true); drop it so it cannot leak into later
+          // executions on this thread
+          VMConfig.clearLocalSnapshot();
+        }
+      }
     } else {
       for (Actuator act : actuatorList) {
         act.validate();
