@@ -6,7 +6,7 @@ import org.junit.Test;
 public class DbLiteRocksDbV2Test extends DbLiteTest {
 
   @Test
-  public void testToolsWithRocksDB() throws InterruptedException, IOException {
+  public void testToolsWithRocksDbV2() throws InterruptedException, IOException {
     testTools("ROCKSDB", 2);
   }
 }

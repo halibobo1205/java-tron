@@ -16,7 +16,6 @@ import org.springframework.test.context.junit.jupiter.SpringExtension;
 import org.tron.common.application.Application;
 import org.tron.common.application.ApplicationFactory;
 import org.tron.common.application.TronApplicationContext;
-import org.tron.common.config.DbBackupConfig;
 import org.tron.common.crypto.ECKey;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.ChainBaseManager;
@@ -48,7 +47,6 @@ public class WorldStateGenesisTest {
     // allow account root
     Args.getInstance().setAllowAccountStateRoot(1);
     // init dbBackupConfig to avoid NPE
-    Args.getInstance().dbBackupConfig = DbBackupConfig.getInstance();
     context = new TronApplicationContext(DefaultConfig.class);
     appTest = ApplicationFactory.create(context);
     appTest.startup();

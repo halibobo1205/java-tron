@@ -143,7 +143,7 @@ public class VMActuator implements Actuator2 {
       rootRepository = RepositoryImpl.createRoot(context.getStoreFactory());
     }
     // Load Config
-    ConfigLoader.load(rootRepository);
+    ConfigLoader.load(rootRepository, isConstantCall);
 
     // If tx`s fee limit is set, use it to calc max energy limit for constant call
     if (isConstantCall && trx.getRawData().getFeeLimit() > 0) {
@@ -285,6 +285,7 @@ public class VMActuator implements Actuator2 {
       result = program.getResult();
       result.setException(e);
       result.rejectInternalTransactions();
+      clearExceptionResult(result);
       result.setRuntimeError(result.getException().getMessage());
       logger.info("JVMStackOverFlowException: {}", result.getException().getMessage());
     } catch (OutOfTimeException e) {
@@ -292,6 +293,7 @@ public class VMActuator implements Actuator2 {
       result = program.getResult();
       result.setException(e);
       result.rejectInternalTransactions();
+      clearExceptionResult(result);
       result.setRuntimeError(result.getException().getMessage());
       logger.info("timeout: {}", result.getException().getMessage());
     } catch (Throwable e) {
@@ -300,6 +302,7 @@ public class VMActuator implements Actuator2 {
       }
       result = program.getResult();
       result.rejectInternalTransactions();
+      clearExceptionResult(result);
       if (Objects.isNull(result.getException())) {
         logger.error(e.getMessage(), e);
         result.setException(new RuntimeException("Unknown Throwable"));
@@ -324,6 +327,13 @@ public class VMActuator implements Actuator2 {
 
       String txHash = Hex.toHexString(rootInternalTx.getHash());
       VMUtils.saveProgramTraceFile(txHash, traceContent);
+    }
+  }
+
+  private void clearExceptionResult(ProgramResult result) {
+    if (VMConfig.allowTvmOsaka()) {
+      result.getDeleteAccounts().clear();
+      result.getLogInfoList().clear();
     }
   }
 
@@ -415,9 +425,9 @@ public class VMActuator implements Actuator2 {
       byte[] ops = newSmartContract.getBytecode().toByteArray();
       rootInternalTx = new InternalTransaction(trx, trxType);
 
-      long maxCpuTimeOfOneTx = rootRepository.getDynamicPropertiesStore()
-          .getMaxCpuTimeOfOneTx() * VMConstant.ONE_THOUSAND;
-      long thisTxCPULimitInUs = (long) (maxCpuTimeOfOneTx * getCpuLimitInUsRatio());
+      long thisTxCPULimitInUs = calculateCpuLimitInUs(isConstantCall,
+          rootRepository.getDynamicPropertiesStore().getMaxCpuTimeOfOneTx(),
+          getCpuLimitInUsRatio(), CommonParameter.getInstance().getConstantCallTimeoutMs());
       long vmStartInUs = System.nanoTime() / VMConstant.ONE_THOUSAND;
       long vmShouldEndInUs = vmStartInUs + thisTxCPULimitInUs;
       ProgramInvoke programInvoke = ProgramInvokeFactory
@@ -529,10 +539,9 @@ public class VMActuator implements Actuator2 {
         energyLimit = getTotalEnergyLimit(creator, caller, contract, feeLimit, callValue);
       }
 
-      long maxCpuTimeOfOneTx = rootRepository.getDynamicPropertiesStore()
-          .getMaxCpuTimeOfOneTx() * VMConstant.ONE_THOUSAND;
-      long thisTxCPULimitInUs =
-          (long) (maxCpuTimeOfOneTx * getCpuLimitInUsRatio());
+      long thisTxCPULimitInUs = calculateCpuLimitInUs(isConstantCall,
+          rootRepository.getDynamicPropertiesStore().getMaxCpuTimeOfOneTx(),
+          getCpuLimitInUsRatio(), CommonParameter.getInstance().getConstantCallTimeoutMs());
       long vmStartInUs = System.nanoTime() / VMConstant.ONE_THOUSAND;
       long vmShouldEndInUs = vmStartInUs + thisTxCPULimitInUs;
       ProgramInvoke programInvoke = ProgramInvokeFactory
@@ -706,6 +715,14 @@ public class VMActuator implements Actuator2 {
     }
 
     return cpuLimitRatio;
+  }
+
+  static long calculateCpuLimitInUs(boolean isConstantCall, long maxCpuTimeOfOneTxMs,
+      double cpuLimitInUsRatio, long constantCallTimeoutMs) {
+    if (isConstantCall && constantCallTimeoutMs > 0L) {
+      return constantCallTimeoutMs * VMConstant.ONE_THOUSAND;
+    }
+    return (long) (maxCpuTimeOfOneTxMs * VMConstant.ONE_THOUSAND * cpuLimitInUsRatio);
   }
 
   public long getTotalEnergyLimitWithFixRatio(AccountCapsule creator, AccountCapsule caller,

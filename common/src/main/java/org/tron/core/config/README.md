@@ -28,10 +28,7 @@ storage {
     {
       name = "account",
       path = "/path/to/accout",   // relative or absolute path
-      createIfMissing = true,
-      paranoidChecks = true,
-      verifyChecksums = true,
-      compressionType = 1,        // 0 - no compression,  1 - compressed with snappy
+      # following are only used for LevelDB
       blockSize = 4096,           // 4  KB =         4 * 1024 B
       writeBufferSize = 10485760, // 10 MB = 10 * 1024 * 1024 B
       cacheSize = 10485760,       // 10 MB = 10 * 1024 * 1024 B
@@ -43,7 +40,7 @@ storage {
 
 ```
 
-As shown in the example above, the `accout` database will be stored in the path of `/path/to/accout/database` while the index be stored in `/path/to/accout/index`. And, the example also shows our default value of LevelDB options(Start from `createIfMissing` and end at `maxOpenFiles`). Please refer to the docs of [LevelDB](https://github.com/google/leveldb/blob/master/doc/index.md#performance) to figure out the details of these options.
+As shown in the example above, the `accout` database will be stored in the path of `/path/to/accout/database` while the index be stored in `/path/to/accout/index`. And, the example also shows our default value of LevelDB options(Start from `blockSize` and end at `maxOpenFiles`). Please refer to the docs of [LevelDB](https://github.com/google/leveldb/blob/master/doc/index.md#performance) to figure out the details of these options.
 
 ## gRPC
 
@@ -57,8 +54,9 @@ node {
     # Number of gRPC thread, default availableProcessors / 2
     # thread = 16
 
-    # The maximum number of concurrent calls permitted for each incoming connection
-    # maxConcurrentCallsPerConnection =
+    # The maximum number of concurrent calls permitted for each incoming connection,
+    # default 100. Setting 0 also uses the secure default.
+    # maxConcurrentCallsPerConnection = 100
 
     # The HTTP/2 flow control window, default 1MB
     # flowControlWindow =
@@ -77,6 +75,10 @@ node {
   }
 }
 ```
+
+> **Upgrade note:** `maxConcurrentCallsPerConnection = 0` previously disabled the limit.
+> It now selects the secure default of 100. Configure an explicit positive value if a node
+> requires more than 100 concurrent calls on one connection.
 
 ## backup
 You can customize backup options in the `node.backup` part of `config.conf`, which looks like:

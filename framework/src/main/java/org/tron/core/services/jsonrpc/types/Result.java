@@ -27,14 +27,6 @@ public abstract class Result {
     return bytes.isEmpty() ? null : ByteArray.toJsonHex(bytes.toByteArray());
   }
 
-  public static String toEthHexAddress(ByteString bytes) {
-    if (bytes.size() == DecodeUtil.ADDRESS_SIZE / 2
-        && bytes.byteAt(0) == DecodeUtil.addressPreFixByte) {
-      return ByteArray.toJsonHex(bytes.substring(1).toByteArray());
-    }
-    return bytes.isEmpty() ? null : ByteArray.toJsonHex(bytes.toByteArray());
-  }
-
   public static String toHex(String s) {
     return s == null || s.isEmpty() ? null :
         ByteArray.toJsonHex(s.getBytes(StandardCharsets.UTF_8));
@@ -45,5 +37,13 @@ public abstract class Result {
     return input.entrySet().stream().filter(e -> e.getValue() > 0).map(Token10Result::new)
         .sorted(Comparator.comparing(Token10Result::getKey))
         .collect(Collectors.toList());
+  }
+
+  public static String toEthHexAddress(ByteString bytes) {
+    if (bytes.size() == DecodeUtil.ADDRESS_SIZE / 2
+        && bytes.byteAt(0) == DecodeUtil.addressPreFixByte) {
+      return ByteArray.toJsonHex(bytes.substring(1).toByteArray());
+    }
+    return bytes.isEmpty() ? null : ByteArray.toJsonHex(bytes.toByteArray());
   }
 }

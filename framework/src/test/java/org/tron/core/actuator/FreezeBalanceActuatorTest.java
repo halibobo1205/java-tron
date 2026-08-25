@@ -13,6 +13,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.tron.common.BaseTest;
+import org.tron.common.TestConstants;
 import org.tron.common.crypto.ECKey;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.Utils;
@@ -23,7 +24,6 @@ import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.DelegatedResourceAccountIndexCapsule;
 import org.tron.core.capsule.DelegatedResourceCapsule;
 import org.tron.core.capsule.TransactionResultCapsule;
-import org.tron.core.config.Parameter.ChainConstant;
 import org.tron.core.config.args.Args;
 import org.tron.core.db.Manager;
 import org.tron.core.exception.ContractExeException;
@@ -49,7 +49,7 @@ public class FreezeBalanceActuatorTest extends BaseTest {
   private WorldStateCallBack worldStateCallBack;
 
   static {
-    Args.setParam(new String[]{"--output-directory", dbPath()}, Constant.TEST_CONF);
+    Args.setParam(new String[]{"--output-directory", dbPath()}, TestConstants.TEST_CONF);
     OWNER_ADDRESS = Wallet.getAddressPreFixString() + "548794500882809695a8a687866e76d4271a1abc";
     RECEIVER_ADDRESS = Wallet.getAddressPreFixString() + "abd4b9367799eaa3197fecb144eb71de1e049150";
     OWNER_ACCOUNT_INVALID =
@@ -691,35 +691,6 @@ public class FreezeBalanceActuatorTest extends BaseTest {
       Assert.fail();
     }
   }
-
-  //@Test
-  public void moreThanFrozenNumber() {
-    long frozenBalance = 1_000_000_000L;
-    long duration = 3;
-    FreezeBalanceActuator actuator = new FreezeBalanceActuator();
-    actuator.setChainBaseManager(dbManager.getChainBaseManager())
-        .setAny(getContractForBandwidth(OWNER_ADDRESS, frozenBalance, duration));
-
-    TransactionResultCapsule ret = new TransactionResultCapsule();
-    try {
-      actuator.validate();
-      actuator.execute(ret);
-    } catch (ContractValidateException | ContractExeException e) {
-      Assert.fail();
-    }
-    try {
-      actuator.validate();
-      actuator.execute(ret);
-      fail("cannot run here.");
-    } catch (ContractValidateException e) {
-      long maxFrozenNumber = ChainConstant.MAX_FROZEN_NUMBER;
-      Assert.assertEquals("max frozen number is: " + maxFrozenNumber, e.getMessage());
-
-    } catch (ContractExeException e) {
-      Assert.fail();
-    }
-  }
-
 
   @Test
   public void commonErrorCheck() {

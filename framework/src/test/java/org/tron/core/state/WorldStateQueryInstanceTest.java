@@ -21,7 +21,6 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.junit.jupiter.SpringExtension;
 import org.tron.common.application.TronApplicationContext;
-import org.tron.common.config.DbBackupConfig;
 import org.tron.common.crypto.ECKey;
 import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.utils.Utils;
@@ -74,7 +73,6 @@ public class WorldStateQueryInstanceTest {
     // allow account root
     Args.getInstance().setAllowAccountStateRoot(1);
     // init dbBackupConfig to avoid NPE
-    Args.getInstance().dbBackupConfig = DbBackupConfig.getInstance();
     context = new TronApplicationContext(DefaultConfig.class);
     chainBaseManager = context.getBean(ChainBaseManager.class);
     merkleStorage =  context.getBean(MerkleStorage.class);
