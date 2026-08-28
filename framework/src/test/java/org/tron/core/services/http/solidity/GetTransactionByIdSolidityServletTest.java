@@ -139,7 +139,7 @@ public class GetTransactionByIdSolidityServletTest {
     while ((text = bufferedReader.readLine()) != null) {
       sb.append(text);
     }
-    Assert.assertTrue(sb.toString().contains("null"));
+    Assert.assertTrue(sb.toString().contains("{\"Error\":\"internal server error\"}"));
     httpUrlConnection.disconnect();
   }
 
@@ -195,7 +195,7 @@ public class GetTransactionByIdSolidityServletTest {
     while ((text = bufferedReader.readLine()) != null) {
       sb.append(text);
     }
-    Assert.assertTrue(sb.toString().contains("null"));
+    Assert.assertTrue(sb.toString().contains("{\"Error\":\"internal server error\"}"));
     httpUrlConnection.disconnect();
   }
 }
