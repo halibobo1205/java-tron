@@ -119,21 +119,30 @@ subprojects {
         testImplementation "org.mockito:mockito-inline:4.11.0"
     }
     if (project.name != 'protocol' && project.name != 'errorprone'
-            && javaVersion.isJava11Compatible()) {
+            && javaVersion.isCompatibleWith(JavaVersion.VERSION_17)) {
         apply plugin: 'net.ltgt.errorprone'
         dependencies {
             errorprone "com.google.errorprone:error_prone_core:${errorproneVersion}"
             errorprone rootProject.project(':errorprone')
         }
+        // Keep test compilation free of Error Prone so existing test code does not block builds.
         tasks.withType(JavaCompile).configureEach {
+            options.errorprone.enabled = false
+        }
+        tasks.named(sourceSets.main.compileJavaTaskName, JavaCompile).configure {
             options.errorprone {
                 enabled = true
                 disableWarningsInGeneratedCode = true
                 disableAllChecks = true
                 excludedPaths = '.*/generated/.*'
                 errorproneArgs.addAll([
+                        '-Xep:BigDecimalFloatingPointConstructor:ERROR',
+                        '-Xep:SelfAssignment:ERROR',
                         '-Xep:StringCaseLocaleUsage:ERROR',
                         '-Xep:StringCaseLocaleUsageMethodRef:ERROR',
+                        '-Xep:ForbidJavaLangMath:ERROR',
+                        '-Xep:ComparatorNeverReturnsZero:ERROR',
+                        '-Xep:CatchAndPrintStackTrace:ERROR',
                 ])
             }
         }

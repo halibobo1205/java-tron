@@ -1,9 +1,10 @@
-if (!JavaVersion.current().isJava11Compatible()) {
-    // ErrorProne core requires JDK 11+; skip this module on JDK 8
+if (!JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_17)) {
+    // ErrorProne core 2.42.0 ships Java 17 bytecode; skip below JDK 17
     tasks.withType(JavaCompile).configureEach { enabled = false }
     tasks.withType(Jar).configureEach { enabled = false }
     // No jar is produced, so the root maven-publish setup must not try to publish one
     tasks.withType(AbstractPublishToMaven).configureEach { enabled = false }
+    tasks.withType(Test).configureEach { enabled = false }
 } else {
     dependencies {
         compileOnly "com.google.errorprone:error_prone_annotations:${errorproneVersion}"
@@ -11,5 +12,21 @@ if (!JavaVersion.current().isJava11Compatible()) {
         compileOnly "com.google.errorprone:error_prone_core:${errorproneVersion}"
         compileOnly "com.google.auto.service:auto-service:1.1.1"
         annotationProcessor "com.google.auto.service:auto-service:1.1.1"
+        testImplementation "com.google.errorprone:error_prone_test_helpers:${errorproneVersion}"
+    }
+
+    tasks.withType(Test).configureEach {
+        jvmArgs(
+                '--add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED',
+                '--add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED',
+                '--add-exports=jdk.compiler/com.sun.tools.javac.main=ALL-UNNAMED',
+                '--add-exports=jdk.compiler/com.sun.tools.javac.model=ALL-UNNAMED',
+                '--add-exports=jdk.compiler/com.sun.tools.javac.parser=ALL-UNNAMED',
+                '--add-exports=jdk.compiler/com.sun.tools.javac.processing=ALL-UNNAMED',
+                '--add-exports=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED',
+                '--add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED',
+                '--add-opens=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED',
+                '--add-opens=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED'
+        )
     }
 }
