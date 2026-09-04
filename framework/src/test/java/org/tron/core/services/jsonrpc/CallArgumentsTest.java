@@ -48,6 +48,17 @@ public class CallArgumentsTest extends BaseTest {
   }
 
   @Test
+  public void parseOptionalGasDistinguishesOmittedAndExplicitZero()
+      throws JsonRpcInvalidParamsException {
+    CallArguments args = new CallArguments();
+    Assert.assertNull(args.parseOptionalGas());
+    args.setGas("0x0");
+    Assert.assertEquals(Long.valueOf(0L), args.parseOptionalGas());
+    args.setGas("0x10");
+    Assert.assertEquals(Long.valueOf(16L), args.parseOptionalGas());
+  }
+
+  @Test
   public void resolveData_inputOnly_returnsInput() throws JsonRpcInvalidParamsException {
     CallArguments args = new CallArguments();
     args.setInput("0xdeadbeef");
@@ -190,6 +201,33 @@ public class CallArgumentsTest extends BaseTest {
     CallArguments args = new CallArguments();
     args.setData("0x123");
     Assert.assertEquals("0x123", args.resolveData());
+  }
+
+  @Test
+  public void resolveData_dataWhitespace_acceptedForBackwardCompat()
+      throws JsonRpcInvalidParamsException {
+    CallArguments args = new CallArguments();
+    args.setData("de ad\nbeef");
+    Assert.assertEquals("de ad\nbeef", args.resolveData());
+  }
+
+  @Test
+  public void resolveData_lenientWhitespacePreservesLegacyRawLengthParity()
+      throws JsonRpcInvalidParamsException {
+    CallArguments accepted = new CallArguments();
+    accepted.setData("a  ");
+    Assert.assertEquals("a  ", accepted.resolveData());
+
+    CallArguments rejected = new CallArguments();
+    rejected.setData("a ");
+    Assert.assertThrows(JsonRpcInvalidParamsException.class, rejected::resolveData);
+  }
+
+  @Test
+  public void resolveData_inputWhitespace_rejectedByStrictMode() {
+    CallArguments args = new CallArguments();
+    args.setInput("0xde adbeef");
+    Assert.assertThrows(JsonRpcInvalidParamsException.class, args::resolveData);
   }
 
   /** Reproduces issue #6517 contract-creation symptom. */

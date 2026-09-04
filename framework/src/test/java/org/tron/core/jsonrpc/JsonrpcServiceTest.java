@@ -783,6 +783,29 @@ public class JsonrpcServiceTest extends BaseTest {
         () -> tronJsonRpc.getCall(null, new HashMap<String, String>()));
     Assert.assertEquals("invalid json request", emptyMapEx.getMessage());
 
+    // blockNumber and blockHash are mutually exclusive in the object form.
+    HashMap<String, String> ambiguousParams = new HashMap<>();
+    ambiguousParams.put("blockNumber", ByteArray.toJsonHex(blockCapsule1.getNum()));
+    ambiguousParams.put("blockHash", "0x" + blockCapsule1.getBlockId().toString());
+    Exception ambiguousEx = Assert.assertThrows(Exception.class,
+        () -> tronJsonRpc.getCall(null, ambiguousParams));
+    Assert.assertEquals("invalid json request", ambiguousEx.getMessage());
+
+    // blockNumber must be an Ethereum QUANTITY, not a bare decimal string.
+    HashMap<String, String> decimalParams = new HashMap<>();
+    decimalParams.put("blockNumber", "5");
+    Exception decimalEx = Assert.assertThrows(Exception.class,
+        () -> tronJsonRpc.getCall(null, decimalParams));
+    Assert.assertEquals("invalid block number", decimalEx.getMessage());
+
+    // requireCanonical is outside the P0 object-form selector surface.
+    HashMap<String, Object> requireCanonicalNumberParams = new HashMap<>();
+    requireCanonicalNumberParams.put("blockNumber", ByteArray.toJsonHex(blockCapsule1.getNum()));
+    requireCanonicalNumberParams.put("requireCanonical", Boolean.TRUE);
+    Exception requireCanonicalNumberEx = Assert.assertThrows(Exception.class,
+        () -> tronJsonRpc.getCall(null, requireCanonicalNumberParams));
+    Assert.assertEquals("invalid json request", requireCanonicalNumberEx.getMessage());
+
     // blockNumber with malformed hex -> invalid block number
     HashMap<String, String> badHexParams = new HashMap<>();
     badHexParams.put("blockNumber", "xxx");
@@ -811,6 +834,41 @@ public class JsonrpcServiceTest extends BaseTest {
     Exception missingHashEx = Assert.assertThrows(Exception.class,
         () -> tronJsonRpc.getCall(null, missingHashParams));
     Assert.assertEquals("header for hash not found", missingHashEx.getMessage());
+
+    // Valid historical object-form selectors must not silently execute against latest when
+    // archive eth_call is unavailable.
+    HashMap<String, String> historicalNumParams = new HashMap<>();
+    historicalNumParams.put("blockNumber", ByteArray.toJsonHex(blockCapsule1.getNum()));
+    Exception historicalNumEx = Assert.assertThrows(Exception.class,
+        () -> tronJsonRpc.getCall(null, historicalNumParams));
+    Assert.assertEquals(
+        "QUANTITY not supported, just support TAG as latest", historicalNumEx.getMessage());
+
+    HashMap<String, String> historicalHashParams = new HashMap<>();
+    historicalHashParams.put("blockHash", "0x" + blockCapsule1.getBlockId().toString());
+    Exception historicalHashEx = Assert.assertThrows(Exception.class,
+        () -> tronJsonRpc.getCall(null, historicalHashParams));
+    Assert.assertEquals(
+        "QUANTITY not supported, just support TAG as latest", historicalHashEx.getMessage());
+
+    HashMap<String, Object> canonicalHashParams = new HashMap<>();
+    canonicalHashParams.put("blockHash", "0x" + blockCapsule1.getBlockId().toString());
+    canonicalHashParams.put("requireCanonical", Boolean.TRUE);
+    Exception canonicalHashEx = Assert.assertThrows(Exception.class,
+        () -> tronJsonRpc.getCall(null, canonicalHashParams));
+    Assert.assertEquals(
+        "QUANTITY not supported, just support TAG as latest", canonicalHashEx.getMessage());
+
+    BlockCapsule forkBlock = new BlockCapsule(blockCapsule1.getNum(), Sha256Hash.wrap(
+        ByteString.copyFrom(ByteArray.fromHexString(
+            "1304f784e4e7bae517bcab94c3e0c9214fb4ac7ff9d7d5a937d1f40031f87b81"))),
+        blockCapsule1.getTimeStamp() + 1, ByteString.copyFromUtf8("forkAddress"));
+    dbManager.getBlockStore().put(forkBlock.getBlockId().getBytes(), forkBlock);
+    HashMap<String, String> nonCanonicalHashParams = new HashMap<>();
+    nonCanonicalHashParams.put("blockHash", "0x" + forkBlock.getBlockId().toString());
+    Exception nonCanonicalHashEx = Assert.assertThrows(Exception.class,
+        () -> tronJsonRpc.getCall(null, nonCanonicalHashParams));
+    Assert.assertEquals("header for hash not found", nonCanonicalHashEx.getMessage());
   }
 
   /**

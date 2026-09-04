@@ -134,6 +134,8 @@ import org.tron.core.actuator.ActuatorConstant;
 import org.tron.core.actuator.ActuatorFactory;
 import org.tron.core.actuator.UnfreezeBalanceV2Actuator;
 import org.tron.core.actuator.VMActuator;
+import org.tron.core.archive.ArchiveException;
+import org.tron.core.archive.query.HistoricalQueryLimitException;
 import org.tron.core.capsule.AbiCapsule;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.AssetIssueCapsule;
@@ -716,6 +718,36 @@ public class Wallet {
     } catch (StoreException e) {
       logger.info(e.getMessage());
       return null;
+    }
+  }
+
+  /** Historical-query lookup that bypasses canonical RocksDB/LevelDB cache admission. */
+  public Block getBlockByNumWithoutCache(long blockNum) {
+    try {
+      return chainBaseManager.getBlockByNumWithoutCache(blockNum).getInstance();
+    } catch (ItemNotFoundException e) {
+      logger.info(e.getMessage());
+      return null;
+    } catch (HistoricalQueryLimitException e) {
+      throw e;
+    } catch (StoreException | RuntimeException e) {
+      throw new ArchiveException(
+          "failed to read canonical block " + blockNum, e);
+    }
+  }
+
+  /** Historical-query canonical-id lookup that bypasses shared cache admission. */
+  public byte[] getBlockIdByNumWithoutCache(long blockNum) {
+    try {
+      return chainBaseManager.getBlockIdByNumWithoutCache(blockNum).getBytes();
+    } catch (ItemNotFoundException e) {
+      logger.info(e.getMessage());
+      return null;
+    } catch (HistoricalQueryLimitException e) {
+      throw e;
+    } catch (RuntimeException e) {
+      throw new ArchiveException(
+          "failed to read canonical block id " + blockNum, e);
     }
   }
 
@@ -1833,6 +1865,24 @@ public class Wallet {
       logger.warn(e.getMessage());
     }
     return block;
+  }
+
+  /** Historical-query lookup that bypasses canonical RocksDB/LevelDB cache admission. */
+  public Block getBlockByIdWithoutCache(ByteString blockId) {
+    if (Objects.isNull(blockId)) {
+      return null;
+    }
+    try {
+      return chainBaseManager.getBlockByIdWithoutCache(
+          Sha256Hash.wrap(blockId.toByteArray())).getInstance();
+    } catch (ItemNotFoundException e) {
+      logger.warn(e.getMessage());
+      return null;
+    } catch (HistoricalQueryLimitException e) {
+      throw e;
+    } catch (StoreException | RuntimeException e) {
+      throw new ArchiveException("failed to read canonical block by id", e);
+    }
   }
 
   public BlockList getBlocksByLimitNext(long number, long limit) {
@@ -3158,13 +3208,9 @@ public class Wallet {
         StoreFactory.getInstance(), true, false);
     VMActuator vmActuator = new VMActuator(true);
 
-    try {
+    try (VMConfig.LocalSnapshotScope ignored = VMConfig.preserveLocalSnapshot()) {
       vmActuator.validate(context);
       vmActuator.execute(context);
-    } finally {
-      // constant call runs on a pooled RPC worker; drop its thread-local VM config view so it
-      // can never leak into a later (block/broadcast) execution on the same thread.
-      VMConfig.clearLocalSnapshot();
     }
 
     ProgramResult result = context.getProgramResult();

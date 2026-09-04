@@ -149,8 +149,11 @@ public class SnapshotManager implements RevokingDatabase {
   }
 
   @Override
-  public void add(IRevokingDB db) {
+  public synchronized void add(IRevokingDB db) {
     Chainbase revokingDB = (Chainbase) db;
+    for (int i = 0; i < size; i++) {
+      revokingDB.setHead(revokingDB.getHead().advance());
+    }
     dbs.add(revokingDB);
     flushServices.put(revokingDB.getDbName(),
         MoreExecutors.listeningDecorator(ExecutorServiceManager.newSingleThreadExecutor(
@@ -218,6 +221,26 @@ public class SnapshotManager implements RevokingDatabase {
     });
   }
 
+  private synchronized void commitToRoot() {
+    if (activeSession != 1 || size != 1) {
+      throw new RevokingStoreIllegalStateException(
+          String.format("root commit requires one active top-level snapshot, active=%d, size=%d",
+              activeSession, size));
+    }
+    List<String> invalidDbs = dbs.stream()
+        .filter(db -> !Snapshot.isImpl(db.getHead())
+            || !Snapshot.isRoot(db.getHead().getPrevious()))
+        .map(Chainbase::getDbName)
+        .collect(Collectors.toList());
+    if (!invalidDbs.isEmpty()) {
+      throw new RevokingStoreIllegalStateException(
+          "root commit found databases outside the top-level snapshot: " + invalidDbs);
+    }
+    dbs.forEach(db -> db.getHead().getRoot().merge(db.getHead()));
+    retreat();
+    --activeSession;
+  }
+
   public synchronized void pop() {
     if (activeSession != 0) {
       throw new RevokingStoreIllegalStateException(
@@ -250,6 +273,11 @@ public class SnapshotManager implements RevokingDatabase {
   @Override
   public int size() {
     return size;
+  }
+
+  @Override
+  public int getPendingFlushCount() {
+    return flushCount;
   }
 
   public int getMaxSize() {
@@ -583,6 +611,12 @@ public class SnapshotManager implements RevokingDatabase {
     public void commit() {
       applySnapshot = false;
       snapshotManager.commit();
+    }
+
+    @Override
+    public void commitToRoot() {
+      snapshotManager.commitToRoot();
+      applySnapshot = false;
     }
 
     @Override

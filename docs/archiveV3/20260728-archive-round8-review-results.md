@@ -1,0 +1,44 @@
+# Archive round-8 review results (for codex)
+
+**Delta reviewed:** `de9a8234d1..c03b17bac1` — 8 archive-only commits (136 files, +9436/−733): historical debug trace v1 (`ff7e2b6c03`) + hardening (`1387d908fa`), historical SELFDESTRUCT replay (`dd08fd2019`), admission/query race closures (`a3d4834137`/`a9dc9523f7`/`0015cd55ff`), eth_call selector preservation, cross-JDK validation, test isolation. Non-archive infra commits were rebased out before review (deliberate).
+**Provenance:** 5 finders → 3-lens adversarial verification → critic; 69 agents. 21 raw → 13 survived → **dedup 9 distinct issues: exactly 1 code bug (low), 0 regressions of protected fixes**. claude independently re-verified the code bug. Suites green: chainbase `archive.*`, actuator `vm.archive`+`vm.program`, framework jsonrpc.
+
+## Dimension verdicts
+
+| Dimension | Verdict |
+|---|---|
+| trace v1 | **PRODUCTION-WORTHY WITH CONDITIONS** — request-owned listener, canonical path byte-identical, strict fail-closed options, reserve-before-materialize byte budgets, gated executor, TX_BEFORE-on-USER_TX_VM semantics, pre-enable blocks fail closed. Conditions = items 1-3 below. |
+| selfdestruct replay | **CORRECT** across all six audit axes — complete TRC10 enumeration (19 exact-length LATEST-CF scans, tombstone retention, mid-chain fail-closed), overlay-first merge preserves the round-6 fix, vote/withdrawReward replay with byte-for-byte DelegationStore key parity, blackhole/EIP-6780/recreate semantics verified. |
+| races + r7 closure | **CLOSED** — R28-5a/5c, disk-sampler, stalled-probe, submit-vs-close, typed query-error races all verified with targeted concurrency tests. `metrics_dropped_reports` sticky + accurate + documented. |
+| perf | **ACCEPTABLE, NET POSITIVE** — WAL-only ack drops per-block payload re-verification, tail-only startup revalidation, single-flight disk sampling, dynamic_level_bytes on every CF; trace capture adds zero clock samples; all retention budget-reserved. |
+| regression sweep | **CLEAN — all protected fixes intact**, incl. nested-swallow finally-rethrow on BOTH executors (the hardening commit itself fixed a v1 suppress-only bug there, with terminal-first priority). |
+
+## Round-7 closure scoreboard
+P1.1 full-throwable logging **LANDED** (`Manager.java:1730-1746`, 10 call sites, dead throw collapsed) · P1.3 dynamic_level_bytes **LANDED** (`UnifiedArchiveDb.java:1108`, every CF, asserted in test) · P2.2 config parity **LANDED** for the original items (publisher.async=true, jsonRpcWorkerThreads) — but trace introduced a NEW parity gap (item 3) · P3 hygiene **MOSTLY LANDED** · **P2.1 RE-OPENED** (item 4): legitimately closed at schema-6 by the round-28 rerun, then `1387d908fa` bumped layout-schema to **7** (USER_TX_VM txNum-layout change) with no exact-artifact E2E after the bump.
+
+## Action items (priority order)
+
+1. **[medium, docs] Runbook Stage C contradicts shipped trace v1.** `20260714-…-runbook.md:68-69` still mandates debug_trace* "must remain method-not-found" (blocker framing), while `ff7e2b6c03` shipped debug_traceCall/debug_traceTransaction and authority-doc decision 8 supersedes the exclusion (the same commit's doc sweep missed the runbook). Rewrite Stage C: default-off nodes still return −32601 (verified: `TronJsonRpcImpl.requireDebugTraceEnabled:1133-1137`); debug-enabled nodes validate per the trace v1 plan (spot-diff debug_traceTransaction vs an independent node; pre-enable blocks fail closed via `UnsupportedHistoricalStateException` — note: not the literal "VM pre-state was not captured" string).
+2. **[low, the one code bug — claude-verified] Traced call wrappers extend TVM memory above canonical guards.** `Program.java` `callToAddress:1118` (+ `callToPrecompiledAddress:1871`, `createContract:865`, `createContract2:1838`): with a collector installed, `memoryChunk(inData/initCode)` runs BEFORE the MAX_DEPTH / insufficient-balance early-returns inside the untraced body — guard-rejected calls extend memory canonical execution never touched → structLog memory column diverges from on-chain. Fix: defer the read until after the guards, or capture input via a non-extending peek.
+3. **[low, tests] Trace-path nested-swallow test not restored.** The protection EXISTS and is correct (`HistoricalDebugTraceExecutor.java:121-158` finally re-reads `getRecordedExecutionTerminalFailure`, terminal-first), but the real-VM test deleted with the old trace cut (`54b3be8ae0:290`) was not restored. Port `nestedRewardBalanceFailureCannotBeHiddenByParentSuccess` to the trace executor with structLog + callTracer.
+4. **[low, procedural] Schema-7 re-opens P2.1 evidence.** Rerun the round-28 private-chain oracle + offline-probe + SIGKILL matrix on an exact schema-7 HEAD artifact and record in docs/archiveV3.
+5. **[low, maintenance] Delegation-key drift guard.** `ArchiveRepositoryAdapter` re-implements DelegationStore's private key builders (byte-parity today, no guard). Add a cross-check test (write via real DelegationStore, read via the adapter) or extract shared package-visible builders.
+6. **[cosmetic batch, one commit]** Mirror the four `storage.archive.debug` budget keys into `config.conf:92`; re-widen the TOMBSTONE comment (`HistoricalArchiveVmDynamicProperties.java:374` — "eth_call" → "eth_call/trace" again); add the round-27-decision breadcrumb at the `eraseBlock` ARCHIVE_RUNTIME catch; drop the stale verification-metadata claim from the `e28409782b` message context if amended.
+7. **[optional perf]** Skip `Program.checkCPUTimeLimit` when the query deadline drives `vmShouldEndInUs` (redundant clock sample per opcode on historical paths); eliminate the SLOAD logical-read double-charge in `ArchiveStructLogCollector.captureTouchedStorage` (post-op capture).
+
+## Remediation verification (claude, 2026-07-28)
+
+`a0616c8879 fix(archive): close round-8 review findings` (15 files, +776/−36) — **items 1-6 all verified LANDED; item 7 (optional perf pair) deferred as designated**:
+
+1. ✅ Runbook Stage C rewritten: default-off → −32601; debug-enabled nodes compare structLogs+callTracer vs an independent node; pre-enable blocks must fail closed with `UnsupportedHistoricalStateException`, never a partial trace.
+2. ✅ Memory hoisting fixed **parity-precisely**: new non-extending `Memory.memoryPeek` used only for the MAX_DEPTH-rejected case across all 4 wrappers — correct scoping, since canonical order is depth-check → `memoryChunk` → balance-check (the balance case extends memory canonically too, so peeking there would have been the opposite divergence). `MemoryTest` covers the peek.
+3. ✅ `HistoricalDebugTraceNestedFailureTest` (266 lines): nested RewardBalance failure cannot be hidden by parent success, asserted for BOTH structLog and callTracer collectors.
+4. ✅ P2.1 closed: `20260728-archive-schema7-round8-e2e-results.md` — exact schema-7 artifact (FullNode.jar SHA-256 `17d43213…`), fresh private chain, JDK 17.0.17.
+5. ✅ `delegationKeysMatchCanonicalStoreBuilders` — real `DelegationStore` (CALLS_REAL_METHODS) writes, adapter reads: drift guard in place.
+6. ✅ Cosmetic batch: config.conf carries the 4 debug budget keys; TOMBSTONE comment re-widened to eth_call/trace; `eraseBlock` breadcrumb explains why failing is mandatory and why ARCHIVE_RUNTIME routes it.
+7. ⏸ Optional perf pair (redundant `checkCPUTimeLimit`, SLOAD double-charge) — open, non-blocking.
+
+Bonus hardening in the same commit (beyond checklist): `shouldBeginArchiveUserVmTx` guard (null blockCap / unsigned block), +94-line eth_call integration test, +48 DefaultArchiveServiceTest, +23 ManagerArchiveLifecycleTest.
+
+## Verified sound (no action)
+Trace isolation (listener null-checked, canonical byte-identical); budgets reserve-before-materialize clamped by maxResponseBytes; TX_BEFORE/USER_TX_VM anchoring consistent; selfdestruct all axes; `metrics_dropped_reports` semantics; **zero behavioral regressions** — nested-swallow both executors, TRC10 overlay, digest fold + test, close() ordering, reconcile re-ack, fsyncs/block=2, deadline clamp, SolidityNode refusal, query-limit zero rejection, journal budget, metrics labels/gauges/buckets, dynamic_level_bytes.

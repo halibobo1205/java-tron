@@ -28,6 +28,7 @@ public class StorageConfig {
   private CheckpointConfig checkpoint = new CheckpointConfig();
   private SnapshotConfig snapshot = new SnapshotConfig();
   private TxCacheConfig txCache = new TxCacheConfig();
+  private ArchiveConfig archive = new ArchiveConfig();
   // ConfigBeanFactory requires all bean fields present per item, so we parse manually.
   @Setter(lombok.AccessLevel.NONE)
   private List<PropertyConfig> properties = new ArrayList<>();
@@ -158,6 +159,333 @@ public class StorageConfig {
     }
   }
 
+  // Archive (transaction-level historical state) sidecar config. Default disabled = pure no-op.
+  // Nested beans bind 1:1 via ConfigBeanFactory; keys/defaults mirror
+  // reference.conf storage.archive.
+  @Getter
+  @Setter
+  public static class ArchiveConfig {
+
+    private static final String SUPPORTED_COVERAGE = "TVM_STATE_ONLY";
+
+    private boolean enable = false;
+    private DbConfig db = new DbConfig();
+    private TxNumConfig txnum = new TxNumConfig();
+    private TemporalConfig temporal = new TemporalConfig();
+    private PublisherConfig publisher = new PublisherConfig();
+    private QueryConfig query = new QueryConfig();
+    private IdentityConfig identity = new IdentityConfig();
+    private CommitmentConfig commitment = new CommitmentConfig();
+    private DebugConfig debug = new DebugConfig();
+    private String coverage = "TVM_STATE_ONLY";
+    private boolean warnUnclassifiedStoreWrites = true;
+
+    void postProcess() {
+      if (db == null) {
+        throw new IllegalArgumentException("storage.archive.db must not be null");
+      }
+      if (db.directory == null || db.directory.trim().isEmpty()) {
+        throw new IllegalArgumentException("storage.archive.db.directory must not be empty");
+      }
+      if (coverage == null || coverage.trim().isEmpty()) {
+        throw new IllegalArgumentException("storage.archive.coverage must not be empty");
+      }
+      coverage = coverage.trim();
+      if (!SUPPORTED_COVERAGE.equals(coverage)) {
+        throw new IllegalArgumentException(
+            "storage.archive.coverage supports only " + SUPPORTED_COVERAGE + " in P0");
+      }
+      if (!warnUnclassifiedStoreWrites) {
+        throw new IllegalArgumentException(
+            "storage.archive.warnUnclassifiedStoreWrites cannot be false in P0");
+      }
+      if (enable && (txnum == null || !txnum.isEnable())) {
+        throw new IllegalArgumentException("storage.archive.txnum.enable cannot be false in P0");
+      }
+      if (enable && (temporal == null || !temporal.isEnable())) {
+        throw new IllegalArgumentException("storage.archive.temporal.enable cannot be false in P0");
+      }
+      if (publisher == null) {
+        throw new IllegalArgumentException("storage.archive.publisher must not be null");
+      }
+      publisher.postProcess();
+      if (query == null) {
+        throw new IllegalArgumentException("storage.archive.query must not be null");
+      }
+      query.postProcess();
+      if (identity == null) {
+        throw new IllegalArgumentException("storage.archive.identity must not be null");
+      }
+      if (debug == null) {
+        throw new IllegalArgumentException("storage.archive.debug must not be null");
+      }
+      debug.postProcess();
+      if (debug.isEnable() && !enable) {
+        throw new IllegalArgumentException(
+            "storage.archive.debug.enable requires storage.archive.enable");
+      }
+      if (enable && commitment != null && commitment.isEnable()) {
+        throw new IllegalArgumentException(
+            "storage.archive.commitment.enable is not supported in P0");
+      }
+      if (enable && commitment != null && commitment.isPersistTxRoots()) {
+        throw new IllegalArgumentException(
+            "storage.archive.commitment.persistTxRoots cannot be true in P0");
+      }
+    }
+
+    @Getter
+    @Setter
+    public static class DbConfig {
+
+      private String directory = "archive";
+      private boolean fullScrubOnStartup;
+    }
+
+    /** One-time opt-in for creating or resuming the canonical/archive ACTIVE identity pair. */
+    @Getter
+    @Setter
+    public static class IdentityConfig {
+
+      private boolean initialize;
+    }
+
+    @Getter
+    @Setter
+    public static class TxNumConfig {
+
+      private boolean enable = true;
+    }
+
+    @Getter
+    @Setter
+    public static class TemporalConfig {
+
+      private boolean enable = true;
+    }
+
+    /** Runtime solidified-journal publisher. Archive-enabled nodes publish off the block thread. */
+    @Getter
+    @Setter
+    public static class PublisherConfig {
+
+      private static final long MAX_OPERATION_TIMEOUT_MS = 24L * 60L * 60L * 1_000L;
+
+      private boolean async = true;
+      private boolean backpressure = true;
+      private int softInFlightBlocks = 32_768;
+      private int hardInFlightBlocks = 65_536;
+      private long softInFlightBytes = 128L * 1024 * 1024;
+      private long hardInFlightBytes = 256L * 1024 * 1024;
+      private long softInFlightRecords = 1_000_000L;
+      private long hardInFlightRecords = 2_000_000L;
+      private long softMinFreeBytes = 5L * 1024 * 1024 * 1024;
+      private long hardMinFreeBytes = 1L * 1024 * 1024 * 1024;
+      private long backpressureTimeoutMs = 30_000L;
+      private long publishTimeoutMs = 120_000L;
+      private long journalTimeoutMs = 120_000L;
+      private long recoveryTimeoutMs = MAX_OPERATION_TIMEOUT_MS;
+
+      void postProcess() {
+        if (softInFlightBlocks <= 0) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.softInFlightBlocks must be positive");
+        }
+        if (hardInFlightBlocks < softInFlightBlocks) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.hardInFlightBlocks must be greater than or equal to "
+                  + "softInFlightBlocks");
+        }
+        if (softInFlightBytes <= 0) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.softInFlightBytes must be positive");
+        }
+        if (hardInFlightBytes < softInFlightBytes) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.hardInFlightBytes must be greater than or equal to "
+                  + "softInFlightBytes");
+        }
+        if (softInFlightRecords <= 0) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.softInFlightRecords must be positive");
+        }
+        if (hardInFlightRecords < softInFlightRecords) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.hardInFlightRecords must be greater than or equal to "
+                  + "softInFlightRecords");
+        }
+        if (hardMinFreeBytes < 0) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.hardMinFreeBytes must be non-negative");
+        }
+        if (softMinFreeBytes < hardMinFreeBytes) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.softMinFreeBytes must be greater than or equal to "
+                  + "hardMinFreeBytes");
+        }
+        if (backpressureTimeoutMs < 0) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.backpressureTimeoutMs must be non-negative");
+        }
+        if (backpressureTimeoutMs > MAX_OPERATION_TIMEOUT_MS) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.backpressureTimeoutMs exceeds 24 hours");
+        }
+        if (publishTimeoutMs <= 0) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.publishTimeoutMs must be positive");
+        }
+        if (publishTimeoutMs > MAX_OPERATION_TIMEOUT_MS) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.publishTimeoutMs exceeds 24 hours");
+        }
+        if (journalTimeoutMs <= 0) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.journalTimeoutMs must be positive");
+        }
+        if (journalTimeoutMs > MAX_OPERATION_TIMEOUT_MS) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.journalTimeoutMs exceeds 24 hours");
+        }
+        if (recoveryTimeoutMs <= 0) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.recoveryTimeoutMs must be positive");
+        }
+        if (recoveryTimeoutMs > MAX_OPERATION_TIMEOUT_MS) {
+          throw new IllegalArgumentException(
+              "storage.archive.publisher.recoveryTimeoutMs exceeds 24 hours");
+        }
+      }
+    }
+
+    /** Historical-query admission and per-request budgets. -1 is the unlimited sentinel. */
+    @Getter
+    @Setter
+    public static class QueryConfig {
+
+      private static final long UNLIMITED = -1L;
+      private static final long DEFAULT_MAX_CONCURRENT_QUERIES = 8L;
+      private static final long DEFAULT_MAX_PENDING_QUERIES = 16L;
+      private static final long DEFAULT_MAX_OPEN_SNAPSHOTS = 8L;
+      private static final long DEFAULT_ACQUIRE_TIMEOUT_MS = 0L;
+      private static final long DEFAULT_DEADLINE_MS = 30_000L;
+      private static final long DEFAULT_MAX_QUERIES_PER_BATCH = 8L;
+      private static final long DEFAULT_BATCH_DEADLINE_MS = 30_000L;
+      private static final long DEFAULT_MAX_LOGICAL_READS = 1_000_000L;
+      private static final long DEFAULT_MAX_BACKEND_READS = 100_000L;
+      private static final long DEFAULT_MAX_BACKEND_VALUE_BYTES = 4L * 1024 * 1024;
+      private static final long DEFAULT_MAX_BACKEND_READ_BYTES = 32L * 1024 * 1024;
+      private static final long DEFAULT_MAX_VM_STEPS = 1_000_000L;
+      private static final long DEFAULT_MAX_VM_OVERLAY_BYTES = 32L * 1024 * 1024;
+      private static final long DEFAULT_MAX_RESPONSE_BYTES = 24L * 1024 * 1024;
+
+      private int jsonRpcWorkerThreads = 2;
+      private long maxConcurrentQueries = DEFAULT_MAX_CONCURRENT_QUERIES;
+      private long maxPendingQueries = DEFAULT_MAX_PENDING_QUERIES;
+      private long maxOpenSnapshots = DEFAULT_MAX_OPEN_SNAPSHOTS;
+      private long acquireTimeoutMs = DEFAULT_ACQUIRE_TIMEOUT_MS;
+      private long deadlineMs = DEFAULT_DEADLINE_MS;
+      private long maxQueriesPerBatch = DEFAULT_MAX_QUERIES_PER_BATCH;
+      private long batchDeadlineMs = DEFAULT_BATCH_DEADLINE_MS;
+      private long maxLogicalReadsPerRequest = DEFAULT_MAX_LOGICAL_READS;
+      private long maxBackendReadsPerRequest = DEFAULT_MAX_BACKEND_READS;
+      private long maxBackendValueBytes = DEFAULT_MAX_BACKEND_VALUE_BYTES;
+      private long maxBackendReadBytesPerRequest = DEFAULT_MAX_BACKEND_READ_BYTES;
+      private int maxCachedEntries = 4_096;
+      private long maxCachedBytes = 4L * 1024 * 1024;
+      private long maxVmSteps = DEFAULT_MAX_VM_STEPS;
+      private long maxVmOverlayBytes = DEFAULT_MAX_VM_OVERLAY_BYTES;
+      private long maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES;
+
+      void postProcess() {
+        if (jsonRpcWorkerThreads <= 0) {
+          throw invalidLimit("jsonRpcWorkerThreads", "must be positive");
+        }
+        requirePositiveOrUnlimited("maxConcurrentQueries", maxConcurrentQueries);
+        requireNonNegativeOrUnlimited("maxPendingQueries", maxPendingQueries);
+        requirePositiveOrUnlimited("maxOpenSnapshots", maxOpenSnapshots);
+        requireNonNegativeOrUnlimited("acquireTimeoutMs", acquireTimeoutMs);
+        requirePositiveOrUnlimited("deadlineMs", deadlineMs);
+        requirePositiveOrUnlimited("maxQueriesPerBatch", maxQueriesPerBatch);
+        requirePositiveOrUnlimited("batchDeadlineMs", batchDeadlineMs);
+        requirePositiveOrUnlimited(
+            "maxLogicalReadsPerRequest", maxLogicalReadsPerRequest);
+        requirePositiveOrUnlimited(
+            "maxBackendReadsPerRequest", maxBackendReadsPerRequest);
+        requirePositiveOrUnlimited("maxBackendValueBytes", maxBackendValueBytes);
+        requirePositiveOrUnlimited(
+            "maxBackendReadBytesPerRequest", maxBackendReadBytesPerRequest);
+        requireNonNegative("maxCachedEntries", maxCachedEntries);
+        requireNonNegative("maxCachedBytes", maxCachedBytes);
+        requireNonNegativeOrUnlimited("maxVmSteps", maxVmSteps);
+        requireNonNegativeOrUnlimited("maxVmOverlayBytes", maxVmOverlayBytes);
+        requireNonNegativeOrUnlimited("maxResponseBytes", maxResponseBytes);
+      }
+
+      private static void requirePositiveOrUnlimited(String key, long value) {
+        if (value != UNLIMITED && value <= 0) {
+          throw invalidLimit(key, "must be positive or -1");
+        }
+      }
+
+      private static void requireNonNegativeOrUnlimited(String key, long value) {
+        if (value < 0 && value != UNLIMITED) {
+          throw invalidLimit(key, "must be non-negative or -1");
+        }
+      }
+
+      private static void requireNonNegative(String key, long value) {
+        if (value < 0) {
+          throw invalidLimit(key, "must be non-negative");
+        }
+      }
+
+      private static IllegalArgumentException invalidLimit(String key, String requirement) {
+        return new IllegalArgumentException(
+            "storage.archive.query." + key + " " + requirement);
+      }
+    }
+
+    @Getter
+    @Setter
+    public static class CommitmentConfig {
+
+      private boolean enable = false;
+      private boolean persistTxRoots = false;
+    }
+
+    @Getter
+    @Setter
+    public static class DebugConfig {
+
+      private boolean enable = false;
+      private int maxConcurrentTraces = 1;
+      private int maxPendingTraces = 1;
+      private long maxTraceSteps = 250_000L;
+      private long maxTraceBytes = 16L * 1024 * 1024;
+
+      void postProcess() {
+        if (maxConcurrentTraces <= 0) {
+          throw invalidLimit("maxConcurrentTraces", "must be positive");
+        }
+        if (maxPendingTraces < 0) {
+          throw invalidLimit("maxPendingTraces", "must be non-negative");
+        }
+        if (maxTraceSteps <= 0L) {
+          throw invalidLimit("maxTraceSteps", "must be positive");
+        }
+        if (maxTraceBytes <= 0L) {
+          throw invalidLimit("maxTraceBytes", "must be positive");
+        }
+      }
+
+      private static IllegalArgumentException invalidLimit(String key, String requirement) {
+        return new IllegalArgumentException(
+            "storage.archive.debug." + key + " " + requirement);
+      }
+    }
+  }
+
   // A named database entry: name/path plus the optional LevelDB option overrides
   // inherited from DbOptionOverride (boxed types, null = "inherit per-tier defaults").
   @Getter
@@ -172,6 +500,7 @@ public class StorageConfig {
 
   public static StorageConfig fromConfig(Config config) {
     Config section = config.getConfig("storage");
+    validateArchiveConfigKeys(section);
 
     StorageConfig sc = ConfigBeanFactory.create(section, StorageConfig.class);
     sc.rawStorageConfig = section;
@@ -185,7 +514,74 @@ public class StorageConfig {
     sc.dbSettings.postProcess();
     sc.snapshot.postProcess();
     sc.txCache.postProcess();
+    sc.archive.postProcess();
     return sc;
+  }
+
+  private static void validateArchiveConfigKeys(Config section) {
+    if (!section.hasPath("archive")) {
+      return;
+    }
+    Config archive = section.getConfig("archive");
+    requireOnlyKeys("storage.archive", archive.root(), "enable", "db", "txnum", "temporal",
+        "publisher", "query", "identity", "commitment", "debug", "coverage",
+        "warnUnclassifiedStoreWrites");
+    if (archive.hasPath("db")) {
+      requireOnlyKeys("storage.archive.db", archive.getConfig("db").root(), "directory",
+          "fullScrubOnStartup");
+    }
+    if (archive.hasPath("txnum")) {
+      requireOnlyKeys("storage.archive.txnum", archive.getConfig("txnum").root(), "enable");
+    }
+    if (archive.hasPath("temporal")) {
+      requireOnlyKeys("storage.archive.temporal", archive.getConfig("temporal").root(), "enable");
+    }
+    if (archive.hasPath("publisher")) {
+      requireOnlyKeys("storage.archive.publisher", archive.getConfig("publisher").root(),
+          "async", "backpressure", "softInFlightBlocks", "hardInFlightBlocks",
+          "softInFlightBytes", "hardInFlightBytes", "softInFlightRecords",
+          "hardInFlightRecords", "softMinFreeBytes", "hardMinFreeBytes",
+          "backpressureTimeoutMs", "publishTimeoutMs", "journalTimeoutMs",
+          "recoveryTimeoutMs");
+    }
+    if (archive.hasPath("query")) {
+      requireOnlyKeys("storage.archive.query", archive.getConfig("query").root(),
+          "jsonRpcWorkerThreads", "maxConcurrentQueries", "maxPendingQueries",
+          "acquireTimeoutMs", "deadlineMs",
+          "maxQueriesPerBatch", "batchDeadlineMs",
+          "maxOpenSnapshots", "maxLogicalReadsPerRequest", "maxBackendReadsPerRequest",
+          "maxBackendValueBytes", "maxBackendReadBytesPerRequest",
+          "maxCachedEntries", "maxCachedBytes", "maxVmSteps", "maxVmOverlayBytes",
+          "maxResponseBytes");
+    }
+    if (archive.hasPath("identity")) {
+      requireOnlyKeys("storage.archive.identity", archive.getConfig("identity").root(),
+          "initialize");
+    }
+    if (archive.hasPath("commitment")) {
+      requireOnlyKeys("storage.archive.commitment", archive.getConfig("commitment").root(),
+          "enable", "persistTxRoots");
+    }
+    if (archive.hasPath("debug")) {
+      requireOnlyKeys("storage.archive.debug", archive.getConfig("debug").root(),
+          "enable", "maxConcurrentTraces", "maxPendingTraces", "maxTraceSteps",
+          "maxTraceBytes");
+    }
+  }
+
+  private static void requireOnlyKeys(String path, ConfigObject object, String... allowedKeys) {
+    for (String key : object.keySet()) {
+      boolean allowed = false;
+      for (String allowedKey : allowedKeys) {
+        if (allowedKey.equals(key)) {
+          allowed = true;
+          break;
+        }
+      }
+      if (!allowed) {
+        throw new IllegalArgumentException(path + "." + key + " is not supported");
+      }
+    }
   }
 
   // Partial LevelDB option override for default/defaultM/defaultL.

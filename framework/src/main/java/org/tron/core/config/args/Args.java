@@ -224,6 +224,9 @@ public class Args extends CommonParameter {
     PARAMETER.storage.setTxCacheInitOptimization(sc.getTxCache().isInitOptimization());
     PARAMETER.storage.setMaxFlushCount(sc.getSnapshot().getMaxFlushCount());
 
+    // Archive sidecar config (non-consensus; default disabled = no-op).
+    PARAMETER.storage.setArchive(sc.getArchive());
+
     // RocksDB settings
     StorageConfig.DbSettingsConfig dbs = sc.getDbSettings();
     PARAMETER.rocksDBCustomSettings = RocksDbSettings
@@ -557,6 +560,7 @@ public class Args extends CommonParameter {
     PARAMETER.jsonRpcMaxBlockFilterNum = jsonrpc.getMaxBlockFilterNum();
     PARAMETER.jsonRpcMaxBatchSize = jsonrpc.getMaxBatchSize();
     PARAMETER.jsonRpcMaxResponseSize = jsonrpc.getMaxResponseSize();
+    PARAMETER.jsonRpcMaxPendingResponseBytes = jsonrpc.getMaxPendingResponseBytes();
     PARAMETER.jsonRpcMaxAddressSize = jsonrpc.getMaxAddressSize();
     PARAMETER.jsonRpcMaxLogFilterNum = jsonrpc.getMaxLogFilterNum();
     PARAMETER.jsonRpcMaxMessageSize = jsonrpc.getMaxMessageSize();
@@ -1315,4 +1319,3 @@ public class Args extends CommonParameter {
     return optionGroupMap;
   }
 }
-

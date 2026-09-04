@@ -1,5 +1,9 @@
 package org.tron.core.vm.repository;
 
+import java.math.BigInteger;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
 import org.apache.commons.lang3.tuple.Pair;
 import org.tron.common.runtime.vm.DataWord;
 import org.tron.core.capsule.*;
@@ -17,7 +21,26 @@ public interface Repository {
 
   DynamicPropertiesStore getDynamicPropertiesStore();
 
+  /**
+   * The VM's read-only view of dynamic properties. Defaults to the latest {@link
+   * DynamicPropertiesStore}; a historical archive call overrides this to expose the protocol
+   * parameters in effect at the target block, while {@link #getDynamicPropertiesStore()} becomes
+   * unsupported on that path. VM code that only needs hard-fork / fee flags should prefer this.
+   */
+  default VmDynamicProperties getVmDynamicProperties() {
+    return getDynamicPropertiesStore();
+  }
+
+  /** Returns whether this repository is replaying immutable historical archive state. */
+  default boolean isHistoricalArchive() {
+    return false;
+  }
+
   DelegationStore getDelegationStore();
+
+  default BigInteger getWitnessVi(long cycle, byte[] address) {
+    return getDelegationStore().getWitnessVi(cycle, address);
+  }
 
   AccountCapsule createAccount(byte[] address, Protocol.AccountType type);
 
@@ -127,6 +150,19 @@ public interface Repository {
 
   long getTokenBalance(byte[] address, byte[] tokenId);
 
+  /**
+   * Returns a defensive snapshot of every positive TRC10 balance currently visible for an
+   * account. Historical repositories override this to enumerate archive state without consulting
+   * live stores.
+   */
+  default Map<String, Long> getTokenBalances(byte[] address) {
+    AccountCapsule account = getAccount(address);
+    if (account == null) {
+      return Collections.emptyMap();
+    }
+    return Collections.unmodifiableMap(new HashMap<>(account.getAssetMapV2()));
+  }
+
   long getAccountLeftEnergyFromFreeze(AccountCapsule accountCapsule);
 
   long getAccountEnergyUsage(AccountCapsule accountCapsule);
@@ -140,6 +176,11 @@ public interface Repository {
   byte[] getBlackHoleAddress();
 
   BlockCapsule getBlockByNum(final long num);
+
+  default byte[] getBlockHashByNum(long num) {
+    BlockCapsule block = getBlockByNum(num);
+    return block == null ? null : block.getBlockId().getBytes();
+  }
 
   AccountCapsule createNormalAccount(byte[] address);
 
@@ -166,5 +207,15 @@ public interface Repository {
   long getHeadSlot();
 
   long getSlotByTimestampMs(long timestamp);
+
+  /**
+   * Historical-only resource usage merge used by SELFDESTRUCT after frozen-v2 balances move to the
+   * inheritor. Live execution uses the canonical processors directly.
+   */
+  default void transferFrozenV2UsageForSelfDestruct(AccountCapsule owner,
+      AccountCapsule inheritor, long now) {
+    throw new UnsupportedOperationException(
+        "historical SELFDESTRUCT resource replay is unavailable");
+  }
 
 }

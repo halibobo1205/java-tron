@@ -4,7 +4,10 @@ import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
@@ -18,6 +21,17 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
+import java.util.Iterator;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import javax.servlet.ServletOutputStream;
+import javax.servlet.WriteListener;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import org.junit.After;
@@ -27,6 +41,12 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.core.Constant;
+import org.tron.core.archive.ArchiveSnapshotInvalidatedException;
+import org.tron.core.archive.query.ArchiveQueryCoordinator;
+import org.tron.core.archive.query.ArchiveQueryLimits;
+import org.tron.core.archive.query.ArchiveQueryTransportScope;
+import org.tron.core.archive.query.HistoricalQueryLimitException;
+import org.tron.core.archive.query.QueryLease;
 
 public class JsonRpcServletTest {
 
@@ -36,6 +56,7 @@ public class JsonRpcServletTest {
   private JsonRpcServer mockRpcServer;
   private int savedMaxBatchSize;
   private int savedMaxResponseSize;
+  private long savedMaxPendingResponseBytes;
 
   @Before
   public void setUp() throws Exception {
@@ -46,12 +67,16 @@ public class JsonRpcServletTest {
     f.set(servlet, mockRpcServer);
     savedMaxBatchSize = CommonParameter.getInstance().jsonRpcMaxBatchSize;
     savedMaxResponseSize = CommonParameter.getInstance().jsonRpcMaxResponseSize;
+    savedMaxPendingResponseBytes =
+        CommonParameter.getInstance().jsonRpcMaxPendingResponseBytes;
   }
 
   @After
   public void tearDown() {
     CommonParameter.getInstance().jsonRpcMaxBatchSize = savedMaxBatchSize;
     CommonParameter.getInstance().jsonRpcMaxResponseSize = savedMaxResponseSize;
+    CommonParameter.getInstance().jsonRpcMaxPendingResponseBytes =
+        savedMaxPendingResponseBytes;
   }
 
   // --- parse error paths ---
@@ -147,7 +172,7 @@ public class JsonRpcServletTest {
   @Test
   public void rpcServerThrowsRuntimeException_returnsInternalError() throws Exception {
     doThrow(new RuntimeException("server exploded")).when(mockRpcServer)
-        .handle(any(HttpServletRequest.class), any(HttpServletResponse.class));
+        .handleRequest(any(InputStream.class), any(OutputStream.class));
     MockHttpServletResponse resp = doPost("{\"method\":\"eth_blockNumber\",\"id\":42}");
     assertEquals(200, resp.getStatus());
     JsonNode body = MAPPER.readTree(resp.getContentAsString());
@@ -156,27 +181,213 @@ public class JsonRpcServletTest {
   }
 
   @Test
+  public void rpcServerFailureReleasesArchivePermitBeforeWritingError() throws Exception {
+    ArchiveQueryCoordinator coordinator = new ArchiveQueryCoordinator();
+    doAnswer(inv -> {
+      QueryLease lease = coordinator.acquire();
+      ArchiveQueryTransportScope.closeAfterResponse(lease);
+      throw new RuntimeException("server exploded");
+    }).when(mockRpcServer).handleRequest(any(InputStream.class), any(OutputStream.class));
+    MockHttpServletRequest req = new MockHttpServletRequest("POST", "/jsonrpc");
+    req.setContent("{\"method\":\"eth_getBalance\",\"id\":42}"
+        .getBytes(StandardCharsets.UTF_8));
+    MockHttpServletResponse resp = new MockHttpServletResponse() {
+      @Override
+      public ServletOutputStream getOutputStream() {
+        assertEquals(0, coordinator.getActiveLeaseCount());
+        return super.getOutputStream();
+      }
+    };
+
+    servlet.callDoPost(req, resp);
+
+    assertEquals(0, coordinator.getActiveLeaseCount());
+    assertEquals(-32603,
+        MAPPER.readTree(resp.getContentAsString()).get("error").get("code").asInt());
+  }
+
+  @Test
   public void batchRpcServerThrows_internalErrorIsArray() throws Exception {
     doThrow(new RuntimeException("boom")).when(mockRpcServer)
         .handleRequest(any(InputStream.class), any(OutputStream.class));
-    MockHttpServletResponse resp = doPost("[{\"method\":\"eth_blockNumber\"}]");
+    MockHttpServletResponse resp = doPost(
+        "[{\"method\":\"eth_blockNumber\",\"id\":1}]");
     assertEquals(200, resp.getStatus());
     JsonNode body = MAPPER.readTree(resp.getContentAsString());
     assertTrue("batch internal error must be an array", body.isArray());
     assertEquals(-32603, body.get(0).get("error").get("code").asInt());
   }
 
+  @Test
+  public void batchIOExceptionReleasesArchivePermitAndTransportScope() throws Exception {
+    ArchiveQueryCoordinator coordinator = new ArchiveQueryCoordinator();
+    IOException expectedFailure = new IOException("transport failed");
+    doAnswer(inv -> {
+      QueryLease lease = coordinator.acquire();
+      ArchiveQueryTransportScope.closeAfterResponse(lease);
+      throw expectedFailure;
+    }).when(mockRpcServer).handleRequest(any(InputStream.class), any(OutputStream.class));
+
+    try {
+      doPost("[{\"method\":\"eth_blockNumber\",\"id\":1}]");
+      fail("expected checked transport failure");
+    } catch (IOException actualFailure) {
+      assertTrue(actualFailure == expectedFailure);
+    }
+
+    assertEquals(0, coordinator.getActiveLeaseCount());
+    try (ArchiveQueryTransportScope ignored = ArchiveQueryTransportScope.open()) {
+      // A leaked ThreadLocal scope would reject this second open on the servlet thread.
+    }
+  }
+
+  @Test
+  public void singleNotificationOuterFailureReturnsNoResponse() throws Exception {
+    doThrow(new RuntimeException("boom")).when(mockRpcServer)
+        .handleRequest(any(InputStream.class), any(OutputStream.class));
+
+    MockHttpServletResponse resp = doPost(
+        "{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\"}");
+
+    assertEquals(0, resp.getContentAsByteArray().length);
+  }
+
+  @Test
+  public void batchNotificationDeadlineFailureReturnsNoResponse() throws Exception {
+    HistoricalQueryLimitException deadline = new HistoricalQueryLimitException(
+        HistoricalQueryLimitException.Reason.DEADLINE,
+        HistoricalQueryLimitException.Limit.BATCH_DEADLINE,
+        "batch deadline");
+    doThrow(deadline).when(mockRpcServer)
+        .handleRequest(any(InputStream.class), any(OutputStream.class));
+
+    MockHttpServletResponse resp = doPost(
+        "[{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\"}]");
+
+    assertEquals(0, resp.getContentAsByteArray().length);
+  }
+
+  @Test
+  public void interruptedBatchElementStopsBeforeInvokingLaterElements() throws Exception {
+    HistoricalQueryLimitException interrupted = new HistoricalQueryLimitException(
+        HistoricalQueryLimitException.Reason.RESOURCE_EXHAUSTED,
+        HistoricalQueryLimitException.Limit.INTERRUPTED,
+        "interrupted while acquiring historical query permit");
+    AtomicInteger calls = new AtomicInteger();
+    doAnswer(invocation -> {
+      if (calls.incrementAndGet() == 1) {
+        Thread.currentThread().interrupt();
+        throw interrupted;
+      }
+      OutputStream output = invocation.getArgument(1);
+      output.write("{\"jsonrpc\":\"2.0\",\"result\":\"unexpected\",\"id\":2}"
+          .getBytes(StandardCharsets.UTF_8));
+      return 0;
+    }).when(mockRpcServer).handleRequest(any(InputStream.class), any(OutputStream.class));
+
+    try {
+      MockHttpServletResponse response = doPost("[{\"id\":1},{\"id\":2}]");
+
+      JsonNode body = MAPPER.readTree(response.getContentAsByteArray());
+      assertTrue(body.isArray());
+      assertEquals(1, body.size());
+      assertEquals(-32005, body.get(0).get("error").get("code").asInt());
+      assertEquals(1, body.get(0).get("id").asInt());
+      assertEquals(1, calls.get());
+      assertTrue(Thread.currentThread().isInterrupted());
+    } finally {
+      Thread.interrupted();
+    }
+  }
+
+  @Test
+  public void interruptedNotificationStopsBatchWithoutInvokingLaterElements() throws Exception {
+    HistoricalQueryLimitException interrupted = new HistoricalQueryLimitException(
+        HistoricalQueryLimitException.Reason.RESOURCE_EXHAUSTED,
+        HistoricalQueryLimitException.Limit.INTERRUPTED,
+        "interrupted while acquiring historical query permit");
+    AtomicInteger calls = new AtomicInteger();
+    doAnswer(invocation -> {
+      if (calls.incrementAndGet() == 1) {
+        Thread.currentThread().interrupt();
+        throw interrupted;
+      }
+      OutputStream output = invocation.getArgument(1);
+      output.write("{\"jsonrpc\":\"2.0\",\"result\":\"unexpected\",\"id\":2}"
+          .getBytes(StandardCharsets.UTF_8));
+      return 0;
+    }).when(mockRpcServer).handleRequest(any(InputStream.class), any(OutputStream.class));
+
+    try {
+      MockHttpServletResponse response = doPost(
+          "[{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\"},{\"id\":2}]");
+
+      assertEquals(0, response.getContentAsByteArray().length);
+      assertEquals(1, calls.get());
+      assertTrue(Thread.currentThread().isInterrupted());
+    } finally {
+      Thread.interrupted();
+    }
+  }
+
+  @Test
+  public void realJsonRpcServerCannotHideInterruptedBatchFailure() throws Exception {
+    InterruptingApiImpl api = new InterruptingApiImpl();
+    setRpcServer(new JsonRpcServer(
+        JsonRpcServlet.buildRpcMapper(), api, InterruptingApi.class));
+
+    try {
+      MockHttpServletResponse response = doPost(
+          "[{\"jsonrpc\":\"2.0\",\"method\":\"interrupt\",\"params\":[],\"id\":1},"
+              + "{\"jsonrpc\":\"2.0\",\"method\":\"later\",\"params\":[],\"id\":2}]");
+
+      JsonNode body = MAPPER.readTree(response.getContentAsByteArray());
+      assertTrue(body.isArray());
+      assertEquals(1, body.size());
+      assertEquals(-32005, body.get(0).get("error").get("code").asInt());
+      assertEquals(1, body.get(0).get("id").asInt());
+      assertEquals(1, api.calls.get());
+      assertTrue(Thread.currentThread().isInterrupted());
+    } finally {
+      Thread.interrupted();
+    }
+  }
+
+  @Test
+  public void batchCleanupErrorOutranksTransportIOException() throws Exception {
+    ArchiveQueryCoordinator coordinator = new ArchiveQueryCoordinator();
+    IOException transportFailure = new IOException("injected transport failure");
+    AssertionError cleanupFailure = new AssertionError("injected settlement failure");
+    doAnswer(invocation -> {
+      QueryLease lease = coordinator.acquire();
+      ArchiveQueryTransportScope.closeAfterResponse(lease, () -> {
+        throw cleanupFailure;
+      });
+      throw transportFailure;
+    }).when(mockRpcServer).handleRequest(any(InputStream.class), any(OutputStream.class));
+
+    try {
+      assertSame(cleanupFailure, assertThrows(AssertionError.class,
+          () -> doPost("[{\"id\":1}]")));
+      assertTrue(java.util.Arrays.asList(cleanupFailure.getSuppressed())
+          .contains(transportFailure));
+      assertEquals(0, coordinator.getActiveLeaseCount());
+    } finally {
+      coordinator.close();
+    }
+  }
+
   // --- response size limit ---
 
   @Test
   public void responseTooLarge_returnsSingleErrorObject() throws Exception {
-    int limit = 50;
+    int limit = 256;
     CommonParameter.getInstance().jsonRpcMaxResponseSize = limit;
     doAnswer(inv -> {
-      HttpServletResponse r = inv.getArgument(1);
-      r.getOutputStream().write(new byte[limit + 1]);
-      return null;
-    }).when(mockRpcServer).handle(any(HttpServletRequest.class), any(HttpServletResponse.class));
+      OutputStream out = inv.getArgument(1);
+      out.write(new byte[limit + 1]);
+      return 0;
+    }).when(mockRpcServer).handleRequest(any(InputStream.class), any(OutputStream.class));
 
     MockHttpServletResponse resp = doPost("{\"method\":\"eth_getLogs\",\"id\":1}");
     assertEquals(200, resp.getStatus());
@@ -186,8 +397,40 @@ public class JsonRpcServletTest {
   }
 
   @Test
+  public void realJsonRpcServerSingleResponseIsBoundedDuringSerialization() throws Exception {
+    int limit = 256;
+    CommonParameter.getInstance().jsonRpcMaxResponseSize = limit;
+    setRpcServer(new JsonRpcServer(
+        JsonRpcServlet.buildRpcMapper(), new LargeResponseApiImpl(), LargeResponseApi.class));
+
+    MockHttpServletResponse resp = doPost(
+        "{\"jsonrpc\":\"2.0\",\"method\":\"large\",\"params\":[],\"id\":1}");
+
+    assertTrue(resp.getContentAsByteArray().length <= limit);
+    assertEquals(-32003,
+        MAPPER.readTree(resp.getContentAsByteArray()).get("error").get("code").asInt());
+  }
+
+  @Test
+  public void realJsonRpcServerStopsLazyCollectionSerializationAtTheLimit() throws Exception {
+    int limit = 256;
+    CommonParameter.getInstance().jsonRpcMaxResponseSize = limit;
+    LargeIterableApiImpl api = new LargeIterableApiImpl();
+    setRpcServer(new JsonRpcServer(
+        JsonRpcServlet.buildRpcMapper(), api, LargeIterableApi.class));
+
+    MockHttpServletResponse resp = doPost(
+        "{\"jsonrpc\":\"2.0\",\"method\":\"largeIterable\",\"params\":[],\"id\":1}");
+
+    assertEquals(-32003,
+        MAPPER.readTree(resp.getContentAsByteArray()).get("error").get("code").asInt());
+    assertTrue("bounded streaming must stop before materializing the full result",
+        api.emitted.get() < 1_000);
+  }
+
+  @Test
   public void batchResponseTooLarge_returnsErrorArray() throws Exception {
-    int limit = 50;
+    int limit = 256;
     CommonParameter.getInstance().jsonRpcMaxResponseSize = limit;
     doAnswer(inv -> {
       OutputStream out = inv.getArgument(1);
@@ -195,7 +438,8 @@ public class JsonRpcServletTest {
       return 0;
     }).when(mockRpcServer).handleRequest(any(InputStream.class), any(OutputStream.class));
 
-    MockHttpServletResponse resp = doPost("[{\"method\":\"eth_getLogs\"}]");
+    MockHttpServletResponse resp = doPost(
+        "[{\"method\":\"eth_getLogs\",\"id\":1}]");
     assertEquals(200, resp.getStatus());
     JsonNode body = MAPPER.readTree(resp.getContentAsString());
     assertTrue("batch response-too-large must be an array", body.isArray());
@@ -204,7 +448,7 @@ public class JsonRpcServletTest {
 
   @Test
   public void batchShortCircuitsOnOverflow() throws Exception {
-    int limit = 50;
+    int limit = 256;
     CommonParameter.getInstance().jsonRpcMaxResponseSize = limit;
     int[] callCount = {0};
     doAnswer(inv -> {
@@ -222,15 +466,439 @@ public class JsonRpcServletTest {
     assertEquals(200, resp.getStatus());
     JsonNode body = MAPPER.readTree(resp.getContentAsString());
     assertTrue("overflow response must be an array", body.isArray());
-    // Geth-compatible: previous successes are preserved; overflow item and remaining
-    // unexecuted items each get a -32003 error with their original id.
-    assertEquals(3, body.size());
-    assertEquals("ok", body.get(0).get("result").asText());
-    assertEquals(-32003, body.get(1).get("error").get("code").asInt());
-    assertEquals(2, body.get(1).get("id").asInt());
-    assertEquals(-32003, body.get(2).get("error").get("code").asInt());
-    assertEquals(3, body.get(2).get("id").asInt());
+    // Once the immutable batch cannot fit, discard partial successes and return one bounded error.
+    assertEquals(1, body.size());
+    assertEquals(-32003, body.get(0).get("error").get("code").asInt());
+    assertEquals(2, body.get(0).get("id").asInt());
     assertEquals("third sub-request must not be executed after overflow", 2, callCount[0]);
+  }
+
+  @Test
+  public void batchResponseNeverExceedsEvenAnImpossiblySmallConfiguredLimit() throws Exception {
+    int limit = 50;
+    CommonParameter.getInstance().jsonRpcMaxResponseSize = limit;
+    doAnswer(inv -> {
+      OutputStream out = inv.getArgument(1);
+      out.write(new byte[1024 * 1024]);
+      return 0;
+    }).when(mockRpcServer).handleRequest(any(InputStream.class), any(OutputStream.class));
+
+    MockHttpServletResponse resp = doPost("[{\"id\":1},{\"id\":2},{\"id\":3}]");
+
+    assertTrue(resp.getContentAsByteArray().length <= limit);
+  }
+
+  @Test
+  public void slowClientsCannotRetainMoreThanTheGlobalResponseByteBudget() throws Exception {
+    int limit = 256;
+    CommonParameter.getInstance().jsonRpcMaxResponseSize = limit;
+    CommonParameter.getInstance().jsonRpcMaxPendingResponseBytes = 2L * limit;
+    doAnswer(inv -> {
+      OutputStream output = inv.getArgument(1);
+      output.write(new byte[200]);
+      return 0;
+    }).when(mockRpcServer).handleRequest(any(InputStream.class), any(OutputStream.class));
+
+    CountDownLatch enteredNetworkWrite = new CountDownLatch(2);
+    CountDownLatch releaseNetworkWrite = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    Future<?> first = executor.submit(
+        () -> postTo(new BlockingResponse(enteredNetworkWrite, releaseNetworkWrite), 1));
+    Future<?> second = executor.submit(
+        () -> postTo(new BlockingResponse(enteredNetworkWrite, releaseNetworkWrite), 2));
+    try {
+      assertTrue(enteredNetworkWrite.await(5, TimeUnit.SECONDS));
+
+      MockHttpServletResponse third = doPost(
+          "{\"method\":\"eth_getBalance\",\"id\":3}");
+
+      assertEquals(-32005,
+          MAPPER.readTree(third.getContentAsByteArray()).get("error").get("code").asInt());
+    } finally {
+      releaseNetworkWrite.countDown();
+      first.get(5, TimeUnit.SECONDS);
+      second.get(5, TimeUnit.SECONDS);
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
+  public void perResponseLimitDoesNotCollapseTheGlobalResponseByteBudget() throws Exception {
+    int limit = 256;
+    CommonParameter.getInstance().jsonRpcMaxResponseSize = limit;
+    CommonParameter.getInstance().jsonRpcMaxPendingResponseBytes = 4L * limit;
+    doAnswer(inv -> {
+      OutputStream output = inv.getArgument(1);
+      output.write(new byte[200]);
+      return 0;
+    }).when(mockRpcServer).handleRequest(any(InputStream.class), any(OutputStream.class));
+
+    CountDownLatch enteredNetworkWrite = new CountDownLatch(2);
+    CountDownLatch releaseNetworkWrite = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    Future<?> first = executor.submit(
+        () -> postTo(new BlockingResponse(enteredNetworkWrite, releaseNetworkWrite), 1));
+    Future<?> second = executor.submit(
+        () -> postTo(new BlockingResponse(enteredNetworkWrite, releaseNetworkWrite), 2));
+    try {
+      assertTrue(enteredNetworkWrite.await(5, TimeUnit.SECONDS));
+
+      MockHttpServletResponse third = doPost(
+          "{\"method\":\"eth_getBalance\",\"id\":3}");
+
+      assertEquals(200, third.getContentAsByteArray().length);
+    } finally {
+      releaseNetworkWrite.countDown();
+      first.get(5, TimeUnit.SECONDS);
+      second.get(5, TimeUnit.SECONDS);
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
+  public void concurrentBatchConstructionUsesGlobalResponseByteBudget() throws Exception {
+    int limit = 256;
+    CommonParameter.getInstance().jsonRpcMaxResponseSize = limit;
+    CommonParameter.getInstance().jsonRpcMaxPendingResponseBytes = 2L * limit;
+    doAnswer(inv -> {
+      OutputStream output = inv.getArgument(1);
+      output.write(new byte[200]);
+      return 0;
+    }).when(mockRpcServer).handleRequest(any(InputStream.class), any(OutputStream.class));
+
+    CountDownLatch enteredNetworkWrite = new CountDownLatch(2);
+    CountDownLatch releaseNetworkWrite = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    Future<?> first = executor.submit(
+        () -> postBatchTo(new BlockingResponse(enteredNetworkWrite, releaseNetworkWrite), 1));
+    Future<?> second = executor.submit(
+        () -> postBatchTo(new BlockingResponse(enteredNetworkWrite, releaseNetworkWrite), 2));
+    try {
+      assertTrue(enteredNetworkWrite.await(5, TimeUnit.SECONDS));
+
+      MockHttpServletResponse third = doPost("[{\"id\":3}]");
+
+      JsonNode body = MAPPER.readTree(third.getContentAsByteArray());
+      assertTrue(body.isArray());
+      assertEquals(-32005, body.get(0).get("error").get("code").asInt());
+    } finally {
+      releaseNetworkWrite.countDown();
+      first.get(5, TimeUnit.SECONDS);
+      second.get(5, TimeUnit.SECONDS);
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
+  public void batchDeadlineIsRecheckedAfterSubResponseSerialization() throws Exception {
+    ArchiveQueryCoordinator coordinator = new ArchiveQueryCoordinator(
+        ArchiveQueryLimits.builder()
+            .maxConcurrentQueries(1)
+            .deadlineMs(5_000)
+            .batchDeadlineMs(20)
+            .build());
+    doAnswer(inv -> {
+      QueryLease lease = coordinator.acquire();
+      ArchiveQueryTransportScope.closeAfterResponse(lease);
+      OutputStream output = inv.getArgument(1);
+      output.write("{\"jsonrpc\":\"2.0\",\"result\":\"late\",\"id\":1}"
+          .getBytes(StandardCharsets.UTF_8));
+      Thread.sleep(80L);
+      return 0;
+    }).when(mockRpcServer).handleRequest(any(InputStream.class), any(OutputStream.class));
+
+    MockHttpServletResponse response = doPost("[{\"id\":1}]");
+
+    JsonNode body = MAPPER.readTree(response.getContentAsByteArray());
+    assertTrue(body.isArray());
+    assertEquals(-32005, body.get(0).get("error").get("code").asInt());
+    assertEquals(1, body.get(0).get("id").asInt());
+    assertEquals(0, coordinator.getActiveLeaseCount());
+  }
+
+  @Test
+  public void batchDeadlineFailureBeforeCommitDoesNotRetainSuccessfulBytes() throws Exception {
+    HistoricalQueryLimitException deadlineFailure = new HistoricalQueryLimitException(
+        HistoricalQueryLimitException.Reason.DEADLINE,
+        HistoricalQueryLimitException.Limit.BATCH_DEADLINE,
+        "batch deadline");
+    AtomicInteger deadlineChecks = new AtomicInteger();
+    servlet = new TestableServlet() {
+      @Override
+      void checkBatchDeadline() {
+        if (deadlineChecks.incrementAndGet() == 3) {
+          throw deadlineFailure;
+        }
+      }
+    };
+    setRpcServer(mockRpcServer);
+    doAnswer(inv -> {
+      OutputStream output = inv.getArgument(1);
+      output.write("{\"jsonrpc\":\"2.0\",\"result\":\"late\",\"id\":1}"
+          .getBytes(StandardCharsets.UTF_8));
+      return 0;
+    }).when(mockRpcServer).handleRequest(any(InputStream.class), any(OutputStream.class));
+
+    MockHttpServletResponse response = doPost("[{\"id\":1}]");
+
+    JsonNode body = MAPPER.readTree(response.getContentAsByteArray());
+    assertTrue(body.isArray());
+    assertEquals(1, body.size());
+    assertEquals(-32005, body.get(0).get("error").get("code").asInt());
+    assertEquals(1, body.get(0).get("id").asInt());
+    assertFalse(body.get(0).has("result"));
+    assertEquals(3, deadlineChecks.get());
+  }
+
+  @Test
+  public void batchDeadlineAtNextElementPreservesCompletedResponse() throws Exception {
+    HistoricalQueryLimitException deadlineFailure = new HistoricalQueryLimitException(
+        HistoricalQueryLimitException.Reason.DEADLINE,
+        HistoricalQueryLimitException.Limit.BATCH_DEADLINE,
+        "batch deadline");
+    AtomicInteger deadlineChecks = new AtomicInteger();
+    servlet = new TestableServlet() {
+      @Override
+      void checkBatchDeadline() {
+        if (deadlineChecks.incrementAndGet() == 4) {
+          throw deadlineFailure;
+        }
+      }
+    };
+    setRpcServer(mockRpcServer);
+    doAnswer(inv -> {
+      OutputStream output = inv.getArgument(1);
+      output.write("{\"jsonrpc\":\"2.0\",\"result\":\"ok\",\"id\":1}"
+          .getBytes(StandardCharsets.UTF_8));
+      return 0;
+    }).when(mockRpcServer).handleRequest(any(InputStream.class), any(OutputStream.class));
+
+    MockHttpServletResponse response = doPost("[{\"id\":1},{\"id\":2}]");
+
+    JsonNode body = MAPPER.readTree(response.getContentAsByteArray());
+    assertTrue(body.isArray());
+    assertEquals(2, body.size());
+    assertEquals("ok", body.get(0).get("result").asText());
+    assertEquals(1, body.get(0).get("id").asInt());
+    assertEquals(-32005, body.get(1).get("error").get("code").asInt());
+    assertEquals(2, body.get(1).get("id").asInt());
+    assertEquals(4, deadlineChecks.get());
+  }
+
+  @Test
+  public void singleQueryDeadlineIsRecheckedAfterResponseSerialization() throws Exception {
+    ArchiveQueryCoordinator coordinator = new ArchiveQueryCoordinator(
+        ArchiveQueryLimits.builder()
+            .maxConcurrentQueries(1)
+            .deadlineMs(20L)
+            .build());
+    doAnswer(inv -> {
+      QueryLease lease = coordinator.acquire();
+      ArchiveQueryTransportScope.closeAfterResponse(lease);
+      OutputStream output = inv.getArgument(1);
+      output.write("{\"jsonrpc\":\"2.0\",\"result\":\"late\",\"id\":1}"
+          .getBytes(StandardCharsets.UTF_8));
+      Thread.sleep(80L);
+      return 0;
+    }).when(mockRpcServer).handleRequest(any(InputStream.class), any(OutputStream.class));
+
+    MockHttpServletResponse response = doPost("{\"id\":1}");
+
+    JsonNode body = MAPPER.readTree(response.getContentAsByteArray());
+    assertEquals(-32005, body.get("error").get("code").asInt());
+    assertEquals(1, body.get("id").asInt());
+    assertEquals(0, coordinator.getActiveLeaseCount());
+  }
+
+  @Test
+  public void singleSnapshotSealFailureDiscardsSerializedResponse() throws Exception {
+    ArchiveQueryCoordinator coordinator = new ArchiveQueryCoordinator();
+    AtomicBoolean serialized = new AtomicBoolean();
+    doAnswer(inv -> {
+      QueryLease lease = coordinator.acquire();
+      ArchiveQueryTransportScope.closeAfterResponse(lease, () -> {
+        assertTrue(serialized.get());
+        throw new ArchiveSnapshotInvalidatedException("snapshot invalidated");
+      });
+      OutputStream output = inv.getArgument(1);
+      output.write("{\"jsonrpc\":\"2.0\",\"result\":\"orphan\",\"id\":1}"
+          .getBytes(StandardCharsets.UTF_8));
+      serialized.set(true);
+      return 0;
+    }).when(mockRpcServer).handleRequest(any(InputStream.class), any(OutputStream.class));
+
+    MockHttpServletResponse response = doPost("{\"id\":1}");
+
+    JsonNode body = MAPPER.readTree(response.getContentAsByteArray());
+    assertEquals(-32603, body.get("error").get("code").asInt());
+    assertEquals(1, body.get("id").asInt());
+    assertEquals(0, coordinator.getActiveLeaseCount());
+  }
+
+  @Test
+  public void historicalRequestKeepsTransportSettlementOnArchiveWorker() throws Exception {
+    ArchiveJsonRpcExecutor archiveExecutor = new ArchiveJsonRpcExecutor(1, 1_000L);
+    setArchiveJsonRpcExecutor(archiveExecutor);
+    ArchiveQueryCoordinator coordinator = new ArchiveQueryCoordinator();
+    AtomicReference<Thread> executionThread = new AtomicReference<>();
+    AtomicReference<Thread> validationThread = new AtomicReference<>();
+    try {
+      doAnswer(inv -> {
+        executionThread.set(Thread.currentThread());
+        QueryLease lease = coordinator.acquire();
+        ArchiveQueryTransportScope.closeAfterResponse(
+            lease, () -> validationThread.set(Thread.currentThread()));
+        OutputStream output = inv.getArgument(1);
+        output.write("{\"jsonrpc\":\"2.0\",\"result\":\"0x1\",\"id\":1}"
+            .getBytes(StandardCharsets.UTF_8));
+        return 0;
+      }).when(mockRpcServer).handleRequest(any(InputStream.class), any(OutputStream.class));
+
+      MockHttpServletResponse response = doPost("{\"jsonrpc\":\"2.0\","
+          + "\"method\":\"eth_getBalance\",\"params\":[\"TAddress\",\"0x1\"],\"id\":1}");
+
+      assertEquals("0x1", MAPPER.readTree(response.getContentAsByteArray())
+          .get("result").asText());
+      assertTrue(executionThread.get().getName().startsWith("archive-jsonrpc-"));
+      assertSame(executionThread.get(), validationThread.get());
+      assertEquals(0, coordinator.getActiveLeaseCount());
+    } finally {
+      archiveExecutor.close();
+    }
+  }
+
+  @Test
+  public void slowHistoricalClientDoesNotHoldArchiveWorker() throws Exception {
+    ArchiveJsonRpcExecutor archiveExecutor = new ArchiveJsonRpcExecutor(1, 1_000L);
+    setArchiveJsonRpcExecutor(archiveExecutor);
+    CountDownLatch networkWriteEntered = new CountDownLatch(1);
+    CountDownLatch releaseNetworkWrite = new CountDownLatch(1);
+    ExecutorService caller = Executors.newSingleThreadExecutor();
+    try {
+      doAnswer(inv -> {
+        OutputStream output = inv.getArgument(1);
+        output.write("{\"jsonrpc\":\"2.0\",\"result\":\"0x1\",\"id\":1}"
+            .getBytes(StandardCharsets.UTF_8));
+        return 0;
+      }).when(mockRpcServer).handleRequest(any(InputStream.class), any(OutputStream.class));
+
+      BlockingResponse slowResponse =
+          new BlockingResponse(networkWriteEntered, releaseNetworkWrite);
+      Future<?> slowRequest = caller.submit(() -> postTo(slowResponse, 1));
+      assertTrue(networkWriteEntered.await(5L, TimeUnit.SECONDS));
+
+      MockHttpServletResponse second = doPost("{\"jsonrpc\":\"2.0\","
+          + "\"method\":\"eth_getBalance\","
+          + "\"params\":[\"TAddress\",\"0x2\"],\"id\":2}");
+
+      assertEquals("0x1", MAPPER.readTree(second.getContentAsByteArray())
+          .get("result").asText());
+      releaseNetworkWrite.countDown();
+      slowRequest.get(5L, TimeUnit.SECONDS);
+    } finally {
+      releaseNetworkWrite.countDown();
+      caller.shutdownNow();
+      archiveExecutor.close();
+    }
+  }
+
+  @Test
+  public void closedArchiveWorkerDoesNotRespondToHistoricalNotifications() throws Exception {
+    ArchiveJsonRpcExecutor archiveExecutor = new ArchiveJsonRpcExecutor(1, 1_000L);
+    archiveExecutor.close();
+    setArchiveJsonRpcExecutor(archiveExecutor);
+
+    MockHttpServletResponse single = doPost("{\"jsonrpc\":\"2.0\","
+        + "\"method\":\"eth_getBalance\",\"params\":[\"TAddress\",\"0x1\"]}");
+    assertEquals(0, single.getContentLength());
+
+    MockHttpServletResponse batch = doPost("[{\"jsonrpc\":\"2.0\","
+        + "\"method\":\"eth_getBalance\",\"params\":[\"TAddress\",\"0x1\"]},"
+        + "{\"jsonrpc\":\"2.0\",\"method\":\"eth_getCode\","
+        + "\"params\":[\"TAddress\",\"0x2\"]}]");
+    assertEquals(0, batch.getContentLength());
+  }
+
+  @Test
+  public void batchSnapshotSealFailurePreservesPriorResponsesAndFailingId() throws Exception {
+    ArchiveQueryCoordinator coordinator = new ArchiveQueryCoordinator();
+    AtomicBoolean serialized = new AtomicBoolean();
+    int[] calls = {0};
+    doAnswer(inv -> {
+      int call = calls[0]++;
+      OutputStream output = inv.getArgument(1);
+      if (call == 0) {
+        output.write("{\"jsonrpc\":\"2.0\",\"result\":\"ok\",\"id\":1}"
+            .getBytes(StandardCharsets.UTF_8));
+        return 0;
+      }
+      QueryLease lease = coordinator.acquire();
+      ArchiveQueryTransportScope.closeAfterResponse(lease, () -> {
+        assertTrue(serialized.get());
+        throw new ArchiveSnapshotInvalidatedException("snapshot invalidated");
+      });
+      output.write("{\"jsonrpc\":\"2.0\",\"result\":\"orphan\",\"id\":2}"
+          .getBytes(StandardCharsets.UTF_8));
+      serialized.set(true);
+      return 0;
+    }).when(mockRpcServer).handleRequest(any(InputStream.class), any(OutputStream.class));
+
+    MockHttpServletResponse response = doPost("[{\"id\":1},{\"id\":2}]");
+
+    JsonNode body = MAPPER.readTree(response.getContentAsByteArray());
+    assertTrue(body.isArray());
+    assertEquals(2, body.size());
+    assertEquals("ok", body.get(0).get("result").asText());
+    assertEquals(1, body.get(0).get("id").asInt());
+    assertEquals(-32603, body.get(1).get("error").get("code").asInt());
+    assertEquals(2, body.get(1).get("id").asInt());
+    assertEquals(0, coordinator.getActiveLeaseCount());
+  }
+
+  @Test
+  public void actualSerializedResponseSizeEnforcesArchiveBudget() throws Exception {
+    ArchiveQueryCoordinator coordinator = new ArchiveQueryCoordinator(
+        ArchiveQueryLimits.builder().maxResponseBytes(16L).build());
+    doAnswer(inv -> {
+      QueryLease lease = coordinator.acquire();
+      ArchiveQueryTransportScope.closeAfterResponse(lease);
+      OutputStream output = inv.getArgument(1);
+      output.write("{\"jsonrpc\":\"2.0\",\"result\":\"larger-than-budget\",\"id\":1}"
+          .getBytes(StandardCharsets.UTF_8));
+      return 0;
+    }).when(mockRpcServer).handleRequest(any(InputStream.class), any(OutputStream.class));
+
+    MockHttpServletResponse response = doPost("{\"id\":1}");
+
+    JsonNode body = MAPPER.readTree(response.getContentAsByteArray());
+    assertEquals(-32005, body.get("error").get("code").asInt());
+    assertEquals(1, body.get("id").asInt());
+    assertEquals(0, coordinator.getActiveLeaseCount());
+  }
+
+  @Test
+  public void batchOverflowDoesNotEchoAnOversizedId() throws Exception {
+    int limit = 256;
+    CommonParameter.getInstance().jsonRpcMaxResponseSize = limit;
+    int[] calls = {0};
+    doAnswer(inv -> {
+      OutputStream output = inv.getArgument(1);
+      output.write(new byte[calls[0]++ == 0 ? 180 : 100]);
+      return 0;
+    }).when(mockRpcServer).handleRequest(any(InputStream.class), any(OutputStream.class));
+    StringBuilder oversizedId = new StringBuilder();
+    for (int i = 0; i < 10_000; i++) {
+      oversizedId.append('x');
+    }
+
+    MockHttpServletResponse response = doPost(
+        "[{\"id\":1},{\"id\":\"" + oversizedId + "\"}]");
+
+    assertTrue(response.getContentAsByteArray().length <= limit);
+    JsonNode body = MAPPER.readTree(response.getContentAsByteArray());
+    assertTrue(body.isArray());
+    assertEquals(-32003, body.get(0).get("error").get("code").asInt());
+    assertTrue(body.get(0).get("id").isNull());
   }
 
   // --- normal path ---
@@ -239,14 +907,86 @@ public class JsonRpcServletTest {
   public void normalRequest_commitsRpcServerResponse() throws Exception {
     byte[] rpcResp = "{\"result\":\"0x1\"}".getBytes(StandardCharsets.UTF_8);
     doAnswer(inv -> {
-      HttpServletResponse r = inv.getArgument(1);
-      r.getOutputStream().write(rpcResp);
-      return null;
-    }).when(mockRpcServer).handle(any(HttpServletRequest.class), any(HttpServletResponse.class));
+      OutputStream output = inv.getArgument(1);
+      output.write(rpcResp);
+      return 0;
+    }).when(mockRpcServer).handleRequest(any(InputStream.class), any(OutputStream.class));
 
     MockHttpServletResponse resp = doPost("{\"method\":\"eth_blockNumber\",\"id\":1}");
     assertEquals(200, resp.getStatus());
     assertArrayEquals(rpcResp, resp.getContentAsByteArray());
+  }
+
+  @Test
+  public void normalRequestRetainsArchivePermitThroughResponseSerialization() throws Exception {
+    ArchiveQueryCoordinator coordinator = new ArchiveQueryCoordinator();
+    doAnswer(inv -> {
+      QueryLease lease = coordinator.acquire();
+      ArchiveQueryTransportScope.closeAfterResponse(lease);
+      assertFalse(lease.isClosed());
+      assertEquals(1, coordinator.getActiveLeaseCount());
+      OutputStream output = inv.getArgument(1);
+      output.write("{\"result\":\"ok\"}"
+          .getBytes(StandardCharsets.UTF_8));
+      return 0;
+    }).when(mockRpcServer).handleRequest(any(InputStream.class), any(OutputStream.class));
+
+    doPost("{\"method\":\"eth_getBalance\",\"id\":1}");
+
+    assertEquals(0, coordinator.getActiveLeaseCount());
+  }
+
+  @Test
+  public void normalRequestReleasesArchivePermitBeforeNetworkWrite() throws Exception {
+    ArchiveQueryCoordinator coordinator = new ArchiveQueryCoordinator();
+    doAnswer(inv -> {
+      QueryLease lease = coordinator.acquire();
+      ArchiveQueryTransportScope.closeAfterResponse(lease);
+      OutputStream output = inv.getArgument(1);
+      output.write("{\"result\":\"ok\"}"
+          .getBytes(StandardCharsets.UTF_8));
+      return 0;
+    }).when(mockRpcServer).handleRequest(any(InputStream.class), any(OutputStream.class));
+    MockHttpServletRequest req = new MockHttpServletRequest("POST", "/jsonrpc");
+    req.setContent("{\"method\":\"eth_getBalance\",\"id\":1}"
+        .getBytes(StandardCharsets.UTF_8));
+    MockHttpServletResponse resp = new MockHttpServletResponse() {
+      @Override
+      public ServletOutputStream getOutputStream() {
+        assertEquals(0, coordinator.getActiveLeaseCount());
+        return super.getOutputStream();
+      }
+    };
+
+    servlet.callDoPost(req, resp);
+
+    assertEquals(0, coordinator.getActiveLeaseCount());
+  }
+
+  @Test
+  public void batchReleasesEachArchivePermitAfterItsSerializedSubResponse() throws Exception {
+    ArchiveQueryCoordinator coordinator = new ArchiveQueryCoordinator(
+        ArchiveQueryLimits.builder()
+            .maxConcurrentQueries(1)
+            .maxPendingQueries(0)
+            .acquireTimeoutMs(0)
+            .build());
+    int[] calls = {0};
+    doAnswer(inv -> {
+      QueryLease lease = coordinator.acquire();
+      ArchiveQueryTransportScope.closeAfterResponse(lease);
+      assertFalse(lease.isClosed());
+      assertEquals(1, coordinator.getActiveLeaseCount());
+      OutputStream output = inv.getArgument(1);
+      output.write(("{\"jsonrpc\":\"2.0\",\"result\":\"ok\",\"id\":"
+          + ++calls[0] + "}").getBytes(StandardCharsets.UTF_8));
+      return 0;
+    }).when(mockRpcServer).handleRequest(any(InputStream.class), any(OutputStream.class));
+
+    doPost("[{\"id\":1},{\"id\":2}]");
+
+    assertEquals(2, calls[0]);
+    assertEquals(0, coordinator.getActiveLeaseCount());
   }
 
   // --- Content-Type header: must be application/json-rpc (no charset suffix) ---
@@ -423,6 +1163,167 @@ public class JsonRpcServletTest {
     MockHttpServletResponse resp = new MockHttpServletResponse();
     servlet.callDoPost(req, resp);
     return resp;
+  }
+
+  private void setRpcServer(JsonRpcServer server) throws Exception {
+    Field field = JsonRpcServlet.class.getDeclaredField("rpcServer");
+    field.setAccessible(true);
+    field.set(servlet, server);
+  }
+
+  private void setArchiveJsonRpcExecutor(ArchiveJsonRpcExecutor executor) throws Exception {
+    Field field = JsonRpcServlet.class.getDeclaredField("archiveJsonRpcExecutor");
+    field.setAccessible(true);
+    field.set(servlet, executor);
+  }
+
+  private void postTo(MockHttpServletResponse response, int id) {
+    MockHttpServletRequest request = new MockHttpServletRequest("POST", "/jsonrpc");
+    request.setContent(("{\"method\":\"eth_getBalance\",\"id\":" + id + "}")
+        .getBytes(StandardCharsets.UTF_8));
+    try {
+      servlet.callDoPost(request, response);
+    } catch (IOException e) {
+      throw new IllegalStateException(e);
+    }
+  }
+
+  private void postBatchTo(MockHttpServletResponse response, int id) {
+    MockHttpServletRequest request = new MockHttpServletRequest("POST", "/jsonrpc");
+    request.setContent(("[{\"id\":" + id + "}]").getBytes(StandardCharsets.UTF_8));
+    try {
+      servlet.callDoPost(request, response);
+    } catch (IOException e) {
+      throw new IllegalStateException(e);
+    }
+  }
+
+  private static final class BlockingResponse extends MockHttpServletResponse {
+
+    private final CountDownLatch entered;
+    private final CountDownLatch release;
+    private final AtomicBoolean blocked = new AtomicBoolean();
+    private final ServletOutputStream delegate = super.getOutputStream();
+
+    private BlockingResponse(CountDownLatch entered, CountDownLatch release) {
+      this.entered = entered;
+      this.release = release;
+    }
+
+    @Override
+    public ServletOutputStream getOutputStream() {
+      return new ServletOutputStream() {
+        @Override
+        public void write(int value) throws IOException {
+          blockOnce();
+          delegate.write(value);
+        }
+
+        @Override
+        public void write(byte[] value, int offset, int length) throws IOException {
+          blockOnce();
+          delegate.write(value, offset, length);
+        }
+
+        @Override
+        public void flush() throws IOException {
+          delegate.flush();
+        }
+
+        @Override
+        public boolean isReady() {
+          return true;
+        }
+
+        @Override
+        public void setWriteListener(WriteListener writeListener) {
+        }
+
+        private void blockOnce() throws IOException {
+          if (!blocked.compareAndSet(false, true)) {
+            return;
+          }
+          entered.countDown();
+          try {
+            release.await();
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("interrupted while simulating a slow client", e);
+          }
+        }
+      };
+    }
+  }
+
+  public interface LargeResponseApi {
+
+    String large();
+  }
+
+  public interface InterruptingApi {
+
+    String interrupt();
+
+    String later();
+  }
+
+  private static final class InterruptingApiImpl implements InterruptingApi {
+
+    private final AtomicInteger calls = new AtomicInteger();
+
+    @Override
+    public String interrupt() {
+      calls.incrementAndGet();
+      Thread.currentThread().interrupt();
+      throw new HistoricalQueryLimitException(
+          HistoricalQueryLimitException.Reason.RESOURCE_EXHAUSTED,
+          HistoricalQueryLimitException.Limit.INTERRUPTED,
+          "interrupted while acquiring historical query permit");
+    }
+
+    @Override
+    public String later() {
+      calls.incrementAndGet();
+      return "unexpected";
+    }
+  }
+
+  private static final class LargeResponseApiImpl implements LargeResponseApi {
+
+    @Override
+    public String large() {
+      char[] value = new char[1024 * 1024];
+      java.util.Arrays.fill(value, 'x');
+      return new String(value);
+    }
+  }
+
+  public interface LargeIterableApi {
+
+    Iterable<String> largeIterable();
+  }
+
+  private static final class LargeIterableApiImpl implements LargeIterableApi {
+
+    private static final int ITEM_COUNT = 100_000;
+    private static final String ITEM = new String(new char[128]).replace('\0', 'x');
+    private final AtomicInteger emitted = new AtomicInteger();
+
+    @Override
+    public Iterable<String> largeIterable() {
+      return () -> new Iterator<String>() {
+        @Override
+        public boolean hasNext() {
+          return emitted.get() < ITEM_COUNT;
+        }
+
+        @Override
+        public String next() {
+          emitted.incrementAndGet();
+          return ITEM;
+        }
+      };
+    }
   }
 
   private static class TestableServlet extends JsonRpcServlet {

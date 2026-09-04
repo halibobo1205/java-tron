@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.capsule.ContractStateCapsule;
 import org.tron.core.db.TronStoreWithRevoking;
 
@@ -29,7 +30,16 @@ public class ContractStateStore extends TronStoreWithRevoking<ContractStateCapsu
       return;
     }
 
-    revokingDB.put(key, item.getData());
+    byte[] value = item.getData();
+    // L4 archive: contract-state is STORE_SPECIFIC and bypasses the base put hook. Read the pre-put
+    // value (Erigon prev-value) only when archived; default path is a plain put.
+    String dbName = getDbName();
+    boolean capture = ArchiveCaptureHolder.capturesStore(dbName);
+    ArchivePreviousValue previous = capture ? readArchivePreviousValue(dbName, key) : null;
+    revokingDB.put(key, value);
+    if (capture && previous.isAvailable()) {
+      ArchiveCaptureHolder.capturePut(dbName, key, previous.getValue(), value);
+    }
   }
 
 }

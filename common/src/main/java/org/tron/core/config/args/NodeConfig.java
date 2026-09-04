@@ -247,6 +247,7 @@ public class NodeConfig {
     private int maxBlockFilterNum = 50000;
     private int maxBatchSize = 100;
     private int maxResponseSize = 25 * 1024 * 1024;
+    private long maxPendingResponseBytes = 128L * 1024 * 1024;
     private int maxAddressSize = 1000;
     private int maxLogFilterNum = 20000;
     private long maxMessageSize = 4194304;
@@ -475,6 +476,10 @@ public class NodeConfig {
     if (jsonrpc.maxMessageSize < 0) {
       throw new TronError("node.jsonrpc.maxMessageSize must be non-negative, got: "
           + jsonrpc.maxMessageSize, PARAMETER_INIT);
+    }
+    if (jsonrpc.maxPendingResponseBytes <= 0) {
+      throw new TronError("node.jsonrpc.maxPendingResponseBytes must be positive, got: "
+          + jsonrpc.maxPendingResponseBytes, PARAMETER_INIT);
     }
   }
 

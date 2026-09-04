@@ -23,7 +23,11 @@ public class ProgramTrace {
   }
 
   public ProgramTrace(ProgramInvoke programInvoke) {
-    if (programInvoke != null && VMConfig.vmTrace()) {
+    this(programInvoke, VMConfig.vmTrace());
+  }
+
+  public ProgramTrace(ProgramInvoke programInvoke, boolean traceEnabled) {
+    if (programInvoke != null && traceEnabled) {
       contractAddress = Hex.toHexString(programInvoke.getContractAddress().toTronAddress());
     }
   }
@@ -66,7 +70,8 @@ public class ProgramTrace {
   }
 
   public ProgramTrace error(Exception error) {
-    setError(error == null ? "" : format("%s: %s", error.getClass(), error.getMessage()));
+    String message = error == null ? null : error.getMessage();
+    setError(error == null ? "" : format("%s: %s", error.getClass(), message));
     return this;
   }
 

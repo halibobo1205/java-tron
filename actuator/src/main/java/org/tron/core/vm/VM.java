@@ -7,11 +7,15 @@ import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 import org.bouncycastle.util.encoders.Hex;
 import org.springframework.util.StringUtils;
+import org.tron.core.archive.query.HistoricalQueryLimitException;
+import org.tron.core.archive.query.QueryContext;
+import org.tron.core.archive.query.QueryContextHolder;
 import org.tron.core.vm.config.VMConfig;
 import org.tron.core.vm.program.Program;
 import org.tron.core.vm.program.Program.JVMStackOverFlowException;
 import org.tron.core.vm.program.Program.OutOfTimeException;
 import org.tron.core.vm.program.Program.TransferException;
+import org.tron.core.vm.trace.VmStructuredTraceListener;
 
 @Slf4j(topic = "VM")
 public class VM {
@@ -20,18 +24,26 @@ public class VM {
       Op.DELEGATECALL, Op.CALLCODE, Op.CALLTOKEN);
 
   public static void play(Program program, JumpTable jumpTable) {
+    final QueryContext queryContext = QueryContextHolder.current();
+    final VmStructuredTraceListener structuredTraceListener =
+        program.getStructuredTraceListener();
     try {
       long factor = DYNAMIC_ENERGY_FACTOR_DECIMAL;
       long energyUsage = 0L;
       // hoist once per execution: avoids a per-opcode VMConfig.current() thread-local lookup
       final boolean allowDynamicEnergy = VMConfig.allowDynamicEnergy();
+      final boolean vmTraceEnabled = program.isVmTraceEnabled();
 
       if (allowDynamicEnergy) {
         factor = program.updateContextContractFactor();
       }
 
       while (!program.isStopped()) {
-        if (VMConfig.vmTrace()) {
+        if (queryContext != null) {
+          // Stop an oversized historical execution before the next opcode can allocate or read.
+          queryContext.recordVmStep();
+        }
+        if (vmTraceEnabled) {
           program.saveOpTrace();
         }
 
@@ -73,25 +85,44 @@ public class VM {
                 energy += penalty;
               }
 
+              if (structuredTraceListener != null) {
+                structuredTraceListener.captureEnergyCost(program, energy);
+              }
               program.spendEnergyWithPenalty(energy, penalty, opName);
             } else {
+              if (structuredTraceListener != null) {
+                structuredTraceListener.captureEnergyCost(program, energy);
+              }
               program.spendEnergy(energy, opName);
             }
 
           } else {
+            if (structuredTraceListener != null) {
+              structuredTraceListener.captureEnergyCost(program, energy);
+            }
             program.spendEnergy(energy, opName);
           }
 
+          if (queryContext != null) {
+            queryContext.checkDeadline();
+          }
 
           /* check if cpu time out */
           program.checkCPUTimeLimit(opName);
 
           /* exec op action */
           op.execute(program);
+          if (queryContext != null) {
+            // A precompile may be non-interruptible internally; enforce immediately on return.
+            queryContext.checkDeadline();
+          }
 
           program.setPreviouslyExecutedOp((byte) op.getOpcode());
         } catch (RuntimeException e) {
           logger.info("VM halted: [{}]", e.getMessage());
+          if (structuredTraceListener != null) {
+            structuredTraceListener.captureFault(program, e);
+          }
           if (!(e instanceof TransferException)) {
             program.spendAllEnergy();
           }
@@ -110,6 +141,11 @@ public class VM {
     } catch (JVMStackOverFlowException | OutOfTimeException e) {
       throw e;
     } catch (RuntimeException e) {
+      if (e instanceof HistoricalQueryLimitException
+          && program.getContractState() != null
+          && program.getContractState().isHistoricalArchive()) {
+        throw e;
+      }
       // https://openjdk.org/jeps/358
       // https://bugs.openjdk.org/browse/JDK-8220715
       // since jdk 14, the NullPointerExceptions message is not empty
@@ -123,6 +159,10 @@ public class VM {
     } catch (StackOverflowError soe) {
       logger.info("\n !!! StackOverflowError: update your java run command with -Xss !!!\n", soe);
       throw new JVMStackOverFlowException();
+    } finally {
+      if (structuredTraceListener != null) {
+        structuredTraceListener.onProgramExit(program);
+      }
     }
   }
 }

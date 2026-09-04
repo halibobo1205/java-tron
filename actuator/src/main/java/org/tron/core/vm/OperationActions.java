@@ -444,7 +444,7 @@ public class OperationActions {
     DataWord energyPrice = DataWord.ZERO();
     if (VMConfig.allowTvmCompatibleEvm() && program.getContractVersion() == 1) {
       energyPrice = new DataWord(program.getContractState()
-          .getDynamicPropertiesStore().getEnergyFee());
+          .getVmDynamicProperties().getEnergyFee());
     }
     program.stackPush(energyPrice);
     program.step();
@@ -549,7 +549,7 @@ public class OperationActions {
 
   public static void baseFeeAction(Program program) {
     DataWord energyFee =
-        new DataWord(program.getContractState().getDynamicPropertiesStore().getEnergyFee());
+        new DataWord(program.getContractState().getVmDynamicProperties().getEnergyFee());
 
     program.stackPush(energyFee);
     program.step();
@@ -1046,8 +1046,8 @@ public class OperationActions {
     PrecompiledContracts.PrecompiledContract contract =
         PrecompiledContracts.getContractForAddress(codeAddress);
     if (contract != null) {
-      if (program.isConstantCall()) {
-        contract =  PrecompiledContracts.getOptimizedContractForConstant(contract);
+      if (program.usesIsolatedExecutionHelpers()) {
+        contract = PrecompiledContracts.newIsolatedContract(contract);
       }
       program.callToPrecompiledAddress(msg, contract);
     } else {

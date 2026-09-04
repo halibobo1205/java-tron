@@ -1,10 +1,8 @@
 package org.tron.common.runtime;
 
 import java.util.List;
-import java.util.Objects;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.StringUtils;
 import org.tron.core.actuator.Actuator;
 import org.tron.core.actuator.Actuator2;
 import org.tron.core.actuator.ActuatorCreator;
@@ -12,18 +10,8 @@ import org.tron.core.actuator.VMActuator;
 import org.tron.core.db.TransactionContext;
 import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractValidateException;
-import org.tron.core.vm.program.Program;
-import org.tron.core.vm.program.Program.BadJumpDestinationException;
-import org.tron.core.vm.program.Program.IllegalOperationException;
-import org.tron.core.vm.program.Program.JVMStackOverFlowException;
-import org.tron.core.vm.program.Program.OutOfEnergyException;
-import org.tron.core.vm.program.Program.OutOfMemoryException;
-import org.tron.core.vm.program.Program.OutOfTimeException;
-import org.tron.core.vm.program.Program.PrecompiledContractException;
-import org.tron.core.vm.program.Program.StackTooLargeException;
-import org.tron.core.vm.program.Program.StackTooSmallException;
+import org.tron.core.vm.program.VmResultCodeMapper;
 import org.tron.protos.Protocol.Transaction.Contract.ContractType;
-import org.tron.protos.Protocol.Transaction.Result.contractResult;
 
 @Slf4j(topic = "VM")
 public class RuntimeImpl implements Runtime {
@@ -59,7 +47,8 @@ public class RuntimeImpl implements Runtime {
       }
     }
 
-    setResultCode(context.getProgramResult());
+    context.getProgramResult().setResultCode(
+        VmResultCodeMapper.resultCodeOf(context.getProgramResult()));
 
   }
 
@@ -72,65 +61,4 @@ public class RuntimeImpl implements Runtime {
   public String getRuntimeError() {
     return context.getProgramResult().getRuntimeError();
   }
-
-
-  private void setResultCode(ProgramResult result) {
-    RuntimeException exception = result.getException();
-    if (Objects.isNull(exception) && StringUtils
-        .isEmpty(result.getRuntimeError()) && !result.isRevert()) {
-      result.setResultCode(contractResult.SUCCESS);
-      return;
-    }
-    if (result.isRevert()) {
-      result.setResultCode(contractResult.REVERT);
-      return;
-    }
-    if (exception instanceof IllegalOperationException) {
-      result.setResultCode(contractResult.ILLEGAL_OPERATION);
-      return;
-    }
-    if (exception instanceof OutOfEnergyException) {
-      result.setResultCode(contractResult.OUT_OF_ENERGY);
-      return;
-    }
-    if (exception instanceof BadJumpDestinationException) {
-      result.setResultCode(contractResult.BAD_JUMP_DESTINATION);
-      return;
-    }
-    if (exception instanceof OutOfTimeException) {
-      result.setResultCode(contractResult.OUT_OF_TIME);
-      return;
-    }
-    if (exception instanceof OutOfMemoryException) {
-      result.setResultCode(contractResult.OUT_OF_MEMORY);
-      return;
-    }
-    if (exception instanceof PrecompiledContractException) {
-      result.setResultCode(contractResult.PRECOMPILED_CONTRACT);
-      return;
-    }
-    if (exception instanceof StackTooSmallException) {
-      result.setResultCode(contractResult.STACK_TOO_SMALL);
-      return;
-    }
-    if (exception instanceof StackTooLargeException) {
-      result.setResultCode(contractResult.STACK_TOO_LARGE);
-      return;
-    }
-    if (exception instanceof JVMStackOverFlowException) {
-      result.setResultCode(contractResult.JVM_STACK_OVER_FLOW);
-      return;
-    }
-    if (exception instanceof Program.TransferException) {
-      result.setResultCode(contractResult.TRANSFER_FAILED);
-      return;
-    }
-    if (exception instanceof Program.InvalidCodeException) {
-      result.setResultCode(contractResult.INVALID_CODE);
-      return;
-    }
-    result.setResultCode(contractResult.UNKNOWN);
-  }
-
 }
-

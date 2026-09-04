@@ -22,6 +22,7 @@ import org.tron.core.db2.core.Chainbase;
 import org.tron.core.db2.core.SnapshotManager;
 import org.tron.core.exception.BadItemException;
 import org.tron.core.exception.ItemNotFoundException;
+import org.tron.core.exception.RevokingStoreIllegalStateException;
 import org.tron.core.exception.TronError;
 
 @Slf4j
@@ -29,6 +30,7 @@ public class SnapshotManagerTest extends BaseMethodTest {
 
   private SnapshotManager revokingDatabase;
   private TestRevokingTronStore tronDatabase;
+  private TestRevokingTronStore lateDatabase;
 
   @Override
   protected void afterInit() {
@@ -40,7 +42,74 @@ public class SnapshotManagerTest extends BaseMethodTest {
 
   @Override
   protected void beforeDestroy() {
+    if (lateDatabase != null) {
+      lateDatabase.close();
+    }
     tronDatabase.close();
+  }
+
+  @Test
+  public synchronized void testLateRegisteredDatabaseCommitsWithActiveSnapshot() {
+    while (revokingDatabase.size() != 0) {
+      revokingDatabase.pop();
+    }
+
+    lateDatabase = new TestRevokingTronStore("testSnapshotManager-lateCommit");
+    byte[] key = "late-commit".getBytes();
+    ProtoCapsuleTest value = new ProtoCapsuleTest("committed".getBytes());
+    try (ISession session = revokingDatabase.buildSession()) {
+      revokingDatabase.add(lateDatabase.getRevokingDB());
+      lateDatabase.put(key, value);
+      session.commitToRoot();
+    }
+
+    Assert.assertEquals(value, lateDatabase.get(key));
+    Assert.assertEquals(0, revokingDatabase.size());
+    Assert.assertEquals(0, revokingDatabase.getActiveSession());
+  }
+
+  @Test
+  public synchronized void testLateRegisteredDatabaseRollsBackWithActiveSnapshot() {
+    while (revokingDatabase.size() != 0) {
+      revokingDatabase.pop();
+    }
+
+    lateDatabase = new TestRevokingTronStore("testSnapshotManager-lateRollback");
+    byte[] key = "late-rollback".getBytes();
+    ProtoCapsuleTest value = new ProtoCapsuleTest("rolled-back".getBytes());
+    try (ISession ignored = revokingDatabase.buildSession()) {
+      revokingDatabase.add(lateDatabase.getRevokingDB());
+      lateDatabase.put(key, value);
+      Assert.assertEquals(value, lateDatabase.get(key));
+    }
+
+    Assert.assertNull(lateDatabase.get(key));
+    Assert.assertEquals(0, revokingDatabase.size());
+    Assert.assertEquals(0, revokingDatabase.getActiveSession());
+  }
+
+  @Test
+  public synchronized void testRootCommitValidatesEveryDatabaseBeforeMerging() {
+    while (revokingDatabase.size() != 0) {
+      revokingDatabase.pop();
+    }
+
+    lateDatabase = new TestRevokingTronStore("testSnapshotManager-rootCommitValidation");
+    revokingDatabase.add(lateDatabase.getRevokingDB());
+    byte[] key = "must-not-partially-commit".getBytes();
+    ProtoCapsuleTest value = new ProtoCapsuleTest("pending".getBytes());
+    try (ISession session = revokingDatabase.buildSession()) {
+      tronDatabase.put(key, value);
+      lateDatabase.reset();
+
+      RevokingStoreIllegalStateException error = Assert.assertThrows(
+          RevokingStoreIllegalStateException.class, session::commitToRoot);
+      Assert.assertTrue(error.getMessage().contains(lateDatabase.getDbName()));
+    }
+
+    Assert.assertNull(tronDatabase.get(key));
+    Assert.assertEquals(0, revokingDatabase.size());
+    Assert.assertEquals(0, revokingDatabase.getActiveSession());
   }
 
   @Test

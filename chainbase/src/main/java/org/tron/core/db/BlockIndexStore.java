@@ -39,6 +39,15 @@ public class BlockIndexStore extends TronStoreWithRevoking<BytesCapsule> {
     return new BlockId(Sha256Hash.wrap(value.getData()), num);
   }
 
+  /** Durable-root point read for historical queries; fetched SST blocks are not cache-admitted. */
+  public BlockId getFromRootWithoutCache(long num) throws ItemNotFoundException {
+    byte[] value = readRootWithoutCache(ByteArray.fromLong(num));
+    if (ArrayUtils.isEmpty(value)) {
+      throw new ItemNotFoundException(String.format("number: %d is not found!", num));
+    }
+    return new BlockId(Sha256Hash.wrap(value), num);
+  }
+
   @Override
   public BytesCapsule get(byte[] key)
       throws ItemNotFoundException {

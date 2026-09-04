@@ -20,6 +20,7 @@ import static org.tron.common.utils.ByteUtil.stripLeadingZeroes;
 import static org.tron.core.config.Parameter.ChainConstant.TRX_PRECISION;
 import static org.tron.core.vm.VMConstant.SIG_LENGTH;
 
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.google.protobuf.ByteString;
 
 import java.lang.reflect.Constructor;
@@ -29,12 +30,16 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.Setter;
@@ -70,6 +75,10 @@ import org.tron.common.utils.ByteUtil;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.common.zksnark.JLibrustzcash;
 import org.tron.common.zksnark.LibrustzcashParam;
+import org.tron.core.archive.query.ArchiveQueryLimits;
+import org.tron.core.archive.query.HistoricalQueryLimitException;
+import org.tron.core.archive.query.QueryContext;
+import org.tron.core.archive.query.QueryContextHolder;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.capsule.WitnessCapsule;
@@ -212,7 +221,7 @@ public class PrecompiledContracts {
   private static final DataWord p256VerifyAddr = new DataWord(
       "0000000000000000000000000000000000000000000000000000000000000100");
 
-  public static PrecompiledContract getOptimizedContractForConstant(PrecompiledContract contract) {
+  public static PrecompiledContract newIsolatedContract(PrecompiledContract contract) {
     try {
       Constructor<?> constructor = contract.getClass().getDeclaredConstructor();
       return (PrecompiledContracts.PrecompiledContract) constructor.newInstance();
@@ -470,6 +479,20 @@ public class PrecompiledContracts {
       return deposit;
     }
 
+    protected final boolean isHistoricalArchiveCall() {
+      return deposit != null && deposit.isHistoricalArchive();
+    }
+
+    protected final void checkHistoricalArchiveDeadline() {
+      if (!isHistoricalArchiveCall()) {
+        return;
+      }
+      QueryContext queryContext = QueryContextHolder.current();
+      if (queryContext != null) {
+        queryContext.checkDeadline();
+      }
+    }
+
     public ProgramResult getResult() {
       return result;
     }
@@ -479,12 +502,16 @@ public class PrecompiledContracts {
     }
 
     protected long getCPUTimeLeftInNanoSecond() {
-      long left = getVmShouldEndInUs() * VMConstant.ONE_THOUSAND - System.nanoTime();
+      long left = getCPUTimeRemainingInNanoSecond(System.nanoTime());
       if (left <= 0) {
         throw Program.Exception.notEnoughTime("call");
       } else {
         return left;
       }
+    }
+
+    protected long getCPUTimeRemainingInNanoSecond(long sampledNanos) {
+      return getVmShouldEndInUs() * VMConstant.ONE_THOUSAND - sampledNanos;
     }
 
     protected byte[] dataOne() {
@@ -1143,17 +1170,19 @@ public class PrecompiledContracts {
 
     @Override
     public Pair<Boolean, byte[]> execute(byte[] data) {
+      boolean historicalCall = isHistoricalArchiveCall();
       try {
-        return doExecute(data);
+        return doExecute(data, historicalCall);
       } catch (Throwable t) {
-        if (t instanceof InterruptedException){
+        if (t instanceof InterruptedException) {
           Thread.currentThread().interrupt();
         }
+        VerifyTransferProof.rethrowHistoricalHardFailure(historicalCall, t);
         return Pair.of(true, new byte[WORD_SIZE]);
       }
     }
 
-    private Pair<Boolean, byte[]> doExecute(byte[] data)
+    private Pair<Boolean, byte[]> doExecute(byte[] data, boolean historicalCall)
         throws InterruptedException, ExecutionException {
       if (VMConfig.allowTvmOsaka()
           && !isValidAbiEncoding(data, ABI_HEADER_WORDS, ABI_ITEM_WORDS)) {
@@ -1180,12 +1209,18 @@ public class PrecompiledContracts {
         return Pair.of(true, DATA_FALSE);
       }
       byte[] res = new byte[WORD_SIZE];
-      if (isConstantCall()) {
-        //for constant call not use thread pool to avoid potential effect
+      if (!usesCanonicalWorkers(isConstantCall(), historicalCall)) {
+        // Request-local execution must not contend with the canonical validation worker pool.
         for (int i = 0; i < cnt; i++) {
+          if (historicalCall) {
+            checkHistoricalArchiveDeadline();
+          }
           if (DataWord
               .equalAddressByteArray(addresses[i], recoverAddrBySign(signatures[i], hash))) {
             res[i] = 1;
+          }
+          if (historicalCall) {
+            checkHistoricalArchiveDeadline();
           }
         }
       } else {
@@ -1215,6 +1250,10 @@ public class PrecompiledContracts {
         }
       }
       return Pair.of(true, res);
+    }
+
+    static boolean usesCanonicalWorkers(boolean constantCall, boolean historicalCall) {
+      return !constantCall && !historicalCall;
     }
 
     @AllArgsConstructor
@@ -1446,13 +1485,24 @@ public class PrecompiledContracts {
   public static class VerifyTransferProof extends VerifyProof {
 
     private static final Integer[] SIZE = {2080, 2368, 2464, 2752};
+    private static final int HISTORICAL_QUEUE_CAPACITY = 64;
     private static final ExecutorService workersInConstantCall;
+    private static final ThreadPoolExecutor workersInHistoricalCall;
     private static final ExecutorService workersInNonConstantCall;
     private static final String constantCallName = "verify-transfer-constant-call";
+    private static final String historicalCallName = "verify-transfer-historical-call";
     private static final String nonConstantCallName = "verify-transfer-non-constant-call";
 
     static {
       workersInConstantCall = ExecutorServiceManager.newFixedThreadPool(constantCallName, 5);
+      workersInHistoricalCall = new ThreadPoolExecutor(
+          5, 5, 0L, TimeUnit.MILLISECONDS,
+          new ArrayBlockingQueue<>(HISTORICAL_QUEUE_CAPACITY),
+          new ThreadFactoryBuilder()
+              .setNameFormat(historicalCallName + "-%d")
+              .setDaemon(true)
+              .setPriority(Thread.MIN_PRIORITY)
+              .build());
       workersInNonConstantCall = ExecutorServiceManager.newFixedThreadPool(nonConstantCallName, 5);
     }
 
@@ -1463,6 +1513,8 @@ public class PrecompiledContracts {
 
     @Override
     public Pair<Boolean, byte[]> execute(byte[] data) {
+      boolean historicalCall = isHistoricalArchiveCall();
+      List<Future<Boolean>> futures = new ArrayList<>(5);
       if (data == null) {
         return Pair.of(true, DataWord.ZERO().getData());
       }
@@ -1558,9 +1610,10 @@ public class PrecompiledContracts {
 
         int threadCount = spendCount + receiveCount + 1;
         CountDownLatch countDownLatch = new CountDownLatch(threadCount);
-        List<Future<Boolean>> futures = new ArrayList<>(threadCount);
         ExecutorService workers;
-        if (isConstantCall()) {
+        if (historicalCall) {
+          workers = workersInHistoricalCall;
+        } else if (isConstantCall()) {
           workers = workersInConstantCall;
         } else {
           workers = workersInNonConstantCall;
@@ -1586,13 +1639,9 @@ public class PrecompiledContracts {
                 signHash, spendCvs, spendCount * 32, receiveCvs, receiveCount * 32));
         futures.add(futureCheckBindingSig);
 
-        boolean withNoTimeout = countDownLatch.await(getCPUTimeLeftInNanoSecond(),
-            TimeUnit.NANOSECONDS);
-        boolean checkResult = true;
-        for (Future<Boolean> future : futures) {
-          boolean eachTaskResult = future.get();
-          checkResult = checkResult && eachTaskResult;
-        }
+        boolean checkResult = historicalCall
+            ? awaitHistoricalProofTasks(countDownLatch, futures)
+            : awaitLegacyProofTasks(countDownLatch, futures);
         if (checkResult) {
           return insertLeaves(frontier, leafCount, receiveCm);
         } else {
@@ -1600,15 +1649,159 @@ public class PrecompiledContracts {
         }
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
+        rethrowHistoricalInterrupt(historicalCall, e);
         logger.info("VerifyTransferProof exception: " + e.getMessage());
       } catch (Throwable any) {
+        rethrowHistoricalHardFailure(historicalCall, any);
         String errorMsg = any.getMessage();
         if (errorMsg == null && any.getCause() != null) {
           errorMsg = any.getCause().getMessage();
         }
         logger.info("VerifyTransferProof exception: " + errorMsg);
+      } finally {
+        if (historicalCall) {
+          cancelUnfinished(futures);
+        }
       }
       return Pair.of(true, DataWord.ZERO().getData());
+    }
+
+    protected boolean awaitHistoricalProofTasks(
+        CountDownLatch countDownLatch, List<Future<Boolean>> futures)
+        throws InterruptedException, ExecutionException {
+      HistoricalWaitBudget latchBudget = getHistoricalWaitBudget();
+      if (!countDownLatch.await(latchBudget.remainingNanos, TimeUnit.NANOSECONDS)) {
+        throw historicalProofTimeout(null, latchBudget.archiveDeadlineLimited);
+      }
+      boolean result = true;
+      for (Future<Boolean> future : futures) {
+        HistoricalWaitBudget futureBudget = getHistoricalWaitBudget();
+        try {
+          result = future.get(futureBudget.remainingNanos, TimeUnit.NANOSECONDS) && result;
+        } catch (TimeoutException e) {
+          throw historicalProofTimeout(e, futureBudget.archiveDeadlineLimited);
+        }
+      }
+      return result;
+    }
+
+    private HistoricalWaitBudget getHistoricalWaitBudget() {
+      QueryContext queryContext = QueryContextHolder.current();
+      if (queryContext == null) {
+        return new HistoricalWaitBudget(getCPUTimeLeftInNanoSecond(), false);
+      }
+      QueryContext.DeadlineSnapshot archiveDeadline = queryContext.sampleDeadline();
+      long archiveRemainingNanos = archiveDeadline.getRemainingNanos();
+      long vmRemainingNanos = getCPUTimeRemainingInNanoSecond(
+          archiveDeadline.getSampledNanos());
+      boolean archiveDeadlineLimited = archiveRemainingNanos <= vmRemainingNanos;
+      long remainingNanos = archiveDeadlineLimited ? archiveRemainingNanos : vmRemainingNanos;
+      if (remainingNanos <= 0L) {
+        if (archiveDeadlineLimited) {
+          queryContext.checkDeadline();
+        }
+        throw Program.Exception.notEnoughTime("call VerifyTransferProof precompile method");
+      }
+      return new HistoricalWaitBudget(remainingNanos, archiveDeadlineLimited);
+    }
+
+    static OutOfTimeException historicalProofTimeout(
+        Throwable cause, boolean archiveDeadlineLimited) {
+      if (archiveDeadlineLimited) {
+        QueryContext queryContext = QueryContextHolder.current();
+        if (queryContext != null) {
+          // Re-check only when this deadline supplied the wait duration. A later-expiring archive
+          // deadline must not retroactively replace an earlier VM timeout.
+          queryContext.checkDeadline();
+        }
+      }
+      OutOfTimeException timeout =
+          Program.Exception.notEnoughTime("call VerifyTransferProof precompile method");
+      if (cause != null) {
+        try {
+          timeout.addSuppressed(cause);
+        } catch (Throwable ignored) {
+          // Preserve the VM timeout if suppression cannot allocate.
+        }
+      }
+      return timeout;
+    }
+
+    private static final class HistoricalWaitBudget {
+
+      private final long remainingNanos;
+      private final boolean archiveDeadlineLimited;
+
+      private HistoricalWaitBudget(long remainingNanos, boolean archiveDeadlineLimited) {
+        this.remainingNanos = remainingNanos;
+        this.archiveDeadlineLimited = archiveDeadlineLimited;
+      }
+    }
+
+    private boolean awaitLegacyProofTasks(
+        CountDownLatch countDownLatch, List<Future<Boolean>> futures)
+        throws InterruptedException, ExecutionException {
+      countDownLatch.await(getCPUTimeLeftInNanoSecond(), TimeUnit.NANOSECONDS);
+      boolean result = true;
+      for (Future<Boolean> future : futures) {
+        result = future.get() && result;
+      }
+      return result;
+    }
+
+    protected static void cancelUnfinished(List<Future<Boolean>> futures) {
+      for (Future<Boolean> future : futures) {
+        try {
+          if (!future.isDone()) {
+            future.cancel(true);
+          }
+          if (future instanceof Runnable) {
+            workersInHistoricalCall.remove((Runnable) future);
+          }
+        } catch (RuntimeException ignored) {
+          // Cancellation is best-effort; preserve the historical call's primary result/failure.
+        }
+      }
+    }
+
+    static void rethrowHistoricalHardFailure(boolean historicalCall, Throwable failure) {
+      if (!historicalCall) {
+        return;
+      }
+      Throwable terminal = failure instanceof ExecutionException && failure.getCause() != null
+          ? failure.getCause() : failure;
+      if (terminal instanceof HistoricalQueryLimitException) {
+        throw (HistoricalQueryLimitException) terminal;
+      }
+      if (terminal instanceof Error) {
+        throw (Error) terminal;
+      }
+      if (terminal instanceof OutOfTimeException) {
+        throw (OutOfTimeException) terminal;
+      }
+      if (terminal instanceof RejectedExecutionException) {
+        throw new HistoricalQueryLimitException(
+            HistoricalQueryLimitException.Reason.RESOURCE_EXHAUSTED,
+            HistoricalQueryLimitException.Limit.QUERY_ADMISSION,
+            ArchiveQueryLimits.UNLIMITED,
+            ArchiveQueryLimits.UNLIMITED,
+            "historical proof worker capacity exhausted",
+            terminal);
+      }
+    }
+
+    static void rethrowHistoricalInterrupt(
+        boolean historicalCall, InterruptedException failure) {
+      if (!historicalCall) {
+        return;
+      }
+      throw new HistoricalQueryLimitException(
+          HistoricalQueryLimitException.Reason.RESOURCE_EXHAUSTED,
+          HistoricalQueryLimitException.Limit.INTERRUPTED,
+          ArchiveQueryLimits.UNLIMITED,
+          ArchiveQueryLimits.UNLIMITED,
+          "historical proof wait interrupted",
+          failure);
     }
 
     private static class SaplingCheckSpendTask implements Callable<Boolean> {
@@ -1962,8 +2155,8 @@ public class PrecompiledContracts {
       if (accountCapsule == null) {
         tronPower = 0;
       } else {
-        if (getDeposit().getDynamicPropertiesStore().supportUnfreezeDelay()
-            && getDeposit().getDynamicPropertiesStore().supportAllowNewResourceModel()) {
+        if (getDeposit().getVmDynamicProperties().supportUnfreezeDelay()
+            && getDeposit().getVmDynamicProperties().supportAllowNewResourceModel()) {
           tronPower = accountCapsule.getAllTronPower();
         } else {
           tronPower = accountCapsule.getTronPower();

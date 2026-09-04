@@ -1,5 +1,7 @@
 package org.tron.core.vm.program;
 
+import java.math.BigInteger;
+import java.util.Map;
 import org.apache.commons.lang3.tuple.Pair;
 import org.tron.common.runtime.vm.DataWord;
 import org.tron.core.capsule.AccountCapsule;
@@ -16,6 +18,7 @@ import org.tron.core.store.AssetIssueStore;
 import org.tron.core.store.AssetIssueV2Store;
 import org.tron.core.store.DelegationStore;
 import org.tron.core.store.DynamicPropertiesStore;
+import org.tron.core.store.VmDynamicProperties;
 import org.tron.core.vm.program.invoke.ProgramInvoke;
 import org.tron.core.vm.program.listener.ProgramListener;
 import org.tron.core.vm.program.listener.ProgramListenerAware;
@@ -59,6 +62,16 @@ public class ContractState implements Repository, ProgramListenerAware {
   @Override
   public DynamicPropertiesStore getDynamicPropertiesStore() {
     return repository.getDynamicPropertiesStore();
+  }
+
+  @Override
+  public VmDynamicProperties getVmDynamicProperties() {
+    return repository.getVmDynamicProperties();
+  }
+
+  @Override
+  public boolean isHistoricalArchive() {
+    return repository.isHistoricalArchive();
   }
 
   @Override
@@ -255,6 +268,11 @@ public class ContractState implements Repository, ProgramListenerAware {
   }
 
   @Override
+  public Map<String, Long> getTokenBalances(byte[] address) {
+    return repository.getTokenBalances(address);
+  }
+
+  @Override
   public long getAccountLeftEnergyFromFreeze(AccountCapsule accountCapsule) {
     return repository.getAccountLeftEnergyFromFreeze(accountCapsule);
   }
@@ -289,6 +307,10 @@ public class ContractState implements Repository, ProgramListenerAware {
     return repository.getBlockByNum(num);
   }
 
+  public byte[] getBlockHashByNum(long num) {
+    return repository.getBlockHashByNum(num);
+  }
+
   @Override
   public AccountCapsule createNormalAccount(byte[] address) {
     return repository.createNormalAccount(address);
@@ -297,6 +319,11 @@ public class ContractState implements Repository, ProgramListenerAware {
   @Override
   public DelegationStore getDelegationStore() {
     return repository.getDelegationStore();
+  }
+
+  @Override
+  public BigInteger getWitnessVi(long cycle, byte[] address) {
+    return repository.getWitnessVi(cycle, address);
   }
 
   @Override
@@ -442,6 +469,12 @@ public class ContractState implements Repository, ProgramListenerAware {
   @Override
   public long getSlotByTimestampMs(long timestamp) {
     return repository.getSlotByTimestampMs(timestamp);
+  }
+
+  @Override
+  public void transferFrozenV2UsageForSelfDestruct(AccountCapsule owner,
+      AccountCapsule inheritor, long now) {
+    repository.transferFrozenV2UsageForSelfDestruct(owner, inheritor, now);
   }
 
 }

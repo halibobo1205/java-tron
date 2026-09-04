@@ -27,12 +27,18 @@ import org.tron.core.exception.ItemNotFoundException;
 
 @Slf4j(topic = "DB")
 @Component
-public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule> {
+public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule>
+    implements VmDynamicProperties {
 
   private static final byte[] LATEST_BLOCK_HEADER_TIMESTAMP = "latest_block_header_timestamp"
       .getBytes();
   private static final byte[] LATEST_BLOCK_HEADER_NUMBER = "latest_block_header_number".getBytes();
   private static final byte[] LATEST_BLOCK_HEADER_HASH = "latest_block_header_hash".getBytes();
+  private static final byte[] ARCHIVE_GENESIS_COMMIT_MARKER =
+      "ARCHIVE_GENESIS_COMMIT_MARKER".getBytes();
+  private static final byte[] ARCHIVE_GENESIS_MARKER_MAGIC = new byte[] {'A', 'G', 'C', 1};
+  private static final byte ARCHIVE_GENESIS_INTENT = 0;
+  private static final byte ARCHIVE_GENESIS_COMMITTED = 1;
   private static final byte[] STATE_FLAG = "state_flag"
       .getBytes(); // 1 : is maintenance, 0 : is not maintenance
   private static final byte[] LATEST_SOLIDIFIED_BLOCK_NUM = "LATEST_SOLIDIFIED_BLOCK_NUM"
@@ -1010,6 +1016,144 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule> 
       result[i] = Integer.parseInt(s.substring(i, i + 1));
     }
     return result;
+  }
+
+  /**
+   * Re-publishes constructor-seeded rooted dynamic properties while the genesis archive context is
+   * active, so a genesis-complete archive has explicit block-0 rows for every rooted key.
+   */
+  public void saveGenesisArchiveDynamicProperties() {
+    saveLatestBlockHeaderTimestamp(getLatestBlockHeaderTimestamp());
+    saveGenesisArchiveFeeProperties();
+    saveGenesisArchiveResourceProperties();
+    saveGenesisArchiveGovernanceProperties();
+    saveGenesisArchiveVmProperties();
+  }
+
+  private void saveGenesisArchiveFeeProperties() {
+    saveEnergyFee(getEnergyFee());
+    saveTransactionFee(getTransactionFee());
+    saveEnergyPriceHistory(getEnergyPriceHistory());
+    saveBandwidthPriceHistory(getBandwidthPriceHistory());
+    saveMaxFeeLimit(getMaxFeeLimit());
+    saveMaxCpuTimeOfOneTx(getMaxCpuTimeOfOneTx());
+    saveMemoFee(getMemoFee());
+    saveCreateAccountFee(getCreateAccountFee());
+    saveCreateNewAccountFeeInSystemContract(getCreateNewAccountFeeInSystemContract());
+    saveAssetIssueFee(getAssetIssueFee());
+    saveUpdateAccountPermissionFee(getUpdateAccountPermissionFee());
+    saveMultiSignFee(getMultiSignFee());
+    saveExchangeCreateFee(getExchangeCreateFee());
+    saveMarketSellFee(getMarketSellFee());
+    saveMarketCancelFee(getMarketCancelFee());
+  }
+
+  private void saveGenesisArchiveResourceProperties() {
+    saveCreateNewAccountBandwidthRate(getCreateNewAccountBandwidthRate());
+    saveFreeNetLimit(getFreeNetLimit());
+    saveOneDayNetLimit(getOneDayNetLimit());
+    savePublicNetLimit(getPublicNetLimit());
+    savePublicNetUsage(getPublicNetUsage());
+    savePublicNetTime(getPublicNetTime());
+    put(DynamicResourceProperties.TOTAL_ENERGY_LIMIT,
+        new BytesCapsule(ByteArray.fromLong(getTotalEnergyLimit())));
+    saveTotalNetLimit(getTotalNetLimit());
+    saveTotalEnergyCurrentLimit(getTotalEnergyCurrentLimit());
+    saveTotalEnergyTargetLimit(getTotalEnergyTargetLimit());
+    saveTotalEnergyAverageUsage(getTotalEnergyAverageUsage());
+    saveTotalEnergyAverageTime(getTotalEnergyAverageTime());
+    saveBlockEnergyUsage(getBlockEnergyUsage());
+    saveAdaptiveResourceLimitTargetRatio(getAdaptiveResourceLimitTargetRatio());
+    saveAdaptiveResourceLimitMultiplier(getAdaptiveResourceLimitMultiplier());
+    saveTotalNetWeight(getTotalNetWeight());
+    saveTotalEnergyWeight(getTotalEnergyWeight());
+    saveTotalTronPowerWeight(getTotalTronPowerWeight());
+    saveExchangeBalanceLimit(getExchangeBalanceLimit());
+    saveMarketQuantityLimit(getMarketQuantityLimit());
+    saveMaxDelegateLockPeriod(getMaxDelegateLockPeriod());
+    saveMaxCreateAccountTxSize(getMaxCreateAccountTxSize());
+    saveShieldedTransactionFee(getShieldedTransactionFee());
+    saveShieldedTransactionCreateAccountFee(getShieldedTransactionCreateAccountFee());
+    saveTotalShieldedPoolValue(getTotalShieldedPoolValue());
+  }
+
+  private void saveGenesisArchiveGovernanceProperties() {
+    saveNextMaintenanceTime(getNextMaintenanceTime());
+    saveMaintenanceTimeInterval(getMaintenanceTimeInterval());
+    saveMaxFrozenTime(getMaxFrozenTime());
+    saveMinFrozenTime(getMinFrozenTime());
+    saveMaxFrozenSupplyNumber(getMaxFrozenSupplyNumber());
+    saveMaxFrozenSupplyTime(getMaxFrozenSupplyTime());
+    saveMinFrozenSupplyTime(getMinFrozenSupplyTime());
+    saveWitnessAllowanceFrozenTime(getWitnessAllowanceFrozenTime());
+    saveAccountUpgradeCost(getAccountUpgradeCost());
+    saveWitnessPayPerBlock(getWitnessPayPerBlock());
+    saveWitness127PayPerBlock(getWitness127PayPerBlock());
+    saveWitnessStandbyAllowance(getWitnessStandbyAllowance());
+    saveRemoveThePowerOfTheGr(getRemoveThePowerOfTheGr());
+    saveAllowUpdateAccountName(getAllowUpdateAccountName());
+    saveAllowSameTokenName(getAllowSameTokenName());
+    saveAllowDelegateResource(getAllowDelegateResource());
+    saveAllowAdaptiveEnergy(getAllowAdaptiveEnergy());
+    saveAllowProtoFilterNum(getAllowProtoFilterNum());
+    saveAllowAccountStateRoot(getAllowAccountStateRoot());
+    saveChangeDelegation(getChangeDelegation());
+    saveForbidTransferToContract(getForbidTransferToContract());
+    saveAllowPBFT(getAllowPBFT());
+    saveAllowMarketTransaction(getAllowMarketTransaction());
+    saveAllowTransactionFeePool(getAllowTransactionFeePool());
+    saveAllowBlackHoleOptimization(getAllowBlackHoleOptimization());
+    setAllowAccountAssetOptimization(getAllowAccountAssetOptimization());
+    setAllowAssetOptimization(getAllowAssetOptimization());
+    saveAllowNewReward(getAllowNewReward());
+    saveNewRewardAlgorithmEffectiveCycle(getNewRewardAlgorithmEffectiveCycle());
+    saveAllowDelegateOptimization(getAllowDelegateOptimization());
+    saveAllowCancelAllUnfreezeV2(getAllowCancelAllUnfreezeV2());
+    saveAllowOldRewardOpt(getAllowOldRewardOpt());
+    saveProposalExpireTime(getProposalExpireTime());
+    saveLatestProposalNum(getLatestProposalNum());
+    saveLatestExchangeNum(getLatestExchangeNum());
+    saveTotalSignNum(getTotalSignNum());
+    saveTokenIdNum(getTokenIdNum());
+  }
+
+  private void saveGenesisArchiveVmProperties() {
+    saveAllowCreationOfContracts(getAllowCreationOfContracts());
+    saveAllowTvmTransferTrc10(getAllowTvmTransferTrc10());
+    saveAllowTvmConstantinople(getAllowTvmConstantinople());
+    saveAllowTvmSolidity059(getAllowTvmSolidity059());
+    saveAllowTvmIstanbul(getAllowTvmIstanbul());
+    saveAllowTvmFreeze(getAllowTvmFreeze());
+    saveAllowTvmVote(getAllowTvmVote());
+    saveAllowTvmLondon(getAllowTvmLondon());
+    saveAllowTvmShangHai(getAllowTvmShangHai());
+    saveAllowTvmCancun(getAllowTvmCancun());
+    saveAllowTvmBlob(getAllowTvmBlob());
+    saveAllowTvmOsaka(getAllowTvmOsaka());
+    saveAllowTvmPrague(getAllowTvmPrague());
+    saveAllowTvmSelfdestructRestriction(getAllowTvmSelfdestructRestriction());
+    saveAllowTvmCompatibleEvm(getAllowTvmCompatibleEvm());
+    saveAllowOptimizedReturnValueOfChainId(getAllowOptimizedReturnValueOfChainId());
+    saveCurrentCycleNumber(getCurrentCycleNumber());
+    saveLatestVersion(getLatestVersion());
+    saveUnfreezeDelayDays(getUnfreezeDelayDays());
+    saveAllowNewResourceModel(getAllowNewResourceModel());
+    saveAllowShieldedTRC20Transaction(getAllowShieldedTRC20Transaction());
+    saveAllowShieldedTransaction(getAllowShieldedTransaction());
+    saveAllowMultiSign(getAllowMultiSign());
+    saveAllowHigherLimitForMaxCpuTimeOfOneTx(getAllowHigherLimitForMaxCpuTimeOfOneTx());
+    saveAllowDynamicEnergy(getAllowDynamicEnergy());
+    saveDynamicEnergyThreshold(getDynamicEnergyThreshold());
+    saveDynamicEnergyIncreaseFactor(getDynamicEnergyIncreaseFactor());
+    saveDynamicEnergyMaxFactor(getDynamicEnergyMaxFactor());
+    saveAllowEnergyAdjustment(getAllowEnergyAdjustment());
+    saveAllowStrictMath(getAllowStrictMath());
+    saveConsensusLogicOptimization(getConsensusLogicOptimization());
+    saveAllowHardenResourceCalculation(getAllowHardenResourceCalculation());
+    saveAllowHardenExchangeCalculation(getAllowHardenExchangeCalculation());
+    saveAvailableContractType(getAvailableContractType());
+    saveActiveDefaultOperations(getActiveDefaultOperations());
+    saveBlockHashHistoryInstalled(getBlockHashHistoryInstalled());
   }
 
   public void saveTokenIdNum(long num) {
@@ -2204,6 +2348,44 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule> 
     return Sha256Hash.wrap(blockHash);
   }
 
+  /** Persists a fail-stop fence before any archive-enabled genesis store mutation begins. */
+  public void saveArchiveGenesisCommitIntent(ByteString genesisHash) {
+    this.put(ARCHIVE_GENESIS_COMMIT_MARKER,
+        new BytesCapsule(archiveGenesisMarker(ARCHIVE_GENESIS_INTENT, genesisHash)));
+  }
+
+  /** Marks that every canonical genesis store finished its root commit. */
+  public void saveArchiveGenesisCommitComplete(ByteString genesisHash) {
+    this.put(ARCHIVE_GENESIS_COMMIT_MARKER,
+        new BytesCapsule(archiveGenesisMarker(ARCHIVE_GENESIS_COMMITTED, genesisHash)));
+  }
+
+  public boolean hasArchiveGenesisCommitMarker() {
+    return has(ARCHIVE_GENESIS_COMMIT_MARKER);
+  }
+
+  public boolean isArchiveGenesisCommitComplete(ByteString genesisHash) {
+    if (!hasArchiveGenesisCommitMarker()) {
+      return false;
+    }
+    BytesCapsule marker = getUnchecked(ARCHIVE_GENESIS_COMMIT_MARKER);
+    return marker != null && Arrays.equals(
+        archiveGenesisMarker(ARCHIVE_GENESIS_COMMITTED, genesisHash), marker.getData());
+  }
+
+  private static byte[] archiveGenesisMarker(byte state, ByteString genesisHash) {
+    if (genesisHash == null || genesisHash.size() != Sha256Hash.LENGTH) {
+      throw new IllegalArgumentException("archive genesis marker requires a 32-byte block hash");
+    }
+    byte[] hash = genesisHash.toByteArray();
+    byte[] marker = new byte[ARCHIVE_GENESIS_MARKER_MAGIC.length + 1 + hash.length];
+    System.arraycopy(
+        ARCHIVE_GENESIS_MARKER_MAGIC, 0, marker, 0, ARCHIVE_GENESIS_MARKER_MAGIC.length);
+    marker[ARCHIVE_GENESIS_MARKER_MAGIC.length] = state;
+    System.arraycopy(hash, 0, marker, ARCHIVE_GENESIS_MARKER_MAGIC.length + 1, hash.length);
+    return marker;
+  }
+
   /**
    * save timestamp of creating global latest block.
    */
@@ -2567,9 +2749,13 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule> 
   public void saveNewRewardAlgorithmEffectiveCycle() {
     if (getNewRewardAlgorithmEffectiveCycle() == Long.MAX_VALUE) {
       long currentCycle = getCurrentCycleNumber();
-      this.put(NEW_REWARD_ALGORITHM_EFFECTIVE_CYCLE,
-          new BytesCapsule(ByteArray.fromLong(currentCycle + 1)));
+      saveNewRewardAlgorithmEffectiveCycle(currentCycle + 1);
     }
+  }
+
+  public void saveNewRewardAlgorithmEffectiveCycle(long value) {
+    this.put(NEW_REWARD_ALGORITHM_EFFECTIVE_CYCLE,
+        new BytesCapsule(ByteArray.fromLong(value)));
   }
 
   public long getNewRewardAlgorithmEffectiveCycle() {

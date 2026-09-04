@@ -25,10 +25,12 @@ import org.tron.common.runtime.InternalTransaction.ExecutorType;
 import org.tron.common.runtime.InternalTransaction.TrxType;
 import org.tron.common.runtime.ProgramResult;
 import org.tron.common.runtime.vm.DataWord;
-import org.tron.common.utils.StorageUtils;
 import org.tron.common.utils.StringUtil;
 import org.tron.common.utils.WalletUtil;
 import org.tron.core.ChainBaseManager;
+import org.tron.core.archive.query.HistoricalQueryLimitException;
+import org.tron.core.archive.query.QueryContext;
+import org.tron.core.archive.query.QueryContextHolder;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.ContractCapsule;
@@ -37,6 +39,7 @@ import org.tron.core.db.EnergyProcessor;
 import org.tron.core.db.TransactionContext;
 import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractValidateException;
+import org.tron.core.store.VmDynamicProperties;
 import org.tron.core.utils.TransactionUtil;
 import org.tron.core.vm.EnergyCost;
 import org.tron.core.vm.LogInfoTriggerParser;
@@ -45,6 +48,8 @@ import org.tron.core.vm.OperationRegistry;
 import org.tron.core.vm.VM;
 import org.tron.core.vm.VMConstant;
 import org.tron.core.vm.VMUtils;
+import org.tron.core.vm.archive.ArchiveRepositoryAdapter;
+import org.tron.core.vm.archive.UnsupportedHistoricalStateException;
 import org.tron.core.vm.config.ConfigLoader;
 import org.tron.core.vm.config.VMConfig;
 import org.tron.core.vm.program.Program;
@@ -75,6 +80,7 @@ public class VMActuator implements Actuator2 {
 
   /* tvm execution context */
   private Repository rootRepository;
+  @Getter
   private Program program;
   private InternalTransaction rootInternalTx;
 
@@ -95,11 +101,23 @@ public class VMActuator implements Actuator2 {
   @Setter
   private boolean enableEventListener;
 
+  // Historical eth_call injects one archive-backed repository. Its VM properties are part of that
+  // same state view, so repository and protocol flags cannot drift independently.
+  @Setter
+  private Repository injectedRootRepository;
+
+  @Setter
+  private boolean useQueryDeadlineForVm;
+
   private LogInfoTriggerParser logInfoTriggerParser;
 
   public VMActuator(boolean isConstantCall) {
     this.isConstantCall = isConstantCall;
     this.maxEnergyLimit = CommonParameter.getInstance().maxEnergyLimitForConstant;
+  }
+
+  public void setConstantCallMaxEnergyLimit(long maxEnergyLimit) {
+    this.maxEnergyLimit = maxEnergyLimit;
   }
 
   private static long getEnergyFee(long callerEnergyUsage, long callerEnergyFrozen,
@@ -119,16 +137,30 @@ public class VMActuator implements Actuator2 {
       throw new RuntimeException("TransactionContext is null");
     }
 
-    // Load Config
-    ConfigLoader.load(context.getStoreFactory(), isConstantCall);
+    VmDynamicProperties injectedVmProperties = injectedRootRepository == null
+        ? null : injectedRootRepository.getVmDynamicProperties();
+    if (injectedRootRepository != null && injectedVmProperties == null) {
+      throw new RuntimeException("archive repository has no VM dynamic-properties view");
+    }
+
+    // Load Config. A historical call installs an isolated thread-local snapshot from its archived
+    // dynamic-properties view; the latest path keeps writing the global (or its own isolated view).
+    if (injectedVmProperties != null) {
+      ConfigLoader.load(injectedVmProperties, true);
+    } else {
+      ConfigLoader.load(context.getStoreFactory(), isConstantCall);
+    }
     // Warm up registry class
     OperationRegistry.init();
     trx = context.getTrxCap().getInstance();
     // If tx`s fee limit is set, use it to calc max energy limit for constant call
     if (isConstantCall && trx.getRawData().getFeeLimit() > 0) {
-      maxEnergyLimit = min(maxEnergyLimit, trx.getRawData().getFeeLimit()
-          / context.getStoreFactory().getChainBaseManager()
-          .getDynamicPropertiesStore().getEnergyFee(), VMConfig.disableJavaLangMath());
+      long energyFee = injectedVmProperties != null
+          ? injectedVmProperties.getEnergyFee()
+          : context.getStoreFactory().getChainBaseManager().getDynamicPropertiesStore()
+              .getEnergyFee();
+      maxEnergyLimit = min(maxEnergyLimit, trx.getRawData().getFeeLimit() / energyFee,
+          VMConfig.disableJavaLangMath());
     }
     blockCap = context.getBlockCap();
     if ((VMConfig.allowTvmFreeze() || VMConfig.allowTvmFreezeV2())
@@ -138,7 +170,9 @@ public class VMActuator implements Actuator2 {
     //Route Type
     ContractType contractType = this.trx.getRawData().getContract(0).getType();
     //Prepare Repository
-    rootRepository = RepositoryImpl.createRoot(context.getStoreFactory());
+    rootRepository = injectedRootRepository != null
+        ? injectedRootRepository
+        : RepositoryImpl.createRoot(context.getStoreFactory());
 
     enableEventListener = context.isEventPluginLoaded();
 
@@ -259,8 +293,10 @@ public class VMActuator implements Actuator2 {
       } else {
         rootRepository.commit();
       }
-      for (DataWord account : result.getDeleteAccounts()) {
-        RepositoryImpl.removeLruCache(account.toTronAddress());
+      if (injectedRootRepository == null) {
+        for (DataWord account : result.getDeleteAccounts()) {
+          RepositoryImpl.removeLruCache(account.toTronAddress());
+        }
       }
     } catch (JVMStackOverFlowException e) {
       program.spendAllEnergy();
@@ -279,6 +315,15 @@ public class VMActuator implements Actuator2 {
       result.setRuntimeError(result.getException().getMessage());
       logger.info("timeout: {}", result.getException().getMessage());
     } catch (Throwable e) {
+      if (injectedRootRepository != null && e instanceof Error) {
+        throw (Error) e;
+      }
+      if (injectedRootRepository != null && e instanceof HistoricalQueryLimitException) {
+        throw (HistoricalQueryLimitException) e;
+      }
+      if (injectedRootRepository != null && e instanceof UnsupportedHistoricalStateException) {
+        throw (UnsupportedHistoricalStateException) e;
+      }
       if (!(e instanceof TransferException)) {
         program.spendAllEnergy();
       }
@@ -297,7 +342,7 @@ public class VMActuator implements Actuator2 {
     //use program returned fill context
     context.setProgramResult(result);
 
-    if (VMConfig.vmTrace() && program != null) {
+    if (VMConfig.vmTrace() && program != null && injectedRootRepository == null) {
       String traceContent = program.getTrace()
           .result(result.getHReturn())
           .error(result.getException())
@@ -322,7 +367,7 @@ public class VMActuator implements Actuator2 {
 
   private void create()
       throws ContractValidateException {
-    if (!rootRepository.getDynamicPropertiesStore().supportVM()) {
+    if (!rootRepository.getVmDynamicProperties().supportVM()) {
       throw new ContractValidateException("vm work is off, need to be opened by the committee");
     }
 
@@ -373,10 +418,10 @@ public class VMActuator implements Actuator2 {
     // create vm to constructor smart contract
     try {
       long feeLimit = trx.getRawData().getFeeLimit();
-      if (feeLimit < 0 || feeLimit > rootRepository.getDynamicPropertiesStore().getMaxFeeLimit()) {
+      if (feeLimit < 0 || feeLimit > rootRepository.getVmDynamicProperties().getMaxFeeLimit()) {
         logger.info("invalid feeLimit {}", feeLimit);
         throw new ContractValidateException("feeLimit must be >= 0 and <= "
-            + rootRepository.getDynamicPropertiesStore().getMaxFeeLimit());
+            + rootRepository.getVmDynamicProperties().getMaxFeeLimit());
       }
       AccountCapsule creator = rootRepository
           .getAccount(newSmartContract.getOriginAddress().toByteArray());
@@ -387,7 +432,7 @@ public class VMActuator implements Actuator2 {
       if (isConstantCall) {
         energyLimit = maxEnergyLimit;
       } else {
-        if (StorageUtils.getEnergyLimitHardFork()) {
+        if (VMConfig.getEnergyLimitHardFork()) {
           if (callValue < 0) {
             throw new ContractValidateException("callValue must be >= 0");
           }
@@ -408,11 +453,8 @@ public class VMActuator implements Actuator2 {
       byte[] ops = newSmartContract.getBytecode().toByteArray();
       rootInternalTx = new InternalTransaction(trx, trxType);
 
-      long thisTxCPULimitInUs = calculateCpuLimitInUs(isConstantCall,
-          rootRepository.getDynamicPropertiesStore().getMaxCpuTimeOfOneTx(),
-          getCpuLimitInUsRatio(), CommonParameter.getInstance().getConstantCallTimeoutMs());
       long vmStartInUs = System.nanoTime() / VMConstant.ONE_THOUSAND;
-      long vmShouldEndInUs = vmStartInUs + thisTxCPULimitInUs;
+      long vmShouldEndInUs = getVmShouldEndInUs(vmStartInUs);
       ProgramInvoke programInvoke = ProgramInvokeFactory
           .createProgramInvoke(TrxType.TRX_CONTRACT_CREATION_TYPE, executorType, trx,
               tokenValue, tokenId, blockCap.getInstance(), rootRepository, vmStartInUs,
@@ -462,7 +504,7 @@ public class VMActuator implements Actuator2 {
   private void call()
       throws ContractValidateException {
 
-    if (!rootRepository.getDynamicPropertiesStore().supportVM()) {
+    if (!rootRepository.getVmDynamicProperties().supportVM()) {
       logger.info("vm work is off, need to be opened by the committee");
       throw new ContractValidateException("VM work is off, need to be opened by the committee");
     }
@@ -492,7 +534,7 @@ public class VMActuator implements Actuator2 {
       tokenId = contract.getTokenId();
     }
 
-    if (StorageUtils.getEnergyLimitHardFork()) {
+    if (VMConfig.getEnergyLimitHardFork()) {
       if (callValue < 0) {
         throw new ContractValidateException("callValue must be >= 0");
       }
@@ -507,10 +549,10 @@ public class VMActuator implements Actuator2 {
     byte[] code = rootRepository.getCode(contractAddress);
     if (isNotEmpty(code)) {
       long feeLimit = trx.getRawData().getFeeLimit();
-      if (feeLimit < 0 || feeLimit > rootRepository.getDynamicPropertiesStore().getMaxFeeLimit()) {
+      if (feeLimit < 0 || feeLimit > rootRepository.getVmDynamicProperties().getMaxFeeLimit()) {
         logger.info("invalid feeLimit {}", feeLimit);
         throw new ContractValidateException("feeLimit must be >= 0 and <= "
-            + rootRepository.getDynamicPropertiesStore().getMaxFeeLimit());
+            + rootRepository.getVmDynamicProperties().getMaxFeeLimit());
       }
       AccountCapsule caller = rootRepository.getAccount(callerAddress);
       long energyLimit;
@@ -522,11 +564,8 @@ public class VMActuator implements Actuator2 {
         energyLimit = getTotalEnergyLimit(creator, caller, contract, feeLimit, callValue);
       }
 
-      long thisTxCPULimitInUs = calculateCpuLimitInUs(isConstantCall,
-          rootRepository.getDynamicPropertiesStore().getMaxCpuTimeOfOneTx(),
-          getCpuLimitInUsRatio(), CommonParameter.getInstance().getConstantCallTimeoutMs());
       long vmStartInUs = System.nanoTime() / VMConstant.ONE_THOUSAND;
-      long vmShouldEndInUs = vmStartInUs + thisTxCPULimitInUs;
+      long vmShouldEndInUs = getVmShouldEndInUs(vmStartInUs);
       ProgramInvoke programInvoke = ProgramInvokeFactory
           .createProgramInvoke(TrxType.TRX_CONTRACT_CALL_TYPE, executorType, trx,
               tokenValue, tokenId, blockCap.getInstance(), rootRepository, vmStartInUs,
@@ -565,12 +604,12 @@ public class VMActuator implements Actuator2 {
       long callValue) {
 
     long sunPerEnergy = VMConstant.SUN_PER_ENERGY;
-    if (rootRepository.getDynamicPropertiesStore().getEnergyFee() > 0) {
-      sunPerEnergy = rootRepository.getDynamicPropertiesStore().getEnergyFee();
+    if (rootRepository.getVmDynamicProperties().getEnergyFee() > 0) {
+      sunPerEnergy = rootRepository.getVmDynamicProperties().getEnergyFee();
     }
 
     long leftFrozenEnergy = rootRepository.getAccountLeftEnergyFromFreeze(account);
-    if (VMConfig.allowTvmFreeze() || VMConfig.allowTvmFreezeV2()) {
+    if (receipt != null && (VMConfig.allowTvmFreeze() || VMConfig.allowTvmFreezeV2())) {
       receipt.setCallerEnergyLeft(leftFrozenEnergy);
     }
 
@@ -582,21 +621,27 @@ public class VMActuator implements Actuator2 {
     long energyFromFeeLimit = feeLimit / sunPerEnergy;
     if (VMConfig.allowTvmFreezeV2()) {
       long now = rootRepository.getHeadSlot();
-      EnergyProcessor energyProcessor =
-          new EnergyProcessor(
-              rootRepository.getDynamicPropertiesStore(),
-              ChainBaseManager.getInstance().getAccountStore());
-      energyProcessor.updateUsage(account);
-      account.setLatestConsumeTimeForEnergy(now);
-      receipt.setCallerEnergyUsage(account.getEnergyUsage());
-      receipt.setCallerEnergyWindowSize(account.getWindowSize(ENERGY));
-      receipt.setCallerEnergyWindowSizeV2(account.getWindowSizeV2(ENERGY));
-      account.setEnergyUsage(
-          energyProcessor.increase(account, ENERGY,
-              account.getEnergyUsage(), min(leftFrozenEnergy, energyFromFeeLimit,
-                  VMConfig.disableJavaLangMath()), now, now));
-      receipt.setCallerEnergyMergedUsage(account.getEnergyUsage());
-      receipt.setCallerEnergyMergedWindowSize(account.getWindowSize(ENERGY));
+      long usage = min(leftFrozenEnergy, energyFromFeeLimit,
+          VMConfig.disableJavaLangMath());
+      if (injectedRootRepository instanceof ArchiveRepositoryAdapter) {
+        ((ArchiveRepositoryAdapter) injectedRootRepository)
+            .updateEnergyUsageForReplay(account, usage, now);
+      } else {
+        EnergyProcessor energyProcessor =
+            new EnergyProcessor(
+                rootRepository.getDynamicPropertiesStore(),
+                ChainBaseManager.getInstance().getAccountStore());
+        energyProcessor.updateUsage(account);
+        account.setLatestConsumeTimeForEnergy(now);
+        receipt.setCallerEnergyUsage(account.getEnergyUsage());
+        receipt.setCallerEnergyWindowSize(account.getWindowSize(ENERGY));
+        receipt.setCallerEnergyWindowSizeV2(account.getWindowSizeV2(ENERGY));
+        account.setEnergyUsage(
+            energyProcessor.increase(account, ENERGY,
+                account.getEnergyUsage(), usage, now, now));
+        receipt.setCallerEnergyMergedUsage(account.getEnergyUsage());
+        receipt.setCallerEnergyMergedWindowSize(account.getWindowSize(ENERGY));
+      }
       rootRepository.updateAccount(account.createDbKey(), account);
     }
     return min(availableEnergy, energyFromFeeLimit, VMConfig.disableJavaLangMath());
@@ -607,8 +652,8 @@ public class VMActuator implements Actuator2 {
       long callValue) {
 
     long sunPerEnergy = VMConstant.SUN_PER_ENERGY;
-    if (rootRepository.getDynamicPropertiesStore().getEnergyFee() > 0) {
-      sunPerEnergy = rootRepository.getDynamicPropertiesStore().getEnergyFee();
+    if (rootRepository.getVmDynamicProperties().getEnergyFee() > 0) {
+      sunPerEnergy = rootRepository.getVmDynamicProperties().getEnergyFee();
     }
     // can change the calc way
     long leftEnergyFromFreeze = rootRepository.getAccountLeftEnergyFromFreeze(account);
@@ -651,7 +696,7 @@ public class VMActuator implements Actuator2 {
       return getAccountEnergyLimitWithFixRatio(caller, feeLimit, callValue);
     }
     //  according to version
-    if (StorageUtils.getEnergyLimitHardFork()) {
+    if (VMConfig.getEnergyLimitHardFork()) {
       return getTotalEnergyLimitWithFixRatio(creator, caller, contract, feeLimit, callValue);
     } else {
       return getTotalEnergyLimitWithFloatRatio(creator, caller, contract, feeLimit, callValue);
@@ -701,6 +746,27 @@ public class VMActuator implements Actuator2 {
     return cpuLimitRatio;
   }
 
+  private long getVmShouldEndInUs(long vmStartInUs) {
+    QueryContext queryContext = useQueryDeadlineForVm && injectedRootRepository != null
+        ? QueryContextHolder.current() : null;
+    if (queryContext != null) {
+      long remainingNanos = queryContext.getRemainingNanos();
+      if (remainingNanos == Long.MAX_VALUE) {
+        return Long.MAX_VALUE;
+      }
+      long remainingMicros = remainingNanos / VMConstant.ONE_THOUSAND;
+      if (remainingNanos % VMConstant.ONE_THOUSAND != 0L) {
+        remainingMicros++;
+      }
+      return vmStartInUs > Long.MAX_VALUE - remainingMicros
+          ? Long.MAX_VALUE : vmStartInUs + remainingMicros;
+    }
+    long cpuLimitInUs = calculateCpuLimitInUs(isConstantCall,
+        rootRepository.getVmDynamicProperties().getMaxCpuTimeOfOneTx(),
+        getCpuLimitInUsRatio(), CommonParameter.getInstance().getConstantCallTimeoutMs());
+    return vmStartInUs + cpuLimitInUs;
+  }
+
   static long calculateCpuLimitInUs(boolean isConstantCall, long maxCpuTimeOfOneTxMs,
       double cpuLimitInUsRatio, long constantCallTimeoutMs) {
     if (isConstantCall && constantCallTimeoutMs > 0L) {
@@ -735,7 +801,7 @@ public class VMActuator implements Actuator2 {
     long originEnergyLeft = 0;
     if (consumeUserResourcePercent < VMConstant.ONE_HUNDRED) {
       originEnergyLeft = rootRepository.getAccountLeftEnergyFromFreeze(creator);
-      if (VMConfig.allowTvmFreeze() || VMConfig.allowTvmFreezeV2()) {
+      if (receipt != null && (VMConfig.allowTvmFreeze() || VMConfig.allowTvmFreezeV2())) {
         receipt.setOriginEnergyLeft(originEnergyLeft);
       }
     }
@@ -758,20 +824,25 @@ public class VMActuator implements Actuator2 {
     }
     if (VMConfig.allowTvmFreezeV2()) {
       long now = rootRepository.getHeadSlot();
-      EnergyProcessor energyProcessor =
-          new EnergyProcessor(
-              rootRepository.getDynamicPropertiesStore(),
-              ChainBaseManager.getInstance().getAccountStore());
-      energyProcessor.updateUsage(creator);
-      creator.setLatestConsumeTimeForEnergy(now);
-      receipt.setOriginEnergyUsage(creator.getEnergyUsage());
-      receipt.setOriginEnergyWindowSize(creator.getWindowSize(ENERGY));
-      receipt.setOriginEnergyWindowSizeV2(creator.getWindowSizeV2(ENERGY));
-      creator.setEnergyUsage(
-          energyProcessor.increase(creator, ENERGY,
-              creator.getEnergyUsage(), creatorEnergyLimit, now, now));
-      receipt.setOriginEnergyMergedUsage(creator.getEnergyUsage());
-      receipt.setOriginEnergyMergedWindowSize(creator.getWindowSize(ENERGY));
+      if (injectedRootRepository instanceof ArchiveRepositoryAdapter) {
+        ((ArchiveRepositoryAdapter) injectedRootRepository)
+            .updateEnergyUsageForReplay(creator, creatorEnergyLimit, now);
+      } else {
+        EnergyProcessor energyProcessor =
+            new EnergyProcessor(
+                rootRepository.getDynamicPropertiesStore(),
+                ChainBaseManager.getInstance().getAccountStore());
+        energyProcessor.updateUsage(creator);
+        creator.setLatestConsumeTimeForEnergy(now);
+        receipt.setOriginEnergyUsage(creator.getEnergyUsage());
+        receipt.setOriginEnergyWindowSize(creator.getWindowSize(ENERGY));
+        receipt.setOriginEnergyWindowSizeV2(creator.getWindowSizeV2(ENERGY));
+        creator.setEnergyUsage(
+            energyProcessor.increase(creator, ENERGY,
+                creator.getEnergyUsage(), creatorEnergyLimit, now, now));
+        receipt.setOriginEnergyMergedUsage(creator.getEnergyUsage());
+        receipt.setOriginEnergyMergedWindowSize(creator.getWindowSize(ENERGY));
+      }
       rootRepository.updateAccount(creator.createDbKey(), creator);
     }
     return addExact(callerEnergyLimit, creatorEnergyLimit,

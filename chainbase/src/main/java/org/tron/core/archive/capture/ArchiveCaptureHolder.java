@@ -1,0 +1,320 @@
+package org.tron.core.archive.capture;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.tron.core.archive.domain.ArchiveDomain;
+
+/**
+ * Process-wide bridge from the Store path to the active {@link ArchiveCaptureEngine}, mirroring
+ * {@code ArchiveExecutionContextHolder}. When no engine is set (archive disabled) every call is a
+ * cheap no-op.
+ *
+ * <p>Capture failures are isolated from the Store write path, but recorded on the active engine.
+ * The archive commit path fails closed rather than publishing a partial historical sidecar.
+ */
+public final class ArchiveCaptureHolder {
+
+  private static final Logger logger = LoggerFactory.getLogger("archive");
+
+  private static volatile ArchiveCaptureEngine engine;
+
+  private ArchiveCaptureHolder() {
+  }
+
+  public static synchronized void set(ArchiveCaptureEngine captureEngine) {
+    engine = captureEngine;
+  }
+
+  public static synchronized void clear() {
+    engine = null;
+  }
+
+  public static synchronized void clearIf(ArchiveCaptureEngine captureEngine) {
+    if (engine == captureEngine) {
+      engine = null;
+    }
+  }
+
+  public static boolean isActive() {
+    return engine != null;
+  }
+
+  public static boolean isCapturingCurrentTx() {
+    ArchiveCaptureEngine active = engine;
+    return active != null && active.hasCurrentPosition();
+  }
+
+  public static boolean isCurrent(ArchiveCaptureEngine captureEngine) {
+    return engine == captureEngine;
+  }
+
+  public static void recordFailure(String operation, Exception cause) {
+    ArchiveCaptureEngine active = engine;
+    if (active == null) {
+      return;
+    }
+    active.recordFailure(operation, cause);
+    logFailureBestEffort(operation, cause);
+  }
+
+  /** Aggregates a previous-value read without invoking a metrics reporter on the Store hot path. */
+  public static void recordPreviousValueRead(long startedNanos, boolean success) {
+    ArchiveCaptureEngine active = engine;
+    if (active != null) {
+      active.recordPreviousValueRead(startedNanos, success);
+    }
+  }
+
+  /** Aggregates account-asset lookup work without invoking metrics on the Store hot path. */
+  public static void recordAccountAssetLookup(boolean prefixScan, long physicalRowsRead,
+      long startedNanos) {
+    ArchiveCaptureEngine active = engine;
+    if (active != null) {
+      active.recordAccountAssetLookup(prefixScan, physicalRowsRead, startedNanos);
+    }
+  }
+
+  /** Lets streaming semantic hooks stop work once the current block is already doomed. */
+  public static boolean hasFailure() {
+    ArchiveCaptureEngine active = engine;
+    return active != null && active.failure().isPresent();
+  }
+
+  /**
+   * Whether writes to {@code dbName} are archived. The Store path calls this BEFORE a put/delete so
+   * it can skip the prev-value read (an extra get per write, the Erigon-model cost) for
+   * non-archived stores; returns false when archive is off, so the default path does no extra work.
+   */
+  public static boolean capturesStore(String dbName) {
+    return capturesStore(dbName, null, false);
+  }
+
+  /** Key-aware admission used by generic Store hooks to skip excluded allowlist prev-reads. */
+  public static boolean capturesStore(String dbName, byte[] key) {
+    return capturesStore(dbName, key, true);
+  }
+
+  private static boolean capturesStore(String dbName, byte[] key, boolean keyAware) {
+    ArchiveCaptureEngine active = engine;
+    if (active == null) {
+      return false;
+    }
+    if (!active.hasCurrentPosition() && !active.hasActiveBlock()) {
+      return false;
+    }
+    try {
+      boolean captures = keyAware
+          ? active.capturesStore(dbName, key) : active.capturesStore(dbName);
+      if (captures && active.hasActiveBlock() && !active.hasCurrentPosition()) {
+        active.recordFailure("capturesStore(" + dbName + ")",
+            new IllegalStateException("archive captured store write without current tx context"));
+        return false;
+      }
+      return captures;
+    } catch (Exception e) {
+      active.recordFailure("capturesStore(" + dbName + ")", e);
+      // The commit path will fail closed from the recorded failure; skip the extra prev read here.
+      return false;
+    }
+  }
+
+  public static boolean requireCurrentTx(String operation) {
+    ArchiveCaptureEngine active = engine;
+    if (active == null) {
+      return false;
+    }
+    if (active.hasCurrentPosition()) {
+      return true;
+    }
+    if (active.hasActiveBlock()) {
+      active.recordFailure(operation,
+          new IllegalStateException("archive write without current tx context"));
+    }
+    return false;
+  }
+
+  public static void capturePut(String dbName, byte[] key, byte[] prevValue, byte[] value) {
+    ArchiveCaptureEngine active = engine;
+    if (active == null) {
+      return;
+    }
+    if (!ensureCurrentTx(active, "capturePut(" + dbName + ")")) {
+      return;
+    }
+    try {
+      active.capturePut(dbName, key, prevValue, value);
+    } catch (Exception e) {
+      active.recordFailure("capturePut(" + dbName + ")", e);
+      logFailureBestEffort("capturePut(" + dbName + ")", e);
+    }
+  }
+
+  public static void captureDelete(String dbName, byte[] key, byte[] prevValue) {
+    ArchiveCaptureEngine active = engine;
+    if (active == null) {
+      return;
+    }
+    if (!ensureCurrentTx(active, "captureDelete(" + dbName + ")")) {
+      return;
+    }
+    try {
+      active.captureDelete(dbName, key, prevValue);
+    } catch (Exception e) {
+      active.recordFailure("captureDelete(" + dbName + ")", e);
+      logFailureBestEffort("captureDelete(" + dbName + ")", e);
+    }
+  }
+
+  /** Derive ACCOUNT_ASSET (TRC10) records from an account write; isolated like capturePut. */
+  public static void captureAccountAsset(byte[] addressKey, byte[] oldAccount, byte[] newAccount) {
+    ArchiveCaptureEngine active = engine;
+    if (active == null) {
+      return;
+    }
+    if (!ensureCurrentTx(active, "captureAccountAsset")) {
+      return;
+    }
+    try {
+      active.captureAccountAsset(addressKey, oldAccount, newAccount);
+    } catch (Exception e) {
+      active.recordFailure("captureAccountAsset", e);
+      logFailureBestEffort("captureAccountAsset", e);
+    }
+  }
+
+  /** Capture one effective TRC10 balance transition; isolated like capturePut. */
+  public static void captureAccountAsset(byte[] addressKey, byte[] assetId,
+      long oldBalance, long newBalance) {
+    ArchiveCaptureEngine active = engine;
+    if (active == null) {
+      return;
+    }
+    if (!ensureCurrentTx(active, "captureAccountAsset")) {
+      return;
+    }
+    try {
+      active.captureAccountAsset(addressKey, assetId, oldBalance, newBalance);
+    } catch (Exception e) {
+      active.recordFailure("captureAccountAsset", e);
+      logFailureBestEffort("captureAccountAsset", e);
+    }
+  }
+
+  /**
+   * Reserves the raw account inputs before the store-specific asset planner parses protobufs,
+   * builds collections, or scans physical rows. An inactive scope means capture has already failed
+   * or the watermark rejected the input; callers must skip planning but may continue the canonical
+   * store write, which the archive commit will subsequently fail-stop.
+   */
+  public static AccountAssetPlanningScope openAccountAssetPlanning(
+      byte[] addressKey, byte[] oldAccount, byte[] newAccount) {
+    ArchiveCaptureEngine active = engine;
+    if (active == null || active.failure().isPresent()
+        || !ensureCurrentTx(active, "accountAssetPlanning")) {
+      return AccountAssetPlanningScope.inactive();
+    }
+    try {
+      active.beginAccountAssetPlanning(addressKey, oldAccount, newAccount);
+      return new AccountAssetPlanningScope(active);
+    } catch (Exception e) {
+      active.recordFailure("accountAssetPlanning", e);
+      logFailureBestEffort("accountAssetPlanning", e);
+      return AccountAssetPlanningScope.inactive();
+    }
+  }
+
+  public static final class AccountAssetPlanningScope implements AutoCloseable {
+
+    private static final AccountAssetPlanningScope INACTIVE =
+        new AccountAssetPlanningScope(null);
+
+    private final ArchiveCaptureEngine captureEngine;
+    private boolean closed;
+
+    private AccountAssetPlanningScope(ArchiveCaptureEngine captureEngine) {
+      this.captureEngine = captureEngine;
+    }
+
+    private static AccountAssetPlanningScope inactive() {
+      return INACTIVE;
+    }
+
+    public boolean isActive() {
+      return captureEngine != null;
+    }
+
+    @Override
+    public void close() {
+      if (captureEngine != null && !closed) {
+        closed = true;
+        captureEngine.endAccountAssetPlanning();
+      }
+    }
+  }
+
+  /** Capture a SEMANTIC domain put (e.g. CONTRACT_STORAGE); no-op + isolated like capturePut.
+   * {@code prevValue} is the slot value before the write (null = absent). */
+  public static void captureSemanticPut(ArchiveDomain domain, byte[] canonicalKey, byte[] prevValue,
+      byte[] value) {
+    ArchiveCaptureEngine active = engine;
+    if (active == null) {
+      return;
+    }
+    if (!ensureCurrentTx(active, "captureSemanticPut(" + domain + ")")) {
+      return;
+    }
+    try {
+      active.captureSemanticPut(domain, canonicalKey, prevValue, value);
+    } catch (Exception e) {
+      active.recordFailure("captureSemanticPut(" + domain + ")", e);
+      logFailureBestEffort("captureSemanticPut(" + domain + ")", e);
+    }
+  }
+
+  /** Capture a SEMANTIC domain delete (e.g. zeroed storage slot); no-op + isolated.
+   * {@code prevValue} is the slot value before the delete (null = already absent). */
+  public static void captureSemanticDelete(ArchiveDomain domain, byte[] canonicalKey,
+      byte[] prevValue) {
+    ArchiveCaptureEngine active = engine;
+    if (active == null) {
+      return;
+    }
+    if (!ensureCurrentTx(active, "captureSemanticDelete(" + domain + ")")) {
+      return;
+    }
+    try {
+      active.captureSemanticDelete(domain, canonicalKey, prevValue);
+    } catch (Exception e) {
+      active.recordFailure("captureSemanticDelete(" + domain + ")", e);
+      logFailureBestEffort("captureSemanticDelete(" + domain + ")", e);
+    }
+  }
+
+  private static boolean ensureCurrentTx(ArchiveCaptureEngine active, String operation) {
+    if (active.hasCurrentPosition()) {
+      return true;
+    }
+    if (active.hasActiveBlock()) {
+      active.recordFailure(operation,
+          new IllegalStateException("archive write without current tx context"));
+    }
+    return false;
+  }
+
+  private static void logFailureBestEffort(String operation, Throwable failure) {
+    try {
+      logger.warn("archive capture failure recorded during {}; record dropped ({})", operation,
+          safeFailureType(failure));
+    } catch (Throwable ignored) {
+      // Logging is observational; capture failure remains recorded for fail-closed commit.
+    }
+  }
+
+  private static String safeFailureType(Throwable failure) {
+    try {
+      return failure == null ? "unknown" : failure.getClass().getName();
+    } catch (Throwable ignored) {
+      return "unknown";
+    }
+  }
+}

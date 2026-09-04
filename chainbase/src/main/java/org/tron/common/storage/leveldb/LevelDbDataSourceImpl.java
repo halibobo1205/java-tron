@@ -54,6 +54,9 @@ import org.tron.common.storage.WriteOptionsWrapper;
 import org.tron.common.storage.metric.DbStat;
 import org.tron.common.utils.FileUtil;
 import org.tron.common.utils.StorageUtils;
+import org.tron.core.archive.query.ArchiveQueryLockSupport;
+import org.tron.core.archive.query.QueryContext;
+import org.tron.core.archive.query.QueryContextHolder;
 import org.tron.core.db.common.DbSourceInter;
 import org.tron.core.db.common.iterator.StoreIterator;
 import org.tron.core.db2.common.Instance;
@@ -219,6 +222,22 @@ public class LevelDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
     resetDbLock.readLock().lock();
     try {
       return database.get(key);
+    } finally {
+      resetDbLock.readLock().unlock();
+    }
+  }
+
+  /** Point read for untrusted historical lookups that must not perturb the shared block cache. */
+  public byte[] getDataWithoutCache(byte[] key) {
+    QueryContext queryContext = QueryContextHolder.currentStorageContext();
+    ArchiveQueryLockSupport.lock(
+        resetDbLock.readLock(), queryContext, "canonical LevelDB reset lock");
+    try {
+      byte[] value = database.get(key, new ReadOptions().fillCache(false));
+      if (queryContext != null) {
+        queryContext.checkDeadline();
+      }
+      return value;
     } finally {
       resetDbLock.readLock().unlock();
     }
@@ -485,6 +504,11 @@ public class LevelDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
   @Override
   public org.tron.core.db.common.iterator.DBIterator iterator() {
     return new StoreIterator(getDBIterator());
+  }
+
+  @Override
+  public org.tron.core.db.common.iterator.DBIterator rawIterator() {
+    return new StoreIterator(getDBIterator(), true);
   }
 
   public Stream<Entry<byte[], byte[]>> stream() {

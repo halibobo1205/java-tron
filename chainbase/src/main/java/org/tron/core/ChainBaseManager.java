@@ -365,6 +365,24 @@ public class ChainBaseManager {
     return getBlockIndexStore().get(num);
   }
 
+  /** Resolves a durable canonical block id without admitting the index row into shared caches. */
+  public BlockId getBlockIdByNumWithoutCache(final long num) throws ItemNotFoundException {
+    return getBlockIndexStore().getFromRootWithoutCache(num);
+  }
+
+  /** Resolves a durable canonical block without admitting historical reads into shared caches. */
+  public BlockCapsule getBlockByNumWithoutCache(final long num)
+      throws ItemNotFoundException, BadItemException {
+    BlockId blockId = getBlockIndexStore().getFromRootWithoutCache(num);
+    return getBlockStore().getFromRootWithoutCache(blockId.getBytes());
+  }
+
+  /** Reads a durable block body by id without admitting it into shared caches. */
+  public BlockCapsule getBlockByIdWithoutCache(final Sha256Hash hash)
+      throws ItemNotFoundException, BadItemException {
+    return getBlockStore().getFromRootWithoutCache(hash.getBytes());
+  }
+
   public BlockCapsule getBlockByNum(final long num) throws
       ItemNotFoundException, BadItemException {
     return getBlockById(getBlockIdByNum(num));
@@ -417,4 +435,3 @@ public class ChainBaseManager {
     }
   }
 }
-

@@ -3,6 +3,7 @@ package org.tron.core;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -43,6 +44,10 @@ import org.tron.common.utils.ByteUtil;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.common.utils.client.WalletClient;
 import org.tron.common.zksnark.JLibrustzcash;
+import org.tron.core.archive.ArchiveException;
+import org.tron.core.archive.query.HistoricalQueryLimitException;
+import org.tron.core.archive.query.HistoricalQueryLimitException.Limit;
+import org.tron.core.archive.query.HistoricalQueryLimitException.Reason;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.ContractCapsule;
@@ -97,6 +102,140 @@ public class WalletMockTest {
   @After
   public void  clearMocks() {
     Mockito.clearAllCaches();
+  }
+
+  @Test
+  public void corruptCachelessCanonicalBlockIsNotReportedAsMissing() throws Exception {
+    Wallet wallet = new Wallet();
+    ChainBaseManager chainBaseManager = mock(ChainBaseManager.class);
+    BadItemException corruption = new BadItemException("corrupt canonical block");
+    Field field = Wallet.class.getDeclaredField("chainBaseManager");
+    field.setAccessible(true);
+    field.set(wallet, chainBaseManager);
+    when(chainBaseManager.getBlockByNumWithoutCache(7L)).thenThrow(corruption);
+
+    ArchiveException failure = assertThrows(
+        ArchiveException.class, () -> wallet.getBlockByNumWithoutCache(7L));
+
+    assertTrue(failure.getMessage().contains("canonical block 7"));
+    assertSame(corruption, failure.getCause());
+  }
+
+  @Test
+  public void runtimeCachelessCanonicalBlockFailureIsWrapped() throws Exception {
+    Wallet wallet = new Wallet();
+    ChainBaseManager chainBaseManager = mock(ChainBaseManager.class);
+    IllegalArgumentException corruption =
+        new IllegalArgumentException("corrupt canonical block index value");
+    Field field = Wallet.class.getDeclaredField("chainBaseManager");
+    field.setAccessible(true);
+    field.set(wallet, chainBaseManager);
+    when(chainBaseManager.getBlockByNumWithoutCache(7L)).thenThrow(corruption);
+
+    ArchiveException failure = assertThrows(
+        ArchiveException.class, () -> wallet.getBlockByNumWithoutCache(7L));
+
+    assertTrue(failure.getMessage().contains("canonical block 7"));
+    assertSame(corruption, failure.getCause());
+  }
+
+  @Test
+  public void missingCachelessCanonicalBlockStillReturnsNull() throws Exception {
+    Wallet wallet = new Wallet();
+    ChainBaseManager chainBaseManager = mock(ChainBaseManager.class);
+    Field field = Wallet.class.getDeclaredField("chainBaseManager");
+    field.setAccessible(true);
+    field.set(wallet, chainBaseManager);
+    when(chainBaseManager.getBlockByNumWithoutCache(7L))
+        .thenThrow(new ItemNotFoundException("missing canonical block"));
+
+    assertNull(wallet.getBlockByNumWithoutCache(7L));
+  }
+
+  @Test
+  public void corruptCachelessCanonicalBlockIndexIsNotReportedAsMissing() throws Exception {
+    Wallet wallet = new Wallet();
+    ChainBaseManager chainBaseManager = mock(ChainBaseManager.class);
+    IllegalArgumentException corruption =
+        new IllegalArgumentException("corrupt canonical block index");
+    Field field = Wallet.class.getDeclaredField("chainBaseManager");
+    field.setAccessible(true);
+    field.set(wallet, chainBaseManager);
+    when(chainBaseManager.getBlockIdByNumWithoutCache(7L)).thenThrow(corruption);
+
+    ArchiveException failure = assertThrows(
+        ArchiveException.class, () -> wallet.getBlockIdByNumWithoutCache(7L));
+
+    assertTrue(failure.getMessage().contains("canonical block id 7"));
+    assertSame(corruption, failure.getCause());
+  }
+
+  @Test
+  public void missingCachelessCanonicalBlockIndexStillReturnsNull() throws Exception {
+    Wallet wallet = new Wallet();
+    ChainBaseManager chainBaseManager = mock(ChainBaseManager.class);
+    Field field = Wallet.class.getDeclaredField("chainBaseManager");
+    field.setAccessible(true);
+    field.set(wallet, chainBaseManager);
+    when(chainBaseManager.getBlockIdByNumWithoutCache(7L))
+        .thenThrow(new ItemNotFoundException("missing canonical block index"));
+
+    assertNull(wallet.getBlockIdByNumWithoutCache(7L));
+  }
+
+  @Test
+  public void runtimeCachelessCanonicalBlockByIdFailureIsWrapped() throws Exception {
+    Wallet wallet = new Wallet();
+    ChainBaseManager chainBaseManager = mock(ChainBaseManager.class);
+    IllegalArgumentException corruption =
+        new IllegalArgumentException("corrupt canonical block body lookup");
+    Field field = Wallet.class.getDeclaredField("chainBaseManager");
+    field.setAccessible(true);
+    field.set(wallet, chainBaseManager);
+    when(chainBaseManager.getBlockByIdWithoutCache(any(Sha256Hash.class)))
+        .thenThrow(corruption);
+
+    ArchiveException failure = assertThrows(
+        ArchiveException.class,
+        () -> wallet.getBlockByIdWithoutCache(ByteString.copyFrom(new byte[32])));
+
+    assertTrue(failure.getMessage().contains("canonical block by id"));
+    assertSame(corruption, failure.getCause());
+  }
+
+  @Test
+  public void missingCachelessCanonicalBlockByIdStillReturnsNull() throws Exception {
+    Wallet wallet = new Wallet();
+    ChainBaseManager chainBaseManager = mock(ChainBaseManager.class);
+    Field field = Wallet.class.getDeclaredField("chainBaseManager");
+    field.setAccessible(true);
+    field.set(wallet, chainBaseManager);
+    when(chainBaseManager.getBlockByIdWithoutCache(any(Sha256Hash.class)))
+        .thenThrow(new ItemNotFoundException("missing canonical block body"));
+
+    assertNull(wallet.getBlockByIdWithoutCache(ByteString.copyFrom(new byte[32])));
+  }
+
+  @Test
+  public void cachelessCanonicalReadsPreserveHistoricalQueryLimits() throws Exception {
+    Wallet wallet = new Wallet();
+    ChainBaseManager chainBaseManager = mock(ChainBaseManager.class);
+    HistoricalQueryLimitException limit = new HistoricalQueryLimitException(
+        Reason.RESOURCE_EXHAUSTED, Limit.BACKEND_READS,
+        "injected canonical backend-read limit");
+    Field field = Wallet.class.getDeclaredField("chainBaseManager");
+    field.setAccessible(true);
+    field.set(wallet, chainBaseManager);
+    when(chainBaseManager.getBlockByNumWithoutCache(7L)).thenThrow(limit);
+    when(chainBaseManager.getBlockIdByNumWithoutCache(7L)).thenThrow(limit);
+    when(chainBaseManager.getBlockByIdWithoutCache(any(Sha256Hash.class))).thenThrow(limit);
+
+    assertSame(limit, assertThrows(
+        HistoricalQueryLimitException.class, () -> wallet.getBlockByNumWithoutCache(7L)));
+    assertSame(limit, assertThrows(
+        HistoricalQueryLimitException.class, () -> wallet.getBlockIdByNumWithoutCache(7L)));
+    assertSame(limit, assertThrows(HistoricalQueryLimitException.class,
+        () -> wallet.getBlockByIdWithoutCache(ByteString.copyFrom(new byte[32]))));
   }
 
   @Test

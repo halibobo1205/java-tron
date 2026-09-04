@@ -16,6 +16,7 @@ import lombok.ToString;
 import org.springframework.stereotype.Component;
 import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.utils.ByteArray;
+import org.tron.core.archive.query.HistoricalQueryLimitException;
 import org.tron.core.exception.BadItemException;
 import org.tron.core.exception.ItemNotFoundException;
 import org.tron.core.exception.jsonrpc.JsonRpcExceedLimitException;
@@ -90,22 +91,29 @@ public interface TronJsonRpc {
   @JsonRpcMethod("eth_getBalance")
   @JsonRpcErrors({
       @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
+      @JsonRpcError(exception = HistoricalQueryLimitException.class, code = -32005, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInternalException.class, code = -32000, data = "{}"),
   })
-  String getTrxBalance(String address, String blockNumOrTag) throws JsonRpcInvalidParamsException;
+  String getTrxBalance(String address, Object blockParamObj)
+      throws JsonRpcInvalidParamsException, JsonRpcInternalException;
 
   @JsonRpcMethod("eth_getStorageAt")
   @JsonRpcErrors({
       @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
+      @JsonRpcError(exception = HistoricalQueryLimitException.class, code = -32005, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInternalException.class, code = -32000, data = "{}"),
   })
-  String getStorageAt(String address, String storageIdx, String blockNumOrTag)
-      throws JsonRpcInvalidParamsException;
+  String getStorageAt(String address, String storageIdx, Object blockParamObj)
+      throws JsonRpcInvalidParamsException, JsonRpcInternalException;
 
   @JsonRpcMethod("eth_getCode")
   @JsonRpcErrors({
       @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
+      @JsonRpcError(exception = HistoricalQueryLimitException.class, code = -32005, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInternalException.class, code = -32000, data = "{}"),
   })
-  String getABIOfSmartContract(String contractAddress, String bnOrId)
-      throws JsonRpcInvalidParamsException;
+  String getABIOfSmartContract(String contractAddress, Object blockParamObj)
+      throws JsonRpcInvalidParamsException, JsonRpcInternalException;
 
   @JsonRpcMethod("eth_coinbase")
   @JsonRpcErrors({
@@ -163,11 +171,60 @@ public interface TronJsonRpc {
   @JsonRpcErrors({
       @JsonRpcError(exception = JsonRpcInvalidRequestException.class, code = -32600, data = "{}"),
       @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
+      @JsonRpcError(exception = HistoricalQueryLimitException.class, code = -32005, data = "{}"),
       @JsonRpcError(exception = JsonRpcInternalException.class, code = -32000, data = "{}"),
   })
   String getCall(CallArguments transactionCall, Object blockNumOrTag)
       throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
       JsonRpcInternalException;
+
+  @JsonRpcMethod("debug_traceCall")
+  @JsonRpcErrors({
+      @JsonRpcError(exception = JsonRpcMethodNotFoundException.class, code = -32601, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInvalidRequestException.class, code = -32600, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
+      @JsonRpcError(exception = HistoricalQueryLimitException.class, code = -32005, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInternalException.class, code = -32000, data = "{}"),
+  })
+  Object debugTraceCall(CallArguments transactionCall, Object blockNumOrTag)
+      throws JsonRpcMethodNotFoundException, JsonRpcInvalidParamsException,
+      JsonRpcInvalidRequestException, JsonRpcInternalException;
+
+  @JsonRpcMethod("debug_traceCall")
+  @JsonRpcErrors({
+      @JsonRpcError(exception = JsonRpcMethodNotFoundException.class, code = -32601, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInvalidRequestException.class, code = -32600, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
+      @JsonRpcError(exception = HistoricalQueryLimitException.class, code = -32005, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInternalException.class, code = -32000, data = "{}"),
+  })
+  Object debugTraceCall(CallArguments transactionCall, Object blockNumOrTag, Object traceOptions)
+      throws JsonRpcMethodNotFoundException, JsonRpcInvalidParamsException,
+      JsonRpcInvalidRequestException, JsonRpcInternalException;
+
+  @JsonRpcMethod("debug_traceTransaction")
+  @JsonRpcErrors({
+      @JsonRpcError(exception = JsonRpcMethodNotFoundException.class, code = -32601, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInvalidRequestException.class, code = -32600, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
+      @JsonRpcError(exception = HistoricalQueryLimitException.class, code = -32005, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInternalException.class, code = -32000, data = "{}"),
+  })
+  Object debugTraceTransaction(String txHash)
+      throws JsonRpcMethodNotFoundException, JsonRpcInvalidParamsException,
+      JsonRpcInvalidRequestException, JsonRpcInternalException;
+
+  @JsonRpcMethod("debug_traceTransaction")
+  @JsonRpcErrors({
+      @JsonRpcError(exception = JsonRpcMethodNotFoundException.class, code = -32601, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInvalidRequestException.class, code = -32600, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32602, data = "{}"),
+      @JsonRpcError(exception = HistoricalQueryLimitException.class, code = -32005, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInternalException.class, code = -32000, data = "{}"),
+  })
+  Object debugTraceTransaction(String txHash, Object traceOptions)
+      throws JsonRpcMethodNotFoundException, JsonRpcInvalidParamsException,
+      JsonRpcInvalidRequestException, JsonRpcInternalException;
 
   @JsonRpcMethod("net_peerCount")
   String getPeerCount();

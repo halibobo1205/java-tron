@@ -28,6 +28,7 @@ import org.tron.common.utils.Sha256Hash;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.BlockCapsule.BlockId;
 import org.tron.core.exception.BadItemException;
+import org.tron.core.exception.ItemNotFoundException;
 
 @Slf4j(topic = "DB")
 @Component
@@ -45,6 +46,16 @@ public class BlockStore extends TronStoreWithRevoking<BlockCapsule> {
 
   public List<BlockCapsule> getBlockByLatestNum(long getNum) {
     return pack(revokingDB.getlatestValues(getNum));
+  }
+
+  /** Durable-root point read for historical queries; fetched SST blocks are not cache-admitted. */
+  public BlockCapsule getFromRootWithoutCache(byte[] blockId)
+      throws ItemNotFoundException, BadItemException {
+    byte[] value = readRootWithoutCache(blockId);
+    if (value == null) {
+      throw new ItemNotFoundException("block is not found");
+    }
+    return new BlockCapsule(value);
   }
 
   private List<BlockCapsule> pack(Set<byte[]> values) {

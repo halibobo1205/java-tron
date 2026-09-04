@@ -1,0 +1,259 @@
+package org.tron.core.archive.reader;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertThrows;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.Test;
+import org.rocksdb.RocksDBException;
+import org.tron.core.archive.ArchiveException;
+import org.tron.core.archive.ArchivePhase;
+import org.tron.core.archive.ArchiveSource;
+import org.tron.core.archive.codec.DomainValue;
+import org.tron.core.archive.domain.ArchiveDomain;
+import org.tron.core.archive.domain.DefaultArchiveDomainCatalog;
+import org.tron.core.archive.temporal.ArchiveTemporalReadView;
+import org.tron.core.archive.temporal.ArchiveTemporalStore;
+import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
+import org.tron.core.archive.txnum.ArchiveBlockRange;
+import org.tron.core.archive.txnum.ArchiveTxNumIndex;
+import org.tron.core.archive.txnum.InMemoryArchiveTxNumIndex;
+
+public class ArchiveStateReaderFactoryTest {
+
+  @Test
+  public void opensReaderBoundToThePoint() throws Exception {
+    byte[] hash = blockHash(7);
+    ArchiveTxNumIndex index = committedIndex(7, hash, 0);
+    ArchiveBlockRange range = index.getBlockRange(7).get();
+    ArchiveStateReaderFactory factory = factory(index, new InMemoryArchiveTemporalStore());
+    ArchiveStatePoint point = ArchiveStatePoint.blockEnd(7, hash, range.getFinalizeTxNum());
+
+    ArchiveStateReader reader = factory.open(point);
+
+    assertSame(point, reader.getPoint());
+    reader.close();
+  }
+
+  @Test
+  public void nullPointIsHistoryUnavailable() {
+    ArchiveStateReaderFactory factory =
+        factory(committedIndex(1, blockHash(1), 0), new InMemoryArchiveTemporalStore());
+    ArchiveReaderException e = assertThrows(ArchiveReaderException.class, () -> factory.open(null));
+    assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, e.getReason());
+  }
+
+  @Test
+  public void nullStoreIsArchiveDisabled() {
+    ArchiveTxNumIndex index = committedIndex(1, blockHash(1), 0);
+    ArchiveStateReaderFactory disabled = new DefaultArchiveStateReaderFactory(
+        null, new DefaultArchiveDomainCatalog(), index, () -> {
+        });
+    ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
+        () -> disabled.open(ArchiveStatePoint.blockEnd(1, blockHash(1), 1)));
+    assertEquals(ArchiveReaderException.Reason.ARCHIVE_DISABLED, e.getReason());
+  }
+
+  @Test
+  public void rejectsUncoveredPoint() {
+    ArchiveStateReaderFactory factory =
+        factory(committedIndex(1, blockHash(1), 0), new InMemoryArchiveTemporalStore());
+
+    ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
+        () -> factory.open(ArchiveStatePoint.blockEnd(2, blockHash(2), 1)));
+
+    assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, e.getReason());
+  }
+
+  @Test
+  public void rejectsWrongBlockHash() {
+    byte[] hash = blockHash(1);
+    ArchiveTxNumIndex index = committedIndex(1, hash, 0);
+    ArchiveBlockRange range = index.getBlockRange(1).get();
+    ArchiveStateReaderFactory factory = factory(index, new InMemoryArchiveTemporalStore());
+
+    ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
+        () -> factory.open(ArchiveStatePoint.blockEnd(1, blockHash(2),
+            range.getFinalizeTxNum())));
+
+    assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, e.getReason());
+  }
+
+  @Test
+  public void rejectsNullBlockHash() {
+    // Point-hash guard, first disjunct: a point carrying no block hash fails closed. The correct
+    // finalizeTxNum keeps validatePointTxNum green so the null-hash condition is the sole cause.
+    byte[] hash = blockHash(1);
+    ArchiveTxNumIndex index = committedIndex(1, hash, 0);
+    ArchiveBlockRange range = index.getBlockRange(1).get();
+    ArchiveStateReaderFactory factory = factory(index, new InMemoryArchiveTemporalStore());
+
+    ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
+        () -> factory.open(ArchiveStatePoint.blockEnd(1, null, range.getFinalizeTxNum())));
+
+    assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, e.getReason());
+  }
+
+  @Test
+  public void rejectsBlockHashWithWrongLength() {
+    // Point-hash guard, second disjunct: a non-null hash of the wrong length fails closed.
+    byte[] hash = blockHash(1);
+    ArchiveTxNumIndex index = committedIndex(1, hash, 0);
+    ArchiveBlockRange range = index.getBlockRange(1).get();
+    ArchiveStateReaderFactory factory = factory(index, new InMemoryArchiveTemporalStore());
+
+    ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
+        () -> factory.open(ArchiveStatePoint.blockEnd(1,
+            new byte[ArchiveBlockRange.BLOCK_HASH_LENGTH - 1], range.getFinalizeTxNum())));
+
+    assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, e.getReason());
+  }
+
+  @Test
+  public void rejectsBlockEndTxNumMismatch() {
+    // BLOCK_END point whose txNum disagrees with the committed finalize txNum fails closed. The
+    // txNum check precedes the hash check, so a correct hash isolates the txNum-mismatch branch.
+    byte[] hash = blockHash(1);
+    ArchiveTxNumIndex index = committedIndex(1, hash, 0);
+    ArchiveBlockRange range = index.getBlockRange(1).get();
+    ArchiveStateReaderFactory factory = factory(index, new InMemoryArchiveTemporalStore());
+
+    ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
+        () -> factory.open(ArchiveStatePoint.blockEnd(1, hash, range.getFinalizeTxNum() + 1)));
+
+    assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, e.getReason());
+  }
+
+  @Test
+  public void rejectsTxBeforeOutsideBlockRange() {
+    // The entire TX_BEFORE path was untested. A block committed with userTxCount == 0 makes the
+    // first conjunct (userTxCount > 0) false, so any tx-before point fails closed at line 86.
+    byte[] hash = blockHash(1);
+    ArchiveTxNumIndex index = committedIndex(1, hash, 0);
+    ArchiveBlockRange range = index.getBlockRange(1).get();
+    ArchiveStateReaderFactory factory = factory(index, new InMemoryArchiveTemporalStore());
+
+    ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
+        () -> factory.open(ArchiveStatePoint.txBefore(1, hash, range.getPrepareTxNum())));
+
+    assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, e.getReason());
+  }
+
+  @Test
+  public void availabilityGuardCanRejectUnavailableArchive() {
+    byte[] hash = blockHash(1);
+    ArchiveTxNumIndex index = committedIndex(1, hash, 0);
+    ArchiveBlockRange range = index.getBlockRange(1).get();
+    ArchiveStateReaderFactory guarded = new DefaultArchiveStateReaderFactory(
+        new InMemoryArchiveTemporalStore(), new DefaultArchiveDomainCatalog(), index,
+        () -> {
+          throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
+              "uncovered");
+        });
+
+    ArchiveReaderException e = assertThrows(ArchiveReaderException.class,
+        () -> guarded.open(ArchiveStatePoint.blockEnd(1, hash, range.getFinalizeTxNum())));
+
+    assertEquals(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE, e.getReason());
+  }
+
+  @Test
+  public void blockRangeIoFailureIsNotMisclassifiedAsCorruption() {
+    ArchiveTxNumIndex index = mock(ArchiveTxNumIndex.class);
+    when(index.getBlockRange(1L)).thenThrow(new ArchiveException(
+        "block-range read failed", new RocksDBException("injected RocksDB I/O failure")));
+    ArchiveStateReaderFactory factory = factory(index, new InMemoryArchiveTemporalStore());
+
+    ArchiveReaderException failure = assertThrows(ArchiveReaderException.class,
+        () -> factory.open(ArchiveStatePoint.blockEnd(1L, blockHash(1), 1L)));
+
+    assertEquals(ArchiveReaderException.Reason.INTERNAL_IO, failure.getReason());
+  }
+
+  @Test
+  public void coverageFloorIoFailureIsNotMisclassifiedAsCorruption() {
+    byte[] hash = blockHash(1);
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        1L, 0L, 1L, 0L, 1L, hash, 0, ArchiveSource.NORMAL, new byte[32]);
+    ArchiveTxNumIndex index = mock(ArchiveTxNumIndex.class);
+    when(index.getBlockRange(1L)).thenReturn(Optional.of(range));
+    when(index.getFirstArchivedBlock()).thenThrow(new ArchiveException(
+        "coverage read failed", new RocksDBException("injected RocksDB I/O failure")));
+    ArchiveStateReaderFactory factory = factory(index, new InMemoryArchiveTemporalStore());
+
+    ArchiveReaderException failure = assertThrows(ArchiveReaderException.class,
+        () -> factory.open(ArchiveStatePoint.blockEnd(1L, hash, range.getFinalizeTxNum())));
+
+    assertEquals(ArchiveReaderException.Reason.INTERNAL_IO, failure.getReason());
+  }
+
+  @Test
+  public void factoryClosesOwnedSnapshotWhenConstructionThrowsError() throws Exception {
+    byte[] hash = blockHash(1);
+    ArchiveBlockRange range = new ArchiveBlockRange(
+        1L, 0L, 1L, 0L, 1L, hash, 0, ArchiveSource.NORMAL, new byte[32]);
+    AssertionError failure = new AssertionError("coverage lookup failed");
+    ArchiveTxNumIndex index = mock(ArchiveTxNumIndex.class);
+    when(index.getBlockRange(1L)).thenReturn(Optional.of(range));
+    when(index.getFirstArchivedBlock()).thenThrow(failure);
+
+    AtomicInteger closes = new AtomicInteger();
+    ArchiveTemporalReadView view = mock(ArchiveTemporalReadView.class);
+    doAnswer(invocation -> {
+      closes.incrementAndGet();
+      return null;
+    }).when(view).close();
+    ArchiveTemporalStore temporalStore = mock(ArchiveTemporalStore.class);
+    when(temporalStore.openReadView()).thenReturn(view);
+    when(temporalStore.getAsOf(
+        org.mockito.ArgumentMatchers.any(ArchiveDomain.class),
+        org.mockito.ArgumentMatchers.any(byte[].class),
+        org.mockito.ArgumentMatchers.anyLong())).thenReturn(Optional.<DomainValue>empty());
+    DefaultArchiveStateReaderFactory factory = new DefaultArchiveStateReaderFactory(
+        temporalStore, new DefaultArchiveDomainCatalog(), index, () -> {
+        });
+
+    AssertionError thrown = assertThrows(AssertionError.class,
+        () -> factory.open(ArchiveStatePoint.blockEnd(1L, hash, 1L)));
+
+    assertSame(failure, thrown);
+    assertEquals(1, closes.get());
+  }
+
+  private static ArchiveStateReaderFactory factory(ArchiveTxNumIndex index,
+      InMemoryArchiveTemporalStore temporalStore) {
+    return new DefaultArchiveStateReaderFactory(
+        temporalStore, new DefaultArchiveDomainCatalog(), index, () -> {
+        });
+  }
+
+  private static ArchiveTxNumIndex committedIndex(long blockNum, byte[] blockHash,
+      int userTxCount) {
+    ArchiveTxNumIndex index = new InMemoryArchiveTxNumIndex();
+    index.beginBlock(blockNum, ArchiveSource.NORMAL);
+    index.allocateSystemTx(blockNum, ArchivePhase.BLOCK_PREPARE);
+    for (int i = 0; i < userTxCount; i++) {
+      index.allocateUserTx(blockNum, i, txId(i));
+    }
+    index.allocateSystemTx(blockNum, ArchivePhase.BLOCK_FINALIZE);
+    index.commitBlock(blockNum, blockHash, userTxCount);
+    return index;
+  }
+
+  private static byte[] blockHash(int seed) {
+    byte[] hash = new byte[ArchiveBlockRange.BLOCK_HASH_LENGTH];
+    hash[ArchiveBlockRange.BLOCK_HASH_LENGTH - 1] = (byte) seed;
+    return hash;
+  }
+
+  private static byte[] txId(int seed) {
+    byte[] txId = new byte[ArchiveBlockRange.BLOCK_HASH_LENGTH];
+    txId[txId.length - 1] = (byte) seed;
+    return txId;
+  }
+}

@@ -20,6 +20,21 @@ public class MoveAbiHelper {
     this.chainBaseManager = chainBaseManager;
   }
 
+  /** Embedded non-empty ABI entries are the only archive-visible state moved by this helper. */
+  public boolean wouldChangeArchiveState() {
+    ContractStore contractStore = chainBaseManager.getContractStore();
+    if (contractStore == null) {
+      return true;
+    }
+    Iterator<Map.Entry<byte[], ContractCapsule>> it = contractStore.iterator();
+    while (it.hasNext()) {
+      if (!it.next().getValue().getInstance().getAbi().getEntrysList().isEmpty()) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   public void doWork() {
     long start = System.currentTimeMillis();
     logger.info("Start to move abi");

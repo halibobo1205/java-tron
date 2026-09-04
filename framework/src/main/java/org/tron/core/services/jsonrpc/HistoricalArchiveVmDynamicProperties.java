@@ -1,0 +1,651 @@
+package org.tron.core.services.jsonrpc;
+
+import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.Map;
+import org.tron.common.math.StrictMathWrapper;
+import org.tron.common.utils.ByteArray;
+import org.tron.core.archive.reader.ArchiveReadResult;
+import org.tron.core.archive.reader.ArchiveReadResult.Status;
+import org.tron.core.archive.reader.ArchiveReaderException;
+import org.tron.core.archive.reader.ArchiveStatePoint;
+import org.tron.core.archive.reader.ArchiveStateReader;
+import org.tron.core.config.Parameter.ForkBlockVersionEnum;
+import org.tron.core.store.VmDynamicProperties;
+
+/**
+ * Archive-backed historical {@link VmDynamicProperties}: reconstructs the VM execution parameters
+ * from DYNAMIC_PROPERTIES history at the target block, rather than the latest values. This covers
+ * opcode/fork gates, CHAINID behaviour, VM enablement, fee/CPU limits, dynamic-energy knobs, and
+ * VM arithmetic/resource flags. Energy price is reconstructed from the archived {@code ENERGY_FEE}
+ * row at the target state point.
+ *
+ * <p>Each flag is read once at construction (reader open) via {@code getDynamicProperty}:
+ * <ul>
+ *   <li>PRESENT -- the value explicitly written by a proposal as of this block;</li>
+ *   <li>MISSING -- no proposal change captured by this block. For hard-coded local defaults, a
+ *       genesis-complete archive can reconstruct the in-memory default. For config/proposal-driven
+ *       flags whose genesis value can vary by deployment, archive history must contain the value
+ *       explicitly; otherwise execution fails closed.</li>
+ * </ul>
+ *
+ * <p>Only proposals or dynamic-property maintenance writes these keys (the constructor's default
+ * seed is not part of block application, so it is never captured), which is what makes
+ * MISSING-means-default exact under genesis coverage. Execution-affecting keys are explicitly
+ * rooted in {@code DynamicKeyPolicy}.
+ */
+public final class HistoricalArchiveVmDynamicProperties implements VmDynamicProperties {
+
+  static final long DEFAULT_ENERGY_FEE = 100L;
+  static final String[] STRICT_GENESIS_LONG_KEYS = {
+      "latest_block_header_timestamp",
+      "ENERGY_FEE",
+      "TRANSACTION_FEE",
+      "MAX_FEE_LIMIT",
+      "MAX_CPU_TIME_OF_ONE_TX",
+      "MEMO_FEE",
+      "CREATE_ACCOUNT_FEE",
+      "CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT",
+      "ASSET_ISSUE_FEE",
+      "UPDATE_ACCOUNT_PERMISSION_FEE",
+      "MULTI_SIGN_FEE",
+      "EXCHANGE_CREATE_FEE",
+      "MARKET_SELL_FEE",
+      "MARKET_CANCEL_FEE",
+      "CREATE_NEW_ACCOUNT_BANDWIDTH_RATE",
+      "FREE_NET_LIMIT",
+      "ONE_DAY_NET_LIMIT",
+      "PUBLIC_NET_LIMIT",
+      "PUBLIC_NET_USAGE",
+      "PUBLIC_NET_TIME",
+      "TOTAL_ENERGY_LIMIT",
+      "TOTAL_NET_LIMIT",
+      "TOTAL_ENERGY_CURRENT_LIMIT",
+      "TOTAL_ENERGY_TARGET_LIMIT",
+      "TOTAL_ENERGY_AVERAGE_USAGE",
+      "TOTAL_ENERGY_AVERAGE_TIME",
+      "BLOCK_ENERGY_USAGE",
+      "ADAPTIVE_RESOURCE_LIMIT_TARGET_RATIO",
+      "ADAPTIVE_RESOURCE_LIMIT_MULTIPLIER",
+      "TOTAL_NET_WEIGHT",
+      "TOTAL_ENERGY_WEIGHT",
+      "TOTAL_TRON_POWER_WEIGHT",
+      "EXCHANGE_BALANCE_LIMIT",
+      "MARKET_QUANTITY_LIMIT",
+      "MAX_DELEGATE_LOCK_PERIOD",
+      "MAX_CREATE_ACCOUNT_TX_SIZE",
+      "SHIELDED_TRANSACTION_FEE",
+      "SHIELDED_TRANSACTION_CREATE_ACCOUNT_FEE",
+      "TOTAL_SHIELDED_POOL_VALUE",
+      "NEXT_MAINTENANCE_TIME",
+      "MAINTENANCE_TIME_INTERVAL",
+      "ACCOUNT_UPGRADE_COST",
+      "WITNESS_PAY_PER_BLOCK",
+      "WITNESS_127_PAY_PER_BLOCK",
+      "WITNESS_STANDBY_ALLOWANCE",
+      "REMOVE_THE_POWER_OF_THE_GR",
+      "ALLOW_UPDATE_ACCOUNT_NAME",
+      " ALLOW_SAME_TOKEN_NAME",
+      "ALLOW_DELEGATE_RESOURCE",
+      "ALLOW_ADAPTIVE_ENERGY",
+      "ALLOW_PROTO_FILTER_NUM",
+      "ALLOW_ACCOUNT_STATE_ROOT",
+      "CHANGE_DELEGATION",
+      "FORBID_TRANSFER_TO_CONTRACT",
+      "ALLOW_PBFT",
+      "ALLOW_MARKET_TRANSACTION",
+      "ALLOW_TRANSACTION_FEE_POOL",
+      "ALLOW_BLACKHOLE_OPTIMIZATION",
+      "ALLOW_ACCOUNT_ASSET_OPTIMIZATION",
+      "ALLOW_ASSET_OPTIMIZATION",
+      "ALLOW_NEW_REWARD",
+      "ALLOW_DELEGATE_OPTIMIZATION",
+      "ALLOW_CANCEL_ALL_UNFREEZE_V2",
+      "ALLOW_OLD_REWARD_OPT",
+      "PROPOSAL_EXPIRE_TIME",
+      "LATEST_PROPOSAL_NUM",
+      "LATEST_EXCHANGE_NUM",
+      "TOKEN_ID_NUM",
+      "ALLOW_CREATION_OF_CONTRACTS",
+      "ALLOW_TVM_TRANSFER_TRC10",
+      "ALLOW_TVM_CONSTANTINOPLE",
+      "ALLOW_TVM_SOLIDITY_059",
+      "ALLOW_TVM_ISTANBUL",
+      "ALLOW_TVM_FREEZE",
+      "ALLOW_TVM_VOTE",
+      "ALLOW_TVM_LONDON",
+      "ALLOW_TVM_COMPATIBLE_EVM",
+      "ALLOW_HIGHER_LIMIT_FOR_MAX_CPU_TIME_OF_ONE_TX",
+      "ALLOW_OPTIMIZED_RETURN_VALUE_OF_CHAIN_ID",
+      "CURRENT_CYCLE_NUMBER",
+      "ALLOW_DYNAMIC_ENERGY",
+      "DYNAMIC_ENERGY_THRESHOLD",
+      "DYNAMIC_ENERGY_INCREASE_FACTOR",
+      "DYNAMIC_ENERGY_MAX_FACTOR",
+      "ALLOW_TVM_SHANGHAI",
+      "ALLOW_ENERGY_ADJUSTMENT",
+      "ALLOW_STRICT_MATH",
+      "ALLOW_TVM_CANCUN",
+      "CONSENSUS_LOGIC_OPTIMIZATION",
+      "ALLOW_TVM_BLOB",
+      "ALLOW_TVM_SELFDESTRUCT_RESTRICTION",
+      "ALLOW_TVM_OSAKA",
+      "ALLOW_TVM_PRAGUE",
+      "ALLOW_HARDEN_RESOURCE_CALCULATION",
+      "ALLOW_HARDEN_EXCHANGE_CALCULATION",
+      "ALLOW_NEW_RESOURCE_MODEL",
+      "UNFREEZE_DELAY_DAYS",
+      "ALLOW_SHIELDED_TRC20_TRANSACTION",
+      "ALLOW_SHIELDED_TRANSACTION",
+      "ALLOW_MULTI_SIGN"
+  };
+
+  static final String[] STRICT_GENESIS_PRESENT_KEYS = {
+      "MAX_FROZEN_TIME",
+      "MIN_FROZEN_TIME",
+      "MAX_FROZEN_SUPPLY_NUMBER",
+      "MAX_FROZEN_SUPPLY_TIME",
+      "MIN_FROZEN_SUPPLY_TIME",
+      "WITNESS_ALLOWANCE_FROZEN_TIME",
+      "TOTAL_SIGN_NUM",
+      "VERSION_NUMBER",
+      "AVAILABLE_CONTRACT_TYPE",
+      "ACTIVE_DEFAULT_OPERATIONS"
+  };
+
+  private final long latestBlockHeaderNumber;
+  private final long latestBlockHeaderTimestamp;
+  private final long energyFee;
+  private final long maintenanceTimeInterval;
+  private final long currentCycleNumber;
+  private final long totalNetLimit;
+  private final long totalNetWeight;
+  private final long totalEnergyCurrentLimit;
+  private final long totalEnergyWeight;
+  private final long totalTronPowerWeight;
+  private final long allowCreationOfContracts;
+  private final long maxFeeLimit;
+  private final long maxCpuTimeOfOneTx;
+  private final long allowTvmTransferTrc10;
+  private final long allowTvmConstantinople;
+  private final long allowTvmSolidity059;
+  private final long allowTvmIstanbul;
+  private final long allowTvmFreeze;
+  private final long allowTvmVote;
+  private final long allowTvmLondon;
+  private final long allowTvmShangHai;
+  private final long allowTvmCancun;
+  private final long allowTvmBlob;
+  private final long allowTvmOsaka;
+  private final long allowTvmSelfdestructRestriction;
+  private final long allowTvmCompatibleEvm;
+  private final long allowOptimizedReturnValueOfChainId;
+  // FreezeV2 / shielded-TRC20 / multi-sign also change a constant-call result (opcode validity,
+  // precompile presence, ADDRESS / ORIGIN bytes), so they are rooted VM_CONFIG and reconstructed
+  // at the target block exactly like the other flags.
+  private final long unfreezeDelayDays;
+  private final long allowNewResourceModel;
+  private final long allowCancelAllUnfreezeV2;
+  private final long allowNewReward;
+  private final long allowShieldedTRC20Transaction;
+  private final long allowMultiSign;
+  private final long allowHigherLimitForMaxCpuTimeOfOneTx;
+  private final long allowDynamicEnergy;
+  private final long dynamicEnergyThreshold;
+  private final long dynamicEnergyIncreaseFactor;
+  private final long dynamicEnergyMaxFactor;
+  private final long allowEnergyAdjustment;
+  private final long allowStrictMath;
+  private final long consensusLogicOptimization;
+  private final long allowHardenResourceCalculation;
+  private final Map<Integer, byte[]> forkStatsByVersion;
+
+  HistoricalArchiveVmDynamicProperties(long energyFee,
+      ArchiveStateReader reader, boolean genesisComplete) throws ArchiveReaderException {
+    this.energyFee = energyFee;
+    ArchiveStatePoint point = reader.getPoint();
+    this.latestBlockHeaderNumber = point.getKind() == ArchiveStatePoint.Kind.TX_BEFORE
+        ? StrictMathWrapper.max(0L, point.getBlockNum() - 1L)
+        : point.getBlockNum();
+    this.latestBlockHeaderTimestamp = resolve(reader, "latest_block_header_timestamp",
+        genesisComplete, 0L);
+    this.maintenanceTimeInterval = resolveArchived(reader, "MAINTENANCE_TIME_INTERVAL");
+    this.currentCycleNumber = resolve(reader, "CURRENT_CYCLE_NUMBER", genesisComplete,
+        0L);
+    this.totalNetLimit = resolve(reader, "TOTAL_NET_LIMIT", genesisComplete,
+        43_200_000_000L);
+    this.totalNetWeight = resolve(reader, "TOTAL_NET_WEIGHT", genesisComplete,
+        0L);
+    this.totalEnergyCurrentLimit = resolve(reader, "TOTAL_ENERGY_CURRENT_LIMIT", genesisComplete,
+        50_000_000_000L);
+    this.totalEnergyWeight = resolve(reader, "TOTAL_ENERGY_WEIGHT", genesisComplete,
+        0L);
+    this.totalTronPowerWeight = resolve(reader, "TOTAL_TRON_POWER_WEIGHT", genesisComplete,
+        0L);
+    this.allowCreationOfContracts = resolveArchived(reader, "ALLOW_CREATION_OF_CONTRACTS");
+    this.maxFeeLimit = resolve(reader, "MAX_FEE_LIMIT", genesisComplete,
+        1_000_000_000L);
+    this.maxCpuTimeOfOneTx = resolve(reader, "MAX_CPU_TIME_OF_ONE_TX", genesisComplete,
+        50L);
+    this.allowTvmTransferTrc10 = resolveArchived(reader, "ALLOW_TVM_TRANSFER_TRC10");
+    this.allowTvmConstantinople = resolveArchived(reader, "ALLOW_TVM_CONSTANTINOPLE");
+    this.allowTvmSolidity059 = resolveArchived(reader, "ALLOW_TVM_SOLIDITY_059");
+    this.allowTvmIstanbul = resolveArchived(reader, "ALLOW_TVM_ISTANBUL");
+    this.allowTvmFreeze = resolveArchived(reader, "ALLOW_TVM_FREEZE");
+    this.allowTvmVote = resolveArchived(reader, "ALLOW_TVM_VOTE");
+    this.allowTvmLondon = resolveArchived(reader, "ALLOW_TVM_LONDON");
+    this.allowTvmShangHai = resolveArchivedConfigDefault(reader, "ALLOW_TVM_SHANGHAI");
+    this.allowTvmCancun = resolveArchivedConfigDefault(reader, "ALLOW_TVM_CANCUN");
+    this.allowTvmBlob = resolveArchivedConfigDefault(reader, "ALLOW_TVM_BLOB");
+    // Osaka and selfdestruct-restriction default to a hard-coded 0L in their live getters.
+    this.allowTvmOsaka = resolve(reader, "ALLOW_TVM_OSAKA", genesisComplete,
+        0L);
+    this.allowTvmSelfdestructRestriction = resolve(reader, "ALLOW_TVM_SELFDESTRUCT_RESTRICTION",
+        genesisComplete, 0L);
+    this.allowTvmCompatibleEvm = resolveArchived(reader, "ALLOW_TVM_COMPATIBLE_EVM");
+    this.allowOptimizedReturnValueOfChainId =
+        resolveArchived(reader, "ALLOW_OPTIMIZED_RETURN_VALUE_OF_CHAIN_ID");
+    this.unfreezeDelayDays = resolveArchived(reader, "UNFREEZE_DELAY_DAYS");
+    this.allowNewResourceModel = resolveArchived(reader, "ALLOW_NEW_RESOURCE_MODEL");
+    this.allowCancelAllUnfreezeV2 =
+        resolve(reader, "ALLOW_CANCEL_ALL_UNFREEZE_V2", genesisComplete, 0L);
+    this.allowNewReward =
+        resolve(reader, "ALLOW_NEW_REWARD", genesisComplete, 0L);
+    this.allowShieldedTRC20Transaction =
+        resolveArchived(reader, "ALLOW_SHIELDED_TRC20_TRANSACTION");
+    this.allowMultiSign = resolveArchived(reader, "ALLOW_MULTI_SIGN");
+    this.allowHigherLimitForMaxCpuTimeOfOneTx =
+        resolveArchived(reader, "ALLOW_HIGHER_LIMIT_FOR_MAX_CPU_TIME_OF_ONE_TX");
+    this.allowDynamicEnergy = resolveArchived(reader, "ALLOW_DYNAMIC_ENERGY");
+    this.dynamicEnergyThreshold = resolveArchived(reader, "DYNAMIC_ENERGY_THRESHOLD");
+    this.dynamicEnergyIncreaseFactor = resolveArchived(reader, "DYNAMIC_ENERGY_INCREASE_FACTOR");
+    this.dynamicEnergyMaxFactor = resolveArchived(reader, "DYNAMIC_ENERGY_MAX_FACTOR");
+    this.allowEnergyAdjustment =
+        resolveArchivedConfigDefault(reader, "ALLOW_ENERGY_ADJUSTMENT");
+    this.allowStrictMath = resolveArchivedConfigDefault(reader, "ALLOW_STRICT_MATH");
+    this.consensusLogicOptimization =
+        resolveArchivedConfigDefault(reader, "CONSENSUS_LOGIC_OPTIMIZATION");
+    this.allowHardenResourceCalculation =
+        resolveArchived(reader, "ALLOW_HARDEN_RESOURCE_CALCULATION");
+    this.forkStatsByVersion = resolveForkStats(reader, genesisComplete,
+        ForkBlockVersionEnum.VERSION_4_7_1, ForkBlockVersionEnum.VERSION_4_8_1_1);
+  }
+
+  static long resolveEnergyFee(ArchiveStateReader reader, boolean genesisComplete)
+      throws ArchiveReaderException {
+    return resolve(reader, "ENERGY_FEE", genesisComplete,
+        DEFAULT_ENERGY_FEE);
+  }
+
+  public static void validateGenesisArchiveRows(ArchiveStateReader reader)
+      throws ArchiveReaderException {
+    long energyFee = 0L;
+    for (String key : STRICT_GENESIS_LONG_KEYS) {
+      long value = requirePresentLong(reader, key);
+      if ("ENERGY_FEE".equals(key)) {
+        energyFee = value;
+      }
+    }
+    for (String key : STRICT_GENESIS_PRESENT_KEYS) {
+      requirePresent(reader, key);
+    }
+    new HistoricalArchiveVmDynamicProperties(energyFee, reader, true);
+  }
+
+  private static long requirePresentLong(ArchiveStateReader reader, String key)
+      throws ArchiveReaderException {
+    byte[] value = requirePresent(reader, key).getValue();
+    if (value.length != Long.BYTES) {
+      throw new ArchiveReaderException(ArchiveReaderException.Reason.CORRUPT_VALUE,
+          "archive dynamic property " + key + " has invalid length " + value.length);
+    }
+    return ByteArray.toLong(value);
+  }
+
+  private static ArchiveReadResult<byte[]> requirePresent(ArchiveStateReader reader, String key)
+      throws ArchiveReaderException {
+    byte[] canonicalKey = key.getBytes(StandardCharsets.US_ASCII);
+    ArchiveReadResult<byte[]> r = reader.getDynamicProperty(canonicalKey);
+    if (r.isPresent()) {
+      return r;
+    }
+    if (r.getStatus() == Status.TOMBSTONE) {
+      throw new ArchiveReaderException(ArchiveReaderException.Reason.CORRUPT_VALUE,
+          "archive dynamic property " + key + " is tombstoned");
+    }
+    throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
+        "archive dynamic property " + key + " is missing from genesis archive");
+  }
+
+  private static long resolve(ArchiveStateReader reader, String key, boolean genesisComplete,
+      long inMemoryDefault) throws ArchiveReaderException {
+    byte[] canonicalKey = key.getBytes(StandardCharsets.US_ASCII);
+    ArchiveReadResult<byte[]> r = reader.getDynamicProperty(canonicalKey);
+    if (r.isPresent()) {
+      // Stored as ByteArray.fromLong (8 bytes), same encoding the live getter decodes.
+      byte[] value = r.getValue();
+      if (value.length != Long.BYTES) {
+        throw new ArchiveReaderException(ArchiveReaderException.Reason.CORRUPT_VALUE,
+            "archive dynamic property " + key + " has invalid length " + value.length);
+      }
+      return ByteArray.toLong(value);
+    }
+    if (r.getStatus() == Status.TOMBSTONE) {
+      // A tombstone prev-value is a POSITIVE "this key was unset as of the queried block" (Erigon
+      // created-key: the first write records prevValue = absent -> tombstone). Unset == the code
+      // default -- exactly how resolveForkStats treats a tombstone. This is stronger than MISSING
+      // (unknown), so it holds even before mid-chain coverage; do NOT throw here.
+      return inMemoryDefault;
+    }
+    // MISSING: no captured change as of this block.
+    if (genesisComplete) {
+      return inMemoryDefault;
+    }
+    throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
+        "archive dynamic property " + key + " is unknown before mid-chain coverage");
+  }
+
+  private static long resolveArchived(ArchiveStateReader reader, String key)
+      throws ArchiveReaderException {
+    // Default tombstone value 0: for the flags on the plain path this is either dead (the key is
+    // genesis-seeded, so it surfaces as MISSING not tombstone) or exact (its live getter hard-codes
+    // .orElse(0L)). Config-defaulted flags whose default can be non-zero pass an explicit default.
+    return resolveArchived(reader, key, 0L);
+  }
+
+  private static long resolveArchived(ArchiveStateReader reader, String key, long tombstoneDefault)
+      throws ArchiveReaderException {
+    byte[] canonicalKey = key.getBytes(StandardCharsets.US_ASCII);
+    ArchiveReadResult<byte[]> r = reader.getDynamicProperty(canonicalKey);
+    if (r.isPresent()) {
+      byte[] value = r.getValue();
+      if (value.length != Long.BYTES) {
+        throw new ArchiveReaderException(ArchiveReaderException.Reason.CORRUPT_VALUE,
+            "archive dynamic property " + key + " has invalid length " + value.length);
+      }
+      return ByteArray.toLong(value);
+    }
+    if (r.getStatus() == Status.TOMBSTONE) {
+      // Tombstone positively proves the key was unset as of this block (its first write is later,
+      // in-window). Its value is then the flag's own default -- exactly what the live getter's
+      // .orElse(...) returns for an absent key. That default is 0 for a fork gate on the plain
+      // path, but a config-defaulted flag (e.g. ALLOW_TVM_SHANGHAI on a custom net) can default to
+      // a non-zero value, so the caller passes it in. Resolving to that default (instead of failing
+      // closed) keeps historical eth_call/trace working for every pre-activation block of an
+      // in-window upgrade; MISSING (below) stays strict because genesis coverage cannot be proven.
+      return tombstoneDefault;
+    }
+    throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
+        "archive dynamic property " + key + " is missing from archived history");
+  }
+
+  private static long resolveArchivedConfigDefault(ArchiveStateReader reader, String key)
+      throws ArchiveReaderException {
+    byte[] canonicalKey = key.getBytes(StandardCharsets.US_ASCII);
+    ArchiveReadResult<byte[]> result = reader.getDynamicProperty(canonicalKey);
+    if (result.isPresent()) {
+      byte[] value = result.getValue();
+      if (value.length != Long.BYTES) {
+        throw new ArchiveReaderException(ArchiveReaderException.Reason.CORRUPT_VALUE,
+            "archive dynamic property " + key + " has invalid length " + value.length);
+      }
+      return ByteArray.toLong(value);
+    }
+    // PRESENT is required even for a tombstone: an absent-key default supplied by node config is
+    // not part of historical state, so consulting the current process would silently replay the
+    // target block under potentially different VM rules.
+    throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
+        "archive dynamic property " + key
+            + " has no archived value for its network-configured default");
+  }
+
+  private static Map<Integer, byte[]> resolveForkStats(ArchiveStateReader reader,
+      boolean genesisComplete, ForkBlockVersionEnum... versions) throws ArchiveReaderException {
+    Map<Integer, byte[]> statsByVersion = new HashMap<>();
+    for (ForkBlockVersionEnum version : versions) {
+      int value = version.getValue();
+      String key = "FORK_VERSION_" + value;
+      ArchiveReadResult<byte[]> r =
+          reader.getDynamicProperty(key.getBytes(StandardCharsets.US_ASCII));
+      if (r.isPresent()) {
+        statsByVersion.put(value, r.getValue().clone());
+        continue;
+      }
+      if (r.getStatus() == Status.TOMBSTONE) {
+        continue;
+      }
+      if (!genesisComplete) {
+        throw new ArchiveReaderException(ArchiveReaderException.Reason.HISTORY_UNAVAILABLE,
+            "archive dynamic property " + key + " is unknown before mid-chain coverage");
+      }
+    }
+    return statsByVersion;
+  }
+
+  @Override
+  public long getLatestBlockHeaderNumber() {
+    return latestBlockHeaderNumber;
+  }
+
+  @Override
+  public long getLatestBlockHeaderTimestamp() {
+    return latestBlockHeaderTimestamp;
+  }
+
+  @Override
+  public long getEnergyFee() {
+    return energyFee;
+  }
+
+  @Override
+  public long getMaintenanceTimeInterval() {
+    return maintenanceTimeInterval;
+  }
+
+  @Override
+  public byte[] statsByVersion(int version) {
+    byte[] stats = forkStatsByVersion.get(version);
+    return stats == null ? null : stats.clone();
+  }
+
+  @Override
+  public long getCurrentCycleNumber() {
+    return currentCycleNumber;
+  }
+
+  @Override
+  public long getTotalNetLimit() {
+    return totalNetLimit;
+  }
+
+  @Override
+  public long getTotalNetWeight() {
+    return totalNetWeight;
+  }
+
+  @Override
+  public long getTotalEnergyCurrentLimit() {
+    return totalEnergyCurrentLimit;
+  }
+
+  @Override
+  public long getTotalEnergyWeight() {
+    return totalEnergyWeight;
+  }
+
+  @Override
+  public long getTotalTronPowerWeight() {
+    return totalTronPowerWeight;
+  }
+
+  @Override
+  public boolean supportVM() {
+    return allowCreationOfContracts == 1L;
+  }
+
+  @Override
+  public long getMaxFeeLimit() {
+    return maxFeeLimit;
+  }
+
+  @Override
+  public long getMaxCpuTimeOfOneTx() {
+    return maxCpuTimeOfOneTx;
+  }
+
+  @Override
+  public long getAllowTvmTransferTrc10() {
+    return allowTvmTransferTrc10;
+  }
+
+  @Override
+  public long getAllowTvmConstantinople() {
+    return allowTvmConstantinople;
+  }
+
+  @Override
+  public long getAllowTvmSolidity059() {
+    return allowTvmSolidity059;
+  }
+
+  @Override
+  public long getAllowTvmIstanbul() {
+    return allowTvmIstanbul;
+  }
+
+  @Override
+  public long getAllowTvmFreeze() {
+    return allowTvmFreeze;
+  }
+
+  @Override
+  public long getAllowTvmVote() {
+    return allowTvmVote;
+  }
+
+  @Override
+  public long getAllowTvmLondon() {
+    return allowTvmLondon;
+  }
+
+  @Override
+  public long getAllowTvmShangHai() {
+    return allowTvmShangHai;
+  }
+
+  @Override
+  public long getAllowTvmCancun() {
+    return allowTvmCancun;
+  }
+
+  @Override
+  public long getAllowTvmBlob() {
+    return allowTvmBlob;
+  }
+
+  @Override
+  public long getAllowTvmOsaka() {
+    return allowTvmOsaka;
+  }
+
+  @Override
+  public long getAllowTvmSelfdestructRestriction() {
+    return allowTvmSelfdestructRestriction;
+  }
+
+  @Override
+  public long getAllowTvmCompatibleEvm() {
+    return allowTvmCompatibleEvm;
+  }
+
+  @Override
+  public long getAllowOptimizedReturnValueOfChainId() {
+    return allowOptimizedReturnValueOfChainId;
+  }
+
+  @Override
+  public boolean supportUnfreezeDelay() {
+    // allowTvmFreezeV2 = unfreezeDelayDays > 0; gates FREEZEBALANCEV2 / DELEGATERESOURCE opcodes.
+    return unfreezeDelayDays > 0;
+  }
+
+  @Override
+  public long getUnfreezeDelayDays() {
+    return unfreezeDelayDays;
+  }
+
+  @Override
+  public long getAllowNewResourceModel() {
+    return allowNewResourceModel;
+  }
+
+  @Override
+  public boolean supportAllowNewResourceModel() {
+    return allowNewResourceModel == 1L;
+  }
+
+  @Override
+  public boolean supportAllowCancelAllUnfreezeV2() {
+    return allowCancelAllUnfreezeV2 == 1L;
+  }
+
+  @Override
+  public long getAllowNewReward() {
+    return allowNewReward;
+  }
+
+  @Override
+  public long getAllowShieldedTRC20Transaction() {
+    return allowShieldedTRC20Transaction;
+  }
+
+  @Override
+  public long getAllowMultiSign() {
+    return allowMultiSign;
+  }
+
+  @Override
+  public long getAllowHigherLimitForMaxCpuTimeOfOneTx() {
+    return allowHigherLimitForMaxCpuTimeOfOneTx;
+  }
+
+  @Override
+  public long getAllowDynamicEnergy() {
+    return allowDynamicEnergy;
+  }
+
+  @Override
+  public long getDynamicEnergyThreshold() {
+    return dynamicEnergyThreshold;
+  }
+
+  @Override
+  public long getDynamicEnergyIncreaseFactor() {
+    return dynamicEnergyIncreaseFactor;
+  }
+
+  @Override
+  public long getDynamicEnergyMaxFactor() {
+    return dynamicEnergyMaxFactor;
+  }
+
+  @Override
+  public long getAllowEnergyAdjustment() {
+    return allowEnergyAdjustment;
+  }
+
+  @Override
+  public long getAllowStrictMath() {
+    return allowStrictMath;
+  }
+
+  @Override
+  public long getConsensusLogicOptimization() {
+    return consensusLogicOptimization;
+  }
+
+  @Override
+  public long getAllowHardenResourceCalculation() {
+    return allowHardenResourceCalculation;
+  }
+}

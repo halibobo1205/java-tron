@@ -1,0 +1,250 @@
+package org.tron.core.vm.config;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+
+import java.util.Arrays;
+import org.junit.Test;
+import org.tron.core.config.Parameter.ForkBlockVersionEnum;
+import org.tron.core.store.VmDynamicProperties;
+
+/**
+ * Proves {@link ConfigLoader#load(VmDynamicProperties)} drives every VMConfig flag from the
+ * supplied dynamic-properties view (not a hard-coded latest store). This is what lets a historical
+ * archive call load the protocol parameters in effect at the target block; the latest path is
+ * unchanged because {@code load(StoreFactory)} now delegates here with the live store.
+ */
+public class ConfigLoaderVmPropertiesTest {
+
+  private static final long MAINTENANCE_INTERVAL = 6 * 60 * 60 * 1000L;
+
+  /** A VmDynamicProperties whose every long getter returns {@code v}, boolean getter {@code b}. */
+  private static final class StubProps implements VmDynamicProperties {
+    private final long v;
+    private final boolean b;
+
+    StubProps(long v, boolean b) {
+      this.v = v;
+      this.b = b;
+    }
+
+    public long getLatestBlockHeaderNumber() {
+      return v == 0L ? -1L : v;
+    }
+
+    public long getLatestBlockHeaderTimestamp() {
+      if (v == 0L) {
+        return 0L;
+      }
+      return hardForkTime(ForkBlockVersionEnum.VERSION_4_8_1_1) + 1;
+    }
+
+    public long getMaintenanceTimeInterval() {
+      return MAINTENANCE_INTERVAL;
+    }
+
+    public byte[] statsByVersion(int version) {
+      byte[] stats = new byte[27];
+      if (v != 0L) {
+        Arrays.fill(stats, (byte) 1);
+      }
+      return stats;
+    }
+
+    public long getCurrentCycleNumber() {
+      return v;
+    }
+
+    public long getTotalNetLimit() {
+      return v;
+    }
+
+    public long getTotalNetWeight() {
+      return v;
+    }
+
+    public long getTotalEnergyCurrentLimit() {
+      return v;
+    }
+
+    public long getTotalEnergyWeight() {
+      return v;
+    }
+
+    public long getTotalTronPowerWeight() {
+      return v;
+    }
+
+    public boolean supportVM() {
+      return b;
+    }
+
+    public boolean supportUnfreezeDelay() {
+      return b;
+    }
+
+    public long getUnfreezeDelayDays() {
+      return v;
+    }
+
+    public long getAllowNewResourceModel() {
+      return v;
+    }
+
+    public boolean supportAllowNewResourceModel() {
+      return b;
+    }
+
+    public long getEnergyFee() {
+      return v;
+    }
+
+    public long getMaxFeeLimit() {
+      return v;
+    }
+
+    public long getMaxCpuTimeOfOneTx() {
+      return v;
+    }
+
+    public long getAllowMultiSign() {
+      return v;
+    }
+
+    public long getAllowTvmTransferTrc10() {
+      return v;
+    }
+
+    public long getAllowTvmConstantinople() {
+      return v;
+    }
+
+    public long getAllowTvmSolidity059() {
+      return v;
+    }
+
+    public long getAllowShieldedTRC20Transaction() {
+      return v;
+    }
+
+    public long getAllowTvmIstanbul() {
+      return v;
+    }
+
+    public long getAllowTvmFreeze() {
+      return v;
+    }
+
+    public long getAllowTvmVote() {
+      return v;
+    }
+
+    public long getAllowTvmLondon() {
+      return v;
+    }
+
+    public long getAllowTvmCompatibleEvm() {
+      return v;
+    }
+
+    public long getAllowHigherLimitForMaxCpuTimeOfOneTx() {
+      return v;
+    }
+
+    public long getAllowOptimizedReturnValueOfChainId() {
+      return v;
+    }
+
+    public long getAllowDynamicEnergy() {
+      return v;
+    }
+
+    public long getDynamicEnergyThreshold() {
+      return v;
+    }
+
+    public long getDynamicEnergyIncreaseFactor() {
+      return v;
+    }
+
+    public long getDynamicEnergyMaxFactor() {
+      return v;
+    }
+
+    public long getAllowTvmShangHai() {
+      return v;
+    }
+
+    public long getAllowEnergyAdjustment() {
+      return v;
+    }
+
+    public long getAllowStrictMath() {
+      return v;
+    }
+
+    public long getAllowTvmCancun() {
+      return v;
+    }
+
+    public long getConsensusLogicOptimization() {
+      return v;
+    }
+
+    public long getAllowTvmBlob() {
+      return v;
+    }
+
+    public long getAllowTvmSelfdestructRestriction() {
+      return v;
+    }
+
+    public long getAllowTvmOsaka() {
+      return v;
+    }
+
+    public long getAllowHardenResourceCalculation() {
+      return v;
+    }
+  }
+
+  @Test
+  public void loadFromVmPropertiesDrivesEachFlagBothWays() {
+    boolean prevDisable = ConfigLoader.disable;
+    ConfigLoader.disable = false;
+    try {
+      // Active view: every flag turns on, the numeric threshold takes the supplied value.
+      // isolate=false installs the global snapshot, which the VMConfig getters read by default.
+      ConfigLoader.load(new StubProps(1L, true), false);
+      assertTrue(VMConfig.allowTvmLondon());
+      assertTrue(VMConfig.allowTvmCancun());
+      assertTrue(VMConfig.allowStrictMath());
+      assertTrue(VMConfig.allowTvmTransferTrc10());
+      assertTrue(VMConfig.allowTvmFreezeV2()); // from supportUnfreezeDelay()
+      assertTrue(VMConfig.getEnergyLimitHardFork());
+      assertTrue(VMConfig.passFork471());
+      assertTrue(VMConfig.passFork4811());
+      assertEquals(1L, VMConfig.getDynamicEnergyThreshold());
+
+      // Inactive view: the same flags turn off, proving the load is data-driven, not constant.
+      ConfigLoader.load(new StubProps(0L, false), false);
+      assertFalse(VMConfig.allowTvmLondon());
+      assertFalse(VMConfig.allowTvmCancun());
+      assertFalse(VMConfig.allowStrictMath());
+      assertFalse(VMConfig.allowTvmTransferTrc10());
+      assertFalse(VMConfig.allowTvmFreezeV2());
+      assertFalse(VMConfig.getEnergyLimitHardFork());
+      assertFalse(VMConfig.passFork471());
+      assertFalse(VMConfig.passFork4811());
+      assertEquals(0L, VMConfig.getDynamicEnergyThreshold());
+    } finally {
+      ConfigLoader.disable = prevDisable;
+    }
+  }
+
+  private static long hardForkTime(ForkBlockVersionEnum version) {
+    return ((version.getHardForkTime() - 1) / MAINTENANCE_INTERVAL + 1)
+        * MAINTENANCE_INTERVAL;
+  }
+}

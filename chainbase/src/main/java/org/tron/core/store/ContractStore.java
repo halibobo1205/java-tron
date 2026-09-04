@@ -6,6 +6,7 @@ import org.apache.commons.lang3.ArrayUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.capsule.AbiCapsule;
 import org.tron.core.capsule.ContractCapsule;
 import org.tron.core.db.TronStoreWithRevoking;
@@ -36,7 +37,16 @@ public class ContractStore extends TronStoreWithRevoking<ContractCapsule> {
     if (item.getInstance().hasAbi()) {
       item = new ContractCapsule(item.getInstance().toBuilder().clearAbi().build());
     }
-    revokingDB.put(key, item.getData());
+    byte[] value = item.getData();
+    // L4 archive: contract is STORE_SPECIFIC (abi already cleared); bypasses the base put hook.
+    // Read the pre-put value (Erigon prev-value) only when archived; default path is a plain put.
+    String dbName = getDbName();
+    boolean capture = ArchiveCaptureHolder.capturesStore(dbName);
+    ArchivePreviousValue previous = capture ? readArchivePreviousValue(dbName, key) : null;
+    revokingDB.put(key, value);
+    if (capture && previous.isAvailable()) {
+      ArchiveCaptureHolder.capturePut(dbName, key, previous.getValue(), value);
+    }
   }
 
   /**

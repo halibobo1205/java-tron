@@ -46,6 +46,9 @@ public class VMConfig {
     public boolean allowTvmSelfdestructRestriction;
     public boolean allowTvmOsaka;
     public boolean allowHardenResourceCalculation;
+    public boolean energyLimitHardFork;
+    public boolean passFork471;
+    public boolean passFork4811;
   }
 
   // HEAD / block-processing config, written by the consensus path; read by everyone with no
@@ -54,6 +57,7 @@ public class VMConfig {
 
   // Per-thread override used only by constant calls bound to a non-HEAD (solidity/PBFT) snapshot.
   private static final ThreadLocal<Snapshot> localSnapshot = new ThreadLocal<>();
+  private static final ThreadLocal<LocalSnapshotScope> localSnapshotScope = new ThreadLocal<>();
 
   private static Snapshot current() {
     Snapshot local = localSnapshot.get();
@@ -82,6 +86,74 @@ public class VMConfig {
     localSnapshot.remove();
   }
 
+  /**
+   * Preserves the caller's local VM view while a nested constant call installs its own snapshot.
+   * Scopes are owner-thread and LIFO bound so a failed or out-of-order cleanup cannot erase an
+   * outer execution's configuration.
+   */
+  public static LocalSnapshotScope preserveLocalSnapshot() {
+    Snapshot previousSnapshot = localSnapshot.get();
+    LocalSnapshotScope previousScope = localSnapshotScope.get();
+    LocalSnapshotScope scope = new LocalSnapshotScope(
+        previousSnapshot, previousScope, Thread.currentThread());
+    try {
+      localSnapshotScope.set(scope);
+      return scope;
+    } catch (RuntimeException | Error failure) {
+      try {
+        if (previousScope == null) {
+          localSnapshotScope.remove();
+        } else {
+          localSnapshotScope.set(previousScope);
+        }
+      } catch (RuntimeException | Error restoreFailure) {
+        if (failure != restoreFailure) {
+          failure.addSuppressed(restoreFailure);
+        }
+      }
+      throw failure;
+    }
+  }
+
+  public static final class LocalSnapshotScope implements AutoCloseable {
+
+    private final Snapshot previousSnapshot;
+    private final LocalSnapshotScope previousScope;
+    private final Thread owner;
+    private boolean closed;
+
+    private LocalSnapshotScope(Snapshot previousSnapshot,
+        LocalSnapshotScope previousScope, Thread owner) {
+      this.previousSnapshot = previousSnapshot;
+      this.previousScope = previousScope;
+      this.owner = owner;
+    }
+
+    @Override
+    public void close() {
+      if (Thread.currentThread() != owner) {
+        throw new IllegalStateException("local VM config scope closed by a non-owner thread");
+      }
+      if (closed) {
+        return;
+      }
+      if (localSnapshotScope.get() != this) {
+        throw new IllegalStateException("local VM config scopes closed out of order");
+      }
+      if (previousSnapshot == null) {
+        localSnapshot.remove();
+      } else {
+        localSnapshot.set(previousSnapshot);
+      }
+      if (previousScope == null) {
+        localSnapshotScope.remove();
+      } else {
+        localSnapshotScope.set(previousScope);
+      }
+      closed = true;
+    }
+  }
+
   private VMConfig() {
   }
 
@@ -95,6 +167,7 @@ public class VMConfig {
 
   public static void initVmHardFork(boolean pass) {
     CommonParameter.ENERGY_LIMIT_HARD_FORK = pass;
+    globalSnapshot.energyLimitHardFork = pass;
   }
 
   // The init* setters below mutate the global (HEAD) config in place. They are kept for tests and
@@ -204,8 +277,16 @@ public class VMConfig {
     globalSnapshot.allowHardenResourceCalculation = allow == 1;
   }
 
+  public static void initPassFork471(boolean pass) {
+    globalSnapshot.passFork471 = pass;
+  }
+
+  public static void initPassFork4811(boolean pass) {
+    globalSnapshot.passFork4811 = pass;
+  }
+
   public static boolean getEnergyLimitHardFork() {
-    return CommonParameter.ENERGY_LIMIT_HARD_FORK;
+    return current().energyLimitHardFork;
   }
 
   public static boolean allowTvmTransferTrc10() {
@@ -310,5 +391,13 @@ public class VMConfig {
 
   public static boolean allowHardenResourceCalculation() {
     return current().allowHardenResourceCalculation;
+  }
+
+  public static boolean passFork471() {
+    return current().passFork471;
+  }
+
+  public static boolean passFork4811() {
+    return current().passFork4811;
   }
 }

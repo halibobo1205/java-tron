@@ -44,8 +44,9 @@ import org.tron.common.utils.Utils;
 import org.tron.common.utils.WalletUtil;
 import org.tron.core.ChainBaseManager;
 import org.tron.core.Constant;
+import org.tron.core.archive.query.QueryContext;
+import org.tron.core.archive.query.QueryContextHolder;
 import org.tron.core.capsule.AccountCapsule;
-import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.ContractCapsule;
 import org.tron.core.capsule.ContractStateCapsule;
 import org.tron.core.capsule.DelegatedResourceCapsule;
@@ -95,6 +96,8 @@ import org.tron.core.vm.repository.Key;
 import org.tron.core.vm.repository.Repository;
 import org.tron.core.vm.trace.ProgramTrace;
 import org.tron.core.vm.trace.ProgramTraceListener;
+import org.tron.core.vm.trace.VmCallTraceCollector;
+import org.tron.core.vm.trace.VmStructuredTraceListener;
 import org.tron.core.vm.utils.MUtil;
 import org.tron.core.vm.utils.VoteRewardUtil;
 import org.tron.protos.Protocol;
@@ -114,6 +117,7 @@ public class Program {
   private static final String INVALID_TOKEN_ID_MSG = "not valid token id";
   private static final String REFUND_ENERGY_FROM_MESSAGE_CALL = "refund energy from message call";
   private static final String CALL_PRE_COMPILED = "call pre-compiled";
+  private static final long INTERNAL_TOKEN_ENTRY_OVERHEAD_BYTES = 192L;
   private static final int lruCacheSize = CommonParameter.getInstance().getSafeLruCacheSize();
   private static final LRUMap<Key, ProgramPrecompile> programPrecompileLRUMap
       = new LRUMap<>(lruCacheSize);
@@ -123,6 +127,9 @@ public class Program {
   private ProgramInvoke invoke;
   private ProgramOutListener listener;
   private ProgramTraceListener traceListener;
+  private boolean vmTraceEnabled;
+  private VmStructuredTraceListener structuredTraceListener;
+  private VmCallTraceCollector callTraceCollector;
   private ProgramStorageChangeListener storageDiffListener = new ProgramStorageChangeListener();
   private CompositeProgramListener programListener = new CompositeProgramListener();
   private Stack stack;
@@ -130,7 +137,7 @@ public class Program {
   private ContractState contractState;
   private byte[] returnDataBuffer;
   private ProgramResult result = new ProgramResult();
-  private ProgramTrace trace = new ProgramTrace();
+  private final ProgramTrace trace;
   private byte[] ops;
   private byte[] codeAddress;
   private int pc;
@@ -154,11 +161,12 @@ public class Program {
     this.ops = nullToEmpty(ops);
     this.codeAddress = codeAddress;
 
-    traceListener = new ProgramTraceListener(VMConfig.vmTrace());
+    vmTraceEnabled = VMConfig.vmTrace() && QueryContextHolder.current() == null;
+    traceListener = new ProgramTraceListener(vmTraceEnabled);
     this.memory = setupProgramListener(new Memory());
     this.stack = setupProgramListener(new Stack());
     this.contractState = setupProgramListener(new ContractState(programInvoke));
-    this.trace = new ProgramTrace(programInvoke);
+    this.trace = new ProgramTrace(programInvoke, vmTraceEnabled);
     this.nonce = internalTransaction.getNonce();
   }
 
@@ -206,7 +214,7 @@ public class Program {
   }
 
   public ProgramPrecompile getProgramPrecompile() {
-    if (isConstantCall()) {
+    if (usesIsolatedExecutionHelpers()) {
       if (programPrecompile == null) {
         programPrecompile = ProgramPrecompile.compile(ops);
       }
@@ -222,6 +230,15 @@ public class Program {
       }
     }
     return programPrecompile;
+  }
+
+  /**
+   * Request-local VM executions must not mutate singleton helpers shared by canonical execution.
+   * Historical transaction replay remains non-constant; only its mutable helper objects are
+   * isolated.
+   */
+  public boolean usesIsolatedExecutionHelpers() {
+    return isConstantCall() || getContractState().isHistoricalArchive();
   }
 
   public int getCallDeep() {
@@ -434,6 +451,10 @@ public class Program {
     return memory.read(offset, size);
   }
 
+  private byte[] memoryPeek(int offset, int size) {
+    return memory.peek(offset, size);
+  }
+
   public void memoryCopy(int dst, int src, int size) {
     memory.copy(dst, src, size);
   }
@@ -467,8 +488,12 @@ public class Program {
 
     increaseNonce();
 
+    Map<String, Long> tokenBalances = getContractState().isHistoricalArchive()
+        ? getContractState().getTokenBalances(owner)
+        : getContractState().getAccount(owner).getAssetMapV2();
+    reserveInternalTokenSnapshot(tokenBalances);
     InternalTransaction internalTx = addInternalTx(null, owner, obtainer, balance, null,
-        "suicide", nonce, getContractState().getAccount(owner).getAssetMapV2());
+        "suicide", nonce, tokenBalances);
 
     int ADDRESS_SIZE = VMUtils.getAddressSize();
     if (FastByteComparisons.compareTo(owner, 0, ADDRESS_SIZE, obtainer, 0, ADDRESS_SIZE) == 0) {
@@ -477,14 +502,14 @@ public class Program {
       byte[] blackHoleAddress = getContractState().getBlackHoleAddress();
       if (VMConfig.allowTvmTransferTrc10()) {
         getContractState().addBalance(blackHoleAddress, balance);
-        MUtil.transferAllToken(getContractState(), owner, blackHoleAddress);
+        MUtil.transferAllToken(getContractState(), owner, blackHoleAddress, tokenBalances);
       }
     } else {
       createAccountIfNotExist(getContractState(), obtainer);
       try {
         MUtil.transfer(getContractState(), owner, obtainer, balance);
         if (VMConfig.allowTvmTransferTrc10()) {
-          MUtil.transferAllToken(getContractState(), owner, obtainer);
+          MUtil.transferAllToken(getContractState(), owner, obtainer, tokenBalances);
         }
       } catch (ContractValidateException e) {
         if (VMConfig.allowTvmConstantinople()) {
@@ -513,6 +538,7 @@ public class Program {
       }
     }
     getResult().addDeleteAccount(this.getContractAddress());
+    recordSelfDestructTrace(owner, obtainer, balance);
   }
 
   public void suicide2(DataWord obtainerAddress) {
@@ -536,10 +562,15 @@ public class Program {
 
     increaseNonce();
 
+    Map<String, Long> tokenBalances = getContractState().isHistoricalArchive()
+        ? getContractState().getTokenBalances(owner)
+        : getContractState().getAccount(owner).getAssetMapV2();
+    reserveInternalTokenSnapshot(tokenBalances);
     InternalTransaction internalTx = addInternalTx(null, owner, obtainer, balance, null,
-        "suicide", nonce, getContractState().getAccount(owner).getAssetMapV2());
+        "suicide", nonce, tokenBalances);
 
     if (FastByteComparisons.isEqual(owner, obtainer)) {
+      recordSelfDestructTrace(owner, obtainer, balance);
       return;
     }
 
@@ -556,7 +587,7 @@ public class Program {
     try {
       MUtil.transfer(getContractState(), owner, obtainer, balance);
       if (VMConfig.allowTvmTransferTrc10()) {
-        MUtil.transferAllToken(getContractState(), owner, obtainer);
+        MUtil.transferAllToken(getContractState(), owner, obtainer, tokenBalances);
       }
     } catch (ContractValidateException e) {
       if (VMConfig.allowTvmConstantinople()) {
@@ -579,6 +610,35 @@ public class Program {
         internalTx.setValue(internalTx.getValue() + expireUnfrozenBalance);
       }
     }
+    recordSelfDestructTrace(owner, obtainer, balance);
+  }
+
+  private void recordSelfDestructTrace(byte[] owner, byte[] beneficiary, long balance) {
+    if (callTraceCollector == null) {
+      return;
+    }
+    try (VmCallTraceCollector.TraceScope traceScope = callTraceCollector.enter(
+        Op.SUICIDE, owner, beneficiary, EMPTY_BYTE_ARRAY, 0L,
+        BigInteger.valueOf(balance), false)) {
+      traceScope.complete(EMPTY_BYTE_ARRAY, 0L, false, null);
+    }
+  }
+
+  private void reserveInternalTokenSnapshot(Map<String, Long> tokenBalances) {
+    if (!getContractState().isHistoricalArchive()
+        || tokenBalances == null || tokenBalances.isEmpty()) {
+      return;
+    }
+    QueryContext queryContext = QueryContextHolder.current();
+    if (queryContext == null) {
+      return;
+    }
+    long retainedBytes = 0L;
+    for (String tokenId : tokenBalances.keySet()) {
+      retainedBytes += INTERNAL_TOKEN_ENTRY_OVERHEAD_BYTES
+          + (tokenId == null ? 0L : tokenId.length() * 2L);
+    }
+    queryContext.recordVmOverlayBytes(retainedBytes);
   }
 
   public Repository getContractState() {
@@ -641,26 +701,31 @@ public class Program {
             });
 
     // merge usage
-    BandwidthProcessor bandwidthProcessor = new BandwidthProcessor(ChainBaseManager.getInstance());
-    bandwidthProcessor.updateUsageForDelegated(ownerCapsule);
-    ownerCapsule.setLatestConsumeTime(now);
-    if (ownerCapsule.getNetUsage() > 0) {
-      bandwidthProcessor.unDelegateIncrease(inheritorCapsule, ownerCapsule,
-          ownerCapsule.getNetUsage(), BANDWIDTH, now);
-    }
+    if (repo.isHistoricalArchive()) {
+      repo.transferFrozenV2UsageForSelfDestruct(ownerCapsule, inheritorCapsule, now);
+    } else {
+      BandwidthProcessor bandwidthProcessor =
+          new BandwidthProcessor(ChainBaseManager.getInstance());
+      bandwidthProcessor.updateUsageForDelegated(ownerCapsule);
+      ownerCapsule.setLatestConsumeTime(now);
+      if (ownerCapsule.getNetUsage() > 0) {
+        bandwidthProcessor.unDelegateIncrease(inheritorCapsule, ownerCapsule,
+            ownerCapsule.getNetUsage(), BANDWIDTH, now);
+      }
 
-    EnergyProcessor energyProcessor =
-        new EnergyProcessor(
-            repo.getDynamicPropertiesStore(), ChainBaseManager.getInstance().getAccountStore());
-    energyProcessor.updateUsage(ownerCapsule);
-    ownerCapsule.setLatestConsumeTimeForEnergy(now);
-    if (ownerCapsule.getEnergyUsage() > 0) {
-      energyProcessor.unDelegateIncrease(inheritorCapsule, ownerCapsule,
-          ownerCapsule.getEnergyUsage(), ENERGY, now);
+      EnergyProcessor energyProcessor =
+          new EnergyProcessor(
+              repo.getDynamicPropertiesStore(), ChainBaseManager.getInstance().getAccountStore());
+      energyProcessor.updateUsage(ownerCapsule);
+      ownerCapsule.setLatestConsumeTimeForEnergy(now);
+      if (ownerCapsule.getEnergyUsage() > 0) {
+        energyProcessor.unDelegateIncrease(inheritorCapsule, ownerCapsule,
+            ownerCapsule.getEnergyUsage(), ENERGY, now);
+      }
     }
 
     // withdraw expire unfrozen balance
-    long nowTimestamp = repo.getDynamicPropertiesStore().getLatestBlockHeaderTimestamp();
+    long nowTimestamp = repo.getVmDynamicProperties().getLatestBlockHeaderTimestamp();
     long expireUnfrozenBalance =
         ownerCapsule.getUnfrozenV2List().stream()
             .filter(
@@ -755,7 +820,7 @@ public class Program {
     }
 
     // check freeze
-    long now = getContractState().getDynamicPropertiesStore().getLatestBlockHeaderTimestamp();
+    long now = getContractState().getVmDynamicProperties().getLatestBlockHeaderTimestamp();
     // bandwidth
     if (accountCapsule.getFrozenCount() > 0
         && accountCapsule.getFrozenList().stream()
@@ -778,7 +843,7 @@ public class Program {
     if (!VMConfig.allowTvmFreezeV2()) {
       return true;
     }
-    long now = getContractState().getDynamicPropertiesStore().getLatestBlockHeaderTimestamp();
+    long now = getContractState().getVmDynamicProperties().getLatestBlockHeaderTimestamp();
 
     boolean isDelegatedResourceEmpty =
         accountCapsule.getDelegatedFrozenV2BalanceForBandwidth() == 0
@@ -796,21 +861,67 @@ public class Program {
   public void createContract(DataWord value, DataWord memStart, DataWord memSize) {
     returnDataBuffer = null; // reset return buffer right before the call
 
-    if (getCallDeep() == MAX_DEPTH) {
+    boolean rejectForDepth = getCallDeep() == MAX_DEPTH;
+    if (rejectForDepth && callTraceCollector == null) {
       stackPushZero();
       return;
     }
     // [1] FETCH THE CODE FROM THE MEMORY
-    byte[] programCode = memoryChunk(memStart.intValue(), memSize.intValue());
+    byte[] programCode = rejectForDepth
+        ? memoryPeek(memStart.intValue(), memSize.intValue())
+        : memoryChunk(memStart.intValue(), memSize.intValue());
 
     byte[] newAddress = TransactionUtil
         .generateContractAddress(rootTransactionId, nonce);
+    if (rejectForDepth) {
+      traceCreateDepthFailure(value, programCode, newAddress, false);
+      stackPushZero();
+      return;
+    }
 
     createContractImpl(value, programCode, newAddress, false);
   }
 
   private void createContractImpl(DataWord value, byte[] programCode, byte[] newAddress,
       boolean isCreate2) {
+    if (callTraceCollector == null) {
+      createContractImplUntraced(value, programCode, newAddress, isCreate2, null);
+      return;
+    }
+    int opCode = isCreate2 ? Op.CREATE2 : Op.CREATE;
+    long energyBefore = getResult().getEnergyUsed();
+    VmCallTraceCollector.TraceScope traceScope = callTraceCollector.enter(
+        opCode, getContextAddress(), newAddress, programCode,
+        getCreateEnergy(getEnergyLimitLeft()).longValueSafe(), value.value(), false);
+    Throwable executionFailure = null;
+    NestedCreateTraceOutcome traceOutcome = new NestedCreateTraceOutcome();
+    byte[] output = EMPTY_BYTE_ARRAY;
+    try {
+      output = createContractImplUntraced(
+          value, programCode, newAddress, isCreate2, traceOutcome);
+    } catch (RuntimeException | Error failure) {
+      executionFailure = failure;
+      throw failure;
+    } finally {
+      completeCallTrace(
+          traceScope, energyBefore, 0L, executionFailure, output, traceOutcome.result,
+          traceOutcome.failureReason);
+    }
+  }
+
+  private void traceCreateDepthFailure(
+      DataWord value, byte[] programCode, byte[] newAddress, boolean isCreate2) {
+    int opCode = isCreate2 ? Op.CREATE2 : Op.CREATE;
+    try (VmCallTraceCollector.TraceScope traceScope = callTraceCollector.enter(
+        opCode, getContextAddress(), newAddress, programCode,
+        getCreateEnergy(getEnergyLimitLeft()).longValueSafe(), value.value(), false)) {
+      traceScope.complete(
+          EMPTY_BYTE_ARRAY, 0L, false, "max call depth exceeded");
+    }
+  }
+
+  private byte[] createContractImplUntraced(DataWord value, byte[] programCode, byte[] newAddress,
+      boolean isCreate2, NestedCreateTraceOutcome traceOutcome) {
     byte[] senderAddress = getContextAddress();
 
     if (logger.isDebugEnabled()) {
@@ -820,8 +931,11 @@ public class Program {
 
     long endowment = value.value().longValueExact();
     if (getContractState().getBalance(senderAddress) < endowment) {
+      if (traceOutcome != null) {
+        traceOutcome.failureReason = "insufficient balance for transfer";
+      }
       stackPushZero();
-      return;
+      return EMPTY_BYTE_ARRAY;
     }
 
     AccountCapsule existingAccount = getContractState().getAccount(newAddress);
@@ -910,6 +1024,8 @@ public class Program {
               .toHexString(newAddress)));
     } else if (isNotEmpty(programCode)) {
       Program program = new Program(programCode, newAddress, programInvoke, internalTx);
+      program.setStructuredTraceListener(structuredTraceListener);
+      program.setCallTraceCollector(callTraceCollector);
       program.setRootTransactionId(this.rootTransactionId);
       if (VMConfig.allowTvmCompatibleEvm()) {
         program.setContractVersion(getContractVersion());
@@ -919,6 +1035,9 @@ public class Program {
       getTrace().merge(program.getTrace());
       // always commit nonce
       this.nonce = program.nonce;
+    }
+    if (traceOutcome != null) {
+      traceOutcome.result = createResult;
     }
 
     // 4. CREATE THE CONTRACT OUT OF RETURN
@@ -960,7 +1079,7 @@ public class Program {
       stackPushZero();
 
       if (createResult.getException() != null) {
-        return;
+        return createResult.getHReturn();
       } else {
         returnDataBuffer = createResult.getHReturn();
       }
@@ -975,6 +1094,7 @@ public class Program {
 
     // 5. REFUND THE REMAIN Energy
     refundEnergyAfterVM(energyLimit, createResult);
+    return code;
   }
 
   public void refundEnergyAfterVM(DataWord energyLimit, ProgramResult result) {
@@ -998,15 +1118,54 @@ public class Program {
    * @param msg is the message call object
    */
   public void callToAddress(MessageCall msg) {
+    if (callTraceCollector == null) {
+      callToAddressUntraced(msg, null, null);
+      return;
+    }
+    boolean rejectForDepth = getCallDeep() == MAX_DEPTH;
+    byte[] input = rejectForDepth
+        ? memoryPeek(msg.getInDataOffs().intValue(), msg.getInDataSize().intValue())
+        : memoryChunk(msg.getInDataOffs().intValue(), msg.getInDataSize().intValue());
+    long energyBefore = getResult().getEnergyUsed();
+    VmCallTraceCollector.TraceScope traceScope = callTraceCollector.enter(
+        msg.getOpCode(), getContextAddress(), msg.getCodeAddress().toTronAddress(), input,
+        msg.getEnergy().longValueSafe(),
+        msg.getOpCode() == Op.DELEGATECALL
+            ? getCallValue().value() : msg.getEndowment().value(),
+        false);
+    Throwable executionFailure = null;
+    ProgramResult callResult = null;
+    NestedCallTraceOutcome traceOutcome = new NestedCallTraceOutcome();
+    try {
+      callResult = callToAddressUntraced(
+          msg, rejectForDepth ? null : input, traceOutcome);
+    } catch (RuntimeException | Error failure) {
+      executionFailure = failure;
+      throw failure;
+    } finally {
+      completeCallTrace(
+          traceScope, energyBefore, msg.getEnergy().longValueSafe(), executionFailure,
+          callResult == null ? getReturnDataBuffer() : callResult.getHReturn(), callResult,
+          traceOutcome.failureReason);
+    }
+  }
+
+  private ProgramResult callToAddressUntraced(
+      MessageCall msg, byte[] tracedInput, NestedCallTraceOutcome traceOutcome) {
     returnDataBuffer = null; // reset return buffer right before the call
 
     if (getCallDeep() == MAX_DEPTH) {
+      if (traceOutcome != null) {
+        traceOutcome.failureReason = "max call depth exceeded";
+      }
       stackPushZero();
       refundEnergy(msg.getEnergy().longValue(), " call deep limit reach");
-      return;
+      return null;
     }
 
-    byte[] data = memoryChunk(msg.getInDataOffs().intValue(), msg.getInDataSize().intValue());
+    byte[] data = tracedInput == null
+        ? memoryChunk(msg.getInDataOffs().intValue(), msg.getInDataSize().intValue())
+        : tracedInput;
 
     // FETCH THE SAVED STORAGE
     byte[] codeAddress = msg.getCodeAddress().toTronAddress();
@@ -1050,18 +1209,24 @@ public class Program {
     if (!isTokenTransfer) {
       long senderBalance = deposit.getBalance(senderAddress);
       if (senderBalance < endowment) {
+        if (traceOutcome != null) {
+          traceOutcome.failureReason = "insufficient balance for transfer";
+        }
         stackPushZero();
         refundEnergy(msg.getEnergy().longValue(), REFUND_ENERGY_FROM_MESSAGE_CALL);
-        return;
+        return null;
       }
     } else {
       // transfer trc10 token validation
       tokenId = String.valueOf(msg.getTokenId().longValue()).getBytes();
       long senderBalance = deposit.getTokenBalance(senderAddress, tokenId);
       if (senderBalance < endowment) {
+        if (traceOutcome != null) {
+          traceOutcome.failureReason = "insufficient token balance for transfer";
+        }
         stackPushZero();
         refundEnergy(msg.getEnergy().longValue(), REFUND_ENERGY_FROM_MESSAGE_CALL);
-        return;
+        return null;
       }
     }
 
@@ -1141,6 +1306,8 @@ public class Program {
         programInvoke.setConstantCall();
       }
       Program program = new Program(programCode, codeAddress, programInvoke, internalTx);
+      program.setStructuredTraceListener(structuredTraceListener);
+      program.setCallTraceCollector(callTraceCollector);
       program.setRootTransactionId(this.rootTransactionId);
       if (VMConfig.allowTvmCompatibleEvm()) {
         program.setContractVersion(invoke.getDeposit()
@@ -1165,7 +1332,7 @@ public class Program {
         stackPushZero();
 
         if (callResult.getException() != null) {
-          return;
+          return callResult;
         }
       } else {
         // 4. THE FLAG OF SUCCESS IS ONE PUSHED INTO THE STACK
@@ -1208,6 +1375,7 @@ public class Program {
     } else {
       refundEnergy(msg.getEnergy().longValue(), "remaining energy from the internal call");
     }
+    return callResult;
   }
 
   public void increaseNonce() {
@@ -1347,10 +1515,10 @@ public class Program {
         && index >= max(256, this.getNumber().longValue(),
         VMConfig.disableJavaLangMath()) - 256) {
 
-      BlockCapsule blockCapsule = contractState.getBlockByNum(index);
+      byte[] blockHash = contractState.getBlockHashByNum(index);
 
-      if (Objects.nonNull(blockCapsule)) {
-        return new DataWord(blockCapsule.getBlockId().getBytes()).clone();
+      if (Objects.nonNull(blockHash)) {
+        return new DataWord(blockHash).clone();
       } else {
         return DataWord.ZERO.clone();
       }
@@ -1389,7 +1557,7 @@ public class Program {
   }
 
   public DataWord getChainId() {
-    byte[] chainId = getContractState().getBlockByNum(0).getBlockId().getBytes();
+    byte[] chainId = getContractState().getBlockHashByNum(0);
     if (VMConfig.allowTvmCompatibleEvm() || VMConfig.allowOptimizedReturnValueOfChainId()) {
       chainId = Arrays.copyOfRange(chainId, chainId.length - 4, chainId.length);
     }
@@ -1607,8 +1775,50 @@ public class Program {
 
   public void saveOpTrace() {
     if (this.pc < ops.length) {
-      trace.addOp(ops[pc], pc, getCallDeep(), getEnergyLimitLeft(), traceListener.resetActions());
+      if (structuredTraceListener != null) {
+        structuredTraceListener.capture(this);
+      } else {
+        trace.addOp(ops[pc], pc, getCallDeep(), getEnergyLimitLeft(),
+            traceListener.resetActions());
+      }
     }
+  }
+
+  public boolean isVmTraceEnabled() {
+    return vmTraceEnabled;
+  }
+
+  public VmStructuredTraceListener getStructuredTraceListener() {
+    return structuredTraceListener;
+  }
+
+  public void setStructuredTraceListener(VmStructuredTraceListener structuredTraceListener) {
+    if (structuredTraceListener == null) {
+      return;
+    }
+    if (VMConfig.vmTrace() && QueryContextHolder.current() == null) {
+      throw new IllegalStateException("structured and global VM trace cannot be enabled together");
+    }
+    this.structuredTraceListener = structuredTraceListener;
+    this.vmTraceEnabled = true;
+  }
+
+  public void setCallTraceCollector(VmCallTraceCollector callTraceCollector) {
+    this.callTraceCollector = callTraceCollector;
+  }
+
+  public long getInitialEnergyLimit() {
+    return invoke.getEnergyLimit();
+  }
+
+  public byte[] getReturnDataBuffer() {
+    return returnDataBuffer == null
+        ? EMPTY_BYTE_ARRAY
+        : Arrays.copyOf(returnDataBuffer, returnDataBuffer.length);
+  }
+
+  public int getReturnDataBufferLength() {
+    return returnDataBuffer == null ? 0 : returnDataBuffer.length;
   }
 
   public ProgramTrace getTrace() {
@@ -1620,24 +1830,33 @@ public class Program {
       returnDataBuffer = null; // reset return buffer right before the call
     }
 
-    byte[] senderAddress;
-    if ((VMConfig.allowTvmCompatibleEvm() || VMConfig.allowTvmOsaka())
-        && getCallDeep() == MAX_DEPTH) {
+    boolean rejectForDepth =
+        (VMConfig.allowTvmCompatibleEvm() || VMConfig.allowTvmOsaka())
+            && getCallDeep() == MAX_DEPTH;
+    if (rejectForDepth && callTraceCollector == null) {
       stackPushZero();
       return;
     }
-    if (getCallDeep() == MAX_DEPTH) {
+    if (!rejectForDepth && getCallDeep() == MAX_DEPTH) {
       MUtil.checkCPUTimeForCreate2();
     }
+    byte[] senderAddress;
     if (VMConfig.allowTvmIstanbul()) {
       senderAddress = getContextAddress();
     } else {
       senderAddress = getCallerAddress().toTronAddress();
     }
-    byte[] programCode = memoryChunk(memStart.intValue(), memSize.intValue());
+    byte[] programCode = rejectForDepth
+        ? memoryPeek(memStart.intValue(), memSize.intValue())
+        : memoryChunk(memStart.intValue(), memSize.intValue());
 
     byte[] contractAddress = WalletUtil
         .generateContractAddress2(senderAddress, salt.getData(), programCode);
+    if (rejectForDepth) {
+      traceCreateDepthFailure(value, programCode, contractAddress, true);
+      stackPushZero();
+      return;
+    }
     createContractImpl(value, programCode, contractAddress, true);
   }
 
@@ -1658,9 +1877,42 @@ public class Program {
 
   public void callToPrecompiledAddress(MessageCall msg,
       PrecompiledContracts.PrecompiledContract contract) {
+    if (callTraceCollector == null) {
+      callToPrecompiledAddressUntraced(msg, contract, null, null);
+      return;
+    }
+    byte[] input = memoryPeek(
+        msg.getInDataOffs().intValue(), msg.getInDataSize().intValue());
+    long energyBefore = getResult().getEnergyUsed();
+    VmCallTraceCollector.TraceScope traceScope = callTraceCollector.enter(
+        msg.getOpCode(), getContextAddress(), msg.getCodeAddress().toTronAddress(), input,
+        msg.getEnergy().longValueSafe(),
+        msg.getOpCode() == Op.DELEGATECALL
+            ? getCallValue().value() : msg.getEndowment().value(),
+        true);
+    Throwable executionFailure = null;
+    NestedCallTraceOutcome traceOutcome = new NestedCallTraceOutcome();
+    try {
+      callToPrecompiledAddressUntraced(msg, contract, input, traceOutcome);
+    } catch (RuntimeException | Error failure) {
+      executionFailure = failure;
+      throw failure;
+    } finally {
+      completeCallTrace(
+          traceScope, energyBefore, msg.getEnergy().longValueSafe(), executionFailure,
+          getReturnDataBuffer(), null, traceOutcome.failureReason);
+    }
+  }
+
+  private void callToPrecompiledAddressUntraced(MessageCall msg,
+      PrecompiledContracts.PrecompiledContract contract, byte[] tracedInput,
+      NestedCallTraceOutcome traceOutcome) {
     returnDataBuffer = null; // reset return buffer right before the call
 
     if (getCallDeep() == MAX_DEPTH) {
+      if (traceOutcome != null) {
+        traceOutcome.failureReason = "max call depth exceeded";
+      }
       stackPushZero();
       this.refundEnergy(msg.getEnergy().longValue(), " call deep limit reach");
       return;
@@ -1691,12 +1943,22 @@ public class Program {
       senderBalance = deposit.getTokenBalance(senderAddress, tokenId);
     }
     if (senderBalance < endowment) {
+      if (traceOutcome != null) {
+        traceOutcome.failureReason = isTokenTransfer
+            ? "insufficient token balance for transfer"
+            : "insufficient balance for transfer";
+      }
       stackPushZero();
       refundEnergy(msg.getEnergy().longValue(), REFUND_ENERGY_FROM_MESSAGE_CALL);
       return;
     }
-    byte[] data = this.memoryChunk(msg.getInDataOffs().intValue(),
-        msg.getInDataSize().intValue());
+    byte[] data;
+    if (tracedInput == null) {
+      data = memoryChunk(msg.getInDataOffs().intValue(), msg.getInDataSize().intValue());
+    } else {
+      memory.extend(msg.getInDataOffs().intValue(), msg.getInDataSize().intValue());
+      data = tracedInput;
+    }
 
     // Charge for endowment - is not reversible by rollback
     if (!ArrayUtils.isEmpty(senderAddress) && !ArrayUtils.isEmpty(contextAddress)
@@ -1722,6 +1984,9 @@ public class Program {
 
     long requiredEnergy = contract.getEnergyForData(data);
     if (requiredEnergy > msg.getEnergy().longValue()) {
+      if (traceOutcome != null) {
+        traceOutcome.failureReason = "out of energy";
+      }
       // Not need to throw an exception, method caller needn't know that
       // regard as consumed the energy
       this.refundEnergy(0, CALL_PRE_COMPILED); //matches cpp logic
@@ -1752,6 +2017,9 @@ public class Program {
         if (Objects.nonNull(this.result.getException())) {
           throw result.getException();
         }
+        if (traceOutcome != null) {
+          traceOutcome.failureReason = "precompile execution failed";
+        }
       }
 
       if (VMConfig.allowTvmSelfdestructRestriction()) {
@@ -1760,6 +2028,92 @@ public class Program {
         this.memorySave(msg.getOutDataOffs().intValue(), out.getRight());
       }
     }
+  }
+
+  private void completeCallTrace(VmCallTraceCollector.TraceScope traceScope,
+      long energyBefore, long prechargedEnergy, Throwable executionFailure, byte[] output,
+      ProgramResult nestedResult, String failureReason) {
+    Throwable traceFailure = null;
+    try {
+      byte[] safeOutput = output == null ? EMPTY_BYTE_ARRAY : output;
+      long energyUsed = prechargedEnergy + getResult().getEnergyUsed() - energyBefore;
+      if (energyUsed < 0L) {
+        energyUsed = 0L;
+      }
+      boolean nestedFailed = nestedResult != null
+          && (nestedResult.getException() != null || nestedResult.isRevert()
+          || nestedResult.getRuntimeError() != null && !nestedResult.getRuntimeError().isEmpty());
+      boolean failed = executionFailure != null || nestedFailed || failureReason != null
+          || nestedResult == null && (stack.isEmpty() || stack.peek().isZero());
+      boolean reverted = executionFailure == null
+          && (nestedResult != null ? nestedResult.isRevert()
+          : failed && safeOutput.length > 0);
+      String error = null;
+      if (executionFailure != null) {
+        error = traceFailureMessage(executionFailure);
+      } else if (nestedResult != null && nestedResult.getException() != null) {
+        error = traceFailureMessage(nestedResult.getException());
+      } else if (nestedResult != null && nestedResult.isRevert()) {
+        error = "execution reverted";
+      } else if (nestedResult != null && nestedResult.getRuntimeError() != null
+          && !nestedResult.getRuntimeError().isEmpty()) {
+        error = nestedResult.getRuntimeError();
+      } else if (failureReason != null) {
+        error = failureReason;
+      } else if (failed) {
+        error = reverted ? "execution reverted" : "execution failed";
+      }
+      traceScope.complete(failed && !reverted ? EMPTY_BYTE_ARRAY : safeOutput,
+          energyUsed, reverted, error);
+    } catch (RuntimeException | Error failure) {
+      traceFailure = failure;
+    }
+    try {
+      traceScope.close();
+    } catch (RuntimeException | Error failure) {
+      if (traceFailure == null) {
+        traceFailure = failure;
+      } else {
+        addSuppressedSafely(traceFailure, failure);
+      }
+    }
+    if (traceFailure != null) {
+      if (executionFailure != null) {
+        addSuppressedSafely(executionFailure, traceFailure);
+      } else if (traceFailure instanceof RuntimeException) {
+        throw (RuntimeException) traceFailure;
+      } else {
+        throw (Error) traceFailure;
+      }
+    }
+  }
+
+  private static String traceFailureMessage(Throwable failure) {
+    String message = failure.getMessage();
+    return message == null || message.isEmpty()
+        ? failure.getClass().getSimpleName() : message;
+  }
+
+  private static void addSuppressedSafely(Throwable primary, Throwable candidate) {
+    if (primary == candidate) {
+      return;
+    }
+    try {
+      primary.addSuppressed(candidate);
+    } catch (Throwable ignored) {
+      // Preserve the execution failure if trace finalization itself cannot be attributed.
+    }
+  }
+
+  private static final class NestedCreateTraceOutcome {
+
+    private ProgramResult result;
+    private String failureReason;
+  }
+
+  private static final class NestedCallTraceOutcome {
+
+    private String failureReason;
   }
 
   public boolean byTestingSuite() {
@@ -1862,6 +2216,10 @@ public class Program {
    */
   public byte[] getMemory() {
     return memory.read(0, memory.size());
+  }
+
+  public int getMemorySize() {
+    return memory.size();
   }
 
   /**
@@ -2363,11 +2721,11 @@ public class Program {
 
     if (contractStateCapsule == null) {
       contractStateCapsule = new ContractStateCapsule(
-          contractState.getDynamicPropertiesStore().getCurrentCycleNumber());
+          contractState.getVmDynamicProperties().getCurrentCycleNumber());
       contractState.updateContractState(getContextAddress(), contractStateCapsule);
     } else {
       if (contractStateCapsule.catchUpToCycle(
-          contractState.getDynamicPropertiesStore().getCurrentCycleNumber(),
+          contractState.getVmDynamicProperties().getCurrentCycleNumber(),
           VMConfig.getDynamicEnergyThreshold(),
           VMConfig.getDynamicEnergyIncreaseFactor(),
           VMConfig.getDynamicEnergyMaxFactor(),

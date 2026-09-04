@@ -840,8 +840,9 @@ public class AccountCapsule implements ProtoCapsule<Account>, Comparable<Account
       return false;
     }
 
+    String assetId = ByteArray.toStr(key);
     this.account = this.account.toBuilder()
-        .putAssetV2(ByteArray.toStr(key), value)
+        .putAssetV2(assetId, value)
         .build();
     return true;
   }

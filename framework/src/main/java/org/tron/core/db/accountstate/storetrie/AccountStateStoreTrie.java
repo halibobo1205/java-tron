@@ -62,6 +62,12 @@ public class AccountStateStoreTrie extends TronStoreWithRevoking<BytesCapsule> i
   }
 
   @Override
+  public BytesCapsule getWithoutCache(byte[] key) {
+    byte[] value = readRootWithoutCache(key);
+    return value == null ? null : new BytesCapsule(value);
+  }
+
+  @Override
   public void put(byte[] key, BytesCapsule item) {
     super.put(key, item);
   }

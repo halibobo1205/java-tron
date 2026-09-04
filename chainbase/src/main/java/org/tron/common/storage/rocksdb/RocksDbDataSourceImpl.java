@@ -31,10 +31,17 @@ import org.rocksdb.Status;
 import org.rocksdb.WriteBatch;
 import org.rocksdb.WriteOptions;
 import org.tron.common.error.TronDBException;
+import org.tron.common.math.StrictMathWrapper;
 import org.tron.common.setting.RocksDbSettings;
 import org.tron.common.storage.WriteOptionsWrapper;
 import org.tron.common.storage.metric.DbStat;
 import org.tron.common.utils.FileUtil;
+import org.tron.core.archive.ArchiveRocksIterators;
+import org.tron.core.archive.ArchiveRocksReadOptions;
+import org.tron.core.archive.query.ArchiveQueryLockSupport;
+import org.tron.core.archive.query.ArchiveQueryLimits;
+import org.tron.core.archive.query.QueryContext;
+import org.tron.core.archive.query.QueryContextHolder;
 import org.tron.core.db.common.DbSourceInter;
 import org.tron.core.db.common.iterator.RockStoreIterator;
 import org.tron.core.db2.common.Instance;
@@ -46,6 +53,8 @@ import org.tron.core.exception.TronError;
 @NoArgsConstructor
 public class RocksDbDataSourceImpl extends DbStat implements DbSourceInter<byte[]>,
     Iterable<Map.Entry<byte[], byte[]>>, Instance<RocksDbDataSourceImpl> {
+
+  private static final int HISTORICAL_READ_PROBE_BYTES = 64 * 1024;
 
   private String dataBaseName;
   private RocksDB database;
@@ -255,6 +264,57 @@ public class RocksDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
     }
   }
 
+  /** Point read for untrusted historical lookups that must not perturb the shared block cache. */
+  public byte[] getDataWithoutCache(byte[] key) {
+    QueryContext queryContext = QueryContextHolder.currentStorageContext();
+    ArchiveQueryLockSupport.lock(
+        resetDbLock.readLock(), queryContext, "canonical RocksDB reset lock");
+    try {
+      throwIfNotAlive();
+      checkArgNotNull(key, "key");
+      try (ReadOptions readOptions = new ReadOptions().setFillCache(false)) {
+        if (queryContext == null) {
+          return database.get(readOptions, key);
+        }
+        ArchiveRocksReadOptions.configureNativeDeadline(
+            readOptions, queryContext.getRemainingNanos());
+        long maxValueBytes = queryContext.getLimits().getMaxBackendValueBytes();
+        long maxRequestBytes = queryContext.getLimits().getMaxBackendReadBytesPerRequest();
+        long probeLimit = HISTORICAL_READ_PROBE_BYTES;
+        if (!ArchiveQueryLimits.isUnlimited(maxValueBytes)) {
+          probeLimit = StrictMathWrapper.min(probeLimit, maxValueBytes);
+        }
+        if (!ArchiveQueryLimits.isUnlimited(maxRequestBytes)) {
+          probeLimit = StrictMathWrapper.min(probeLimit, maxRequestBytes);
+        }
+        int probeBytes = (int) probeLimit;
+        byte[] probe = new byte[probeBytes];
+        int valueBytes = database.get(readOptions, key, probe);
+        queryContext.checkDeadline();
+        if (valueBytes == RocksDB.NOT_FOUND) {
+          return null;
+        }
+        queryContext.validateBackendValueBytes(valueBytes);
+        if (valueBytes <= probe.length) {
+          return Arrays.copyOf(probe, valueBytes);
+        }
+        queryContext.recordBackendRead();
+        byte[] value = new byte[valueBytes];
+        int copiedBytes = database.get(readOptions, key, value);
+        queryContext.checkDeadline();
+        if (copiedBytes != valueBytes) {
+          throw new RuntimeException(dataBaseName + " changed during cacheless historical read");
+        }
+        return value;
+      }
+    } catch (RocksDBException e) {
+      ArchiveRocksIterators.rethrowIfNativeDeadline(e, queryContext);
+      throw new RuntimeException(dataBaseName, e);
+    } finally {
+      resetDbLock.readLock().unlock();
+    }
+  }
+
   @Override
   public void deleteData(byte[] key) {
     resetDbLock.readLock().lock();
@@ -296,6 +356,12 @@ public class RocksDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
   public org.tron.core.db.common.iterator.DBIterator iterator() {
     ReadOptions readOptions = getReadOptions();
     return new RockStoreIterator(getRocksIterator(readOptions), readOptions);
+  }
+
+  @Override
+  public org.tron.core.db.common.iterator.DBIterator rawIterator() {
+    ReadOptions readOptions = new ReadOptions().setFillCache(false);
+    return new RockStoreIterator(getRocksIterator(readOptions), readOptions, true);
   }
 
   private void updateByBatchInner(Map<byte[], byte[]> rows, WriteOptions options)

@@ -1,0 +1,150 @@
+package org.tron.core.services.jsonrpc;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertThrows;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+import com.google.protobuf.ByteString;
+import java.util.ArrayList;
+import java.util.List;
+import org.junit.After;
+import org.junit.Test;
+import org.tron.common.utils.Sha256Hash;
+import org.tron.core.Wallet;
+import org.tron.core.archive.ArchivePhase;
+import org.tron.core.archive.ArchiveSource;
+import org.tron.core.archive.DefaultArchiveService;
+import org.tron.core.archive.capture.ArchiveCaptureHolder;
+import org.tron.core.archive.capture.ArchiveChangeRecord;
+import org.tron.core.archive.codec.DomainValue;
+import org.tron.core.archive.domain.ArchiveDomain;
+import org.tron.core.archive.reader.ArchiveStorageKeyCodec;
+import org.tron.core.archive.temporal.InMemoryArchiveTemporalStore;
+import org.tron.core.archive.txnum.ArchiveBlockRange;
+import org.tron.core.archive.txnum.ArchiveTxPosition;
+import org.tron.core.capsule.BlockCapsule;
+import org.tron.core.exception.jsonrpc.JsonRpcInternalException;
+import org.tron.protos.Protocol.Account;
+import org.tron.protos.contract.SmartContractOuterClass.SmartContract;
+
+/**
+ * End-to-end positive test for the L6 historical state-read path: an archive populated with an
+ * account / code / storage slot at block 0 makes the
+ * {@link ArchiveJsonRpcStateAdapter} renders eth_getBalance / eth_getCode / eth_getStorageAt with
+ * the ARCHIVED values -- proving resolver -> coverage gate -> reader -> hex render end to end. The
+ * eth-form 20-byte address is converted to the 21-byte TRON address the reader keys on.
+ */
+public class ArchiveStateReadIntegrationTest {
+
+  private final List<DefaultArchiveService> archiveServices = new ArrayList<>();
+
+  @After
+  public void closeArchiveServices() {
+    try {
+      for (DefaultArchiveService archiveService : archiveServices) {
+        archiveService.close();
+      }
+    } finally {
+      ArchiveCaptureHolder.clear();
+    }
+  }
+
+  private DefaultArchiveService newArchiveService(InMemoryArchiveTemporalStore temporalStore) {
+    DefaultArchiveService archiveService = new DefaultArchiveService(true, temporalStore);
+    archiveServices.add(archiveService);
+    return archiveService;
+  }
+
+  @Test
+  public void archiveReturnsHistoricalBalanceCodeStorage() throws Exception {
+    InMemoryArchiveTemporalStore temporal = new InMemoryArchiveTemporalStore();
+    DefaultArchiveService svc = newArchiveService(temporal);
+
+    ArchiveBlockRange range = commitEmptyBlock(svc, 0);
+    long t = range.getFinalizeTxNum();
+
+    byte[] addr21 = new byte[21];
+    addr21[0] = 0x41;
+    addr21[20] = 0x11;
+    put(temporal, t, ArchiveDomain.ACCOUNT, addr21,
+        Account.newBuilder().setAddress(ByteString.copyFrom(addr21)).setBalance(777L).build()
+            .toByteArray());
+    put(temporal, t, ArchiveDomain.CONTRACT, addr21,
+        SmartContract.newBuilder().setContractAddress(ByteString.copyFrom(addr21)).build()
+            .toByteArray());
+    put(temporal, t, ArchiveDomain.CODE, addr21, new byte[] {0x60, 0x00});
+    byte[] slot = new byte[32];
+    byte[] word = new byte[32];
+    word[31] = 0x2a;
+    put(temporal, t, ArchiveDomain.CONTRACT_STORAGE,
+        ArchiveStorageKeyCodec.contractStorageKey(addr21, slot, 0), word);
+
+    Wallet wallet = mock(Wallet.class);
+    ArchiveJsonRpcStateAdapter adapter = new ArchiveJsonRpcStateAdapter(wallet, svc);
+    // 20-byte eth form; addressCompatibleToByteArray prepends 0x41 -> addr21.
+    String ethAddr = "0x0000000000000000000000000000000000000011";
+
+    assertEquals("0x309", adapter.getBalance(ethAddr, "0x0"));      // 777 == 0x309
+    assertEquals("0x6000", adapter.getCode(ethAddr, "0x0"));
+    assertEquals("0x000000000000000000000000000000000000000000000000000000000000002a",
+        adapter.getStorageAt(ethAddr, "0x0", "0x0"));
+  }
+
+  @Test
+  public void blockOneStartRejectsPublicQueryBeforeStateLookup() throws Exception {
+    DefaultArchiveService svc = newArchiveService(new InMemoryArchiveTemporalStore());
+    commitEmptyBlock(svc, 1);
+    Wallet wallet = walletWithBlock(1);
+    ArchiveJsonRpcStateAdapter adapter = new ArchiveJsonRpcStateAdapter(wallet, svc);
+    String ethAddr = "0x0000000000000000000000000000000000000011";
+
+    JsonRpcInternalException ex = assertThrows(JsonRpcInternalException.class,
+        () -> adapter.getBalance(ethAddr, "0x1"));
+
+    assertEquals("archive public queries require complete from-genesis coverage", ex.getMessage());
+  }
+
+  @Test
+  public void blockZeroStartAllowsMissingAccountAsZeroBalance() throws Exception {
+    DefaultArchiveService svc = newArchiveService(new InMemoryArchiveTemporalStore());
+    commitEmptyBlock(svc, 0);
+    Wallet wallet = walletWithBlock(0);
+    ArchiveJsonRpcStateAdapter adapter = new ArchiveJsonRpcStateAdapter(wallet, svc);
+    String ethAddr = "0x0000000000000000000000000000000000000011";
+
+    assertEquals("0x0", adapter.getBalance(ethAddr, "0x0"));
+  }
+
+  private static ArchiveBlockRange commitEmptyBlock(DefaultArchiveService svc, long blockNum) {
+    svc.getTxNumIndex().beginBlock(blockNum, ArchiveSource.NORMAL);
+    svc.getTxNumIndex().allocateSystemTx(blockNum, ArchivePhase.BLOCK_PREPARE);
+    svc.getTxNumIndex().allocateSystemTx(blockNum, ArchivePhase.BLOCK_FINALIZE);
+    return svc.getTxNumIndex().commitBlock(blockNum, blockHash(blockNum), 0);
+  }
+
+  private static Wallet walletWithBlock(long blockNum) {
+    Wallet wallet = mock(Wallet.class);
+    BlockCapsule block = blockCapsule(blockNum);
+    when(wallet.getBlockByNum(blockNum)).thenReturn(block.getInstance());
+    return wallet;
+  }
+
+  private static byte[] blockHash(long blockNum) {
+    return blockCapsule(blockNum).getBlockId().getBytes();
+  }
+
+  private static BlockCapsule blockCapsule(long blockNum) {
+    return new BlockCapsule(blockNum, Sha256Hash.ZERO_HASH, 1000L,
+        ByteString.copyFrom(new byte[21]));
+  }
+
+  private void put(InMemoryArchiveTemporalStore temporal, long txNum, ArchiveDomain domain,
+      byte[] key, byte[] value) {
+    ArchiveTxPosition pos = new ArchiveTxPosition(
+        txNum, 0, ArchivePhase.BLOCK_FINALIZE, ArchiveSource.NORMAL, -1, null);
+    // Genesis-complete create at txNum (prev = tombstone): getAsOf(txNum) falls through to latest.
+    temporal.putChange(new ArchiveChangeRecord(pos, domain, key, DomainValue.tombstone(),
+        DomainValue.present(value)));
+  }
+}
