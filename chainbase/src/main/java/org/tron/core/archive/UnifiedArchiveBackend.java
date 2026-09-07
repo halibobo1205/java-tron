@@ -3,6 +3,7 @@ package org.tron.core.archive;
 import java.util.Optional;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.LongConsumer;
+import lombok.extern.slf4j.Slf4j;
 import org.tron.core.archive.query.QueryContext;
 import org.tron.core.archive.temporal.ArchiveTemporalReadView;
 import org.tron.core.archive.temporal.UnifiedArchiveTemporalStore;
@@ -17,6 +18,7 @@ import org.tron.core.archive.unified.UnifiedArchiveReadView;
  * Resource closure remains owned by {@link UnifiedArchiveTxNumIndex}, which closes the shared DB
  * after the in-flight and temporal adapters have completed their no-op closes.
  */
+@Slf4j(topic = "archive")
 final class UnifiedArchiveBackend {
 
   private static final long SYSTEM_MUTATION_ALLOWANCE = 100_000L;
@@ -198,6 +200,8 @@ final class UnifiedArchiveBackend {
 
   private void validateStartup(boolean fullScrub, boolean deferRepairValidation,
       boolean rangeChainAlreadyValidated) {
+    logger.info("Archive post-reconcile validation: fullScrub={}, rangesAlreadyValidated={}",
+        fullScrub, rangeChainAlreadyValidated);
     try (UnifiedArchiveReadView view = db.openScanView();
         UnifiedArchiveTxNumIndex.ReadScope ignored = txNumIndex.bindReadView(view)) {
       if (!fullScrub && rangeChainAlreadyValidated) {

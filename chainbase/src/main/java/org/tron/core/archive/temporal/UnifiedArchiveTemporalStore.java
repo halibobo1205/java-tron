@@ -18,6 +18,7 @@ import org.tron.common.math.StrictMathWrapper;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchiveRocksIterators;
 import org.tron.core.archive.ArchiveResourceEstimator;
+import org.tron.core.archive.ArchiveStartupProgress;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
@@ -661,6 +662,7 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
 
     UnifiedArchiveIterator changeset = view.newIterator(UnifiedArchiveColumnFamily.CHANGESET);
     boolean firstRange = true;
+    ArchiveStartupProgress progress = new ArchiveStartupProgress("temporal-blocks");
     for (long blockNum = firstBlock; ; blockNum++) {
       ArchiveBlockRange range = rangeLookup.apply(blockNum);
       if (range == null || range.getBlockNum() != blockNum) {
@@ -679,6 +681,7 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
         throw new ArchiveException("archive temporal commit marker missing for block "
             + blockNum);
       }
+      progress.record(blockNum);
       markers.next();
       if (blockNum == lastBlock) {
         break;
@@ -695,6 +698,7 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
       throw new ArchiveException("archive temporal commit marker has no index range for block "
           + ArchiveTemporalCodec.blockNumOfBlockCommitKey(markers.key()));
     }
+    progress.complete();
   }
 
   public void validateCommitMarkersCovered(LongPredicate hasIndexRange) {
@@ -734,6 +738,7 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
       byte[] previousHistoryPrefix = null;
       long previousHistoryTxNum = ArchiveTemporalIntegrityCodec.NO_HISTORY_TX_NUM;
       ArchiveTemporalIntegrityCodec.DecodedRow previousChangeset = null;
+      ArchiveStartupProgress historyProgress = new ArchiveStartupProgress("history-links");
       history.seek(new byte[] {ArchiveTemporalCodec.HISTORY_PREFIX});
       while (history.isValid()
           && history.key()[0] == ArchiveTemporalCodec.HISTORY_PREFIX) {
@@ -790,12 +795,15 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
           }
           previousLatestKey = latestKey;
         }
+        historyProgress.record(txNum);
         history.next();
       }
       ArchiveRocksIterators.requireOk(history, "UNIFIED_V1 validate temporal history");
+      historyProgress.complete();
 
       UnifiedArchiveIterator changeset =
           view.newIterator(UnifiedArchiveColumnFamily.CHANGESET);
+      ArchiveStartupProgress changesetProgress = new ArchiveStartupProgress("changeset-links");
       changeset.seek(new byte[] {ArchiveTemporalCodec.CHANGESET_PREFIX});
       while (changeset.isValid()
           && changeset.key()[0] == ArchiveTemporalCodec.CHANGESET_PREFIX) {
@@ -815,9 +823,11 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
           throw new ArchiveException("archive temporal changeset txNum link mismatch");
         }
         changesetRow.domainValue().decode();
+        changesetProgress.record(txNum);
         changeset.next();
       }
       ArchiveRocksIterators.requireOk(changeset, "UNIFIED_V1 validate temporal changesets");
+      changesetProgress.complete();
     validateLatestRows(view);
   }
 
@@ -840,6 +850,7 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
   }
 
   private static void validatePayloadRows(UnifiedArchiveReadView view) {
+    ArchiveStartupProgress progress = new ArchiveStartupProgress("payload-owners");
     UnifiedArchiveIterator payloads =
         view.newIterator(UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD);
     payloads.seekToFirst();
@@ -856,12 +867,15 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
           "UNIFIED_V1 validate temporal payload owner") == null) {
         throw new ArchiveException("UNIFIED_V1 temporal payload has no logical owner");
       }
+      progress.record(-1L);
       payloads.next();
     }
     ArchiveRocksIterators.requireOk(payloads, "UNIFIED_V1 validate temporal payload rows");
+    progress.complete();
   }
 
   private void validateAnchorRows(UnifiedArchiveReadView view) {
+    ArchiveStartupProgress progress = new ArchiveStartupProgress("anchors");
     UnifiedArchiveIterator anchors = view.newIterator(UnifiedArchiveColumnFamily.COMMITMENT);
     UnifiedArchiveIterator history = view.newIterator(UnifiedArchiveColumnFamily.HISTORY);
     anchors.seekToFirst();
@@ -900,12 +914,15 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
       } else {
         throw new ArchiveException("UNIFIED_V1 temporal anchor has no history row");
       }
+      progress.record(anchor.linkedTxNum());
       anchors.next();
     }
     ArchiveRocksIterators.requireOk(anchors, "UNIFIED_V1 validate temporal anchors");
+    progress.complete();
   }
 
   private void validateLatestDomainRows(UnifiedArchiveReadView view) {
+    ArchiveStartupProgress progress = new ArchiveStartupProgress("latest-domains");
     UnifiedArchiveIterator iterator = view.newIterator(UnifiedArchiveColumnFamily.LATEST);
     iterator.seekToFirst();
     while (iterator.isValid()) {
@@ -918,13 +935,17 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
           "UNIFIED_V1 validate latest domain row");
       ArchiveTemporalRowValidator.validate(
           catalog, key, row.payloadView(), true, dynamicKeyPolicy);
+      progress.record(row.linkedTxNum());
       iterator.next();
     }
     ArchiveRocksIterators.requireOk(iterator, "UNIFIED_V1 validate latest domain rows");
+    progress.complete();
   }
 
   private void validateDomainRows(UnifiedArchiveReadView view,
       UnifiedArchiveColumnFamily columnFamily, byte prefix) {
+    ArchiveStartupProgress progress = new ArchiveStartupProgress(
+        columnFamily.getName() + "-domains");
     UnifiedArchiveIterator iterator = view.newIterator(columnFamily);
     byte[] previousHistoryPrefix = null;
     long previousHistoryTxNum = ArchiveTemporalIntegrityCodec.NO_HISTORY_TX_NUM;
@@ -962,10 +983,12 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
       }
       ArchiveTemporalRowValidator.validate(
           catalog, key, row.payloadView(), true, dynamicKeyPolicy);
+      progress.record(row.linkedTxNum());
       iterator.next();
     }
     ArchiveRocksIterators.requireOk(iterator,
         "UNIFIED_V1 validate domain rows in " + columnFamily.getName());
+    progress.complete();
   }
 
   public boolean hasCommitMarker(long blockNum) {
@@ -988,6 +1011,7 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
   }
 
   private void validateLatestRows(UnifiedArchiveReadView view) {
+    ArchiveStartupProgress progress = new ArchiveStartupProgress("latest-links");
     UnifiedArchiveIterator latest = view.newIterator(UnifiedArchiveColumnFamily.LATEST);
     UnifiedArchiveIterator history = view.newIterator(UnifiedArchiveColumnFamily.HISTORY);
     latest.seek(new byte[] {ArchiveTemporalCodec.LATEST_PREFIX});
@@ -1024,9 +1048,11 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
       } else {
         throw new ArchiveException("archive temporal latest has no history row");
       }
+      progress.record(latestRow.linkedTxNum());
       latest.next();
     }
     ArchiveRocksIterators.requireOk(latest, "UNIFIED_V1 validate latest rows");
+    progress.complete();
   }
 
   private BlockRows readBlockRows(UnifiedArchiveReadView view, ArchiveBlockRange range) {

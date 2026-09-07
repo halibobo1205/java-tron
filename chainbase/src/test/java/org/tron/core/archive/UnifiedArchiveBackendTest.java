@@ -9,11 +9,13 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -435,6 +437,42 @@ public class UnifiedArchiveBackendTest {
     }
     assertThrows(ArchiveException.class,
         () -> view.getAsOf(ArchiveDomain.ACCOUNT, accountKey(), 0L));
+  }
+
+  @Test
+  public void normalStartupScanDoesNotPointReadMiddleRanges() throws Exception {
+    publish(block(0L, DomainValue.tombstone(), value(1)));
+    publish(block(1L, value(1), value(2)));
+    publish(block(2L, value(2), value(3)));
+    byte[] middleKey = ByteBuffer.allocate(1 + Long.BYTES)
+        .put((byte) 0x10).putLong(1L).array();
+    RocksDB raw = ReflectUtils.getFieldValue(db, "db");
+    RocksDB observed = spy(raw);
+    ReflectUtils.setFieldValue(db, "db", observed);
+    try {
+      index.validateStartup(false, true);
+      verify(observed, never()).get(any(ColumnFamilyHandle.class), any(ReadOptions.class),
+          argThat(key -> Arrays.equals(middleKey, key)), any(byte[].class));
+    } finally {
+      ReflectUtils.setFieldValue(db, "db", raw);
+    }
+  }
+
+  @Test
+  public void normalStartupScanRejectsCorruptMiddleRangeLengths() {
+    publish(block(0L, DomainValue.tombstone(), value(1)));
+    publish(block(1L, value(1), value(2)));
+    publish(block(2L, value(2), value(3)));
+    byte[] middleKey = ByteBuffer.allocate(1 + Long.BYTES)
+        .put((byte) 0x10).putLong(1L).array();
+    for (int length : new int[] {3, 1024 * 1024}) {
+      write(db, new UnifiedArchiveMaintenanceBatch().put(
+          UnifiedArchiveColumnFamily.INDEX, middleKey, new byte[length]));
+      ArchivePersistentStateCorruptionException failure = assertThrows(
+          ArchivePersistentStateCorruptionException.class, () -> index.validateStartup(false, true));
+      assertTrue(failure.getMessage().contains("committed block range length mismatch"));
+      assertTrue(failure.getMessage().contains("actualBytes=" + length));
+    }
   }
 
   @Test
@@ -953,7 +991,7 @@ public class UnifiedArchiveBackendTest {
       publish(block(1L, first, value(2)));
 
       assertEquals("one metadata preflight plus one preparation pass must stay bounded",
-          19L, statistics.getTickerCount(TickerType.NUMBER_KEYS_READ) - before);
+          17L, statistics.getTickerCount(TickerType.NUMBER_KEYS_READ) - before);
     } finally {
       reopenWithMetrics(metricsPreviouslyEnabled);
     }

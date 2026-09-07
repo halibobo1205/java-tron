@@ -10,6 +10,8 @@ import org.tron.core.archive.query.QueryContextHolder;
 /** Owner-thread wrapper around one native iterator belonging to a unified read view. */
 public final class UnifiedArchiveIterator implements AutoCloseable {
 
+  private static final int MAX_FIXED_VALUE_BYTES = 64 * 1024;
+
   private final RocksIterator delegate;
   private final Thread owner = Thread.currentThread();
   private boolean closed;
@@ -77,6 +79,29 @@ public final class UnifiedArchiveIterator implements AutoCloseable {
   public byte[] value() {
     requireOwnerAndOpen();
     return delegate.value();
+  }
+
+  /** Reads a trusted fixed-size row without materializing an oversized corrupt native value. */
+  public byte[] valueExact(int expectedBytes, String what) {
+    requireOwnerAndOpen();
+    if (expectedBytes < 0 || expectedBytes > MAX_FIXED_VALUE_BYTES) {
+      throw new ArchiveException(what + " has invalid fixed byte length: " + expectedBytes);
+    }
+    QueryContext context = beforeRead();
+    if (context != null) {
+      context.validateBackendValueBytes(expectedBytes);
+    }
+    byte[] value = new byte[expectedBytes];
+    int actualBytes = delegate.value(value);
+    afterRead(context, "valueExact");
+    if (actualBytes != expectedBytes) {
+      throw new ArchiveException(what + " length mismatch: expectedBytes="
+          + expectedBytes + ", actualBytes=" + actualBytes);
+    }
+    if (context != null) {
+      context.recordBackendValueBytes(actualBytes);
+    }
+    return value;
   }
 
   public void status() throws RocksDBException {

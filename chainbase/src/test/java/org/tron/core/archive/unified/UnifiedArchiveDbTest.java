@@ -1665,6 +1665,54 @@ public class UnifiedArchiveDbTest {
   }
 
   @Test
+  public void exactIteratorValueUsesSnapshotAndAccountsBytesOnce() {
+    db.writeMaintenanceAtomically(new UnifiedArchiveMaintenanceBatch()
+        .put(UnifiedArchiveColumnFamily.HISTORY, HISTORY_KEY, HISTORY_VALUE));
+    QueryContext context = new QueryContext(ArchiveQueryLimits.unlimited());
+    try (UnifiedArchiveReadView view = db.openReadView();
+        QueryContextHolder.Scope ignored = QueryContextHolder.attach(context)) {
+      UnifiedArchiveIterator iterator = view.newIterator(UnifiedArchiveColumnFamily.HISTORY);
+      iterator.seek(HISTORY_KEY);
+      db.writeMaintenanceAtomically(new UnifiedArchiveMaintenanceBatch()
+          .put(UnifiedArchiveColumnFamily.HISTORY, HISTORY_KEY, new byte[128]));
+
+      assertArrayEquals(HISTORY_VALUE, iterator.valueExact(HISTORY_VALUE.length, "history"));
+      assertEquals(HISTORY_VALUE.length, context.getBackendReadBytes());
+    }
+  }
+
+  @Test
+  public void exactIteratorValueRejectsOversizedAndTruncatedRows() {
+    for (int actualBytes : new int[] {3, 1024 * 1024}) {
+      db.writeMaintenanceAtomically(new UnifiedArchiveMaintenanceBatch()
+          .put(UnifiedArchiveColumnFamily.HISTORY, HISTORY_KEY, new byte[actualBytes]));
+      try (UnifiedArchiveReadView view = db.openReadView()) {
+        UnifiedArchiveIterator iterator = view.newIterator(UnifiedArchiveColumnFamily.HISTORY);
+        iterator.seek(HISTORY_KEY);
+        ArchiveException failure = assertThrows(ArchiveException.class,
+            () -> iterator.valueExact(32, "fixed row"));
+        assertTrue(failure.getMessage().contains("expectedBytes=32"));
+        assertTrue(failure.getMessage().contains("actualBytes=" + actualBytes));
+      }
+    }
+  }
+
+  @Test
+  public void exactIteratorValueEnforcesBudgetBeforeNativeRead() {
+    RocksIterator nativeIterator = mock(RocksIterator.class);
+    QueryContext context = new QueryContext(ArchiveQueryLimits.builder()
+        .maxBackendValueBytes(16L).build());
+    try (UnifiedArchiveIterator iterator = new UnifiedArchiveIterator(nativeIterator);
+        QueryContextHolder.Scope ignored = QueryContextHolder.attach(context)) {
+      HistoricalQueryLimitException failure = assertThrows(HistoricalQueryLimitException.class,
+          () -> iterator.valueExact(32, "fixed row"));
+      assertEquals(HistoricalQueryLimitException.Limit.BACKEND_VALUE_BYTES, failure.getLimit());
+      verify(nativeIterator, never()).value(any(byte[].class));
+      assertEquals(0L, context.getBackendReadBytes());
+    }
+  }
+
+  @Test
   public void exactReadsAccountLocatorAfterReadAndPayloadBeforeReadExactlyOnce() {
     byte[] locator = new byte[45];
     Arrays.fill(locator, (byte) 0x11);
