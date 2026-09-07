@@ -400,6 +400,7 @@ public final class DefaultArchiveService implements ArchiveService {
   }
 
   private void loadInFlightBlocks() {
+    ArchiveStartupProgress progress = new ArchiveStartupProgress("inflight-journal");
     long[] startupJournalBytes = {0L};
     long[] startupPublicationBytes = {0L};
     long[] startupResourceBytes = {0L};
@@ -444,6 +445,7 @@ public final class DefaultArchiveService implements ArchiveService {
             validateJournalPositionsMatchIndex(block);
           });
           pendingPublishedJournals.put(range.getBlockNum(), block);
+          progress.record(range.getBlockNum());
           return;
         }
         loadedBlocks[0]++;
@@ -460,8 +462,14 @@ public final class DefaultArchiveService implements ArchiveService {
           replayExecutionInFlightBlock(block);
         });
         rememberInFlightInMemory(block);
+        progress.record(range.getBlockNum());
       });
     }
+    progress.complete();
+    logger.info("Archive startup journals loaded: blocks={}, records={}, bytes={}, "
+            + "staleBlocks={}, staleRecords={}, staleBytes={}",
+        loadedBlocks[0], loadedRecords[0], loadedBytes[0],
+        staleBlocks[0], staleRecords[0], staleBytes[0]);
   }
 
   private static void validatePersistentJournalState(long blockNum, Runnable validator) {

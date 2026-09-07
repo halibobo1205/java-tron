@@ -43,7 +43,10 @@ JDK 17, local arm64:
 - Manager archive startup/genesis/lifecycle/publication/shutdown/fork tests,
   default archive configuration tests and historical state RPC integration:
   40 passed.
-- `lint checkstyleMain checkstyleTest -x generateGitProperties`: passed.
+- `lint checkstyleMain checkstyleTest -x generateGitProperties`: passed, but
+  those Checkstyle tasks cover framework/plugins, not the changed chainbase
+  sources. This is not evidence that chainbase passed Checkstyle. See the
+  follow-up review for explicit source checks and their baseline comparison.
 - New regressions cover one DB open on authenticated restart, identity floor
   mismatch and handle cleanup, no point Get for middle ranges, corrupt fixed
   row lengths, snapshot consistency and pre-read query budget enforcement.

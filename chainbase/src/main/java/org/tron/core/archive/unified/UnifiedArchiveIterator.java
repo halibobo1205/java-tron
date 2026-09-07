@@ -1,5 +1,6 @@
 package org.tron.core.archive.unified;
 
+import java.util.Arrays;
 import org.rocksdb.RocksDBException;
 import org.rocksdb.RocksIterator;
 import org.tron.core.archive.ArchiveException;
@@ -14,6 +15,7 @@ public final class UnifiedArchiveIterator implements AutoCloseable {
 
   private final RocksIterator delegate;
   private final Thread owner = Thread.currentThread();
+  private byte[] boundedValueProbe = new byte[0];
   private boolean closed;
   private Throwable closeFailure;
 
@@ -102,6 +104,28 @@ public final class UnifiedArchiveIterator implements AutoCloseable {
       context.recordBackendValueBytes(actualBytes);
     }
     return value;
+  }
+
+  /** Reads a variable-size row through a small bounded probe, accounting its actual length. */
+  public byte[] valueBounded(int minBytes, int maxBytes, String what) {
+    requireOwnerAndOpen();
+    if (minBytes < 0 || maxBytes < minBytes || maxBytes > MAX_FIXED_VALUE_BYTES) {
+      throw new ArchiveException(what + " has invalid byte bounds: " + minBytes + ".." + maxBytes);
+    }
+    QueryContext context = beforeRead();
+    if (boundedValueProbe.length < maxBytes) {
+      boundedValueProbe = new byte[maxBytes];
+    }
+    int actualBytes = delegate.value(boundedValueProbe);
+    afterRead(context, "valueBounded");
+    if (actualBytes < minBytes || actualBytes > maxBytes) {
+      throw new ArchiveException(what + " length outside bounds: minBytes=" + minBytes
+          + ", maxBytes=" + maxBytes + ", actualBytes=" + actualBytes);
+    }
+    if (context != null) {
+      context.recordBackendValueBytes(actualBytes);
+    }
+    return Arrays.copyOf(boundedValueProbe, actualBytes);
   }
 
   public void status() throws RocksDBException {

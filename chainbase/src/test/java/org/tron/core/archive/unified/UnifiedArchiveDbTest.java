@@ -1713,6 +1713,104 @@ public class UnifiedArchiveDbTest {
   }
 
   @Test
+  public void boundedIteratorValueAcceptsBothEdgesAndUsesSnapshot() {
+    for (int size : new int[] {31, 95}) {
+      byte[] row = new byte[size];
+      Arrays.fill(row, (byte) size);
+      db.writeMaintenanceAtomically(new UnifiedArchiveMaintenanceBatch()
+          .put(UnifiedArchiveColumnFamily.HISTORY, HISTORY_KEY, row));
+      QueryContext context = new QueryContext(ArchiveQueryLimits.builder()
+          .maxBackendValueBytes(size).maxBackendReadBytesPerRequest(size).build());
+      try (UnifiedArchiveReadView view = db.openReadView();
+          QueryContextHolder.Scope ignored = QueryContextHolder.attach(context)) {
+        UnifiedArchiveIterator iterator = view.newIterator(UnifiedArchiveColumnFamily.HISTORY);
+        iterator.seek(HISTORY_KEY);
+        db.writeMaintenanceAtomically(new UnifiedArchiveMaintenanceBatch()
+            .put(UnifiedArchiveColumnFamily.HISTORY, HISTORY_KEY, new byte[128]));
+
+        assertArrayEquals(row, iterator.valueBounded(31, 95, "position"));
+        assertEquals(size, context.getBackendReadBytes());
+      }
+    }
+  }
+
+  @Test
+  public void boundedIteratorValueRejectsTruncatedAndOversizedRows() {
+    for (int size : new int[] {30, 96, 1024 * 1024}) {
+      db.writeMaintenanceAtomically(new UnifiedArchiveMaintenanceBatch()
+          .put(UnifiedArchiveColumnFamily.HISTORY, HISTORY_KEY, new byte[size]));
+      try (UnifiedArchiveReadView view = db.openReadView()) {
+        UnifiedArchiveIterator iterator = view.newIterator(UnifiedArchiveColumnFamily.HISTORY);
+        iterator.seek(HISTORY_KEY);
+        ArchiveException failure = assertThrows(ArchiveException.class,
+            () -> iterator.valueBounded(31, 95, "position"));
+        assertTrue(failure.getMessage().contains("actualBytes=" + size));
+        byte[] probe = ReflectUtils.getFieldValue(iterator, "boundedValueProbe");
+        assertEquals(95, probe.length);
+      }
+    }
+  }
+
+  @Test
+  public void boundedIteratorValueEnforcesActualValueBudget() {
+    RocksIterator nativeIterator = mock(RocksIterator.class);
+    doReturn(63).when(nativeIterator).value(any(byte[].class));
+    QueryContext context = new QueryContext(ArchiveQueryLimits.builder()
+        .maxBackendValueBytes(62L).build());
+    try (UnifiedArchiveIterator iterator = new UnifiedArchiveIterator(nativeIterator);
+        QueryContextHolder.Scope ignored = QueryContextHolder.attach(context)) {
+      HistoricalQueryLimitException failure = assertThrows(HistoricalQueryLimitException.class,
+          () -> iterator.valueBounded(31, 95, "position"));
+      assertEquals(HistoricalQueryLimitException.Limit.BACKEND_VALUE_BYTES, failure.getLimit());
+      verify(nativeIterator).value(any(byte[].class));
+      assertEquals(0L, context.getBackendReadBytes());
+    }
+  }
+
+  @Test
+  public void boundedIteratorValueRejectsInvalidBoundsBeforeNativeRead() {
+    RocksIterator nativeIterator = mock(RocksIterator.class);
+    try (UnifiedArchiveIterator iterator = new UnifiedArchiveIterator(nativeIterator)) {
+      for (int[] bounds : new int[][] {{-1, 95}, {96, 95}, {0, 65537}}) {
+        ArchiveException failure = assertThrows(ArchiveException.class,
+            () -> iterator.valueBounded(bounds[0], bounds[1], "position"));
+        assertTrue(failure.getMessage().contains("invalid byte bounds"));
+      }
+      verify(nativeIterator, never()).value(any(byte[].class));
+    }
+  }
+
+  @Test
+  public void boundedIteratorValueEnforcesDeadlineOwnerAndClosedGuards() throws Exception {
+    RocksIterator nativeIterator = mock(RocksIterator.class);
+    UnifiedArchiveIterator iterator = new UnifiedArchiveIterator(nativeIterator);
+    try {
+      FutureTask<Throwable> foreignRead = failureOf(
+          () -> iterator.valueBounded(31, 95, "position"));
+      Thread thread = new Thread(foreignRead, "archive-foreign-bounded-value");
+      thread.start();
+      Throwable ownerFailure = foreignRead.get(1L, TimeUnit.SECONDS);
+      thread.join(1_000L);
+      assertTrue(ownerFailure instanceof ArchiveException);
+      assertTrue(ownerFailure.getMessage().contains("non-owner thread"));
+
+      QueryContext context = new QueryContext(ArchiveQueryLimits.builder().deadlineMs(1L).build());
+      Thread.sleep(10L);
+      try (QueryContextHolder.Scope ignored = QueryContextHolder.attach(context)) {
+        HistoricalQueryLimitException failure = assertThrows(HistoricalQueryLimitException.class,
+            () -> iterator.valueBounded(31, 95, "position"));
+        assertEquals(HistoricalQueryLimitException.Limit.DEADLINE, failure.getLimit());
+      }
+    } finally {
+      iterator.close();
+    }
+    ArchiveException failure = assertThrows(ArchiveException.class,
+        () -> iterator.valueBounded(31, 95, "position"));
+    assertTrue(failure.getMessage().contains("closed"));
+    verify(nativeIterator, never()).value(any(byte[].class));
+  }
+
+  @Test
   public void exactReadsAccountLocatorAfterReadAndPayloadBeforeReadExactlyOnce() {
     byte[] locator = new byte[45];
     Arrays.fill(locator, (byte) 0x11);
