@@ -44,7 +44,8 @@
 #   band 4  resource-faults           22600 - 22999
 #   band 5  concurrency-under-fault   23000 - 23399
 #   band 6  catchup-batch-flush-kill  23400 - 23799
-#   band 7  (unregistered scenarios)  23800 - 24199
+#   band 7  debug-trace               23800 - 24199
+#   band 8  (unregistered scenarios)  24200 - 24599
 #
 # One BLOCK per node inside a band, 10 ports wide, slot 0..38:
 #
@@ -78,7 +79,7 @@ AH_PORT_BAND_WIDTH=400
 AH_PORT_NODE_STRIDE=10
 AH_PORT_MAX_SLOT=38
 AH_PORT_AUX_SLOT=39
-AH_PORT_BAND_COUNT=8
+AH_PORT_BAND_COUNT=9
 # net.inet.ip.portrange.first on macOS; Linux's is 32768 but its default
 # ip_local_port_range never dips below 32768 either, so one floor covers both.
 AH_PORT_EPHEMERAL_FLOOR=49152
@@ -87,7 +88,7 @@ AH_PORT_EPHEMERAL_FLOOR=49152
 # sources this file before defining one.
 ah_port_err() { printf 'ERROR [ports] %s\n' "$*" >&2; }
 
-# ah_port_band_index SLUG -> 0..7.  Unregistered scenarios land in the shared
+# ah_port_band_index SLUG -> 0..8.  Unregistered scenarios land in the shared
 # sandbox band and say so, rather than silently overlapping a real one.
 ah_port_band_index() {
   case "$1" in
@@ -98,10 +99,11 @@ ah_port_band_index() {
     resource-faults)          printf '4\n' ;;
     concurrency-under-fault)  printf '5\n' ;;
     catchup-batch-flush-kill) printf '6\n' ;;
+    debug-trace)             printf '7\n' ;;
     *)
-      ah_port_err "scenario '$1' has no reserved port band; using the shared sandbox band 7." \
+      ah_port_err "scenario '$1' has no reserved port band; using the shared sandbox band 8." \
         "Register it in ports.sh before adding it to the suite."
-      printf '7\n'
+      printf '8\n'
       ;;
   esac
 }

@@ -213,10 +213,11 @@ def main():
 
     # ------------------------------------------------------------ stage 2: cross-check the jar
     try:
-        dump = subprocess.run(["javap", "-p", "-l", "-cp", JAR, CLS],
+        # JDK 25 prints line tables only when disassembly is also requested.
+        dump = subprocess.run(["javap", "-p", "-c", "-l", "-cp", JAR, CLS],
                               capture_output=True, text=True, check=True).stdout
     except Exception as exc:
-        fail("javap -p -l failed for %s in %s (%s)" % (CLS, os.path.basename(JAR), exc))
+        fail("javap -p -c -l failed for %s in %s (%s)" % (CLS, os.path.basename(JAR), exc))
 
     tables = {}
     current = None
