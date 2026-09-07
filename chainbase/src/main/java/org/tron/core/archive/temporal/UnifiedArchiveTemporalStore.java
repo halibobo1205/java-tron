@@ -674,7 +674,7 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
       }
       requireCommitMarker(markers, blockNum);
       BlockRows rows = readBlockRows(view, changeset, range);
-      byte[] marker = readBlockMarker(view, markers.key(),
+      byte[] marker = markers.valueExact(ArchiveTemporalCodec.blockCommitValueLength(),
           "UNIFIED_V1 validate temporal commit marker");
       if (!ArchiveTemporalCodec.blockCommitMatches(
           marker, range, rows.count, rows.digest)) {
@@ -1077,8 +1077,10 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
       if (txNum > range.getLastTxNum()) {
         break;
       }
-      ArchiveTemporalIntegrityCodec.DecodedRow changesetValue = readRequiredIntegrityRow(
+      ArchiveTemporalIntegrityCodec.DecodedRow changesetValue = decodeIntegrityRow(
           view, UnifiedArchiveColumnFamily.CHANGESET, changesetKey,
+          changeset.valueExact(ArchiveTemporalIntegrityCodec.LOCATOR_BYTES,
+              "UNIFIED_V1 block changeset locator"),
           "UNIFIED_V1 read block commit changeset");
       if (changesetValue.linkedTxNum() != txNum) {
         throw new ArchiveException(

@@ -22,6 +22,7 @@ import java.util.Map;
 import java.util.Set;
 import org.apache.commons.lang3.tuple.Pair;
 import org.bouncycastle.util.encoders.Hex;
+import org.tron.common.crypto.Hash;
 import org.tron.common.math.StrictMathWrapper;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.runtime.vm.DataWord;
@@ -319,6 +320,15 @@ public class ArchiveRepositoryAdapter implements Repository {
 
   @Override
   public void saveCode(byte[] address, byte[] code) {
+    cacheCode(address, code);
+    if (VMConfig.allowTvmConstantinople()) {
+      ContractCapsule contract = getContract(address);
+      contract.setCodeHash(Hash.sha3(code));
+      updateContract(address, contract);
+    }
+  }
+
+  private void cacheCode(byte[] address, byte[] code) {
     reserveOverlay(address, code);
     codes.put(Key.create(address), code == null ? null : code.clone());
   }
@@ -383,7 +393,8 @@ public class ArchiveRepositoryAdapter implements Repository {
     });
     codes.forEach((key, code) -> {
       if (code != null) {
-        parent.saveCode(key.getData(), code);
+        // The child's contract overlay already carries the runtime hash, as in RepositoryImpl.
+        parent.cacheCode(key.getData(), code);
       }
     });
     contracts.forEach((key, contract) -> {

@@ -3,7 +3,9 @@ package org.tron.core.archive.unified;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.rocksdb.ColumnFamilyHandle;
 import org.rocksdb.ReadOptions;
@@ -24,6 +26,7 @@ public final class UnifiedArchiveReadView implements AutoCloseable {
 
   private static final byte[] EMPTY_VALUE_BUFFER = new byte[0];
   private static final int MAX_BOUNDED_GET_PROBE_BYTES = 64 * 1024;
+  private static final int MAX_VALIDATION_LOOKUP_CURSORS = 16;
 
   private final RocksDB db;
   private final EnumMap<UnifiedArchiveColumnFamily, ColumnFamilyHandle> handles;
@@ -43,6 +46,7 @@ public final class UnifiedArchiveReadView implements AutoCloseable {
   private boolean snapshotUseReleased;
   private Throwable closeFailure;
   private byte[] boundedGetProbe = EMPTY_VALUE_BUFFER;
+  private Map<Integer, UnifiedArchiveIterator> validationLookups;
 
   UnifiedArchiveReadView(RocksDB db,
       EnumMap<UnifiedArchiveColumnFamily, ColumnFamilyHandle> handles,
@@ -76,6 +80,10 @@ public final class UnifiedArchiveReadView implements AutoCloseable {
   /** Reads a snapshot value only after its native size passes the caller's allocation bound. */
   public byte[] getBounded(UnifiedArchiveColumnFamily columnFamily, byte[] key,
       long maxValueBytes, String what) {
+    UnifiedArchiveIterator lookup = validationLookup(columnFamily, key, maxValueBytes);
+    if (lookup != null) {
+      return seekExact(lookup, key) ? lookup.valueBounded(0, (int) maxValueBytes, what) : null;
+    }
     return getBounded(columnFamily, key, maxValueBytes, what, true);
   }
 
@@ -128,7 +136,40 @@ public final class UnifiedArchiveReadView implements AutoCloseable {
   /** Reads a small fixed-size value with an exact native buffer, then accounts it if present. */
   public byte[] getExact(UnifiedArchiveColumnFamily columnFamily, byte[] key,
       long expectedValueBytes, String what) {
+    UnifiedArchiveIterator lookup = validationLookup(columnFamily, key, expectedValueBytes);
+    if (lookup != null) {
+      return seekExact(lookup, key) ? lookup.valueExact((int) expectedValueBytes, what) : null;
+    }
     return getExact(columnFamily, key, expectedValueBytes, what, false);
+  }
+
+  UnifiedArchiveReadView enableValidationLookups() {
+    validationLookups = new HashMap<>();
+    return this;
+  }
+
+  private UnifiedArchiveIterator validationLookup(UnifiedArchiveColumnFamily family,
+      byte[] key, long bound) {
+    requireOwnerAndOpen();
+    if (validationLookups == null || bound < 0L || bound > MAX_BOUNDED_GET_PROBE_BYTES) {
+      return null;
+    }
+    requireColumnFamily(family);
+    requireKey(key);
+    // Separate key families retain independent seek locality during cross-reference validation.
+    int bucket = family.ordinal() * 256 + (key[0] & 0xff);
+    UnifiedArchiveIterator iterator = validationLookups.get(bucket);
+    if (iterator == null && validationLookups.size() < MAX_VALIDATION_LOOKUP_CURSORS) {
+      iterator = newIterator(family);
+      validationLookups.put(bucket, iterator);
+    }
+    return iterator;
+  }
+
+  private static boolean seekExact(UnifiedArchiveIterator iterator, byte[] key) {
+    iterator.seek(key);
+    ArchiveRocksIterators.requireOk(iterator, "UNIFIED_V1 validation lookup");
+    return iterator.isValid() && Arrays.equals(key, iterator.key());
   }
 
   /**

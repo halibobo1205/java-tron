@@ -17,6 +17,7 @@ import java.util.Optional;
 import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -146,6 +147,8 @@ public final class DefaultArchiveService implements ArchiveService {
   private final ArchiveOperationWatchdog journalWatchdog;
   private final ArchiveRepairClearPermit repairClearPermit = new ArchiveRepairClearPermit();
   private final Object repairStateMutex = new Object();
+  private final AtomicReference<String> requestedRepairReason = new AtomicReference<>();
+  private boolean fatalRepairPersisted;
   private final Object fatalTransitionMonitor = new Object();
   private long activeFatalTransitions;
   private boolean fatalTransitionsSealed;
@@ -684,7 +687,7 @@ public final class DefaultArchiveService implements ArchiveService {
                 || inFlightResourceBytes >= publisherConfig.getHardInFlightBytes()
                 || usableSpace < publisherConfig.getHardMinFreeBytes();
         if (hardLimitReached) {
-          fatalFailure = new ArchiveException(
+          fatalFailure = new ResourceAdmissionFailure(
               "archive in-flight journal reached hard watermark: blocks="
                   + inFlightBlockCount + ", records=" + inFlightRecordCount
                   + ", bytes=" + inFlightRetainedBytes
@@ -704,7 +707,7 @@ public final class DefaultArchiveService implements ArchiveService {
               ? backpressureTimeoutNanos : publisherStallTimeoutNanos;
           long remaining = (diskSoftLimitReached ? diskDeadline : publisherDeadline) - now;
           if (timeoutNanos == 0L || remaining <= 0L) {
-            fatalFailure = new ArchiveException(
+            fatalFailure = new ResourceAdmissionFailure(
                 "archive publisher backpressure timed out: no publication progress, blocks="
                     + inFlightBlockCount + ", records=" + inFlightRecordCount
                     + ", bytes=" + inFlightRetainedBytes
@@ -747,7 +750,7 @@ public final class DefaultArchiveService implements ArchiveService {
             return;
           }
           validateCaptureAvailable();
-          validateRecoveryStorageWithWatchdog();
+          validateStartupStorageLocked();
           lifecycle.completeRecovery(() -> {
             try {
               if (publisher != null && !publisher.activateForRecovery()) {
@@ -774,14 +777,6 @@ public final class DefaultArchiveService implements ArchiveService {
       } finally {
         writeLock.unlock();
       }
-    }
-  }
-
-  private void validateRecoveryStorageWithWatchdog() {
-    long timeoutNanos = TimeUnit.MILLISECONDS.toNanos(publisherConfig.getRecoveryTimeoutMs());
-    try (ArchiveOperationWatchdog.Scope ignored = journalWatchdog.arm(
-        "archive recovery startup validation", timeoutNanos)) {
-      validateStartupStorageLocked();
     }
   }
 
@@ -1188,7 +1183,16 @@ public final class DefaultArchiveService implements ArchiveService {
       return;
     }
     validateStartupDiskSpaceLocked();
-    startupValidator.run();
+    if (journalWatchdog == null) {
+      // Direct RUNNING construction validates before watchdog creation (in-memory test callers).
+      startupValidator.run();
+    } else {
+      long timeoutNanos = TimeUnit.MILLISECONDS.toNanos(publisherConfig.getRecoveryTimeoutMs());
+      try (ArchiveOperationWatchdog.Scope ignored = journalWatchdog.arm(
+          "archive recovery startup validation", timeoutNanos)) {
+        startupValidator.run();
+      }
+    }
     startupStorageValidated = true;
   }
 
@@ -3624,6 +3628,10 @@ public final class DefaultArchiveService implements ArchiveService {
     boolean first = lifecycle.markFatal(normalized);
     RuntimeException primary = lifecycle.getFatalFailure();
     transition.arm(primary, failure, repairReason, first);
+    if (!first || !(failure instanceof ResourceAdmissionFailure)) {
+      requestedRepairReason.compareAndSet(null,
+          primary instanceof ResourceAdmissionFailure ? repairReason : fatalReason(primary));
+    }
     // Every contender can arm the same primary. This closes the CAS-winner scheduling gap without
     // opening callback delivery before the repair marker has crossed its durability barrier.
     try {
@@ -3637,11 +3645,13 @@ public final class DefaultArchiveService implements ArchiveService {
     if (!claim.first) {
       suppressFatalStepFailure(claim.primary, claim.contender);
       logAdditionalFatalBestEffort(claim.primary, claim.contender);
+      persistFatalRepair(claim);
       return;
     }
     try {
       queryCoordinator.beginDrain();
     } catch (Throwable drainFailure) {
+      requestedRepairReason.compareAndSet(null, claim.repairReason);
       suppressFatalStepFailure(claim.primary, drainFailure);
     }
     try {
@@ -3649,6 +3659,7 @@ public final class DefaultArchiveService implements ArchiveService {
         publisher.beginDrain();
       }
     } catch (Throwable drainFailure) {
+      requestedRepairReason.compareAndSet(null, claim.repairReason);
       suppressFatalStepFailure(claim.primary, drainFailure);
     }
     try {
@@ -3656,25 +3667,68 @@ public final class DefaultArchiveService implements ArchiveService {
         backlogMonitor.notifyAll();
       }
     } catch (Throwable notifyFailure) {
+      requestedRepairReason.compareAndSet(null, claim.repairReason);
       suppressFatalStepFailure(claim.primary, notifyFailure);
     }
+    // A pre-write capacity refusal is clean only after admission closes and all work is idle.
+    // In particular, a publisher may have released its lease but not reported its failure yet.
+    if (claim.contender instanceof ResourceAdmissionFailure) {
+      boolean idle = false;
+      try {
+        idle = isIdleAfterFatalDrain();
+      } catch (Throwable idleFailure) {
+        suppressFatalStepFailure(claim.primary, idleFailure);
+      }
+      if (!idle) {
+        requestedRepairReason.compareAndSet(null, claim.repairReason);
+      }
+    }
+    if (!persistFatalRepair(claim)) {
+      return;
+    }
+    try {
+      fatalController.deliver();
+    } catch (Throwable deliveryFailure) {
+      suppressFatalStepFailure(claim.primary, deliveryFailure);
+    }
+  }
+
+  private boolean isIdleAfterFatalDrain() {
+    for (ArchiveLifecycle.WorkType type : ArchiveLifecycle.WorkType.values()) {
+      if (lifecycle.getActiveCount(type) != 0L) {
+        return false;
+      }
+    }
+    return publisher == null || publisher.isCleanlyDrained();
+  }
+
+  private boolean persistFatalRepair(FatalTransition claim) {
     synchronized (repairStateMutex) {
+      String reason = requestedRepairReason.get();
+      if (reason == null || fatalRepairPersisted) {
+        return true;
+      }
       try {
         ArchiveMetrics.setRepairRequired(true);
       } catch (Throwable metricsFailure) {
         suppressFatalStepFailure(claim.primary, metricsFailure);
       }
       try {
-        txNumIndex.markRepairRequired(claim.repairReason);
+        txNumIndex.markRepairRequired(reason);
+        fatalRepairPersisted = true;
       } catch (Throwable markerFailure) {
         suppressFatalStepFailure(claim.primary, markerFailure);
-        return;
+        return false;
       }
     }
-    try {
-      fatalController.deliver();
-    } catch (Throwable deliveryFailure) {
-      suppressFatalStepFailure(claim.primary, deliveryFailure);
+    return true;
+  }
+
+  /** Allowlisted only at awaitWriterCapacity, before the caller acquires its writer lease. */
+  private static final class ResourceAdmissionFailure extends ArchiveException {
+
+    private ResourceAdmissionFailure(String message) {
+      super(message);
     }
   }
 

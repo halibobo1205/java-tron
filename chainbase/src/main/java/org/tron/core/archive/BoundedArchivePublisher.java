@@ -128,6 +128,14 @@ public final class BoundedArchivePublisher implements AutoCloseable {
     }
   }
 
+  /** Atomically distinguishes settled drain from an executor failure awaiting its callback. */
+  boolean isCleanlyDrained() {
+    synchronized (monitor) {
+      return (state == State.DRAINING || state == State.CLOSED)
+          && !processing && target == null;
+    }
+  }
+
   public boolean awaitIdle(long timeout, TimeUnit unit) throws InterruptedException {
     if (unit == null) {
       throw new NullPointerException("unit");

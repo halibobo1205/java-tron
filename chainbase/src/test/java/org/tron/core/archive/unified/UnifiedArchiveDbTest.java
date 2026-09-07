@@ -26,6 +26,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
@@ -1662,6 +1663,48 @@ public class UnifiedArchiveDbTest {
         return failure;
       }
     });
+  }
+
+  @Test
+  public void validationLookupsRequireExactKeysAndKeepTheirSnapshot() {
+    db.writeMaintenanceAtomically(new UnifiedArchiveMaintenanceBatch()
+        .put(UnifiedArchiveColumnFamily.HISTORY, ascii("b2"), HISTORY_VALUE));
+    try (UnifiedArchiveReadView view = db.openValidationReadView()) {
+      db.writeMaintenanceAtomically(new UnifiedArchiveMaintenanceBatch()
+          .put(UnifiedArchiveColumnFamily.HISTORY, ascii("b2"), new byte[128]));
+      for (String absent : new String[] {"b", "b1", "b3", "z"}) {
+        assertNull(view.getExact(UnifiedArchiveColumnFamily.HISTORY,
+            ascii(absent), HISTORY_VALUE.length, "history"));
+      }
+      assertArrayEquals(HISTORY_VALUE, view.getExact(UnifiedArchiveColumnFamily.HISTORY,
+          ascii("b2"), HISTORY_VALUE.length, "history"));
+      assertArrayEquals(HISTORY_VALUE, view.getBounded(UnifiedArchiveColumnFamily.HISTORY,
+          ascii("b2"), HISTORY_VALUE.length, "history"));
+    }
+  }
+
+  @Test
+  public void validationLookupsKeepAllocationBoundsAndCursorCountBounded() {
+    db.writeMaintenanceAtomically(new UnifiedArchiveMaintenanceBatch()
+        .put(UnifiedArchiveColumnFamily.HISTORY, HISTORY_KEY, new byte[1024 * 1024]));
+    try (UnifiedArchiveReadView view = db.openValidationReadView()) {
+      ArchiveException exact = assertThrows(ArchiveException.class, () -> view.getExact(
+          UnifiedArchiveColumnFamily.HISTORY, HISTORY_KEY, 32L, "history"));
+      assertTrue(exact.getMessage().contains("actualBytes=1048576"));
+      ArchiveException bounded = assertThrows(ArchiveException.class, () -> view.getBounded(
+          UnifiedArchiveColumnFamily.HISTORY, HISTORY_KEY, 32L, "history"));
+      assertTrue(bounded.getMessage().contains("actualBytes=1048576"));
+      for (int prefix = 0; prefix < 256; prefix++) {
+        assertNull(view.getExact(UnifiedArchiveColumnFamily.HISTORY,
+            new byte[] {(byte) prefix}, 32L, "missing"));
+      }
+      Map<?, ?> lookups = ReflectUtils.getFieldValue(view, "validationLookups");
+      assertEquals(16, lookups.size());
+      List<?> iterators = ReflectUtils.getFieldValue(view, "iterators");
+      assertEquals(16, iterators.size());
+    }
+    AtomicInteger activeViews = ReflectUtils.getFieldValue(db, "activeReadViews");
+    assertEquals(0, activeViews.get());
   }
 
   @Test

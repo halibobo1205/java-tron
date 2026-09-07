@@ -244,11 +244,15 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
       return Optional.empty();
     }
     ArchiveTxPosition position = ArchiveBlockRangeCodec.decodePosition(value);
+    validateCommittedPosition(position, txNum);
+    return Optional.of(position);
+  }
+
+  private void validateCommittedPosition(ArchiveTxPosition position, long txNum) {
     ArchiveBlockRange range = getBlockRange(position.getBlockNum())
         .orElseThrow(() -> new ArchiveException(
             "archive tx-position has no committed block range for txNum " + txNum));
     validatePosition(range, position, txNum);
-    return Optional.of(position);
   }
 
   @Override
@@ -628,8 +632,7 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
             if (decoded.getTxNum() != positionTxNum) {
               throw new ArchiveException("UNIFIED_V1 position key/value txNum mismatch");
             }
-            getPosition(positionTxNum).orElseThrow(() -> new ArchiveException(
-                "UNIFIED_V1 position row is not committed"));
+            validateCommittedPosition(decoded, positionTxNum);
             break;
           case ArchiveBlockRangeCodec.TXNUM_BY_BLOCK_INDEX_PREFIX:
             long indexedBlockNum =
