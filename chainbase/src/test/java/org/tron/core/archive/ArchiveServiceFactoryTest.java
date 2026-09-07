@@ -1,24 +1,32 @@
 package org.tron.core.archive;
 
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockConstruction;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
 import static org.tron.core.archive.unified.UnifiedArchiveTestMaintenance.write;
 
 import com.google.protobuf.ByteString;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import org.mockito.MockedConstruction;
 import org.mockito.MockedStatic;
 import org.tron.common.arch.Arch;
 import org.tron.common.utils.ByteArray;
@@ -34,6 +42,7 @@ import org.tron.core.archive.domain.ArchiveSchemaChecksum;
 import org.tron.core.archive.domain.DefaultArchiveDomainCatalog;
 import org.tron.core.archive.domain.DefaultArchiveDomainRegistry;
 import org.tron.core.archive.identity.ArchiveIdentityClaim;
+import org.tron.core.archive.identity.ArchiveIdentityException;
 import org.tron.core.archive.identity.ArchiveIdentityProtocol;
 import org.tron.core.archive.identity.UnifiedArchiveIdentityPayload;
 import org.tron.core.archive.temporal.UnifiedArchiveTemporalStore;
@@ -220,6 +229,55 @@ public class ArchiveServiceFactoryTest {
     }
     try (UnifiedArchiveDb db = UnifiedArchiveDb.open(root.resolve("unified"), schema)) {
       assertFalse(UnifiedArchiveTxNumIndex.hasRepairRequired(db));
+    }
+  }
+
+  @Test
+  public void anchoredFactoryClosesOpenedServiceWhenIdentityCompletionFails() throws Exception {
+    Path root = temporaryFolder.getRoot().toPath().resolve("identity-completion-failure");
+    Path anchors = temporaryFolder.getRoot().toPath().resolve("completion-anchors");
+    ArchiveDomainCatalog catalog = new DefaultArchiveDomainCatalog();
+    byte[] schema = ArchiveSchemaChecksum.of(new DefaultArchiveDomainRegistry(), catalog);
+    BlockCapsule genesis = new BlockCapsule(0L, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY);
+    ArchiveIdentityProtocol real = new ArchiveIdentityProtocol(
+        new UnifiedArchiveIdentityPayload(catalog, schema));
+    ArchiveIdentityClaim claim = ArchiveIdentityClaim.create(genesis.getBlockId().toString(),
+        ByteArray.toHexString(schema), "UNIFIED_V1", root, 0L);
+    real.init(anchors, claim);
+    real.resume(anchors, claim);
+
+    for (Throwable injected : new Throwable[] {
+        new ArchiveIdentityException("injected identity completion"),
+        new IOException("injected identity lock release"),
+        new IllegalStateException("injected identity completion"),
+        new AssertionError("injected identity completion")}) {
+      AtomicReference<ArchiveService> opened = new AtomicReference<>();
+      try (MockedStatic<BlockUtil> blockUtil = mockStatic(BlockUtil.class);
+          MockedConstruction<ArchiveIdentityProtocol> protocols = mockConstruction(
+              ArchiveIdentityProtocol.class, (protocol, context) ->
+                  when(protocol.withValidatedActive(any(), any(), anyString(), anyString(),
+                      anyString(), any())).thenAnswer(invocation -> {
+                        ArchiveIdentityProtocol.ActiveIdentityAction<ArchiveService> action =
+                            invocation.getArgument(5);
+                        opened.set(real.withValidatedActive(anchors, root,
+                            genesis.getBlockId().toString(), ByteArray.toHexString(schema),
+                            "UNIFIED_V1", action));
+                        throw injected;
+                      }))) {
+        blockUtil.when(BlockUtil::newGenesisBlockCapsule).thenReturn(genesis);
+        Throwable failure = assertThrows(Throwable.class,
+            () -> ArchiveServiceFactory.create(archiveConfig(), root.toString(), null, anchors));
+        assertSame(injected, injected instanceof IOException ? failure.getCause() : failure);
+        assertNotNull("failure must occur after the service was opened", opened.get());
+      }
+      // Reopening exercises native handle/lock release, not just an in-memory closed flag.
+      try (UnifiedArchiveDb db = UnifiedArchiveDb.open(root.resolve("unified"), schema)) {
+        assertFalse(UnifiedArchiveTxNumIndex.hasRepairRequired(db));
+      } finally {
+        if (opened.get() != null) {
+          opened.get().close();
+        }
+      }
     }
   }
 

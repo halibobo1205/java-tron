@@ -9,7 +9,9 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
@@ -35,6 +37,7 @@ import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -658,6 +661,80 @@ public class UnifiedArchiveBackendTest {
           oneBlockIterators, manyBlockIterators);
     } finally {
       reopenWithMetrics(metricsPreviouslyEnabled);
+    }
+  }
+
+  @Test
+  public void fullStartupScrubAdmitsCrossReferenceReadsToArchiveCache() throws Exception {
+    publish(block(0L, DomainValue.tombstone(), value(1)));
+    publish(block(1L, value(1), value(2)));
+    RocksDB raw = ReflectUtils.getFieldValue(db, "db");
+    RocksDB observed = spy(raw);
+    AtomicInteger reads = new AtomicInteger();
+    doAnswer(invocation -> {
+      ColumnFamilyHandle handle = invocation.getArgument(0);
+      ReadOptions options = invocation.getArgument(1);
+      byte[] key = invocation.getArgument(2);
+      byte[] value = invocation.getArgument(3);
+      assertTrue("startup cross-references must reuse the bounded archive cache",
+          options.fillCache());
+      reads.incrementAndGet();
+      return raw.get(handle, options, key, value);
+    }).when(observed).get(any(ColumnFamilyHandle.class), any(ReadOptions.class),
+        any(byte[].class), any(byte[].class));
+
+    ReflectUtils.setFieldValue(db, "db", observed);
+    try {
+      backend.validateStartup(true, true);
+      assertTrue("the scrub must still perform cross-reference checks", reads.get() > 0);
+    } finally {
+      ReflectUtils.setFieldValue(db, "db", raw);
+    }
+  }
+
+  @Test
+  public void fullKeyspaceReadsCurrentIndexRowsFromIterator() throws Exception {
+    service = unifiedServiceWithVmPreState();
+    BlockCapsule block = canonicalBlock(0L);
+    TransactionCapsule transaction = new TransactionCapsule(Transaction.getDefaultInstance());
+    service.beginBlock(block, ArchiveSource.NORMAL);
+    service.beginSystemTx(block, ArchivePhase.BLOCK_PREPARE);
+    service.endTx();
+    service.beginUserTx(block, 0, transaction);
+    service.beginUserVmTx();
+    service.endTx();
+    service.beginSystemTx(block, ArchivePhase.BLOCK_FINALIZE);
+    service.endTx();
+    ArchiveJournalToken token = service.commitBlockJournaled(block, 1);
+    service.acknowledgeCanonicalCommit(token);
+    service.publishSolidifiedBlocks(0L);
+    assertNotNull(db.get(UnifiedArchiveColumnFamily.INDEX, blockIndexKey(0L, 0)));
+
+    ArchiveBlockRange range = index.getBlockRange(0L).get();
+    Map<Long, ArchiveTxPosition> positions = new HashMap<>();
+    for (long txNum = range.getFirstTxNum(); txNum <= range.getLastTxNum(); txNum++) {
+      positions.put(txNum, index.getPosition(txNum).get());
+    }
+    UnifiedArchiveTxNumIndex observedIndex = spy(index);
+    // Isolate genuine cross-reference reads; every current-row read must use the iterator.
+    doAnswer(call -> Optional.ofNullable(positions.get((Long) call.getArgument(0))))
+        .when(observedIndex).getPosition(anyLong());
+    doReturn(Optional.of(range)).when(observedIndex).getBlockRange(0L);
+    RocksDB raw = ReflectUtils.getFieldValue(db, "db");
+    RocksDB observedDb = spy(raw);
+    EnumMap<UnifiedArchiveColumnFamily, ColumnFamilyHandle> handles =
+        ReflectUtils.getFieldValue(db, "handles");
+    Method validate = UnifiedArchiveTxNumIndex.class.getDeclaredMethod("validateFullKeyspace");
+    validate.setAccessible(true);
+    ReflectUtils.setFieldValue(db, "db", observedDb);
+    try {
+      validate.invoke(observedIndex);
+      verify(observedDb, never()).get(eq(handles.get(UnifiedArchiveColumnFamily.INDEX)),
+          any(ReadOptions.class), any(byte[].class), any(byte[].class));
+      verify(observedDb, never()).get(eq(handles.get(UnifiedArchiveColumnFamily.INDEX)),
+          any(ReadOptions.class), any(byte[].class));
+    } finally {
+      ReflectUtils.setFieldValue(db, "db", raw);
     }
   }
 

@@ -595,7 +595,7 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
         byte[] key = index.key();
         if (Arrays.equals(key, ArchiveBlockRangeCodec.FIRST_BLOCK_KEY)) {
           ArchiveBlockRangeCodec.decodeFirstBlock(
-              get(UnifiedArchiveColumnFamily.INDEX, key));
+              index.valueExact(Long.BYTES, "UNIFIED_V1 first block marker"));
           progress.record(-1L);
           index.next();
           continue;
@@ -605,15 +605,14 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
         }
         switch (key[0]) {
           case ArchiveBlockRangeCodec.TXNUM_BLOCK_PREFIX:
-            ArchiveBlockRange range = ArchiveBlockRangeCodec.decodeRange(
-                get(UnifiedArchiveColumnFamily.INDEX, key));
+            ArchiveBlockRange range = readRange(index, "UNIFIED_V1 full-scrub block range");
             validateRangeKeyMatchesValue(key, range);
             validateRangeShape(range);
             break;
           case ArchiveBlockRangeCodec.TXNUM_BY_TXID_PREFIX:
             byte[] txId = ArchiveBlockRangeCodec.txIdFromKey(key);
             long txNum = ArchiveBlockRangeCodec.decodeCursor(
-                get(UnifiedArchiveColumnFamily.INDEX, key));
+                index.valueExact(Long.BYTES, "UNIFIED_V1 txId position reference"));
             ArchiveTxPosition txIdPosition = getPosition(txNum)
                 .orElseThrow(() -> new ArchiveException(
                     "UNIFIED_V1 txId row has no committed position"));
@@ -624,7 +623,8 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
           case ArchiveBlockRangeCodec.TXNUM_META_PREFIX:
             long positionTxNum = ArchiveBlockRangeCodec.txNumFromPositionKey(key);
             ArchiveTxPosition decoded = ArchiveBlockRangeCodec.decodePosition(
-                get(UnifiedArchiveColumnFamily.INDEX, key));
+                index.valueBounded(31, ArchiveBlockRangeCodec.POSITION_VALUE_MAX_LENGTH,
+                    "UNIFIED_V1 full-scrub tx-position"));
             if (decoded.getTxNum() != positionTxNum) {
               throw new ArchiveException("UNIFIED_V1 position key/value txNum mismatch");
             }
@@ -637,7 +637,7 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
             int indexedTxIndex =
                 ArchiveBlockRangeCodec.txIndexFromBlockIndexKey(key);
             long indexedTxNum = ArchiveBlockRangeCodec.decodeCursor(
-                get(UnifiedArchiveColumnFamily.INDEX, key));
+                index.valueExact(Long.BYTES, "UNIFIED_V1 block-index position reference"));
             ArchiveTxPosition indexedPosition = getPosition(indexedTxNum)
                 .orElseThrow(() -> new ArchiveException(
                     "UNIFIED_V1 block-index row has no committed position"));
