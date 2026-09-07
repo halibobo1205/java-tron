@@ -129,6 +129,9 @@ public final class DefaultArchiveService implements ArchiveService {
   private volatile long activeJournalMutationBytes;
   private volatile long inFlightResourceBytes;
   private volatile long oldestInFlightBlock = -1L;
+  // Monotonic signal for capacity waiters. A soft watermark is flow control, so its timeout
+  // measures a stalled publisher rather than the total time needed to drain a large backlog.
+  private long backlogDrainGeneration;
   private final Object diskSampleMonitor = new Object();
   private final ArchiveDiskSpaceSampler diskSpaceSampler;
   private volatile long lastDiskSampleGeneration;
@@ -637,9 +640,19 @@ public final class DefaultArchiveService implements ArchiveService {
     if (!enabled) {
       return;
     }
-    long timeoutNanos = TimeUnit.MILLISECONDS.toNanos(
+    long backpressureTimeoutNanos = TimeUnit.MILLISECONDS.toNanos(
         publisherConfig.getBackpressureTimeoutMs());
-    long deadline = System.nanoTime() + timeoutNanos;
+    long publisherStallTimeoutNanos = backpressureTimeoutNanos == 0L
+        ? 0L : StrictMathWrapper.max(
+            backpressureTimeoutNanos,
+            TimeUnit.MILLISECONDS.toNanos(publisherConfig.getPublishTimeoutMs()));
+    long startedNanos = System.nanoTime();
+    long diskDeadline = startedNanos + backpressureTimeoutNanos;
+    long publisherDeadline = startedNanos + publisherStallTimeoutNanos;
+    long observedDrainGeneration;
+    synchronized (backlogMonitor) {
+      observedDrainGeneration = backlogDrainGeneration;
+    }
     while (true) {
       validateAvailable();
       long usableSpace;
@@ -652,6 +665,11 @@ public final class DefaultArchiveService implements ArchiveService {
       ArchiveException fatalFailure = null;
       synchronized (backlogMonitor) {
         validateAvailable();
+        long now = System.nanoTime();
+        if (backlogDrainGeneration != observedDrainGeneration) {
+          observedDrainGeneration = backlogDrainGeneration;
+          publisherDeadline = now + publisherStallTimeoutNanos;
+        }
         boolean hardLimitReached =
             inFlightBlockCount >= publisherConfig.getHardInFlightBlocks()
                 || inFlightRecordCount >= publisherConfig.getHardInFlightRecords()
@@ -674,11 +692,14 @@ public final class DefaultArchiveService implements ArchiveService {
           if (!softLimitReached || publisher == null || !publisherConfig.isBackpressure()) {
             return;
           }
-          long remaining = deadline - System.nanoTime();
-          if (timeoutNanos == 0 || remaining <= 0) {
+          long timeoutNanos = diskSoftLimitReached
+              ? backpressureTimeoutNanos : publisherStallTimeoutNanos;
+          long remaining = (diskSoftLimitReached ? diskDeadline : publisherDeadline) - now;
+          if (timeoutNanos == 0L || remaining <= 0L) {
             fatalFailure = new ArchiveException(
-                "archive publisher backpressure timed out: blocks=" + inFlightBlockCount
-                    + ", records=" + inFlightRecordCount + ", bytes=" + inFlightRetainedBytes
+                "archive publisher backpressure timed out: no publication progress, blocks="
+                    + inFlightBlockCount + ", records=" + inFlightRecordCount
+                    + ", bytes=" + inFlightRetainedBytes
                     + ", resourceBytes=" + inFlightResourceBytes + ", diskFree=" + usableSpace);
           } else {
             try {
@@ -1853,6 +1874,7 @@ public final class DefaultArchiveService implements ArchiveService {
           inFlightRetainedBytes, block.estimatedRetainedBytes(), "bytes");
       removePublicationFootprint(blockResourceFootprintBytes(block));
       refreshInFlightResourceBytesLocked();
+      backlogDrainGeneration++;
       backlogMonitor.notifyAll();
     }
     updateInFlightMetrics();
