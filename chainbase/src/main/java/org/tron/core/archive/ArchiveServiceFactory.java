@@ -96,36 +96,46 @@ public final class ArchiveServiceFactory {
     }
     Path archivePath = Paths.get(archiveDir).toAbsolutePath().normalize();
     boolean canonicalHasBlocks = chainBaseManager != null && chainBaseManager.hasBlocks();
-    UnifiedOpenMode openMode;
+    AutoCloseable[] opened = {null};
     try {
       validateArchiveRootBeforeOpen(archivePath, canonicalHasBlocks);
       if (identityAnchorDirectory != null) {
-        validateOrInitializeIdentity(config, archivePath, identityAnchorDirectory,
-            canonicalHasBlocks, catalog, schemaChecksum);
-        // Identity binding creates the payload before activation. Every ACTIVE/resumed identity
-        // must therefore strict-open the registered DB and may never fall back to initialization.
-        openMode = UnifiedOpenMode.OPEN_EXISTING;
-      } else {
-        openMode = validateUnanchoredUnifiedInitialization(
-            config, archivePath, canonicalHasBlocks);
+        return openIdentityBoundArchive(config, archivePath, identityAnchorDirectory,
+            canonicalHasBlocks, catalog, schemaChecksum, active -> {
+              // Retain the authenticated, validated handle instead of reopening and rescanning it.
+              ArchiveService service = openUnifiedArchive(config, archivePath, registry, catalog,
+                  schemaChecksum, queryLimits, publisherConfig, UnifiedOpenMode.OPEN_EXISTING,
+                  active.getFloor());
+              opened[0] = service::close;
+              return service;
+            });
       }
+      UnifiedOpenMode openMode = validateUnanchoredUnifiedInitialization(
+          config, archivePath, canonicalHasBlocks);
       if (openMode == UnifiedOpenMode.INITIALIZE_NEW) {
         Files.createDirectories(archivePath);
       }
+      return openUnifiedArchive(config, archivePath, registry, catalog,
+          schemaChecksum, queryLimits, publisherConfig, openMode, null);
     } catch (ArchiveIdentityException e) {
+      closeOnFailure(opened[0], e);
       throw new ArchiveException("archive identity validation failed: " + e.getMessage()
           + "; restore a canonical/archive backup compatible with this build, or rebuild "
           + "canonical and archive together from empty directories", e);
     } catch (IOException e) {
+      closeOnFailure(opened[0], e);
       throw new ArchiveException("failed to create archive directory " + archiveDir, e);
+    } catch (RuntimeException | Error e) {
+      // A failure releasing either identity lock must not leak a successfully opened service.
+      closeOnFailure(opened[0], e);
+      throw e;
     }
-    return openUnifiedArchive(config, archivePath, registry, catalog,
-        schemaChecksum, queryLimits, publisherConfig, openMode);
   }
 
-  private static void validateOrInitializeIdentity(
+  private static ArchiveService openIdentityBoundArchive(
       StorageConfig.ArchiveConfig config, Path archivePath, Path anchorDirectory,
-      boolean canonicalHasBlocks, ArchiveDomainCatalog catalog, byte[] schemaChecksum)
+      boolean canonicalHasBlocks, ArchiveDomainCatalog catalog, byte[] schemaChecksum,
+      ArchiveIdentityProtocol.ActiveIdentityAction<ArchiveService> openArchive)
       throws IOException {
     String chainId = BlockUtil.newGenesisBlockCapsule().getBlockId().toString();
     String schema = ByteArray.toHexString(schemaChecksum);
@@ -144,19 +154,8 @@ public final class ArchiveServiceFactory {
             : "set storage.archive.identity.initialize=true only for a new empty archive";
         throw new ArchiveException("archive identity is missing; " + remedy);
       }
-      protocol.withValidatedActive(
-          anchorDirectory, archivePath, chainId, schema, UNIFIED_LAYOUT, active -> {
-            long actualFloor = UnifiedArchiveIdentityPayload.inspectAuthenticatedFloor(
-                archivePath, catalog, schemaChecksum,
-                config.getPublisher().getHardInFlightBytes(),
-                config.getPublisher().getHardInFlightRecords(),
-                config.getPublisher().getHardInFlightBlocks());
-            if (active.getFloor() != actualFloor) {
-              throw new ArchiveIdentityException("archive identity active floor mismatch");
-            }
-            return null;
-          });
-      return;
+      return protocol.withValidatedActive(
+          anchorDirectory, archivePath, chainId, schema, UNIFIED_LAYOUT, openArchive);
     }
 
     Optional<ArchiveIdentityClaim> persisted = protocol.findResumableClaim(
@@ -167,6 +166,8 @@ public final class ArchiveServiceFactory {
       protocol.init(anchorDirectory, claim);
     }
     protocol.resume(anchorDirectory, claim);
+    return protocol.withValidatedActive(
+        anchorDirectory, archivePath, chainId, schema, UNIFIED_LAYOUT, openArchive);
   }
 
   private static UnifiedOpenMode validateUnanchoredUnifiedInitialization(
@@ -189,7 +190,8 @@ public final class ArchiveServiceFactory {
   private static ArchiveService openUnifiedArchive(StorageConfig.ArchiveConfig config,
       Path archivePath, ArchiveDomainRegistry registry,
       ArchiveDomainCatalog catalog, byte[] schemaChecksum, ArchiveQueryLimits queryLimits,
-      ArchivePublisherConfig publisherConfig, UnifiedOpenMode openMode) {
+      ArchivePublisherConfig publisherConfig, UnifiedOpenMode openMode, Long identityFloor)
+      throws ArchiveIdentityException {
     Path databasePath = UnifiedArchiveIdentityPayload.databasePath(archivePath);
     UnifiedArchiveDb db = null;
     UnifiedArchiveTxNumIndex txNumIndex = null;
@@ -208,6 +210,12 @@ public final class ArchiveServiceFactory {
               db, catalog, publisherConfig.getHardInFlightBytes(),
               publisherConfig.getHardInFlightRecords(),
               publisherConfig.getHardInFlightBlocks(), writePermit);
+      if (identityFloor != null) {
+        long actualFloor = UnifiedArchiveIdentityPayload.inspectFloor(txNumIndex, inFlightStore);
+        if (identityFloor != actualFloor) {
+          throw new ArchiveIdentityException("archive identity active floor mismatch");
+        }
+      }
       UnifiedArchiveBackend backend =
           new UnifiedArchiveBackend(
               db, txNumIndex, temporalStore, publisherConfig.getHardInFlightBytes(),
@@ -219,7 +227,7 @@ public final class ArchiveServiceFactory {
           ArchiveExecutionContextHolder.get(), temporalStore, inFlightStore, registry,
           catalog, ArchiveLifecycle.Phase.RECOVERING, queryLimits, publisherConfig,
           startupValidator, backend, config.getDebug().isEnable());
-    } catch (RuntimeException | Error e) {
+    } catch (ArchiveIdentityException | RuntimeException | Error e) {
       if (e instanceof ArchivePersistentStateCorruptionException && db != null) {
         try {
           String reason = e.getMessage() == null

@@ -17,6 +17,7 @@ import org.tron.core.archive.ArchivePhase;
 import org.tron.core.archive.ArchiveRocksIterators;
 import org.tron.core.archive.ArchiveSnapshotReleaseException;
 import org.tron.core.archive.ArchiveSource;
+import org.tron.core.archive.ArchiveStartupProgress;
 import org.tron.core.archive.query.QueryContext;
 import org.tron.core.archive.query.QueryContextHolder;
 import org.tron.core.archive.unified.UnifiedArchiveColumnFamily;
@@ -588,12 +589,14 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
       ArchiveRocksIterators.requireOk(meta, "UNIFIED_V1 validate meta keyspace");
 
       UnifiedArchiveIterator index = view.newIterator(UnifiedArchiveColumnFamily.INDEX);
+      ArchiveStartupProgress progress = new ArchiveStartupProgress("index-keyspace");
       index.seekToFirst();
       while (index.isValid()) {
         byte[] key = index.key();
         if (Arrays.equals(key, ArchiveBlockRangeCodec.FIRST_BLOCK_KEY)) {
           ArchiveBlockRangeCodec.decodeFirstBlock(
               get(UnifiedArchiveColumnFamily.INDEX, key));
+          progress.record(-1L);
           index.next();
           continue;
         }
@@ -652,9 +655,11 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
           default:
             throw new ArchiveException("UNIFIED_V1 index column family has an unknown key");
         }
+        progress.record(-1L);
         index.next();
       }
       ArchiveRocksIterators.requireOk(index, "UNIFIED_V1 validate index keyspace");
+      progress.complete();
       return null;
     });
   }
@@ -679,8 +684,7 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
       if (key[0] != ArchiveBlockRangeCodec.TXNUM_BLOCK_PREFIX) {
         return Optional.empty();
       }
-      ArchiveBlockRange range = readRange(
-          view, key, "UNIFIED_V1 highest block range");
+      ArchiveBlockRange range = readRange(iterator, "UNIFIED_V1 highest block range");
       validateRangeKeyMatchesValue(key, range);
       validateRangeShape(range);
       return Optional.of(range);
@@ -689,6 +693,8 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
 
   private void validateRangeCoverage(boolean validatePositions) {
     withScanView(view -> {
+      ArchiveStartupProgress progress = new ArchiveStartupProgress(
+          validatePositions ? "ranges-and-positions" : "ranges");
       UnifiedArchiveIterator iterator = view.newIterator(UnifiedArchiveColumnFamily.INDEX);
       iterator.seek(new byte[] {ArchiveBlockRangeCodec.TXNUM_BLOCK_PREFIX});
       ArchiveBlockRange previous = null;
@@ -700,8 +706,7 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
         if (key[0] != ArchiveBlockRangeCodec.TXNUM_BLOCK_PREFIX) {
           break;
         }
-        ArchiveBlockRange current = readRange(
-            view, key, "UNIFIED_V1 committed block range");
+        ArchiveBlockRange current = readRange(iterator, "UNIFIED_V1 committed block range");
         validateRangeKeyMatchesValue(key, current);
         validateRangeShape(current);
         if (!Arrays.equals(current.getSchemaChecksum(), schemaChecksum)) {
@@ -731,9 +736,11 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
           }
         }
         previous = current;
+        progress.record(current.getBlockNum());
         iterator.next();
       }
       ArchiveRocksIterators.requireOk(iterator, "UNIFIED_V1 validate committed ranges");
+      progress.complete();
       return null;
     });
   }
@@ -773,21 +780,15 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
       if (key[0] != ArchiveBlockRangeCodec.TXNUM_BLOCK_PREFIX) {
         return Optional.empty();
       }
-      ArchiveBlockRange range = readRange(
-          view, key, "UNIFIED_V1 lowest block range");
+      ArchiveBlockRange range = readRange(iterator, "UNIFIED_V1 lowest block range");
     validateRangeKeyMatchesValue(key, range);
     validateRangeShape(range);
     return Optional.of(range);
   }
 
-  private static ArchiveBlockRange readRange(UnifiedArchiveReadView view, byte[] key,
-      String what) {
-    byte[] value = view.getExact(
-        UnifiedArchiveColumnFamily.INDEX, key, ArchiveBlockRangeCodec.RANGE_VALUE_LENGTH, what);
-    if (value == null) {
-      throw new ArchiveException(what + " disappeared from the archive snapshot");
-    }
-    return ArchiveBlockRangeCodec.decodeRange(value);
+  private static ArchiveBlockRange readRange(UnifiedArchiveIterator iterator, String what) {
+    return ArchiveBlockRangeCodec.decodeRange(
+        iterator.valueExact(ArchiveBlockRangeCodec.RANGE_VALUE_LENGTH, what));
   }
 
   private void validateAppendOnlyCommit(ArchiveBlockRange range, long committedNextTxNum) {

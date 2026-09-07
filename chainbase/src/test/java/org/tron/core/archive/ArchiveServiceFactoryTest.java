@@ -3,8 +3,10 @@ package org.tron.core.archive;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
 import static org.tron.core.archive.unified.UnifiedArchiveTestMaintenance.write;
 
@@ -19,7 +21,9 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.mockito.MockedStatic;
 import org.tron.common.arch.Arch;
+import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.ReflectUtils;
+import org.tron.common.utils.Sha256Hash;
 import org.tron.core.ChainBaseManager;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
 import org.tron.core.archive.codec.DomainValue;
@@ -29,7 +33,9 @@ import org.tron.core.archive.domain.ArchiveDomainRegistry;
 import org.tron.core.archive.domain.ArchiveSchemaChecksum;
 import org.tron.core.archive.domain.DefaultArchiveDomainCatalog;
 import org.tron.core.archive.domain.DefaultArchiveDomainRegistry;
+import org.tron.core.archive.identity.ArchiveIdentityClaim;
 import org.tron.core.archive.identity.ArchiveIdentityProtocol;
+import org.tron.core.archive.identity.UnifiedArchiveIdentityPayload;
 import org.tron.core.archive.temporal.UnifiedArchiveTemporalStore;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.archive.txnum.ArchiveTxPosition;
@@ -172,13 +178,48 @@ public class ArchiveServiceFactoryTest {
       assertTrue(Files.notExists(root.resolve("inflight")));
 
       config.getIdentity().setInitialize(false);
-      service = ArchiveServiceFactory.create(
-          config, root.toString(), chainBaseManager, anchors);
-      try {
-        completeRecovery(service);
-      } finally {
-        service.close();
+      byte[] schema = ArchiveSchemaChecksum.of(
+          new DefaultArchiveDomainRegistry(), new DefaultArchiveDomainCatalog());
+      try (MockedStatic<UnifiedArchiveDb> database =
+          mockStatic(UnifiedArchiveDb.class, CALLS_REAL_METHODS)) {
+        service = ArchiveServiceFactory.create(
+            config, root.toString(), chainBaseManager, anchors);
+        try {
+          completeRecovery(service);
+          database.verify(() -> UnifiedArchiveDb.open(root.resolve("unified"), schema), times(1));
+        } finally {
+          service.close();
+        }
       }
+    }
+  }
+
+  @Test
+  public void anchoredFactoryRejectsFloorMismatchAndReleasesDatabase() throws Exception {
+    Path root = temporaryFolder.getRoot().toPath().resolve("mismatched-floor");
+    Path anchors = temporaryFolder.getRoot().toPath().resolve("floor-anchors");
+    ArchiveDomainCatalog catalog = new DefaultArchiveDomainCatalog();
+    byte[] schema = ArchiveSchemaChecksum.of(new DefaultArchiveDomainRegistry(), catalog);
+    BlockCapsule genesis = new BlockCapsule(0L, Sha256Hash.ZERO_HASH, 1L, ByteString.EMPTY);
+    ArchiveIdentityProtocol protocol = new ArchiveIdentityProtocol(
+        new UnifiedArchiveIdentityPayload(catalog, schema));
+    ArchiveIdentityClaim claim = ArchiveIdentityClaim.create(genesis.getBlockId().toString(),
+        ByteArray.toHexString(schema), "UNIFIED_V1", root, 0L);
+    protocol.init(anchors, claim);
+    protocol.resume(anchors, claim);
+    try (UnifiedArchiveDb db = UnifiedArchiveDb.open(root.resolve("unified"), schema)) {
+      new UnifiedArchiveInFlightStore(db, catalog).putBlock(
+          journalBlock(1L, schema, DomainValue.tombstone(), accountValue(1L)));
+    }
+
+    try (MockedStatic<BlockUtil> blockUtil = mockStatic(BlockUtil.class)) {
+      blockUtil.when(BlockUtil::newGenesisBlockCapsule).thenReturn(genesis);
+      ArchiveException failure = assertThrows(ArchiveException.class,
+          () -> ArchiveServiceFactory.create(archiveConfig(), root.toString(), null, anchors));
+      assertTrue(failure.getMessage().contains("archive identity active floor mismatch"));
+    }
+    try (UnifiedArchiveDb db = UnifiedArchiveDb.open(root.resolve("unified"), schema)) {
+      assertFalse(UnifiedArchiveTxNumIndex.hasRepairRequired(db));
     }
   }
 

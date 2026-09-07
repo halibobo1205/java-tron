@@ -99,17 +99,10 @@ public final class UnifiedArchiveIdentityPayload implements ArchiveIdentityPaylo
     Throwable bodyFailure = null;
     try {
       index = new UnifiedArchiveTxNumIndex(db, schemaChecksum, false, true);
-      long persistedFloor = index.getFirstArchivedBlock();
-      if (persistedFloor >= 0) {
-        return persistedFloor;
-      }
       UnifiedArchiveInFlightStore inFlight =
           new UnifiedArchiveInFlightStore(
               db, catalog, maxEncodedBlockBytes, maxRecordsPerBlock, maxBlocks);
-      long[] firstJournal = {Long.MAX_VALUE};
-      inFlight.forEachBlock(block -> firstJournal[0] = StrictMathWrapper.min(
-          firstJournal[0], block.getRange().getBlockNum()));
-      return firstJournal[0] == Long.MAX_VALUE ? 0L : firstJournal[0];
+      return inspectFloor(index, inFlight);
     } catch (RuntimeException | Error e) {
       bodyFailure = e;
       if (markPersistentCorruption
@@ -123,6 +116,19 @@ public final class UnifiedArchiveIdentityPayload implements ArchiveIdentityPaylo
         rethrowCloseFailure(closeFailure);
       }
     }
+  }
+
+  /** Reads the floor from caller-owned adapters without reopening or rescanning the index. */
+  public static long inspectFloor(UnifiedArchiveTxNumIndex index,
+      UnifiedArchiveInFlightStore inFlight) {
+    long persistedFloor = index.getFirstArchivedBlock();
+    if (persistedFloor >= 0) {
+      return persistedFloor;
+    }
+    long[] firstJournal = {Long.MAX_VALUE};
+    inFlight.forEachBlock(block -> firstJournal[0] = StrictMathWrapper.min(
+        firstJournal[0], block.getRange().getBlockNum()));
+    return firstJournal[0] == Long.MAX_VALUE ? 0L : firstJournal[0];
   }
 
   private static void markRepairRequired(UnifiedArchiveDb db,
