@@ -102,6 +102,7 @@ public class BoundedArchivePublisherTest {
       assertTrue(failed.await(2, TimeUnit.SECONDS));
       assertEquals(expected, reported.get());
       assertEquals(BoundedArchivePublisher.State.FAILED, publisher.getState());
+      assertFalse(publisher.isCleanlyDrained());
       assertThrows(ArchiveException.class,
           () -> publisher.request(target(2, 2, 0)));
     } finally {
@@ -153,10 +154,13 @@ public class BoundedArchivePublisherTest {
       ArchiveException failure = assertThrows(ArchiveException.class,
           () -> publisher.request(target(7, 2, 3)));
       assertTrue(failure.getMessage().contains("conflicting archive publish target"));
+      publisher.beginDrain();
+      assertFalse(publisher.isCleanlyDrained());
     } finally {
       release.countDown();
       publisher.close();
     }
+    assertTrue(publisher.isCleanlyDrained());
   }
 
   @Test
@@ -169,6 +173,7 @@ public class BoundedArchivePublisherTest {
         }, failure -> {
           throw new AssertionError(failure);
         });
+    assertFalse(publisher.isCleanlyDrained());
     publisher.activate();
     publisher.beginDrain();
 

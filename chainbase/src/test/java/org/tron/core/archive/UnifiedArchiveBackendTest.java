@@ -9,7 +9,6 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
@@ -37,7 +36,6 @@ import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.EnumMap;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -710,16 +708,6 @@ public class UnifiedArchiveBackendTest {
     service.publishSolidifiedBlocks(0L);
     assertNotNull(db.get(UnifiedArchiveColumnFamily.INDEX, blockIndexKey(0L, 0)));
 
-    ArchiveBlockRange range = index.getBlockRange(0L).get();
-    Map<Long, ArchiveTxPosition> positions = new HashMap<>();
-    for (long txNum = range.getFirstTxNum(); txNum <= range.getLastTxNum(); txNum++) {
-      positions.put(txNum, index.getPosition(txNum).get());
-    }
-    UnifiedArchiveTxNumIndex observedIndex = spy(index);
-    // Isolate genuine cross-reference reads; every current-row read must use the iterator.
-    doAnswer(call -> Optional.ofNullable(positions.get((Long) call.getArgument(0))))
-        .when(observedIndex).getPosition(anyLong());
-    doReturn(Optional.of(range)).when(observedIndex).getBlockRange(0L);
     RocksDB raw = ReflectUtils.getFieldValue(db, "db");
     RocksDB observedDb = spy(raw);
     EnumMap<UnifiedArchiveColumnFamily, ColumnFamilyHandle> handles =
@@ -727,8 +715,9 @@ public class UnifiedArchiveBackendTest {
     Method validate = UnifiedArchiveTxNumIndex.class.getDeclaredMethod("validateFullKeyspace");
     validate.setAccessible(true);
     ReflectUtils.setFieldValue(db, "db", observedDb);
-    try {
-      validate.invoke(observedIndex);
+    try (UnifiedArchiveReadView view = db.openValidationReadView();
+        UnifiedArchiveTxNumIndex.ReadScope ignored = index.bindReadView(view)) {
+      validate.invoke(index);
       verify(observedDb, never()).get(eq(handles.get(UnifiedArchiveColumnFamily.INDEX)),
           any(ReadOptions.class), any(byte[].class), any(byte[].class));
       verify(observedDb, never()).get(eq(handles.get(UnifiedArchiveColumnFamily.INDEX)),
@@ -1333,7 +1322,7 @@ public class UnifiedArchiveBackendTest {
   }
 
   @Test
-  public void commitMarkerScanUsesBoundedLocatorPointReads() {
+  public void commitMarkerScanUsesCurrentLocatorWithoutRepeatingPointRead() {
     ArchiveInFlightBlock block = block(0L, DomainValue.tombstone(), value(1));
     publish(block);
     boolean metricsPreviouslyEnabled =
@@ -1345,11 +1334,26 @@ public class UnifiedArchiveBackendTest {
 
       temporal.validateCommittedBlock(block.getRange());
 
-      assertEquals(6L,
+      assertEquals(5L,
           statistics.getTickerCount(TickerType.NUMBER_KEYS_READ) - before);
     } finally {
       reopenWithMetrics(metricsPreviouslyEnabled);
     }
+  }
+
+  @Test
+  public void commitMarkerScanRejectsOversizedCurrentChangesetLocator() {
+    ArchiveInFlightBlock block = block(0L, DomainValue.tombstone(), value(1));
+    publish(block);
+    byte[] key = firstKey(db, UnifiedArchiveColumnFamily.CHANGESET);
+    write(db, new UnifiedArchiveMaintenanceBatch().put(
+        UnifiedArchiveColumnFamily.CHANGESET, key, new byte[4_096]));
+
+    ArchiveException failure = assertThrows(
+        ArchiveException.class, () -> temporal.validateCommittedBlock(block.getRange()));
+
+    assertTrue(failure.getMessage().contains("length mismatch"));
+    assertTrue(failure.getMessage().contains("actualBytes=4096"));
   }
 
   @Test

@@ -204,7 +204,8 @@ final class UnifiedArchiveBackend {
         fullScrub, rangeChainAlreadyValidated);
     // Full startup scrub repeatedly cross-checks related rows before serving any traffic.
     // Reuse this archive DB's existing bounded cache; ordinary scans and RPCs remain isolated.
-    try (UnifiedArchiveReadView view = fullScrub ? db.openReadView() : db.openScanView();
+    try (UnifiedArchiveReadView view = fullScrub
+        ? db.openValidationReadView() : db.openScanView();
         UnifiedArchiveTxNumIndex.ReadScope ignored = txNumIndex.bindReadView(view)) {
       if (!fullScrub && rangeChainAlreadyValidated) {
         // Construction already validated every range. Reconcile mutates only the checked tail.

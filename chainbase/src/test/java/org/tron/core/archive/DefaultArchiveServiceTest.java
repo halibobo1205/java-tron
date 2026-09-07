@@ -783,9 +783,11 @@ public class DefaultArchiveServiceTest {
       }
     });
     Thread capacityThread = new Thread(capacity, "archive-hard-watermark-capacity");
+    ArchiveWorkLease pendingPublisher = service.acquirePublisherLease();
     try {
       capacityThread.start();
       assertTrue(index.markerEntered.await(1L, TimeUnit.SECONDS));
+      pendingPublisher.close();
       service.setCloseDrainTimeoutForTest(30L, TimeUnit.MILLISECONDS);
 
       ArchiveException closeFailure = assertThrows(ArchiveException.class, service::close);
@@ -794,10 +796,110 @@ public class DefaultArchiveServiceTest {
       index.releaseMarker.countDown();
       assertTrue(capacity.get(1L, TimeUnit.SECONDS) instanceof ArchiveException);
     } finally {
+      pendingPublisher.close();
       index.releaseMarker.countDown();
       capacityThread.join(1_000L);
       service.setCloseDrainTimeoutForTest(1L, TimeUnit.SECONDS);
       service.close();
+    }
+  }
+
+  @Test
+  public void idleCapacityRefusalStopsServiceWithoutCreatingRepairEvidence() throws Exception {
+    TrackingArchiveTxNumIndex index = new TrackingArchiveTxNumIndex();
+    DefaultArchiveService service = serviceWithPublisherConfig(
+        index, new ArchiveExecutionContext(), new InMemoryArchiveTemporalStore(),
+        new InMemoryArchiveInFlightStore(), startupByteBudget(1024L * 1024L));
+    CountDownLatch delivered = new CountDownLatch(1);
+    service.setFatalFailureHandler(ignored -> delivered.countDown());
+    try {
+      ReflectUtils.setFieldValue(service, "inFlightBlockCount", 8);
+      ArchiveException failure = assertThrows(ArchiveException.class, service::awaitWriterCapacity);
+      assertTrue(failure.getMessage().contains("hard watermark"));
+      assertEquals("", index.repairReason);
+      assertTrue(delivered.await(1L, TimeUnit.SECONDS));
+      ArchiveException rejected = assertThrows(ArchiveException.class, service::acquireWriterLease);
+      assertSame(failure, rejected.getCause());
+
+      invokeMarkFatal(service, new ArchiveException("later independent corruption"));
+      assertEquals("later independent corruption", index.repairReason);
+    } finally {
+      service.close();
+    }
+  }
+
+  @Test
+  public void capacityRefusalCannotHidePublisherFailureAwaitingItsCallback() throws Exception {
+    TrackingArchiveTxNumIndex index = new TrackingArchiveTxNumIndex();
+    DefaultArchiveService service = serviceWithPublisherConfig(
+        index, new ArchiveExecutionContext(), new InMemoryArchiveTemporalStore(),
+        new InMemoryArchiveInFlightStore(), startupByteBudget(1024L * 1024L));
+    CountDownLatch failed = new CountDownLatch(1);
+    CountDownLatch release = new CountDownLatch(1);
+    BoundedArchivePublisher publisher = new BoundedArchivePublisher(
+        "archive-pending-failure-test", target -> {
+      throw new ArchiveException("unknown publication write outcome");
+    }, failure -> {
+      failed.countDown();
+      try {
+        assertTrue(release.await(5L, TimeUnit.SECONDS));
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        throw new AssertionError(e);
+      }
+      invokeMarkFatal(service, failure);
+    });
+    ReflectUtils.setFieldValue(service, "publisher", publisher);
+    try {
+      publisher.activate();
+      publisher.request(new ArchivePublishTarget(0L, new byte[32], 0L));
+      assertTrue(failed.await(1L, TimeUnit.SECONDS));
+      ReflectUtils.setFieldValue(service, "inFlightBlockCount", 8);
+      ArchiveException refusal = assertThrows(ArchiveException.class, service::awaitWriterCapacity);
+      assertTrue(refusal.getMessage().contains("hard watermark"));
+      assertTrue(index.repairReason.contains("hard watermark"));
+    } finally {
+      release.countDown();
+      service.close();
+    }
+  }
+
+  @Test
+  public void idleCapacityRefusalNeverClearsExistingRepairEvidence() {
+    TrackingArchiveTxNumIndex index = new TrackingArchiveTxNumIndex();
+    DefaultArchiveService service = serviceWithPublisherConfig(
+        index, new ArchiveExecutionContext(), new InMemoryArchiveTemporalStore(),
+        new InMemoryArchiveInFlightStore(), startupByteBudget(1024L * 1024L));
+    try {
+      index.repairReason = "older failure with unknown write outcome";
+      ReflectUtils.setFieldValue(service, "inFlightBlockCount", 8);
+      ArchiveException refusal = assertThrows(ArchiveException.class, service::awaitWriterCapacity);
+      assertTrue(refusal.getMessage().contains("hard watermark"));
+      assertEquals("older failure with unknown write outcome", index.repairReason);
+    } finally {
+      service.close();
+    }
+  }
+
+  @Test
+  public void capacityRefusalWithReservedWorkStillRequiresRepair() {
+    for (ArchiveLifecycle.WorkType type : new ArchiveLifecycle.WorkType[] {
+        ArchiveLifecycle.WorkType.WRITER, ArchiveLifecycle.WorkType.PUBLISHER,
+        ArchiveLifecycle.WorkType.QUERY}) {
+      TrackingArchiveTxNumIndex index = new TrackingArchiveTxNumIndex();
+      DefaultArchiveService service = serviceWithPublisherConfig(
+          index, new ArchiveExecutionContext(), new InMemoryArchiveTemporalStore(),
+          new InMemoryArchiveInFlightStore(), startupByteBudget(1024L * 1024L));
+      ArchiveLifecycle lifecycle = ReflectUtils.getFieldValue(service, "lifecycle");
+      try (ArchiveWorkLease ignored = lifecycle.acquire(type)) {
+        ReflectUtils.setFieldValue(service, "inFlightBlockCount", 8);
+        ArchiveException refusal =
+            assertThrows(ArchiveException.class, service::awaitWriterCapacity);
+        assertTrue(refusal.getMessage().contains("hard watermark"));
+        assertTrue(index.repairReason.contains("hard watermark"));
+      } finally {
+        service.close();
+      }
     }
   }
 
@@ -2695,6 +2797,16 @@ public class DefaultArchiveServiceTest {
 
   @Test
   public void stalledRecoveryValidationFailsStopOutsideLifecycleCommitLock() throws Exception {
+    assertStalledRecoveryValidationFailsStop(false);
+  }
+
+  @Test
+  public void stalledReconcileValidationUsesRecoveryTimeoutBeforeCompleteRecovery()
+      throws Exception {
+    assertStalledRecoveryValidationFailsStop(true);
+  }
+
+  private void assertStalledRecoveryValidationFailsStop(boolean reconcileFirst) throws Exception {
     TrackingArchiveTxNumIndex index = new TrackingArchiveTxNumIndex();
     CountDownLatch validationEntered = new CountDownLatch(1);
     CountDownLatch releaseValidation = new CountDownLatch(1);
@@ -2714,6 +2826,9 @@ public class DefaultArchiveServiceTest {
     FutureTask<Throwable> recovery = new FutureTask<>(() -> {
       try (ArchiveWorkLease lease = service.acquireRecoveryLease()) {
         lease.start();
+        if (reconcileFirst) {
+          service.reconcileInFlightOnStartup(-1L, -1L, ignored -> null);
+        }
         service.completeRecovery();
         return null;
       } catch (Throwable failure) {

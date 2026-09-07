@@ -638,6 +638,21 @@ public final class UnifiedArchiveDb implements AutoCloseable {
     return callRead(() -> openReadViewLocked(true, Long.MAX_VALUE, 0L, null));
   }
 
+  /** Full scrub only: retain bounded seek cursors for small cross-reference rows. */
+  public UnifiedArchiveReadView openValidationReadView() {
+    UnifiedArchiveReadView view = openReadView();
+    try {
+      return view.enableValidationLookups();
+    } catch (RuntimeException | Error failure) {
+      try {
+        view.close();
+      } catch (RuntimeException | Error closeFailure) {
+        addSuppressedSafely(failure, closeFailure);
+      }
+      throw failure;
+    }
+  }
+
   /**
    * Captures one sequence for untrusted historical queries without admitting their random reads
    * into the shared archive block cache used by publication and maintenance point reads.

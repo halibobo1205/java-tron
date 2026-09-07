@@ -21,6 +21,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.Iterator;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -557,24 +558,38 @@ public class JsonRpcServletTest {
 
   @Test
   public void concurrentBatchConstructionUsesGlobalResponseByteBudget() throws Exception {
+    for (int attempt = 0; attempt < 20; attempt++) {
+      assertConcurrentBatchConstructionUsesGlobalResponseByteBudget();
+    }
+  }
+
+  private void assertConcurrentBatchConstructionUsesGlobalResponseByteBudget() throws Exception {
     int limit = 256;
     CommonParameter.getInstance().jsonRpcMaxResponseSize = limit;
     CommonParameter.getInstance().jsonRpcMaxPendingResponseBytes = 2L * limit;
+    CountDownLatch retainedSubResponses = new CountDownLatch(2);
+    CountDownLatch releaseSubResponses = new CountDownLatch(1);
+    byte[] json = new byte[200];
+    Arrays.fill(json, (byte) ' ');
+    byte[] result = "{\"jsonrpc\":\"2.0\",\"result\":true,\"id\":1}"
+        .getBytes(StandardCharsets.UTF_8);
+    System.arraycopy(result, 0, json, 0, result.length);
     doAnswer(inv -> {
       OutputStream output = inv.getArgument(1);
-      output.write(new byte[200]);
+      output.write(json);
+      retainedSubResponses.countDown();
+      assertTrue("release retained subresponses", releaseSubResponses.await(5, TimeUnit.SECONDS));
       return 0;
     }).when(mockRpcServer).handleRequest(any(InputStream.class), any(OutputStream.class));
 
-    CountDownLatch enteredNetworkWrite = new CountDownLatch(2);
-    CountDownLatch releaseNetworkWrite = new CountDownLatch(1);
     ExecutorService executor = Executors.newFixedThreadPool(2);
     Future<?> first = executor.submit(
-        () -> postBatchTo(new BlockingResponse(enteredNetworkWrite, releaseNetworkWrite), 1));
+        () -> postBatchTo(new MockHttpServletResponse(), 1));
     Future<?> second = executor.submit(
-        () -> postBatchTo(new BlockingResponse(enteredNetworkWrite, releaseNetworkWrite), 2));
+        () -> postBatchTo(new MockHttpServletResponse(), 2));
     try {
-      assertTrue(enteredNetworkWrite.await(5, TimeUnit.SECONDS));
+      assertTrue("both subresponses must hold the budget before batch copying",
+          retainedSubResponses.await(5, TimeUnit.SECONDS));
 
       MockHttpServletResponse third = doPost("[{\"id\":3}]");
 
@@ -582,11 +597,16 @@ public class JsonRpcServletTest {
       assertTrue(body.isArray());
       assertEquals(-32005, body.get(0).get("error").get("code").asInt());
     } finally {
-      releaseNetworkWrite.countDown();
-      first.get(5, TimeUnit.SECONDS);
-      second.get(5, TimeUnit.SECONDS);
-      executor.shutdownNow();
+      releaseSubResponses.countDown();
+      try {
+        first.get(5, TimeUnit.SECONDS);
+        second.get(5, TimeUnit.SECONDS);
+      } finally {
+        executor.shutdownNow();
+      }
     }
+    JsonNode afterRelease = MAPPER.readTree(doPost("[{\"id\":4}]").getContentAsByteArray());
+    assertTrue(afterRelease.get(0).get("result").asBoolean());
   }
 
   @Test
