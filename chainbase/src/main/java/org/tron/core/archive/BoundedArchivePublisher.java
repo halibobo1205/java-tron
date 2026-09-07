@@ -128,6 +128,14 @@ public final class BoundedArchivePublisher implements AutoCloseable {
     }
   }
 
+  /** Whether the requested durable prefix includes the oldest retained journal. */
+  boolean hasPublishableBlock(long oldestBlockNum) {
+    synchronized (monitor) {
+      return state == State.RUNNING && target != null && oldestBlockNum >= 0L
+          && oldestBlockNum <= target.getBlockNum();
+    }
+  }
+
   /** Atomically distinguishes settled drain from an executor failure awaiting its callback. */
   boolean isCleanlyDrained() {
     synchronized (monitor) {

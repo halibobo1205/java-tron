@@ -441,10 +441,53 @@ public class DefaultArchiveServiceAsyncPublisherTest {
   }
 
   @Test
-  public void softWatermarkWaitsUntilPublisherDrainsBacklog() throws Exception {
+  public void softWatermarkDoesNotWaitForUnpublishableTail() {
+    DefaultArchiveService service = service(1, 4, 0);
+    try {
+      journalEmptyBlock(service, block(1));
+
+      service.awaitWriterCapacity();
+
+      assertFalse(service.hasCommittedBlock(1));
+      service.validateAvailable();
+    } finally {
+      service.close();
+    }
+  }
+
+  @Test
+  public void softWatermarkStopsWaitingAfterPublishablePrefixDrains() throws Exception {
+    DefaultArchiveService service = service(1, 4, 0);
+    try {
+      journalEmptyBlock(service, block(1));
+      journalEmptyBlock(service, block(2));
+      try (ArchiveMutationLease mutation = service.acquireMutationReadLease()) {
+        service.requestPublishSolidifiedBlocks(1, block(1).getBlockId().getBytes());
+      }
+      BoundedArchivePublisher publisher = ReflectUtils.getFieldValue(service, "publisher");
+      assertTrue(publisher.awaitIdle(2, TimeUnit.SECONDS));
+
+      service.awaitWriterCapacity();
+
+      assertTrue(service.hasCommittedBlock(1));
+      assertFalse(service.hasCommittedBlock(2));
+      service.validateAvailable();
+    } finally {
+      service.close();
+    }
+  }
+
+  @Test
+  public void softWatermarkWaitsUntilPublishableBacklogDrains() throws Exception {
     DefaultArchiveService service = service(1, 4, 2_000);
+    ReentrantLock publicationLock = ReflectUtils.getFieldValue(service, "publicationLock");
+    publicationLock.lock();
     BlockCapsule block = block(1);
     journalEmptyBlock(service, block);
+    journalEmptyBlock(service, block(2));
+    try (ArchiveMutationLease mutation = service.acquireMutationReadLease()) {
+      service.requestPublishSolidifiedBlocks(1, block.getBlockId().getBytes());
+    }
     CountDownLatch waiterStarted = new CountDownLatch(1);
     ExecutorService executor = Executors.newSingleThreadExecutor();
     Future<?> capacity = executor.submit(() -> {
@@ -456,12 +499,46 @@ public class DefaultArchiveServiceAsyncPublisherTest {
       Thread.sleep(100L);
       assertFalse(capacity.isDone());
 
-      try (ArchiveMutationLease mutation = service.acquireMutationReadLease()) {
-        service.requestPublishSolidifiedBlocks(1, block.getBlockId().getBytes());
-      }
+      publicationLock.unlock();
 
       capacity.get(2, TimeUnit.SECONDS);
       assertTrue(service.hasCommittedBlock(1));
+      assertFalse(service.hasCommittedBlock(2));
+    } finally {
+      if (publicationLock.isHeldByCurrentThread()) {
+        publicationLock.unlock();
+      }
+      executor.shutdownNow();
+      service.close();
+    }
+  }
+
+  @Test
+  public void staleTargetCancellationReleasesSoftWatermarkWaiter() throws Exception {
+    DefaultArchiveService service = service(1, 4, 2_000);
+    ExecutorService executor = Executors.newSingleThreadExecutor();
+    try {
+      journalEmptyBlock(service, block(1));
+      Future<?> capacity;
+      try (ArchiveMutationLease firstEpoch = service.acquireMutationWriteLease()) {
+        service.requestPublishSolidifiedBlocks(1, block(1).getBlockId().getBytes());
+        try (ArchiveMutationLease nextEpoch = service.acquireMutationWriteLease()) {
+          assertTrue(nextEpoch.getEpoch() > firstEpoch.getEpoch());
+        }
+        CountDownLatch waiterStarted = new CountDownLatch(1);
+        capacity = executor.submit(() -> {
+          waiterStarted.countDown();
+          service.awaitWriterCapacity();
+        });
+        assertTrue(waiterStarted.await(1, TimeUnit.SECONDS));
+        Thread.sleep(100L);
+        assertFalse(capacity.isDone());
+      }
+
+      capacity.get(2, TimeUnit.SECONDS);
+
+      assertFalse(service.hasCommittedBlock(1));
+      service.validateAvailable();
     } finally {
       executor.shutdownNow();
       service.close();
@@ -557,9 +634,14 @@ public class DefaultArchiveServiceAsyncPublisherTest {
   @Test
   public void closeWakesWriterWaitingAtSoftWatermark() throws Exception {
     DefaultArchiveService service = service(1, 4, 10_000);
+    ReentrantLock publicationLock = ReflectUtils.getFieldValue(service, "publicationLock");
+    publicationLock.lock();
     journalEmptyBlock(service, block(1));
+    try (ArchiveMutationLease mutation = service.acquireMutationReadLease()) {
+      service.requestPublishSolidifiedBlocks(1, block(1).getBlockId().getBytes());
+    }
     CountDownLatch waiterStarted = new CountDownLatch(1);
-    ExecutorService executor = Executors.newSingleThreadExecutor();
+    ExecutorService executor = Executors.newFixedThreadPool(2);
     Future<?> capacity = executor.submit(() -> {
       waiterStarted.countDown();
       service.awaitWriterCapacity();
@@ -569,13 +651,18 @@ public class DefaultArchiveServiceAsyncPublisherTest {
       Thread.sleep(100L);
       assertFalse(capacity.isDone());
 
-      service.close();
+      Future<?> closing = executor.submit(service::close);
 
       ExecutionException failure = assertThrows(ExecutionException.class,
           () -> capacity.get(1, TimeUnit.SECONDS));
       assertTrue(failure.getCause() instanceof ArchiveException);
       assertTrue(failure.getCause().getMessage().contains("DRAINING"));
+      publicationLock.unlock();
+      closing.get(2, TimeUnit.SECONDS);
     } finally {
+      if (publicationLock.isHeldByCurrentThread()) {
+        publicationLock.unlock();
+      }
       executor.shutdownNow();
       service.close();
     }

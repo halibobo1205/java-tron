@@ -19,6 +19,7 @@
 #   CFK_CATCHUP_TIMEOUT     restart/catch-up timeout (default 360)
 #   HS_FORCE_BUILD=1        rebuild FullNode.jar
 #   HS_KEEP_WORKDIR=1       retain all node data and transcripts
+#   HS_CFG_SOFT_IN_FLIGHT_BLOCKS=8 also exercises pressure below the reversible tail size
 
 set -uo pipefail
 
@@ -204,6 +205,8 @@ hs_assert_eq "1" "$(cfk_local_witness_count "$TARGET_NODE")" \
   "catch-up node local witness count"
 hs_assert_contains "$(grep 'snapshot.maxFlushCount' "$TARGET_NODE/node.conf")" \
   "= $CFK_MAX_FLUSH_COUNT" "target maxFlushCount config"
+hs_assert_contains "$(grep 'softInFlightBlocks' "$TARGET_NODE/node.conf")" \
+  "= ${HS_CFG_SOFT_IN_FLIGHT_BLOCKS:-32768}" "target soft watermark config"
 
 hs_step "building a canonical backlog and recording changing-state oracles"
 hs_node_start "$SOURCE_NODE"
@@ -348,5 +351,6 @@ hs_finish CATCHUP_BATCH_FLUSH_KILL_OK \
   "split=26+1" \
   "flushCount=$CFK_OBSERVED_FLUSH_COUNT" \
   "maxFlushCount=$CFK_OBSERVED_MAX_FLUSH_COUNT" \
+  "softInFlightBlocks=${HS_CFG_SOFT_IN_FLIGHT_BLOCKS:-32768}" \
   "killSourceHead=$SOURCE_HEAD_AT_KILL" \
   "finalArchiveHead=$FINAL_MAX_BLOCK"

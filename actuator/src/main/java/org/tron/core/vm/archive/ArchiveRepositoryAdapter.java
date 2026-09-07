@@ -56,15 +56,16 @@ import org.tron.core.vm.repository.Key;
 import org.tron.core.vm.repository.Repository;
 import org.tron.core.vm.repository.Value;
 import org.tron.protos.Protocol;
+import org.tron.protos.Protocol.Permission;
 import org.tron.protos.contract.Common.ResourceCode;
 
 /**
  * {@link Repository} that replays TVM execution against archive state at a fixed historical point.
  * A root instance reads through an L6 {@link ArchiveStateReader}; the VM executes against a
- * {@link #newRepositoryChild() child} whose writes land in an in-memory copy-on-write overlay and
- * are discarded at the top (a constant call persists nothing). Reads resolve overlay first, then
- * the parent chain, then the archive root; a value absent from the archive is reported absent,
- * never read from the latest stores.
+ * {@link #newRepositoryChild() child} whose writes land in request-local overlays and are discarded
+ * at the top (a constant call persists nothing). Storage views preserve the canonical fork-specific
+ * sharing rules within that request. Other reads resolve overlay first, then the parent chain, then
+ * the archive root; a value absent from the archive is reported absent, never read from latest stores.
  *
  * <p>Hard-fork / proposal flags come from the thread-local {@link VMConfig} snapshot the executor
  * installs. Mutable VM side effects for votes, delegation, and resource weights are isolated in
@@ -85,6 +86,8 @@ public class ArchiveRepositoryAdapter implements Repository {
       "TOTAL_ENERGY_WEIGHT".getBytes(StandardCharsets.US_ASCII);
   private static final byte[] TOTAL_TRON_POWER_WEIGHT =
       "TOTAL_TRON_POWER_WEIGHT".getBytes(StandardCharsets.US_ASCII);
+  private static final byte[] ACTIVE_DEFAULT_OPERATIONS =
+      "ACTIVE_DEFAULT_OPERATIONS".getBytes(StandardCharsets.US_ASCII);
 
   // Root: reader + vmProperties set, parent null. Child: parent set, reader/vmProperties null.
   private final ArchiveStateReader reader;
@@ -102,6 +105,7 @@ public class ArchiveRepositoryAdapter implements Repository {
   private final Map<Key, BytesCapsule> dynamicProperties = new HashMap<>();
   private final Map<Key, VotesCapsule> votes = new HashMap<>();
   private final Map<Key, BytesCapsule> delegations = new HashMap<>();
+  // Cached storage views, shared before ENERGY_LIMIT and copied afterwards, within one request only.
   private final Map<Key, Map<DataWord, DataWord>> storage = new HashMap<>();
   private final Map<Key, Map<Key, Long>> tokenBalances = new HashMap<>();
   private final Map<Key, Map<Key, byte[]>> transientStorage = new HashMap<>();
@@ -253,18 +257,54 @@ public class ArchiveRepositoryAdapter implements Repository {
     if (getAccount(tronAddress) == null) {
       return null;
     }
-    Map<DataWord, DataWord> slots = storage.get(Key.create(tronAddress));
-    if (slots != null && slots.containsKey(key)) {
+    Map<DataWord, DataWord> slots = getStorageOverlay(tronAddress);
+    if (slots.containsKey(key)) {
       DataWord value = slots.get(key);
       return value == null ? null : new DataWord(value.getData());
     }
+    return readArchivedStorage(tronAddress, key);
+  }
+
+  private DataWord readArchivedStorage(byte[] tronAddress, DataWord key) {
     if (parent != null) {
-      return parent.getStorageValue(address, key);
+      return parent.readArchivedStorage(tronAddress, key);
     }
     ArchiveReadResult<byte[]> row = read(() -> reader.getStorage(tronAddress, key.getData()),
         "storage");
     requireKnown(row, "storage");
     return row.isPresent() ? new DataWord(row.getValue()) : null;
+  }
+
+  private Map<DataWord, DataWord> getStorageOverlay(byte[] address) {
+    Key addressKey = Key.create(address);
+    Map<DataWord, DataWord> slots = storage.get(addressKey);
+    if (slots == null) {
+      reserveOverlay(address);
+      slots = inheritStorageOverlay(address);
+      storage.put(addressKey, slots);
+    }
+    return slots;
+  }
+
+  private Map<DataWord, DataWord> inheritStorageOverlay(byte[] address) {
+    Map<DataWord, DataWord> slots = storage.get(Key.create(address));
+    if (slots != null) {
+      return slots;
+    }
+    if (parent == null) {
+      return new HashMap<>();
+    }
+    // Like RepositoryImpl.getStorage, walking ancestors must not populate their storage caches.
+    Map<DataWord, DataWord> inherited = parent.inheritStorageOverlay(address);
+    if (!VMConfig.getEnergyLimitHardFork()) {
+      return inherited;
+    }
+    Map<DataWord, DataWord> copied = new HashMap<>();
+    inherited.forEach((key, value) -> {
+      reserveOverlay(address, key.getData(), value.getData());
+      copied.put(key.clone(), value.clone());
+    });
+    return copied;
   }
 
   @Override
@@ -373,8 +413,9 @@ public class ArchiveRepositoryAdapter implements Repository {
   public void putStorageValue(byte[] address, DataWord key, DataWord value) {
     byte[] tronAddress = TransactionTrace.convertToTronAddress(address);
     reserveOverlay(tronAddress, key.getData(), value.getData());
-    storage.computeIfAbsent(Key.create(tronAddress), k -> new HashMap<>())
-        .put(key.clone(), value.clone());
+    if (getAccount(tronAddress) != null) {
+      getStorageOverlay(tronAddress).put(key.clone(), value.clone());
+    }
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -411,8 +452,11 @@ public class ArchiveRepositoryAdapter implements Repository {
     delegations.forEach((key, value) ->
         parent.updateDelegation(key.getData(), value));
     newContracts.forEach(key -> parent.putNewContract(key.getData()));
-    storage.forEach((addrKey, slots) ->
-        slots.forEach((slot, value) -> parent.putStorageValue(addrKey.getData(), slot, value)));
+    storage.forEach((addrKey, slots) -> {
+      // Canonical commit replaces the parent's cached view, including read-only child snapshots.
+      reserveOverlay(addrKey.getData());
+      parent.storage.put(addrKey, slots);
+    });
     tokenBalances.forEach((addrKey, balances) ->
         balances.forEach((tokenKey, balance) ->
             parent.putTokenBalance(addrKey.getData(), tokenKey.getData(), balance)));
@@ -427,12 +471,9 @@ public class ArchiveRepositoryAdapter implements Repository {
   }
 
   // ---------------------------------------------------------------------------------------------
-  // Account creation: needs the historical block context; wired in L8 Slice 3b.
+  // Account creation: canonical defaults from historical dynamic properties.
   // ---------------------------------------------------------------------------------------------
 
-  // Account creation materializes a fresh zero-balance account in the overlay (discarded at the top
-  // of a constant call). The persisted-only fields RepositoryImpl derives from the store (creation
-  // time, default permission) do not affect a read-only result, so a minimal account is safe.
   @Override
   public AccountCapsule createAccount(byte[] address, Protocol.AccountType type) {
     AccountCapsule account = new AccountCapsule(Protocol.Account.newBuilder()
@@ -455,7 +496,29 @@ public class ArchiveRepositoryAdapter implements Repository {
 
   @Override
   public AccountCapsule createNormalAccount(byte[] address) {
-    return createAccount(address, Protocol.AccountType.Normal);
+    VmDynamicProperties properties = getVmDynamicProperties();
+    ByteString accountAddress = ByteString.copyFrom(address);
+    // At TX_BEFORE this is the previous header, not the executing block's TIMESTAMP.
+    Protocol.Account.Builder builder = Protocol.Account.newBuilder()
+        .setAddress(accountAddress).setType(Protocol.AccountType.Normal)
+        .setCreateTime(properties.getLatestBlockHeaderTimestamp());
+    if (properties.getAllowMultiSign() == 1L) {
+      BytesCapsule operations = getDynamicProperty(ACTIVE_DEFAULT_OPERATIONS);
+      if (operations == null || operations.getData().length != 32) {
+        throw unsupported(
+            "default active permission without archived 32-byte ACTIVE_DEFAULT_OPERATIONS");
+      }
+      Permission owner = AccountCapsule.createDefaultOwnerPermission(accountAddress);
+      // Canonical active defaults share the owner's threshold, parent id, and address/weight key.
+      Permission active = owner.toBuilder().setType(Permission.PermissionType.Active)
+          .setId(2).setPermissionName("active")
+          .setOperations(ByteString.copyFrom(operations.getData())).build();
+      builder.setOwnerPermission(owner).addActivePermission(active);
+    }
+    AccountCapsule account = new AccountCapsule(builder.build());
+    reserveOverlayMessage(address, account.getInstance());
+    accounts.put(Key.create(address), copyAccount(account));
+    return account;
   }
 
   // ---------------------------------------------------------------------------------------------

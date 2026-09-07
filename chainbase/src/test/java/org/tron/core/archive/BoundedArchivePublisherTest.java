@@ -42,13 +42,19 @@ public class BoundedArchivePublisherTest {
       publisher.activate();
       publisher.request(target(1, 1, 0));
       assertTrue(firstEntered.await(1, TimeUnit.SECONDS));
+      assertTrue(publisher.hasPublishableBlock(1));
+      assertFalse(publisher.hasPublishableBlock(2));
+      assertFalse(publisher.hasPublishableBlock(-1));
       publisher.request(target(2, 2, 0));
       publisher.request(target(9, 9, 0));
       publisher.request(target(7, 7, 0));
+      assertTrue(publisher.hasPublishableBlock(9));
+      assertFalse(publisher.hasPublishableBlock(10));
       releaseFirst.countDown();
 
       assertTrue(twoCalls.await(2, TimeUnit.SECONDS));
       assertTrue(publisher.awaitIdle(2, TimeUnit.SECONDS));
+      assertFalse(publisher.hasPublishableBlock(1));
       assertEquals(2, calls.size());
       assertEquals(1, calls.get(0).getBlockNum());
       assertEquals(9, calls.get(1).getBlockNum());
