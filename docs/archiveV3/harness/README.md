@@ -69,6 +69,9 @@ docs/archiveV3/harness/
   scenario-catchup-batch-flush-kill.sh (F) SIGKILL inside a BATCHED SnapshotManager.flush on a
                                 26+1 split chain, then catch-up: the batch window is entered
                                 deterministically via the `cfk.flush` anchor
+  scenario-debug-trace.sh       successful historical call/transaction traces: MSTORE8,
+                                transaction-before storage, SELFDESTRUCT and clean restart
+  test_anchor_resolve.py        real javac/javap fixtures for the anchor resolver
 
   ArchiveProbe.java             offline RocksDB probe: ranges, txNum gaps, span violations,
                                 stale in-flight rows, the repair-required META key.
@@ -104,7 +107,7 @@ under `set -euo pipefail`.
 * **JDK 17+** on `PATH` (`java`, `javac`). Verified on Temurin `17.0.17+10`, arm64.
 * `curl`, `jq`, `python3`, `shasum`, `awk`, `sed`, `grep`, `df`, `dd`. `lsof` and `netstat` are
   used for the port preflight when present. `jdb` is needed only for the scenario-B windows.
-* **Free TCP ports in 21000–24199.** Each scenario owns a 400-port band and each node a 10-port
+* **Free TCP ports in 21000–24599.** Each scenario owns a 400-port band and each node a 10-port
   block inside it — `+0` p2p, `+1` HTTP, `+2` gRPC, `+3` JSON-RPC, `+4` Prometheus, `+5` JDWP.
   Every port is preflighted; a busy port is a harness error, never a silent reassignment. The
   full map, and why nothing may live above 49152, is §12.
@@ -133,11 +136,14 @@ HS_CFG_WITNESS_COUNT=27 ./scenario-history-accuracy.sh   # (E) accuracy, ~12 min
 
 # Exercise a soft watermark smaller than the reversible/flush-pending tail.
 HS_CFG_SOFT_IN_FLIGHT_BLOCKS=8 ./scenario-catchup-batch-flush-kill.sh
+
+# Structured logs and callTracer, with bytecode/receipt-based expectations.
+HS_SKIP_BUILD=1 ./scenario-debug-trace.sh
 ```
 
-`scenario-history-accuracy.sh` is the one scenario that defaults `HS_CFG_WITNESS_COUNT` to **27**
+`scenario-history-accuracy.sh` and `scenario-debug-trace.sh` default `HS_CFG_WITNESS_COUNT` to **27**
 rather than 1 (a one-SR chain has `solid == head`, so "historical" barely means anything), and the
-one that patches its OWN generated `node.conf` — `block.maintenanceTimeInterval` down to 30 s and a
+history scenario patches its OWN generated `node.conf` — `block.maintenanceTimeInterval` down to 30 s and a
 28th, initially dormant `localwitness` key. Both are needed only so a **non-genesis** witness can
 exist: `WithdrawBalanceActuator.java:112-120` refuses to let a genesis ("guard representative")
 witness withdraw, and `MaintenanceManager.java:103-129` only promotes a newly voted witness at a
@@ -201,6 +207,7 @@ FORK_E2E_FAIL checks=17 failures=2 depth=12
 | `scenario-resource-faults.sh` | `FAULT_E2E_OK` / `_FAIL` | `CHECK [PASS] fault.<case>.<name>` lines |
 | `scenario-concurrency-under-fault.sh` | `CONCURRENCY_E2E_OK` / `_FAIL` | `PHASE_VERDICT phase=… verdict=…` |
 | `scenario-catchup-batch-flush-kill.sh` | `CATCHUP_BATCH_FLUSH_KILL_OK` / `_FAIL` | `CHECK …` lines |
+| `scenario-debug-trace.sh` | `DEBUG_TRACE_OK` / `_FAIL` | exact JSON assertions and receipt checks |
 | `run-all.sh` | `PRIVATE_CHAIN_FAULT_SUITE_OK` / `_FAIL` | the per-scenario summary table |
 
 Grep for `_OK$`/`_FAIL` or just check the exit code — they always agree. Two `_FAIL` reasons mean
@@ -684,7 +691,7 @@ and it is resolved at run time in two stages, with a third guard at runtime:
    masked, the named method’s body is brace-matched (all overloads), and the descriptor must
    select **exactly one** statement. Zero or two matches is a **hard error** — an ambiguous anchor
    is never silently resolved to “the first one”, and a match can never land inside a comment.
-2. **Jar.** `javap -p -l` on the jar under test supplies the `LineNumberTable` for that method
+2. **Jar.** `javap -p -c -l` on the jar under test supplies the `LineNumberTable` for that method
    *and for its compiler-synthesized `lambda$<method>$N` bodies* — a statement containing a lambda
    compiles into two methods and both are legitimate locations for it. The resolver then solves
    for the single line offset `delta` between working-tree source and jar
@@ -701,6 +708,11 @@ and it is resolved at run time in two stages, with a third guard at runtime:
 3. **Runtime.** `hs_anchor_assert_hit()` requires the method *and* the line `jdb` reports to match
    the resolved anchor before a kill is credited.
 
+These guards do not prove source/bytecode equivalence. Reordering statements
+within a method can preserve all line-table entries while changing what executes
+at an accepted line. Rebuild after semantic source edits and retain the tested
+jar's digest; do not credit a fault window against an unrelated or stale jar.
+
 Degradation to the probabilistic path now happens **only** when a descriptor genuinely cannot be
 resolved (method renamed or gone, statement deleted or duplicated, body rewritten so no consistent
 offset exists, `python3`/`javap` missing), and the note **names the descriptor that failed**.
@@ -712,7 +724,13 @@ Re-check every anchor without running a scenario — this is the drift check:
 ./anchor.sh km.w5        # just one
 ./anchor.sh --list       # names + what each points at
 ./anchor.sh --selftest   # prove the resolver still REFUSES what it must refuse
+python3 test_anchor_resolve.py -v  # compiled fixtures using javac/javap on PATH
 ```
+
+Run the compiled-fixture tests with each supported JDK's `bin` directory first on
+`PATH`. JDK 25 requires `-c` alongside `javap -l` to emit the line table. The tests
+also check lambda ownership and rejection of missing debug tables or ambiguous
+source statements.
 
 `--selftest` is the guard on the guard. A resolver that quietly picked the first of two candidates
 would still make every window pass, so “ambiguous is a hard error” is asserted against the real
@@ -821,7 +839,8 @@ One **band** per scenario, 400 ports = 40 node blocks:
 | 4 | `resource-faults` | 22600–22999 |
 | 5 | `concurrency-under-fault` | 23000–23399 |
 | 6 | `catchup-batch-flush-kill` | 23400–23799 |
-| 7 | any unregistered scenario (with a warning) | 23800–24199 |
+| 7 | `debug-trace` | 23800–24199 |
+| 8 | any unregistered scenario (with a warning) | 24200–24599 |
 
 One **block** per node inside a band, 10 ports wide, slot `0..38`:
 

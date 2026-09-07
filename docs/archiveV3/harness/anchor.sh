@@ -24,7 +24,7 @@
 #                      bodies; `match` must then match EXACTLY ONCE in the region after it inside
 #                      that same body. Zero or two matches is a HARD ERROR, never a silent pick.
 #
-#   STAGE 2 (jar).     Run `javap -p -l` on the jar UNDER TEST and read the LineNumberTable of the
+#   STAGE 2 (jar).     Run `javap -p -c -l` on the jar UNDER TEST and read the LineNumberTable of the
 #                      named method plus its compiler-synthesized lambda bodies
 #                      (`lambda$<method>$N`) -- a statement containing a lambda is compiled into
 #                      two methods and BOTH are legitimate locations for it. Then solve for the

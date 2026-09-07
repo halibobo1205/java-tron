@@ -76,7 +76,7 @@
 #               brace-matched body in the CURRENT working tree (comments and string literals are
 #               masked first). Zero or two matches is a HARD ERROR -- an ambiguous anchor is
 #               never silently resolved to "the first one".
-#   2. JAR:     javap -p -l on the jar UNDER TEST supplies the LineNumberTable for that method and
+#   2. JAR:     javap -p -c -l on the jar UNDER TEST supplies the LineNumberTable for that method and
 #               for its compiler-synthesized lambda bodies. The breakpoint is emitted in JAR
 #               coordinates after solving for the one line offset between working-tree source and
 #               jar, so an edit ABOVE a method leaves the anchor exactly where it was, while a
