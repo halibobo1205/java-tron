@@ -130,6 +130,9 @@ HS_SKIP_BUILD=1 ./scenario-smoke.sh  # reuse the existing jar
 HS_KEEP_WORKDIR=1 ./scenario-smoke.sh  # keep the run dir for post-mortem
 
 HS_CFG_WITNESS_COUNT=27 ./scenario-history-accuracy.sh   # (E) accuracy, ~12 minutes
+
+# Exercise a soft watermark smaller than the reversible/flush-pending tail.
+HS_CFG_SOFT_IN_FLIGHT_BLOCKS=8 ./scenario-catchup-batch-flush-kill.sh
 ```
 
 `scenario-history-accuracy.sh` is the one scenario that defaults `HS_CFG_WITNESS_COUNT` to **27**

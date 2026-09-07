@@ -703,6 +703,11 @@ public final class DefaultArchiveService implements ArchiveService {
           if (!softLimitReached || publisher == null || !publisherConfig.isBackpressure()) {
             return;
           }
+          // A non-publishable tail needs another canonical block to advance solidification or
+          // flush its checkpoint. Waiting for that same writer would prevent all progress.
+          if (!diskSoftLimitReached && !publisher.hasPublishableBlock(oldestInFlightBlock)) {
+            return;
+          }
           long timeoutNanos = diskSoftLimitReached
               ? backpressureTimeoutNanos : publisherStallTimeoutNanos;
           long remaining = (diskSoftLimitReached ? diskDeadline : publisherDeadline) - now;
@@ -714,8 +719,8 @@ public final class DefaultArchiveService implements ArchiveService {
                     + ", resourceBytes=" + inFlightResourceBytes + ", diskFree=" + usableSpace);
           } else {
             try {
-              long waitNanos = diskSoftLimitReached
-                  ? StrictMathWrapper.min(remaining, DISK_SAMPLE_INTERVAL_NANOS) : remaining;
+              // Target invalidation can settle without removing a journal or signaling backlog.
+              long waitNanos = StrictMathWrapper.min(remaining, DISK_SAMPLE_INTERVAL_NANOS);
               TimeUnit.NANOSECONDS.timedWait(backlogMonitor, waitNanos);
             } catch (InterruptedException e) {
               Thread.currentThread().interrupt();

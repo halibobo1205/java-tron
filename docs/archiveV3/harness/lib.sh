@@ -741,6 +741,7 @@ hs_p2p_port() {
 #   HS_CFG_ARCHIVE_FULL_SCRUB     true|false                     (default false)
 #   HS_CFG_SOFT_MIN_FREE_BYTES    default 33554432 (32 MiB; production 5 GiB)
 #   HS_CFG_HARD_MIN_FREE_BYTES    default 16777216 (16 MiB; production 1 GiB)
+#   HS_CFG_SOFT_IN_FLIGHT_BLOCKS  default 32768; lower to exercise unpublishable-tail pressure
 #   HS_CFG_QUERY_WORKERS          default 2
 #   HS_CFG_MAX_CONCURRENT_QUERIES default 8
 #   HS_CFG_P2P_VERSION            default 20260728
@@ -788,9 +789,17 @@ hs_write_node_config() {
   local full_scrub="${HS_CFG_ARCHIVE_FULL_SCRUB:-false}"
   local soft_free="${HS_CFG_SOFT_MIN_FREE_BYTES:-33554432}"
   local hard_free="${HS_CFG_HARD_MIN_FREE_BYTES:-16777216}"
+  local soft_blocks="${HS_CFG_SOFT_IN_FLIGHT_BLOCKS:-32768}"
   local query_workers="${HS_CFG_QUERY_WORKERS:-2}"
   local max_concurrent="${HS_CFG_MAX_CONCURRENT_QUERIES:-8}"
   local p2p_version="${HS_CFG_P2P_VERSION:-20260728}"
+
+  case "$soft_blocks" in
+    ''|*[!0-9]*) hs_die "HS_CFG_SOFT_IN_FLIGHT_BLOCKS must be in 1..65536" ;;
+  esac
+  if [ "$soft_blocks" -lt 1 ] || [ "$soft_blocks" -gt 65536 ]; then
+    hs_die "HS_CFG_SOFT_IN_FLIGHT_BLOCKS must be in 1..65536, got $soft_blocks"
+  fi
 
   case "$local_witness_first:$local_witness_last:$max_flush_count" in
     *[!0-9:]*)
@@ -892,6 +901,7 @@ storage {
     publisher {
       async = true
       backpressure = true
+      softInFlightBlocks = $soft_blocks
       # Lowered from the 5 GiB / 1 GiB production defaults so a small test
       # volume (scenario C) does not fail-stop on the very first preflight.
       softMinFreeBytes = $soft_free
