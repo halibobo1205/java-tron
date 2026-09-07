@@ -19,6 +19,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.LongConsumer;
 import org.junit.After;
 import org.junit.Test;
@@ -468,6 +469,92 @@ public class DefaultArchiveServiceAsyncPublisherTest {
   }
 
   @Test
+  public void softWatermarkTimeoutResetsWhilePublisherMakesProgress() throws Exception {
+    InMemoryArchiveTemporalStore temporal = spy(new InMemoryArchiveTemporalStore());
+    CountDownLatch[] entered = new CountDownLatch[4];
+    CountDownLatch[] release = new CountDownLatch[4];
+    for (int i = 0; i < entered.length; i++) {
+      entered[i] = new CountDownLatch(1);
+      release[i] = new CountDownLatch(1);
+    }
+    AtomicInteger calls = new AtomicInteger();
+    doAnswer(invocation -> {
+      int call = calls.getAndIncrement();
+      if (call < entered.length) {
+        entered[call].countDown();
+        assertTrue(release[call].await(5L, TimeUnit.SECONDS));
+      }
+      return invocation.callRealMethod();
+    }).when(temporal).putBlockChanges(any(), any());
+
+    ArchivePublisherConfig publisherConfig = new ArchivePublisherConfig(
+        true, true, 1, 8, 1024L * 1024L, 2L * 1024L * 1024L,
+        1_000L, 2_000L, 0L, 0L, 1_000L, 750L);
+    DefaultArchiveService service = service(publisherConfig, temporal);
+    ExecutorService executor = Executors.newSingleThreadExecutor();
+    Future<?> capacity = null;
+    try {
+      for (long blockNum = 1L; blockNum <= 4L; blockNum++) {
+        journalEmptyBlock(service, block(blockNum));
+      }
+      BlockCapsule target = block(4L);
+      try (ArchiveMutationLease mutation = service.acquireMutationReadLease()) {
+        service.requestPublishSolidifiedBlocks(4L, target.getBlockId().getBytes());
+      }
+      assertTrue(entered[0].await(2L, TimeUnit.SECONDS));
+
+      capacity = executor.submit(service::awaitWriterCapacity);
+      for (int i = 0; i < 3; i++) {
+        Thread.sleep(400L);
+        release[i].countDown();
+        assertTrue(entered[i + 1].await(2L, TimeUnit.SECONDS));
+      }
+      assertFalse(capacity.isDone());
+      release[3].countDown();
+
+      capacity.get(2L, TimeUnit.SECONDS);
+      assertEquals(4, calls.get());
+      assertTrue(service.hasCommittedBlock(4L));
+    } finally {
+      for (CountDownLatch latch : release) {
+        latch.countDown();
+      }
+      if (capacity != null && !capacity.isDone()) {
+        capacity.cancel(true);
+      }
+      executor.shutdownNow();
+      service.close();
+    }
+  }
+
+  @Test
+  public void softWatermarkStillFailsWhenPublisherMakesNoProgress() {
+    ArchivePublisherConfig publisherConfig = new ArchivePublisherConfig(
+        true, true, 1, 4, 1024L * 1024L, 2L * 1024L * 1024L,
+        1_000L, 2_000L, 0L, 0L, 100L, 50L);
+    DefaultArchiveService service = service(
+        publisherConfig, new InMemoryArchiveTemporalStore());
+    ReentrantLock publicationLock = ReflectUtils.getFieldValue(service, "publicationLock");
+    publicationLock.lock();
+    try {
+      BlockCapsule block = block(1L);
+      journalEmptyBlock(service, block);
+      try (ArchiveMutationLease mutation = service.acquireMutationReadLease()) {
+        service.requestPublishSolidifiedBlocks(1L, block.getBlockId().getBytes());
+      }
+
+      ArchiveException failure = assertThrows(
+          ArchiveException.class, service::awaitWriterCapacity);
+
+      assertTrue(failure.getMessage().contains("no publication progress"));
+      assertThrows(ArchiveException.class, service::validateAvailable);
+    } finally {
+      publicationLock.unlock();
+      service.close();
+    }
+  }
+
+  @Test
   public void closeWakesWriterWaitingAtSoftWatermark() throws Exception {
     DefaultArchiveService service = service(1, 4, 10_000);
     journalEmptyBlock(service, block(1));
@@ -512,13 +599,18 @@ public class DefaultArchiveServiceAsyncPublisherTest {
 
   private static DefaultArchiveService service(int softLimit, int hardLimit,
       long timeoutMs, ArchiveTemporalStore temporal) {
+    return service(new ArchivePublisherConfig(
+        true, true, softLimit, hardLimit, timeoutMs), temporal);
+  }
+
+  private static DefaultArchiveService service(ArchivePublisherConfig publisherConfig,
+      ArchiveTemporalStore temporal) {
     return new DefaultArchiveService(true, new InMemoryArchiveTxNumIndex(),
         ArchiveExecutionContextHolder.get(), temporal,
         new InMemoryArchiveInFlightStore(), new DefaultArchiveDomainRegistry(),
         new DefaultArchiveDomainCatalog(),
         ArchiveLifecycle.Phase.RUNNING, ArchiveQueryLimits.unlimited(),
-        new ArchivePublisherConfig(true, true, softLimit, hardLimit, timeoutMs), () -> {
-        });
+        publisherConfig, () -> { });
   }
 
   private static void journalEmptyBlock(DefaultArchiveService service, BlockCapsule block) {
