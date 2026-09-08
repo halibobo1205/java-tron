@@ -3,6 +3,7 @@ package org.tron.core.archive.unified;
 import java.util.Arrays;
 import org.rocksdb.RocksDBException;
 import org.rocksdb.RocksIterator;
+import org.tron.common.math.StrictMathWrapper;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchiveRocksIterators;
 import org.tron.core.archive.query.QueryContext;
@@ -102,6 +103,43 @@ public final class UnifiedArchiveIterator implements AutoCloseable {
     }
     if (context != null) {
       context.recordBackendValueBytes(actualBytes);
+    }
+    return value;
+  }
+
+  /** Reads a payload through a capped probe before allocating from its persisted locator length. */
+  byte[] valueExactBudgeted(int expectedBytes, String what) {
+    requireOwnerAndOpen();
+    if (expectedBytes < 0) {
+      throw new ArchiveException(what + " has invalid expected byte length: " + expectedBytes);
+    }
+    QueryContext context = beforeRead();
+    if (context != null) {
+      context.validateBackendValueBytes(expectedBytes);
+    }
+    int probeBytes = StrictMathWrapper.min(expectedBytes, MAX_FIXED_VALUE_BYTES);
+    if (boundedValueProbe.length < probeBytes) {
+      boundedValueProbe = new byte[probeBytes];
+    }
+    int actualBytes = delegate.value(boundedValueProbe);
+    afterRead(context, "valueExactBudgeted");
+    if (actualBytes != expectedBytes) {
+      throw new ArchiveException(what + " length mismatch: expectedBytes="
+          + expectedBytes + ", actualBytes=" + actualBytes);
+    }
+    if (context != null) {
+      context.recordBackendValueBytes(actualBytes);
+    }
+    if (actualBytes <= boundedValueProbe.length) {
+      return Arrays.copyOf(boundedValueProbe, actualBytes);
+    }
+    beforeRead();
+    byte[] value = new byte[actualBytes];
+    int copiedBytes = delegate.value(value);
+    afterRead(context, "valueExactBudgeted");
+    if (copiedBytes != actualBytes) {
+      throw new ArchiveException(what + " changed while reading snapshot: expectedBytes="
+          + actualBytes + ", actualBytes=" + copiedBytes);
     }
     return value;
   }

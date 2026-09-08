@@ -54,6 +54,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.rocksdb.ColumnFamilyHandle;
+import org.rocksdb.FlushOptions;
 import org.rocksdb.ReadOptions;
 import org.rocksdb.RocksDB;
 import org.rocksdb.RocksDBException;
@@ -663,28 +664,55 @@ public class UnifiedArchiveBackendTest {
   }
 
   @Test
+  public void fullStartupScrubAvoidsPayloadPointReadsAcrossFlushedVersions() throws Exception {
+    DomainValue[] versions = {value(1), largeValue(2, 70 * 1024),
+        largeIncompressibleValue(3, 70 * 1024), DomainValue.tombstone(), value(5)};
+    RocksDB raw = ReflectUtils.getFieldValue(db, "db");
+    List<ColumnFamilyHandle> handles = ReflectUtils.getFieldValue(db, "allHandles");
+    DomainValue previous = DomainValue.tombstone();
+    try (FlushOptions options = new FlushOptions().setWaitForFlush(true)) {
+      for (int blockNum = 0; blockNum < versions.length; blockNum++) {
+        publish(block(blockNum, previous, versions[blockNum]));
+        previous = versions[blockNum];
+        raw.flush(options, handles);
+      }
+    }
+    index.close();
+    db = openWithStatistics(dbPath, schemaChecksum);
+    wire(false);
+    Statistics statistics = ReflectUtils.getFieldValue(db, "statistics");
+    long before = statistics.getTickerCount(TickerType.NUMBER_KEYS_READ);
+
+    backend.validateStartup(true, false);
+
+    assertEquals("full scrub must read payloads through bounded snapshot cursors", 0L,
+        statistics.getTickerCount(TickerType.NUMBER_KEYS_READ) - before);
+    for (int blockNum = 0; blockNum < versions.length; blockNum++) {
+      assertTrue(versions[blockNum].contentEquals(
+          temporal.getAsOf(ArchiveDomain.ACCOUNT, accountKey(), blockNum * 2L).get()));
+    }
+  }
+
+  @Test
   public void fullStartupScrubAdmitsCrossReferenceReadsToArchiveCache() throws Exception {
     publish(block(0L, DomainValue.tombstone(), value(1)));
     publish(block(1L, value(1), value(2)));
     RocksDB raw = ReflectUtils.getFieldValue(db, "db");
     RocksDB observed = spy(raw);
-    AtomicInteger reads = new AtomicInteger();
+    AtomicInteger cursors = new AtomicInteger();
     doAnswer(invocation -> {
       ColumnFamilyHandle handle = invocation.getArgument(0);
       ReadOptions options = invocation.getArgument(1);
-      byte[] key = invocation.getArgument(2);
-      byte[] value = invocation.getArgument(3);
       assertTrue("startup cross-references must reuse the bounded archive cache",
           options.fillCache());
-      reads.incrementAndGet();
-      return raw.get(handle, options, key, value);
-    }).when(observed).get(any(ColumnFamilyHandle.class), any(ReadOptions.class),
-        any(byte[].class), any(byte[].class));
+      cursors.incrementAndGet();
+      return raw.newIterator(handle, options);
+    }).when(observed).newIterator(any(ColumnFamilyHandle.class), any(ReadOptions.class));
 
     ReflectUtils.setFieldValue(db, "db", observed);
     try {
       backend.validateStartup(true, true);
-      assertTrue("the scrub must still perform cross-reference checks", reads.get() > 0);
+      assertTrue("the scrub must still open snapshot cursors", cursors.get() > 0);
     } finally {
       ReflectUtils.setFieldValue(db, "db", raw);
     }
