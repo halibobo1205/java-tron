@@ -62,14 +62,21 @@ public class MerkleContainer {
 
   public void saveCurrentMerkleTreeAsBestMerkleTree(long blockNum) throws ZksnarkException {
     IncrementalMerkleTreeContainer treeContainer = getCurrentMerkle();
-    setBestMerkle(blockNum, treeContainer);
-    putMerkleTreeIntoStore(treeContainer.getMerkleTreeKey(), treeContainer.getTreeCapsule());
+    byte[] root = storeBestMerkle(blockNum, treeContainer);
+    putMerkleTreeIntoStore(root, treeContainer.getTreeCapsule());
   }
 
   public void setBestMerkle(long blockNum, IncrementalMerkleTreeContainer treeContainer)
       throws ZksnarkException {
+    storeBestMerkle(blockNum, treeContainer);
+  }
+
+  private byte[] storeBestMerkle(long blockNum, IncrementalMerkleTreeContainer treeContainer)
+      throws ZksnarkException {
     incrementalMerkleTreeStore.put(lastTreeKey, treeContainer.getTreeCapsule());
-    merkleTreeIndexStore.put(blockNum, treeContainer.getMerkleTreeKey());
+    byte[] root = treeContainer.getMerkleTreeKey();
+    merkleTreeIndexStore.put(blockNum, root);
+    return root;
   }
 
   public boolean merkleRootExist(byte[] rt) {
