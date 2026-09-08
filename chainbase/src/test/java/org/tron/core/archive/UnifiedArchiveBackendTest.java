@@ -781,23 +781,106 @@ public class UnifiedArchiveBackendTest {
   }
 
   @Test
-  public void largeTemporalPublicationReadsDoNotPopulatePayloadBlocks() {
+  public void publicationTemporalReadsAdmitBlocksToCache() throws Exception {
+    publish(block(0L, DomainValue.tombstone(), value(1)));
+    publish(block(1L, value(1), value(2)));
+    RocksDB raw = ReflectUtils.getFieldValue(db, "db");
+    RocksDB observed = spy(raw);
+    EnumMap<UnifiedArchiveColumnFamily, ColumnFamilyHandle> handles =
+        ReflectUtils.getFieldValue(db, "handles");
+    ColumnFamilyHandle history = handles.get(UnifiedArchiveColumnFamily.HISTORY);
+    ColumnFamilyHandle payload = handles.get(UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD);
+    List<ColumnFamilyHandle> temporalHandles = Arrays.asList(history, payload,
+        handles.get(UnifiedArchiveColumnFamily.LATEST),
+        handles.get(UnifiedArchiveColumnFamily.COMMITMENT));
+    AtomicInteger historyCursors = new AtomicInteger();
+    AtomicInteger locatorReads = new AtomicInteger();
+    AtomicInteger payloadReads = new AtomicInteger();
+    doAnswer(invocation -> {
+      ColumnFamilyHandle handle = invocation.getArgument(0);
+      ReadOptions options = invocation.getArgument(1);
+      if (handle == history) {
+        assertTrue("publication history seeks must fill the archive cache", options.fillCache());
+        assertNotNull(options.snapshot());
+        historyCursors.incrementAndGet();
+      }
+      return raw.newIterator(handle, options);
+    }).when(observed).newIterator(any(ColumnFamilyHandle.class), any(ReadOptions.class));
+    doAnswer(invocation -> {
+      ColumnFamilyHandle handle = invocation.getArgument(0);
+      ReadOptions options = invocation.getArgument(1);
+      if (temporalHandles.contains(handle)) {
+        assertTrue("publication point reads must fill the archive cache", options.fillCache());
+        assertNotNull(options.snapshot());
+        (handle == payload ? payloadReads : locatorReads).incrementAndGet();
+      }
+      byte[] key = invocation.getArgument(2);
+      byte[] value = invocation.getArgument(3);
+      return raw.get(handle, options, key, value);
+    }).when(observed).get(any(ColumnFamilyHandle.class), any(ReadOptions.class),
+        any(byte[].class), any(byte[].class));
+
+    ReflectUtils.setFieldValue(db, "db", observed);
+    try {
+      publish(block(2L, value(2), value(3)));
+      assertEquals(1, historyCursors.get());
+      assertTrue(locatorReads.get() > 0);
+      assertTrue(payloadReads.get() > 0);
+    } finally {
+      ReflectUtils.setFieldValue(db, "db", raw);
+    }
+    assertValue(temporal.getAsOf(ArchiveDomain.ACCOUNT, accountKey(), 0L), 1);
+    assertValue(temporal.getAsOf(ArchiveDomain.ACCOUNT, accountKey(), 2L), 2);
+    assertValue(temporal.getAsOf(ArchiveDomain.ACCOUNT, accountKey(), 4L), 3);
+  }
+
+  @Test
+  public void publicationPreparationReusesCachedSstBlocksAcrossSnapshots() throws Exception {
     DomainValue first = largeValue(1, 128 * 1024);
     DomainValue second = largeValue(2, 128 * 1024);
     publish(block(0L, DomainValue.tombstone(), first));
+    RocksDB raw = ReflectUtils.getFieldValue(db, "db");
+    List<ColumnFamilyHandle> handles = ReflectUtils.getFieldValue(db, "allHandles");
+    try (FlushOptions options = new FlushOptions().setWaitForFlush(true)) {
+      raw.flush(options, handles);
+    }
     boolean metricsPreviouslyEnabled =
         CommonParameter.getInstance().isMetricsPrometheusEnable();
     try {
       reopenWithMetrics(true);
       Statistics statistics = ReflectUtils.getFieldValue(db, "statistics");
+      ArchiveInFlightBlock candidate = block(1L, first, second);
       long before = statistics.getTickerCount(TickerType.BLOCK_CACHE_DATA_BYTES_INSERT);
-
-      publish(block(1L, first, second));
-
+      long coldDataStart = statistics.getTickerCount(TickerType.BLOCK_CACHE_DATA_MISS);
+      try (UnifiedArchiveTemporalStore.PublicationPreflight preflight =
+          temporal.preflightPublication(candidate.getRecords())) {
+        temporal.stagePublication(UnifiedArchivePublish.builder(), candidate.getRange(), preflight);
+      }
       long inserted = statistics.getTickerCount(
           TickerType.BLOCK_CACHE_DATA_BYTES_INSERT) - before;
-      assertTrue("only compact index metadata may enter the cache: inserted=" + inserted,
-          inserted < 4_096L);
+      assertTrue("publication must cache persisted payload blocks: inserted=" + inserted,
+          inserted >= 128L * 1024L);
+      long dataMisses = statistics.getTickerCount(TickerType.BLOCK_CACHE_DATA_MISS);
+      long indexHits = statistics.getTickerCount(TickerType.BLOCK_CACHE_INDEX_HIT);
+      long dataHits = statistics.getTickerCount(TickerType.BLOCK_CACHE_DATA_HIT);
+      long coldDataMisses = dataMisses - coldDataStart;
+
+      try (UnifiedArchiveTemporalStore.PublicationPreflight preflight =
+          temporal.preflightPublication(candidate.getRecords())) {
+        temporal.stagePublication(UnifiedArchivePublish.builder(), candidate.getRange(), preflight);
+      }
+
+      long warmDataMisses = statistics.getTickerCount(TickerType.BLOCK_CACHE_DATA_MISS)
+          - dataMisses;
+      assertTrue("warm data misses=" + warmDataMisses + ", cold=" + coldDataMisses,
+          warmDataMisses < coldDataMisses);
+      assertTrue(statistics.getTickerCount(TickerType.BLOCK_CACHE_INDEX_HIT) > indexHits);
+      assertTrue(statistics.getTickerCount(TickerType.BLOCK_CACHE_DATA_HIT) > dataHits);
+      publish(candidate);
+      assertTrue(first.contentEquals(temporal.getAsOf(
+          ArchiveDomain.ACCOUNT, accountKey(), 0L).get()));
+      assertTrue(second.contentEquals(temporal.getAsOf(
+          ArchiveDomain.ACCOUNT, accountKey(), 2L).get()));
     } finally {
       reopenWithMetrics(metricsPreviouslyEnabled);
     }
