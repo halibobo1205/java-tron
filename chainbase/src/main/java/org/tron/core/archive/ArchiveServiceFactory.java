@@ -26,6 +26,7 @@ import org.tron.core.archive.txnum.UnifiedArchiveTxNumIndex;
 import org.tron.core.archive.unified.UnifiedArchiveDb;
 import org.tron.core.capsule.utils.BlockUtil;
 import org.tron.core.config.args.StorageConfig;
+import org.tron.core.config.args.StorageConfig.ArchiveConfig.DbConfig;
 
 /**
  * Builds the {@link ArchiveService} for the current configuration. Disabled config returns the
@@ -197,7 +198,8 @@ public final class ArchiveServiceFactory {
     UnifiedArchiveTxNumIndex txNumIndex = null;
     UnifiedArchiveDb.ProductionWritePermit writePermit = null;
     try {
-      db = openUnifiedDatabase(databasePath, schemaChecksum, openMode);
+      db = openUnifiedDatabase(databasePath, schemaChecksum, openMode,
+          config.getDb().getBlockCacheBytes());
       writePermit = db.claimProductionWritePermit();
       boolean fullStartupScrub = config.getDb().isFullScrubOnStartup();
       txNumIndex = new UnifiedArchiveTxNumIndex(
@@ -253,12 +255,18 @@ public final class ArchiveServiceFactory {
 
   static UnifiedArchiveDb openUnifiedDatabase(Path databasePath, byte[] schemaChecksum,
       UnifiedOpenMode openMode) {
+    return openUnifiedDatabase(databasePath, schemaChecksum, openMode,
+        DbConfig.DEFAULT_BLOCK_CACHE_BYTES);
+  }
+
+  static UnifiedArchiveDb openUnifiedDatabase(Path databasePath, byte[] schemaChecksum,
+      UnifiedOpenMode openMode, long blockCacheBytes) {
     if (openMode == null) {
       throw new NullPointerException("openMode");
     }
     return openMode == UnifiedOpenMode.INITIALIZE_NEW
-        ? UnifiedArchiveDb.initialize(databasePath, schemaChecksum)
-        : UnifiedArchiveDb.open(databasePath, schemaChecksum);
+        ? UnifiedArchiveDb.initialize(databasePath, schemaChecksum, blockCacheBytes)
+        : UnifiedArchiveDb.open(databasePath, schemaChecksum, blockCacheBytes);
   }
 
   /**

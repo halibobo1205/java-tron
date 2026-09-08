@@ -15,6 +15,7 @@ import org.rocksdb.FlushOptions;
 import org.rocksdb.RocksDB;
 import org.rocksdb.Statistics;
 import org.rocksdb.TickerType;
+import org.tron.common.math.StrictMathWrapper;
 import org.tron.common.utils.ReflectUtils;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
 import org.tron.core.archive.codec.DomainValue;
@@ -29,20 +30,33 @@ import org.tron.core.archive.txnum.ArchiveTxPosition;
 import org.tron.core.archive.txnum.UnifiedArchiveTxNumIndex;
 import org.tron.core.archive.unified.UnifiedArchiveDb;
 import org.tron.core.archive.unified.UnifiedArchiveTestMaintenance;
+import org.tron.core.config.args.StorageConfig.ArchiveConfig.DbConfig;
 import org.tron.protos.Protocol.Account;
 
 /** Opt-in, synthetic payload benchmark. Not a mainnet workload or a normal unit test. */
 public final class ArchiveStartupPayloadBenchmark {
 
-  private static final int KEY_COUNT = 32768;
+  private static final int KEY_COUNT = Integer.getInteger("archive.benchmark.keyCount", 32768);
+  private static final int HOT_KEY_COUNT = Integer.getInteger("archive.benchmark.hotKeys", 0);
+  private static final long CACHE_BYTES = Long.getLong(
+      "archive.benchmark.cacheBytes", DbConfig.DEFAULT_BLOCK_CACHE_BYTES);
   private static final int CHANGES_PER_BLOCK = 16;
 
   private ArchiveStartupPayloadBenchmark() {
   }
 
   public static void main(String[] args) throws Exception {
+    if (KEY_COUNT < CHANGES_PER_BLOCK) {
+      throw new IllegalArgumentException("keyCount must be at least " + CHANGES_PER_BLOCK);
+    }
+    if (HOT_KEY_COUNT != 0 && HOT_KEY_COUNT < CHANGES_PER_BLOCK) {
+      throw new IllegalArgumentException("hotKeys must be zero or at least " + CHANGES_PER_BLOCK);
+    }
+    if (CACHE_BYTES <= 0L) {
+      throw new IllegalArgumentException("cacheBytes must be positive");
+    }
     if (args.length < 2 || args.length > 3) {
-      throw new IllegalArgumentException("generate|validate DB_PATH [BLOCKS]");
+      throw new IllegalArgumentException("generate|validate|validate-resumable DB_PATH [BLOCKS]");
     }
     Path path = Paths.get(args[1]);
     ArchiveDomainCatalog catalog = new DefaultArchiveDomainCatalog();
@@ -53,8 +67,8 @@ public final class ArchiveStartupPayloadBenchmark {
         throw new IllegalArgumentException("blocks must be positive");
       }
       generate(path, catalog, checksum, blocks);
-    } else if ("validate".equals(args[0])) {
-      validate(path, catalog, checksum);
+    } else if ("validate".equals(args[0]) || "validate-resumable".equals(args[0])) {
+      validate(path, catalog, checksum, "validate-resumable".equals(args[0]));
     } else {
       throw new IllegalArgumentException("unknown benchmark mode: " + args[0]);
     }
@@ -63,13 +77,14 @@ public final class ArchiveStartupPayloadBenchmark {
   private static void generate(Path path, ArchiveDomainCatalog catalog,
       byte[] checksum, int blocks) throws Exception {
     Files.createDirectories(path.toAbsolutePath().getParent());
-    try (UnifiedArchiveDb db = UnifiedArchiveDb.initialize(path, checksum);
+    try (UnifiedArchiveDb db = UnifiedArchiveDb.initialize(path, checksum, CACHE_BYTES);
         FlushOptions flush = new FlushOptions().setWaitForFlush(true)) {
       UnifiedArchiveTxNumIndex index = new UnifiedArchiveTxNumIndex(db, checksum, false, true);
       UnifiedArchiveTemporalStore temporal = new UnifiedArchiveTemporalStore(db, catalog);
       UnifiedArchiveInFlightStore journals = new UnifiedArchiveInFlightStore(db, catalog);
       UnifiedArchiveBackend backend = new UnifiedArchiveBackend(db, index, temporal);
-      DomainValue[] previous = new DomainValue[KEY_COUNT];
+      int totalKeys = StrictMathWrapper.addExact(KEY_COUNT, HOT_KEY_COUNT);
+      DomainValue[] previous = new DomainValue[totalKeys];
       Arrays.fill(previous, DomainValue.tombstone());
       RocksDB raw = ReflectUtils.getFieldValue(db, "db");
       List<ColumnFamilyHandle> handles = ReflectUtils.getFieldValue(db, "allHandles");
@@ -88,7 +103,7 @@ public final class ArchiveStartupPayloadBenchmark {
         List<ArchiveChangeRecord> records = new ArrayList<>();
         for (int offset = 0; offset < CHANGES_PER_BLOCK; offset++) {
           long ordinal = (long) number * CHANGES_PER_BLOCK + offset;
-          int slot = (int) (ordinal % KEY_COUNT);
+          int slot = slot(number, offset, ordinal);
           ArchiveDomain domain = (slot & 3) == 3
               ? ArchiveDomain.CONTRACT_STORAGE : ArchiveDomain.ACCOUNT;
           DomainValue value = nextValue(random, domain, slot, ordinal);
@@ -115,8 +130,10 @@ public final class ArchiveStartupPayloadBenchmark {
     }
   }
 
-  private static void validate(Path path, ArchiveDomainCatalog catalog, byte[] checksum) {
-    try (UnifiedArchiveDb db = UnifiedArchiveTestMaintenance.openWithStatistics(path, checksum)) {
+  private static void validate(Path path, ArchiveDomainCatalog catalog,
+      byte[] checksum, boolean resumable) {
+    try (UnifiedArchiveDb db =
+        UnifiedArchiveTestMaintenance.openWithStatistics(path, checksum, CACHE_BYTES)) {
       UnifiedArchiveTxNumIndex index = new UnifiedArchiveTxNumIndex(db, checksum, false, true);
       UnifiedArchiveBackend backend = new UnifiedArchiveBackend(db, index,
           new UnifiedArchiveTemporalStore(db, catalog));
@@ -125,8 +142,14 @@ public final class ArchiveStartupPayloadBenchmark {
       long seeks = statistics.getTickerCount(TickerType.NUMBER_DB_SEEK);
       long misses = statistics.getTickerCount(TickerType.BLOCK_CACHE_INDEX_MISS);
       long started = System.nanoTime();
-      backend.validateStartup(true, true);
+      if (resumable) {
+        backend.validatePostReconcileStartup(true, true);
+      } else {
+        backend.validateStartup(true, true);
+      }
       System.out.println("PAYLOAD_SCRUB_OK elapsedMs=" + elapsedMillis(started)
+          + " cacheBytes=" + CACHE_BYTES
+          + " resumable=" + resumable
           + " pointReads=" + (statistics.getTickerCount(TickerType.NUMBER_KEYS_READ) - gets)
           + " seeks=" + (statistics.getTickerCount(TickerType.NUMBER_DB_SEEK) - seeks)
           + " indexCacheMisses="
@@ -142,13 +165,24 @@ public final class ArchiveStartupPayloadBenchmark {
         txId == null ? -1 : 0, txId);
   }
 
+  private static int slot(int block, int offset, long ordinal) {
+    if (HOT_KEY_COUNT == 0) {
+      return (int) (ordinal % KEY_COUNT);
+    }
+    if (offset % 4 == 0) {
+      return HOT_KEY_COUNT + (int) ((ordinal / 4) % KEY_COUNT);
+    }
+    return (int) (((long) block + offset) % HOT_KEY_COUNT);
+  }
+
   private static DomainValue nextValue(Random random, ArchiveDomain domain, int slot,
       long ordinal) {
     if (ordinal >= KEY_COUNT && (ordinal / KEY_COUNT) % 3 == 1 && slot % 11 == 0) {
       return DomainValue.tombstone();
     }
-    int bytes = domain == ArchiveDomain.CONTRACT_STORAGE
-        ? 32 : slot % 1024 == 0 ? 96 * 1024 : 384;
+    boolean largeAccount = slot % 1024 == 0
+        && (KEY_COUNT >= 32768 && slot >= HOT_KEY_COUNT || ordinal % 4096 == 0);
+    int bytes = domain == ArchiveDomain.CONTRACT_STORAGE ? 32 : largeAccount ? 96 * 1024 : 384;
     byte[] payload = new byte[bytes];
     random.nextBytes(payload);
     if (domain == ArchiveDomain.CONTRACT_STORAGE) {

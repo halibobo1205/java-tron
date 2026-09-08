@@ -28,4 +28,9 @@ public final class UnifiedArchiveTestMaintenance {
       Path path, byte[] schemaChecksum) {
     return UnifiedArchiveDb.openWithStatisticsForTesting(path, schemaChecksum);
   }
+
+  public static UnifiedArchiveDb openWithStatistics(
+      Path path, byte[] schemaChecksum, long blockCacheBytes) {
+    return UnifiedArchiveDb.openWithStatisticsForTesting(path, schemaChecksum, blockCacheBytes);
+  }
 }

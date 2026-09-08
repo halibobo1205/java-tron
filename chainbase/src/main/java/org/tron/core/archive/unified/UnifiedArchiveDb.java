@@ -47,11 +47,13 @@ import org.tron.core.archive.ArchiveRocksIterators;
 import org.tron.core.archive.ArchiveRocksReadOptions;
 import org.tron.core.archive.ArchiveSnapshotReleaseException;
 import org.tron.core.archive.ArchiveStorageAccessException;
+import org.tron.core.archive.ArchiveValidationCheckpoint;
 import org.tron.core.archive.query.ArchiveQueryLimits;
 import org.tron.core.archive.query.ArchiveSnapshotPermit.SnapshotUse;
 import org.tron.core.archive.query.HistoricalQueryLimitException;
 import org.tron.core.archive.query.QueryContext;
 import org.tron.core.archive.txnum.ArchiveBlockRangeCodec;
+import org.tron.core.config.args.StorageConfig.ArchiveConfig.DbConfig;
 
 /**
  * Core UNIFIED_V1 storage owner: one RocksDB, exact column families, atomic block publication, and
@@ -66,7 +68,7 @@ public final class UnifiedArchiveDb implements AutoCloseable {
   private static final BatchWriter ROCKS_BATCH_WRITER = RocksDB::write;
   private static final byte[] EMPTY_VALUE_BUFFER = new byte[0];
   private static final Logger logger = LoggerFactory.getLogger("archive");
-  private static final long SHARED_BLOCK_CACHE_BYTES = 72L * 1024L * 1024L;
+  private static final long SHARED_BLOCK_CACHE_BYTES = DbConfig.DEFAULT_BLOCK_CACHE_BYTES;
   private static final long DB_WRITE_BUFFER_BYTES = 128L * 1024L * 1024L;
   private static final long MAX_TOTAL_WAL_BYTES = 256L * 1024L * 1024L;
   private static final int MAX_OPEN_FILES = 512;
@@ -85,6 +87,7 @@ public final class UnifiedArchiveDb implements AutoCloseable {
   private final List<ColumnFamilyOptions> columnFamilyOptions;
   private final List<BloomFilter> bloomFilters;
   private final Cache blockCache;
+  private final long blockCacheBytes;
   private final List<ColumnFamilyHandle> allHandles;
   private final ColumnFamilyHandle defaultHandle;
   private final EnumMap<UnifiedArchiveColumnFamily, ColumnFamilyHandle> handles;
@@ -94,6 +97,7 @@ public final class UnifiedArchiveDb implements AutoCloseable {
   private final Statistics statistics;
   private final ReentrantReadWriteLock lifecycleLock = new ReentrantReadWriteLock(true);
   private final ReentrantLock mutationLock = new ReentrantLock(true);
+  private final AtomicBoolean resumableValidationActive = new AtomicBoolean();
   private final ConcurrentMap<JournalMutationKey, JournalMutationLock> journalMutationLocks =
       new ConcurrentHashMap<>();
   private final AtomicInteger activeReadViews = new AtomicInteger();
@@ -110,13 +114,14 @@ public final class UnifiedArchiveDb implements AutoCloseable {
   private UnifiedArchiveDb(Path path, byte[] schemaChecksum, DBOptions dbOptions,
       List<ColumnFamilyOptions> columnFamilyOptions, List<BloomFilter> bloomFilters,
       Cache blockCache, List<ColumnFamilyHandle> allHandles, RocksDB db, BatchWriter batchWriter,
-      Statistics statistics) throws RocksDBException {
+      Statistics statistics, long blockCacheBytes) throws RocksDBException {
     this.path = path;
     this.schemaChecksum = Arrays.copyOf(schemaChecksum, schemaChecksum.length);
     this.dbOptions = dbOptions;
     this.columnFamilyOptions = columnFamilyOptions;
     this.bloomFilters = bloomFilters;
     this.blockCache = blockCache;
+    this.blockCacheBytes = blockCacheBytes;
     this.allHandles = allHandles;
     this.defaultHandle = allHandles.get(0);
     this.handles = mapHandles(allHandles);
@@ -127,6 +132,12 @@ public final class UnifiedArchiveDb implements AutoCloseable {
 
   /** Explicitly creates a new unified DB. The target itself must not already exist. */
   public static UnifiedArchiveDb initialize(Path path, byte[] schemaChecksum) {
+    return initialize(path, schemaChecksum, SHARED_BLOCK_CACHE_BYTES);
+  }
+
+  /** Creates a new DB with one budgeted native cache shared by all archive column families. */
+  public static UnifiedArchiveDb initialize(
+      Path path, byte[] schemaChecksum, long blockCacheBytes) {
     Path target = normalizePath(path);
     UnifiedArchiveManifest.requireSchemaChecksum(schemaChecksum);
     byte[] immutableSchemaChecksum = Arrays.copyOf(schemaChecksum, schemaChecksum.length);
@@ -139,12 +150,19 @@ public final class UnifiedArchiveDb implements AutoCloseable {
       throw new ArchiveException("UNIFIED_V1 initialization parent is not a directory: "
           + parent);
     }
-    return openDatabase(target, immutableSchemaChecksum, true, ROCKS_BATCH_WRITER);
+    return openDatabase(target, immutableSchemaChecksum, true, ROCKS_BATCH_WRITER,
+        false, false, blockCacheBytes);
   }
 
   /** Opens only a fully initialized UNIFIED_V1 DB; this method never creates files or CFs. */
   public static UnifiedArchiveDb open(Path path, byte[] expectedSchemaChecksum) {
     return open(path, expectedSchemaChecksum, ROCKS_BATCH_WRITER);
+  }
+
+  /** Opens existing SST files with a caller-selected cache budget; the disk format is unchanged. */
+  public static UnifiedArchiveDb open(
+      Path path, byte[] expectedSchemaChecksum, long blockCacheBytes) {
+    return open(path, expectedSchemaChecksum, ROCKS_BATCH_WRITER, false, blockCacheBytes);
   }
 
   /**
@@ -176,8 +194,19 @@ public final class UnifiedArchiveDb implements AutoCloseable {
     return open(path, expectedSchemaChecksum, ROCKS_BATCH_WRITER, true);
   }
 
+  static UnifiedArchiveDb openWithStatisticsForTesting(
+      Path path, byte[] expectedSchemaChecksum, long blockCacheBytes) {
+    return open(path, expectedSchemaChecksum, ROCKS_BATCH_WRITER, true, blockCacheBytes);
+  }
+
   private static UnifiedArchiveDb open(Path path, byte[] expectedSchemaChecksum,
       BatchWriter batchWriter, boolean collectStatistics) {
+    return open(path, expectedSchemaChecksum, batchWriter,
+        collectStatistics, SHARED_BLOCK_CACHE_BYTES);
+  }
+
+  private static UnifiedArchiveDb open(Path path, byte[] expectedSchemaChecksum,
+      BatchWriter batchWriter, boolean collectStatistics, long blockCacheBytes) {
     Path target = normalizePath(path);
     UnifiedArchiveManifest.requireSchemaChecksum(expectedSchemaChecksum);
     byte[] immutableSchemaChecksum =
@@ -190,7 +219,8 @@ public final class UnifiedArchiveDb implements AutoCloseable {
     }
     validateColumnFamiliesOnDisk(target);
     return openDatabase(
-        target, immutableSchemaChecksum, false, batchWriter, false, collectStatistics);
+        target, immutableSchemaChecksum, false, batchWriter,
+        false, collectStatistics, blockCacheBytes);
   }
 
   /** Forced-sync journal write; the WAL is always enabled. */
@@ -653,6 +683,53 @@ public final class UnifiedArchiveDb implements AutoCloseable {
     }
   }
 
+  /** Startup owner only: persist progress for this exact durable data version outside RocksDB. */
+  public UnifiedArchiveReadView openResumableValidationReadView() {
+    if (!resumableValidationActive.compareAndSet(false, true)) {
+      throw new ArchiveException("archive resumable validation already active");
+    }
+    UnifiedArchiveReadView view = null;
+    try {
+      view = openValidationReadView();
+      view.claimValidationOwner(resumableValidationActive);
+      callRead(() -> {
+        try {
+          db.syncWal();
+        } catch (RocksDBException e) {
+          throw new ArchiveStorageAccessException("archive validation WAL sync failed", e);
+        }
+        return null;
+      });
+      view.enableValidationCheckpoint(ArchiveValidationCheckpoint.open(
+          path, schemaChecksum, view.sequenceNumber(),
+          () -> callRead(db::getLatestSequenceNumber)));
+      return view;
+    } catch (RuntimeException | Error failure) {
+      if (view == null) {
+        resumableValidationActive.set(false);
+      } else {
+        try {
+          view.close();
+        } catch (RuntimeException | Error closeFailure) {
+          addSuppressedSafely(failure, closeFailure);
+        }
+      }
+      throw failure;
+    }
+  }
+
+  /** A fresh validation failure also invalidates evidence from an earlier interrupted scan. */
+  public void discardValidationCheckpoint(Throwable validationFailure) {
+    try {
+      callRead(() -> {
+        ArchiveValidationCheckpoint.discard(path);
+        return null;
+      });
+    } catch (RuntimeException | Error cleanupFailure) {
+      addSuppressedSafely(validationFailure, cleanupFailure);
+    }
+  }
+
   /**
    * Captures one sequence for untrusted historical queries without admitting their random reads
    * into the shared archive block cache used by publication and maintenance point reads.
@@ -883,7 +960,7 @@ public final class UnifiedArchiveDb implements AutoCloseable {
   }
 
   long configuredBlockCacheBytes() {
-    return SHARED_BLOCK_CACHE_BYTES;
+    return blockCacheBytes;
   }
 
   boolean usesEvictableIndexAndFilterCache() {
@@ -1015,19 +1092,18 @@ public final class UnifiedArchiveDb implements AutoCloseable {
   }
 
   private static UnifiedArchiveDb openDatabase(Path target, byte[] schemaChecksum,
-      boolean initialize, BatchWriter batchWriter) {
-    return openDatabase(target, schemaChecksum, initialize, batchWriter, false, false);
-  }
-
-  private static UnifiedArchiveDb openDatabase(Path target, byte[] schemaChecksum,
       boolean initialize, BatchWriter batchWriter, boolean resumeEmptyInitialization) {
     return openDatabase(
-        target, schemaChecksum, initialize, batchWriter, resumeEmptyInitialization, false);
+        target, schemaChecksum, initialize, batchWriter,
+        resumeEmptyInitialization, false, SHARED_BLOCK_CACHE_BYTES);
   }
 
   private static UnifiedArchiveDb openDatabase(Path target, byte[] schemaChecksum,
       boolean initialize, BatchWriter batchWriter, boolean resumeEmptyInitialization,
-      boolean collectStatistics) {
+      boolean collectStatistics, long blockCacheBytes) {
+    if (blockCacheBytes <= 0L) {
+      throw new IllegalArgumentException("archive block cache bytes must be positive");
+    }
     Statistics statistics = null;
     DBOptions dbOptions = null;
     Cache blockCache = null;
@@ -1057,19 +1133,20 @@ public final class UnifiedArchiveDb implements AutoCloseable {
       if (statistics != null) {
         dbOptions.setStatistics(statistics);
       }
-      blockCache = new LRUCache(SHARED_BLOCK_CACHE_BYTES, -1, false);
+      blockCache = new LRUCache(blockCacheBytes, -1, false);
       List<ColumnFamilyDescriptor> descriptors =
           descriptors(columnFamilyOptions, bloomFilters, blockCache);
       openedDb = RocksDB.open(dbOptions, target.toString(), descriptors, openedHandles);
       UnifiedArchiveDb opened = new UnifiedArchiveDb(target, schemaChecksum, dbOptions,
           columnFamilyOptions, bloomFilters, blockCache,
-          openedHandles, openedDb, batchWriter, statistics);
+          openedHandles, openedDb, batchWriter, statistics, blockCacheBytes);
       if (initialize) {
         opened.installManifest();
       } else if (resumeEmptyInitialization) {
         opened.resumeEmptyManifestIfMissing();
       }
       opened.validateIdentity();
+      logger.info("UNIFIED_V1 archive block cache: capacityBytes={}", blockCacheBytes);
       return opened;
     } catch (RocksDBException e) {
       Throwable cleanupOutcome = closeResources(

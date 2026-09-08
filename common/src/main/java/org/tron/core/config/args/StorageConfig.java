@@ -187,6 +187,9 @@ public class StorageConfig {
       if (db.directory == null || db.directory.trim().isEmpty()) {
         throw new IllegalArgumentException("storage.archive.db.directory must not be empty");
       }
+      if (db.blockCacheBytes <= 0L) {
+        throw new IllegalArgumentException("storage.archive.db.blockCacheBytes must be positive");
+      }
       if (coverage == null || coverage.trim().isEmpty()) {
         throw new IllegalArgumentException("storage.archive.coverage must not be empty");
       }
@@ -238,8 +241,11 @@ public class StorageConfig {
     @Setter
     public static class DbConfig {
 
+      public static final long DEFAULT_BLOCK_CACHE_BYTES = 2L * 1024L * 1024L * 1024L;
+
       private String directory = "archive";
       private boolean fullScrubOnStartup;
+      private long blockCacheBytes = DEFAULT_BLOCK_CACHE_BYTES;
     }
 
     /** One-time opt-in for creating or resuming the canonical/archive ACTIVE identity pair. */
@@ -528,7 +534,7 @@ public class StorageConfig {
         "warnUnclassifiedStoreWrites");
     if (archive.hasPath("db")) {
       requireOnlyKeys("storage.archive.db", archive.getConfig("db").root(), "directory",
-          "fullScrubOnStartup");
+          "fullScrubOnStartup", "blockCacheBytes");
     }
     if (archive.hasPath("txnum")) {
       requireOnlyKeys("storage.archive.txnum", archive.getConfig("txnum").root(), "enable");

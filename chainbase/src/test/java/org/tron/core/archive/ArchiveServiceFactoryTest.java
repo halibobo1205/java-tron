@@ -1,5 +1,6 @@
 package org.tron.core.archive;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertSame;
@@ -109,6 +110,11 @@ public class ArchiveServiceFactoryTest {
             databasePath, schemaChecksum, ArchiveServiceFactory.UnifiedOpenMode.OPEN_EXISTING));
 
     assertFalse(Files.exists(databasePath));
+    ArchiveException failure = assertThrows(ArchiveException.class,
+        () -> ArchiveServiceFactory.openUnifiedDatabase(databasePath, schemaChecksum,
+            ArchiveServiceFactory.UnifiedOpenMode.OPEN_EXISTING, 1024L * 1024L));
+    assertTrue(failure.getMessage().contains("archive is not initialized"));
+    assertFalse(Files.exists(databasePath));
   }
 
   @Test
@@ -155,12 +161,24 @@ public class ArchiveServiceFactoryTest {
 
   @Test
   public void factoryInitializesAndReopensUnifiedArchive() throws Exception {
+    long defaultCache = 2L * 1024L * 1024L * 1024L;
+    assertFactoryInitializesAndReopensUnifiedArchive(defaultCache, defaultCache);
+  }
+
+  @Test
+  public void factoryAppliesCacheBudgetOnInitializationAndReopen() throws Exception {
+    assertFactoryInitializesAndReopensUnifiedArchive(1024L * 1024L, 8L * 1024L * 1024L);
+  }
+
+  private void assertFactoryInitializesAndReopensUnifiedArchive(long initialCache, long reopenCache)
+      throws Exception {
     Path base = temporaryFolder.getRoot().toPath();
     Path root = base.resolve("new-unified");
     Path anchors = Files.createDirectory(base.resolve("unified-anchors"));
     StorageConfig.ArchiveConfig config = archiveConfig();
     config.getIdentity().setInitialize(true);
     config.getDebug().setEnable(true);
+    config.getDb().setBlockCacheBytes(initialCache);
     ChainBaseManager chainBaseManager = mock(ChainBaseManager.class);
     when(chainBaseManager.hasBlocks()).thenReturn(false);
     BlockCapsule genesis = mock(BlockCapsule.class);
@@ -176,6 +194,9 @@ public class ArchiveServiceFactoryTest {
           config, root.toString(), chainBaseManager, anchors);
       try {
         assertTrue((boolean) ReflectUtils.getFieldValue(service, "captureVmPreState"));
+        UnifiedArchiveBackend backend = ReflectUtils.getFieldValue(service, "unifiedBackend");
+        UnifiedArchiveDb opened = ReflectUtils.getFieldValue(backend, "db");
+        assertEquals(initialCache, (long) ReflectUtils.getFieldValue(opened, "blockCacheBytes"));
         completeRecovery(service);
       } finally {
         service.close();
@@ -187,6 +208,7 @@ public class ArchiveServiceFactoryTest {
       assertTrue(Files.notExists(root.resolve("inflight")));
 
       config.getIdentity().setInitialize(false);
+      config.getDb().setBlockCacheBytes(reopenCache);
       byte[] schema = ArchiveSchemaChecksum.of(
           new DefaultArchiveDomainRegistry(), new DefaultArchiveDomainCatalog());
       try (MockedStatic<UnifiedArchiveDb> database =
@@ -195,7 +217,11 @@ public class ArchiveServiceFactoryTest {
             config, root.toString(), chainBaseManager, anchors);
         try {
           completeRecovery(service);
-          database.verify(() -> UnifiedArchiveDb.open(root.resolve("unified"), schema), times(1));
+          database.verify(() -> UnifiedArchiveDb.open(
+              root.resolve("unified"), schema, reopenCache), times(1));
+          UnifiedArchiveBackend backend = ReflectUtils.getFieldValue(service, "unifiedBackend");
+          UnifiedArchiveDb opened = ReflectUtils.getFieldValue(backend, "db");
+          assertEquals(reopenCache, (long) ReflectUtils.getFieldValue(opened, "blockCacheBytes"));
         } finally {
           service.close();
         }

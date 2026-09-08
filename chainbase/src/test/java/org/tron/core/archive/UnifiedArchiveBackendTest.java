@@ -2720,6 +2720,28 @@ public class UnifiedArchiveBackendTest {
   }
 
   @Test
+  public void customCacheBudgetKeepsFullScrubCorruptionDetection() {
+    publish(block(0L, DomainValue.tombstone(), value(1)));
+    publish(block(1L, value(1), value(2)));
+    index.markRepairRequired("cache sizing full scrub test");
+    index.close();
+    index = null;
+    db = UnifiedArchiveDb.open(dbPath, schemaChecksum, 1024L * 1024L);
+    wire(false, true);
+
+    backend.validateStartup(true, true);
+    assertTrue(index.hasRepairRequired());
+    assertValue(temporal.getAsOf(ArchiveDomain.ACCOUNT, accountKey(), 0L), 1);
+    assertValue(temporal.getAsOf(ArchiveDomain.ACCOUNT, accountKey(), 2L), 2);
+
+    tamperFirstValue(db, UnifiedArchiveColumnFamily.HISTORY);
+    ArchiveException failure = assertThrows(ArchiveException.class,
+        () -> backend.validateStartup(true, true));
+    assertTrue(failure.getMessage().contains("temporal reference digest mismatch"));
+    assertTrue(index.hasRepairRequired());
+  }
+
+  @Test
   public void fullScrubRejectsUnknownIndexAndIntegrityRows() {
     write(db, new UnifiedArchiveMaintenanceBatch()
         .put(UnifiedArchiveColumnFamily.INDEX, new byte[] {(byte) 0x7f}, new byte[] {1}));

@@ -593,14 +593,17 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
       ArchiveRocksIterators.requireOk(meta, "UNIFIED_V1 validate meta keyspace");
 
       UnifiedArchiveIterator index = view.newIterator(UnifiedArchiveColumnFamily.INDEX);
-      ArchiveStartupProgress progress = new ArchiveStartupProgress("index-keyspace");
-      index.seekToFirst();
+      ArchiveStartupProgress progress = view.startupProgress("index-keyspace");
+      if (progress.isComplete()) {
+        return null;
+      }
+      progress.seek(index, null);
       while (index.isValid()) {
         byte[] key = index.key();
         if (Arrays.equals(key, ArchiveBlockRangeCodec.FIRST_BLOCK_KEY)) {
           ArchiveBlockRangeCodec.decodeFirstBlock(
               index.valueExact(Long.BYTES, "UNIFIED_V1 first block marker"));
-          progress.record(-1L);
+          progress.record(-1L, index);
           index.next();
           continue;
         }
@@ -658,7 +661,7 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
           default:
             throw new ArchiveException("UNIFIED_V1 index column family has an unknown key");
         }
-        progress.record(-1L);
+        progress.record(-1L, index);
         index.next();
       }
       ArchiveRocksIterators.requireOk(index, "UNIFIED_V1 validate index keyspace");
@@ -696,11 +699,25 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
 
   private void validateRangeCoverage(boolean validatePositions) {
     withScanView(view -> {
-      ArchiveStartupProgress progress = new ArchiveStartupProgress(
-          validatePositions ? "ranges-and-positions" : "ranges");
+      ArchiveStartupProgress progress = validatePositions
+          ? view.startupProgress("ranges-and-positions") : new ArchiveStartupProgress("ranges");
+      if (progress.isComplete()) {
+        return null;
+      }
       UnifiedArchiveIterator iterator = view.newIterator(UnifiedArchiveColumnFamily.INDEX);
-      iterator.seek(new byte[] {ArchiveBlockRangeCodec.TXNUM_BLOCK_PREFIX});
+      progress.seek(iterator, new byte[] {ArchiveBlockRangeCodec.TXNUM_BLOCK_PREFIX});
       ArchiveBlockRange previous = null;
+      if (progress.resumeKey() != null) {
+        iterator.prev();
+        if (iterator.isValid() && iterator.key().length > 0
+            && iterator.key()[0] == ArchiveBlockRangeCodec.TXNUM_BLOCK_PREFIX) {
+          previous = readRange(iterator, "UNIFIED_V1 resumed range predecessor");
+          validateRangeKeyMatchesValue(iterator.key(), previous);
+          validateRangeShape(previous);
+        }
+        ArchiveRocksIterators.requireOk(iterator, "UNIFIED_V1 resumed range predecessor");
+        progress.seek(iterator, null);
+      }
       while (iterator.isValid()) {
         byte[] key = iterator.key();
         if (key.length == 0) {
@@ -739,7 +756,7 @@ public final class UnifiedArchiveTxNumIndex implements ArchiveTxNumIndex, AutoCl
           }
         }
         previous = current;
-        progress.record(current.getBlockNum());
+        progress.record(current.getBlockNum(), iterator);
         iterator.next();
       }
       ArchiveRocksIterators.requireOk(iterator, "UNIFIED_V1 validate committed ranges");
