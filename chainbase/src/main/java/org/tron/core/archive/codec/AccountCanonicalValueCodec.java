@@ -3,7 +3,6 @@ package org.tron.core.archive.codec;
 import com.google.protobuf.CodedOutputStream;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.UnknownFieldSet;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.Arrays;
 import org.tron.core.archive.ArchiveException;
@@ -84,21 +83,25 @@ public final class AccountCanonicalValueCodec implements CanonicalValueCodec {
   }
 
   private static byte[] canonicalize(Account account) {
-    Account stripped = account.toBuilder()
-        .clearAsset()
-        .clearAssetV2()
-        .clearAssetOptimized()
-        .setUnknownFields(UnknownFieldSet.getDefaultInstance())
-        .build();
-    ByteArrayOutputStream out = new ByteArrayOutputStream(stripped.getSerializedSize());
+    Account stripped = account;
+    if (account.getAssetCount() != 0 || account.getAssetV2Count() != 0
+        || account.getAssetOptimized() || !account.getUnknownFields().asMap().isEmpty()) {
+      stripped = account.toBuilder()
+          .clearAsset()
+          .clearAssetV2()
+          .clearAssetOptimized()
+          .setUnknownFields(UnknownFieldSet.getDefaultInstance())
+          .build();
+    }
+    byte[] out = new byte[stripped.getSerializedSize()];
     CodedOutputStream cos = CodedOutputStream.newInstance(out);
     cos.useDeterministicSerialization();
     try {
       stripped.writeTo(cos);
-      cos.flush();
+      cos.checkNoSpaceLeft();
     } catch (IOException e) {
       throw new ArchiveException("account-capsule-canonical-v1: serialization failed", e);
     }
-    return out.toByteArray();
+    return out;
   }
 }
