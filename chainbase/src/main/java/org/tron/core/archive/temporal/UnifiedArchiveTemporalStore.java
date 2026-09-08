@@ -223,7 +223,8 @@ public final class UnifiedArchiveTemporalStore implements ArchiveTemporalStore {
     }
     PersistedPreparationEstimate estimate = new PersistedPreparationEstimate();
     Map<WrappedByteArray, PersistedLatestStatePlan> plans = new HashMap<>();
-    UnifiedArchiveReadView view = db.openScanView();
+    // Publication repeatedly probes history tails and payloads; reuse the bounded archive cache.
+    UnifiedArchiveReadView view = db.openReadView();
     try {
       UnifiedArchiveIterator history = view.newIterator(UnifiedArchiveColumnFamily.HISTORY);
       for (ArchiveChangeRecord record : ordered) {
