@@ -1,0 +1,38 @@
+// Opt-in: ./gradlew -I docs/archiveV3/benchmarks/startup-payload.gradle \
+//   :chainbase:archivePayloadBenchmark -PpayloadMode=generate -PpayloadPath=/tmp/archive-payload
+gradle.projectsEvaluated {
+    def root = gradle.rootProject
+    def chainbase = root.project(':chainbase')
+    def baseline = root.findProperty('payloadBaselineSource')
+    def baselineClasses = chainbase.layout.buildDirectory.dir(
+            'payload-baseline-classes/' + (baseline ? root.file(baseline).name : 'unused'))
+    if (baseline) {
+        chainbase.tasks.register('compilePayloadBaseline', JavaCompile) {
+            dependsOn chainbase.tasks.named('classes')
+            source root.fileTree(baseline) { include '**/*.java' }
+            classpath = chainbase.sourceSets.main.compileClasspath + chainbase.sourceSets.main.output
+            destinationDirectory.set(baselineClasses)
+            options.release.set(8)
+            options.compilerArgs += ['-proc:none']
+            options.errorprone.enabled.set(false)
+        }
+    }
+    chainbase.tasks.register('archivePayloadBenchmark', JavaExec) {
+        dependsOn chainbase.tasks.named('testClasses')
+        if (baseline) {
+            dependsOn chainbase.tasks.named('compilePayloadBaseline')
+        }
+        classpath = (baseline ? chainbase.files(baselineClasses) : chainbase.files()) +
+                chainbase.sourceSets.test.runtimeClasspath
+        mainClass.set('org.tron.core.archive.ArchiveStartupPayloadBenchmark')
+        maxHeapSize = '1g'
+        jvmArgs '-XX:ActiveProcessorCount=4'
+        if (root.findProperty('payloadTimeoutSeconds')) {
+            timeout.set(java.time.Duration.ofSeconds(
+                    Long.parseLong(root.property('payloadTimeoutSeconds'))))
+        }
+        args root.findProperty('payloadMode') ?: 'validate',
+                root.findProperty('payloadPath') ?: '/tmp/archive-payload-benchmark/unified',
+                root.findProperty('payloadBlocks') ?: '16384'
+    }
+}

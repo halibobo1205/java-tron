@@ -1708,6 +1708,216 @@ public class UnifiedArchiveDbTest {
   }
 
   @Test
+  public void validationPayloadReadsMatchPointReadsAndKeepTheirSnapshot() {
+    for (int size : new int[] {1, 31, 65535, 65536, 65537, 1024 * 1024}) {
+      byte[] payload = new byte[size];
+      for (int i = 0; i < size; i++) {
+        payload[i] = (byte) i;
+      }
+      db.writeMaintenanceAtomically(new UnifiedArchiveMaintenanceBatch()
+          .put(UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD, TEMPORAL_PAYLOAD_KEY, payload));
+      try (UnifiedArchiveReadView validation = db.openValidationReadView();
+          UnifiedArchiveReadView pointReads = db.openReadView()) {
+        db.writeMaintenanceAtomically(new UnifiedArchiveMaintenanceBatch()
+            .delete(UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD, TEMPORAL_PAYLOAD_KEY));
+        for (String absent : new String[] {"payload", "payload-j", "payload-z"}) {
+          assertNull(validation.getExactBudgeted(UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD,
+              ascii(absent), size, "absent payload"));
+        }
+        byte[] actual = validation.getExactBudgeted(UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD,
+            TEMPORAL_PAYLOAD_KEY, size, "payload");
+        assertArrayEquals(payload, actual);
+        assertArrayEquals(pointReads.getExactBudgeted(UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD,
+            TEMPORAL_PAYLOAD_KEY, size, "payload"), actual);
+        if (size > 0) {
+          actual[0] ^= 1;
+        }
+        assertArrayEquals(payload, validation.getExactBudgeted(
+            UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD, TEMPORAL_PAYLOAD_KEY, size, "payload"));
+        List<UnifiedArchiveIterator> cursors = ReflectUtils.getFieldValue(validation, "iterators");
+        assertEquals(1, cursors.size());
+        byte[] probe = ReflectUtils.getFieldValue(cursors.get(0), "boundedValueProbe");
+        assertTrue(probe.length <= 65536);
+      }
+    }
+  }
+
+  @Test
+  public void validationPayloadReadsRejectCorruptLengthsWithoutUnboundedAllocation() {
+    for (int actualBytes : new int[] {3, 1024 * 1024}) {
+      db.writeMaintenanceAtomically(new UnifiedArchiveMaintenanceBatch()
+          .put(UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD,
+              TEMPORAL_PAYLOAD_KEY, new byte[actualBytes]));
+      try (UnifiedArchiveReadView view = db.openValidationReadView()) {
+        for (long expected : new long[] {32L, 256L * 1024L * 1024L}) {
+          ArchiveException failure = assertThrows(ArchiveException.class,
+              () -> view.getExactBudgeted(UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD,
+                  TEMPORAL_PAYLOAD_KEY, expected, "payload"));
+          assertTrue(failure.getMessage().contains("actualBytes=" + actualBytes));
+        }
+        for (long invalid : new long[] {-1L, Integer.MAX_VALUE + 1L}) {
+          ArchiveException failure = assertThrows(ArchiveException.class,
+              () -> view.getExactBudgeted(UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD,
+                  TEMPORAL_PAYLOAD_KEY, invalid, "payload"));
+          assertTrue(failure.getMessage().contains("invalid expected byte length"));
+        }
+        assertNull(view.getExactBudgeted(UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD,
+            ascii("missing-payload"), 256L * 1024L * 1024L, "missing payload"));
+        List<UnifiedArchiveIterator> cursors = ReflectUtils.getFieldValue(view, "iterators");
+        for (UnifiedArchiveIterator cursor : cursors) {
+          byte[] probe = ReflectUtils.getFieldValue(cursor, "boundedValueProbe");
+          assertTrue(probe.length <= 65536);
+        }
+      }
+    }
+  }
+
+  @Test
+  public void validationPayloadLookupCursorLimitFallsBackToExactReads() {
+    byte[] payload = new byte[70 * 1024];
+    db.writeMaintenanceAtomically(new UnifiedArchiveMaintenanceBatch()
+        .put(UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD, new byte[] {(byte) 255}, payload));
+    try (UnifiedArchiveReadView view = db.openValidationReadView()) {
+      for (int prefix = 0; prefix < 255; prefix++) {
+        assertNull(view.getExactBudgeted(UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD,
+            new byte[] {(byte) prefix}, payload.length, "absent payload"));
+      }
+      assertArrayEquals(payload, view.getExactBudgeted(UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD,
+          new byte[] {(byte) 255}, payload.length, "fallback payload"));
+      Map<?, ?> lookups = ReflectUtils.getFieldValue(view, "validationLookups");
+      assertEquals(16, lookups.size());
+      List<?> cursors = ReflectUtils.getFieldValue(view, "iterators");
+      assertEquals(16, cursors.size());
+    }
+    AtomicInteger activeViews = ReflectUtils.getFieldValue(db, "activeReadViews");
+    assertEquals(0, activeViews.get());
+  }
+
+  @Test
+  public void validationPayloadReadsDoNotBypassAttachedQueryBudgets() {
+    db.writeMaintenanceAtomically(new UnifiedArchiveMaintenanceBatch()
+        .put(UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD, TEMPORAL_PAYLOAD_KEY, new byte[32]));
+    QueryContext context = new QueryContext(ArchiveQueryLimits.builder()
+        .maxBackendValueBytes(32L).maxBackendReadBytesPerRequest(32L).build());
+    try (UnifiedArchiveReadView view = db.openValidationReadView();
+        QueryContextHolder.Scope ignored = QueryContextHolder.attach(context)) {
+      assertArrayEquals(new byte[32], view.getExactBudgeted(
+          UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD, TEMPORAL_PAYLOAD_KEY, 32L, "payload"));
+      assertEquals(32L, context.getBackendReadBytes());
+      long reads = context.getBackendReads();
+      HistoricalQueryLimitException failure = assertThrows(HistoricalQueryLimitException.class,
+          () -> view.getExactBudgeted(UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD,
+              TEMPORAL_PAYLOAD_KEY, 32L, "payload"));
+      assertEquals(HistoricalQueryLimitException.Limit.BACKEND_READ_BYTES, failure.getLimit());
+      assertEquals(reads, context.getBackendReads());
+      assertEquals(32L, context.getBackendReadBytes());
+      List<?> cursors = ReflectUtils.getFieldValue(view, "iterators");
+      assertTrue(cursors.isEmpty());
+    }
+  }
+
+  @Test
+  public void budgetedIteratorPayloadChecksEmptyValuesAndInvalidLengths() {
+    RocksIterator nativeIterator = mock(RocksIterator.class);
+    doReturn(0).when(nativeIterator).value(any(byte[].class));
+    try (UnifiedArchiveIterator iterator = new UnifiedArchiveIterator(nativeIterator)) {
+      assertArrayEquals(new byte[0], iterator.valueExactBudgeted(0, "empty payload"));
+      ArchiveException mismatch = assertThrows(ArchiveException.class,
+          () -> iterator.valueExactBudgeted(32, "empty payload"));
+      assertTrue(mismatch.getMessage().contains("actualBytes=0"));
+      ArchiveException invalid = assertThrows(ArchiveException.class,
+          () -> iterator.valueExactBudgeted(-1, "payload"));
+      assertTrue(invalid.getMessage().contains("invalid expected byte length"));
+      verify(nativeIterator, times(2)).value(any(byte[].class));
+    }
+  }
+
+  @Test
+  public void budgetedIteratorPayloadRejectsLengthChangeBetweenProbeAndCopy() {
+    RocksIterator nativeIterator = mock(RocksIterator.class);
+    doReturn(70 * 1024, 70 * 1024 + 1).when(nativeIterator).value(any(byte[].class));
+    try (UnifiedArchiveIterator iterator = new UnifiedArchiveIterator(nativeIterator)) {
+      ArchiveException failure = assertThrows(ArchiveException.class,
+          () -> iterator.valueExactBudgeted(70 * 1024, "payload"));
+      assertTrue(failure.getMessage().contains("changed while reading snapshot"));
+      verify(nativeIterator, times(2)).value(any(byte[].class));
+      byte[] probe = ReflectUtils.getFieldValue(iterator, "boundedValueProbe");
+      assertEquals(65536, probe.length);
+    }
+  }
+
+  @Test
+  public void budgetedIteratorPayloadAccountsLargeValuesOnce() {
+    int size = 70 * 1024;
+    db.writeMaintenanceAtomically(new UnifiedArchiveMaintenanceBatch()
+        .put(UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD, TEMPORAL_PAYLOAD_KEY, new byte[size]));
+    QueryContext context = new QueryContext(ArchiveQueryLimits.builder()
+        .maxBackendValueBytes(size).maxBackendReadBytesPerRequest(size).build());
+    try (UnifiedArchiveReadView view = db.openReadView();
+        QueryContextHolder.Scope ignored = QueryContextHolder.attach(context)) {
+      UnifiedArchiveIterator iterator =
+          view.newIterator(UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD);
+      iterator.seek(TEMPORAL_PAYLOAD_KEY);
+      assertArrayEquals(new byte[size], iterator.valueExactBudgeted(size, "payload"));
+      assertEquals(size, context.getBackendReadBytes());
+      long reads = context.getBackendReads();
+      HistoricalQueryLimitException failure = assertThrows(HistoricalQueryLimitException.class,
+          () -> iterator.valueExactBudgeted(size, "payload"));
+      assertEquals(HistoricalQueryLimitException.Limit.BACKEND_READ_BYTES, failure.getLimit());
+      assertEquals(reads + 1, context.getBackendReads());
+      assertEquals(size, context.getBackendReadBytes());
+    }
+  }
+
+  @Test
+  public void budgetedIteratorPayloadEnforcesBudgetBeforeNativeValueRead() {
+    RocksIterator nativeIterator = mock(RocksIterator.class);
+    QueryContext context = new QueryContext(ArchiveQueryLimits.builder()
+        .maxBackendValueBytes(16L).build());
+    try (UnifiedArchiveIterator iterator = new UnifiedArchiveIterator(nativeIterator);
+        QueryContextHolder.Scope ignored = QueryContextHolder.attach(context)) {
+      HistoricalQueryLimitException failure = assertThrows(HistoricalQueryLimitException.class,
+          () -> iterator.valueExactBudgeted(70 * 1024, "payload"));
+      assertEquals(HistoricalQueryLimitException.Limit.BACKEND_VALUE_BYTES, failure.getLimit());
+      verify(nativeIterator, never()).value(any(byte[].class));
+      byte[] probe = ReflectUtils.getFieldValue(iterator, "boundedValueProbe");
+      assertEquals(0, probe.length);
+      assertEquals(0L, context.getBackendReadBytes());
+    }
+  }
+
+  @Test
+  public void validationPayloadReadsEnforceOwnerClosedAndDeadlineGuards() throws Exception {
+    UnifiedArchiveReadView view = db.openValidationReadView();
+    try {
+      FutureTask<Throwable> foreignRead = failureOf(() -> view.getExactBudgeted(
+          UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD, TEMPORAL_PAYLOAD_KEY, 32L, "payload"));
+      Thread thread = new Thread(foreignRead, "archive-foreign-payload-read");
+      thread.start();
+      Throwable ownerFailure = foreignRead.get(1L, TimeUnit.SECONDS);
+      thread.join(1_000L);
+      assertTrue(ownerFailure instanceof ArchiveException);
+      assertTrue(ownerFailure.getMessage().contains("non-owner thread"));
+
+      QueryContext context =
+          new QueryContext(ArchiveQueryLimits.builder().deadlineMs(1000L).build());
+      context.deadlineExceeded();
+      try (QueryContextHolder.Scope ignored = QueryContextHolder.attach(context)) {
+        HistoricalQueryLimitException failure = assertThrows(HistoricalQueryLimitException.class,
+            () -> view.getExactBudgeted(UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD,
+                TEMPORAL_PAYLOAD_KEY, 32L, "payload"));
+        assertEquals(HistoricalQueryLimitException.Limit.DEADLINE, failure.getLimit());
+      }
+    } finally {
+      view.close();
+    }
+    ArchiveException failure = assertThrows(ArchiveException.class,
+        () -> view.getExactBudgeted(UnifiedArchiveColumnFamily.TEMPORAL_PAYLOAD,
+            TEMPORAL_PAYLOAD_KEY, 32L, "payload"));
+    assertTrue(failure.getMessage().contains("closed"));
+  }
+
+  @Test
   public void exactIteratorValueUsesSnapshotAndAccountsBytesOnce() {
     db.writeMaintenanceAtomically(new UnifiedArchiveMaintenanceBatch()
         .put(UnifiedArchiveColumnFamily.HISTORY, HISTORY_KEY, HISTORY_VALUE));

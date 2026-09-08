@@ -173,11 +173,21 @@ public final class UnifiedArchiveReadView implements AutoCloseable {
   }
 
   /**
-   * Reads a value whose exact length is authenticated by a fixed locator. Query budgets are
-   * reserved before both Java allocation and the single native read.
+   * Reads a value whose exact length is authenticated by a fixed locator. Query limits are checked
+   * before payload access; bytes are charged only when the value exists and its length matches.
    */
   public byte[] getExactBudgeted(UnifiedArchiveColumnFamily columnFamily, byte[] key,
       long expectedValueBytes, String what) {
+    // Only startup maintenance uses seek cursors. Keep query accounting and native reads unchanged.
+    if (validationLookups != null && QueryContextHolder.current() == null
+        && expectedValueBytes >= 0L && expectedValueBytes <= Integer.MAX_VALUE) {
+      long probeBytes = StrictMathWrapper.min(expectedValueBytes, MAX_BOUNDED_GET_PROBE_BYTES);
+      UnifiedArchiveIterator lookup = validationLookup(columnFamily, key, probeBytes);
+      if (lookup != null) {
+        return seekExact(lookup, key)
+            ? lookup.valueExactBudgeted((int) expectedValueBytes, what) : null;
+      }
+    }
     return getExact(columnFamily, key, expectedValueBytes, what, true);
   }
 
