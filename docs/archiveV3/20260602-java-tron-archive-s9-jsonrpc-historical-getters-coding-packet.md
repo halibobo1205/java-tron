@@ -16,7 +16,7 @@
 - [PR6 StateReader/JSON-RPC 代码级实现规格](./20260602-java-tron-archive-pr6-state-reader-jsonrpc-implementation-spec.md)
 - [模块 05 ArchiveStateReader 逐文件 Patch 清单](./20260602-java-tron-archive-module-05-state-reader-patch-checklist.md)
 
-java-tron 源码路径：`/Users/boson/IdeaProjects/java-tron`
+java-tron 源码路径：`.`
 
 java-tron 旧文档原始基线：`a79693e450`。
 
@@ -59,7 +59,7 @@ archive error -> JsonRpcInternalException, never default zero
 
 ### 2.1 RPC interface
 
-`/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/services/jsonrpc/TronJsonRpc.java:90-108`：
+`./framework/src/main/java/org/tron/core/services/jsonrpc/TronJsonRpc.java:90-108`：
 
 | JSON-RPC method | Java method | 当前 throws |
 | --- | --- | --- |
@@ -806,7 +806,7 @@ fake adapter 抛：
 
 ## 15. Existing `JsonrpcServiceTest` 迁移点
 
-当前 `/Users/boson/IdeaProjects/java-tron/framework/src/test/java/org/tron/core/jsonrpc/JsonrpcServiceTest.java:491-572` 直接断言三个 state getter 的 `earliest/pending/finalized`，并在 `JsonrpcServiceTest.java:580-599` 覆盖 `eth_call` 同类 latest-only 行为：
+当前 `./framework/src/test/java/org/tron/core/jsonrpc/JsonrpcServiceTest.java:491-572` 直接断言三个 state getter 的 `earliest/pending/finalized`，并在 `JsonrpcServiceTest.java:580-599` 覆盖 `eth_call` 同类 latest-only 行为：
 
 ```text
 earliest/finalized/pending -> TAG_NOT_SUPPORT_ERROR

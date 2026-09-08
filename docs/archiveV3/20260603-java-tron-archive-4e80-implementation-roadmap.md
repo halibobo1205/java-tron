@@ -4,7 +4,7 @@
 
 关联需求：[tronprotocol/java-tron#6289 Implementation of Archive Node on TRON](https://github.com/tronprotocol/java-tron/issues/6289)
 
-java-tron 源码路径：`/Users/boson/IdeaProjects/java-tron`
+java-tron 源码路径：`.`
 
 java-tron 基线：`4e80f8ffa9a2`，`git status --short` 为空，精确冲突标记扫描无命中。
 
@@ -243,9 +243,9 @@ framework/src/main/java/org/tron/core/services/jsonrpc/types/BlockResult.java
 证明：
 
 ```bash
-git -C /Users/boson/IdeaProjects/java-tron rev-parse --short=12 HEAD
-git -C /Users/boson/IdeaProjects/java-tron status --short
-rg -n '^(<<<<<<< .+|=======$|>>>>>>> .+)' /Users/boson/IdeaProjects/java-tron
+git -C . rev-parse --short=12 HEAD
+git -C . status --short
+rg -n '^(<<<<<<< .+|=======$|>>>>>>> .+)' .
 ```
 
 停止条件：HEAD 是 `4e80f8ffa9a2`、status empty、冲突标记扫描无命中。

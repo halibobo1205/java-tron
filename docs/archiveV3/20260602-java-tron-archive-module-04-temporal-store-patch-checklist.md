@@ -16,7 +16,7 @@ S6 历史编码执行包：[java-tron Archive S6：ArchiveRawStore + Temporal Co
 
 S7 历史编码执行包：[java-tron Archive S7：Temporal Commit / GetAsOf / Unwind / Startup 编码执行包](./20260602-java-tron-archive-s7-temporal-commit-unwind-startup-coding-packet.md)
 
-java-tron 源码路径：`/Users/boson/IdeaProjects/java-tron`
+java-tron 源码路径：`.`
 
 java-tron 旧文档原始基线：`a79693e450`，当前 4e80 实现请看页头链接。
 

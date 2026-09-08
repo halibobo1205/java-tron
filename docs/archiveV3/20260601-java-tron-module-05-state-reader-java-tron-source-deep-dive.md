@@ -16,7 +16,7 @@ historical eth_call 代码级实现规格：[java-tron Archive PR8 historical et
 
 逐文件 Patch 清单：[java-tron Archive 模块 05：ArchiveStateReader 逐文件 Patch 清单](./20260602-java-tron-archive-module-05-state-reader-patch-checklist.md)
 
-java-tron 源码路径：`/Users/boson/IdeaProjects/java-tron`
+java-tron 源码路径：`.`
 
 java-tron 旧文档原始基线：`a79693e450`，当前 4e80 实现请看页头链接。
 

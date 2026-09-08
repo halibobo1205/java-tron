@@ -4,7 +4,7 @@
 
 需求：[tronprotocol/java-tron#6289 Implementation of Archive Node on TRON](https://github.com/tronprotocol/java-tron/issues/6289)
 
-java-tron 源码路径：`/Users/boson/IdeaProjects/java-tron`
+java-tron 源码路径：`.`
 
 > 2026-06-03 源码重校准：本文保留为旧总表，正文中仍有 `a79693e450` 行号和旧配置模型描述。当前权威基线是 `4e80f8ffa9a2`，且源码中存在 `StorageConfig.java`、`reference.conf`，精确冲突标记扫描无命中。当前逐模块源码对照请以 [java-tron Archive：4e80 六模块源码对照细化](./20260603-java-tron-archive-4e80-six-modules-source-detail.md) 为准。
 

@@ -8,7 +8,7 @@
 
 上游模块：[模块 01 ArchiveTxNumIndex](./20260603-java-tron-module-01-txnum-index-4e80-source-deep-dive.md)、[模块 02 ArchiveDomainRegistry](./20260603-java-tron-module-02-domain-registry-4e80-source-deep-dive.md)
 
-java-tron 源码路径：`/Users/boson/IdeaProjects/java-tron`
+java-tron 源码路径：`.`
 
 java-tron 基线：`4e80f8ffa9a2`，`git status --short` 为空，精确冲突标记扫描无命中。
 

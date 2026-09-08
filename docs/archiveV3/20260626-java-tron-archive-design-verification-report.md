@@ -9,7 +9,7 @@
 
 ## 0. 校验范围与方法
 
-对 `docs/archiveV3/` 下 **80 份**设计文档（约 6.3 万行；源自 `java-tron-archive-research-docs-20260626.zip`，原始路径 `docs/plans/`）做交叉核实：java-tron 参考 Erigon v3 实现**交易级 (txNum-level) Archive 节点**（[tronprotocol/java-tron#6289](https://github.com/tronprotocol/java-tron/issues/6289)）。报告内 `file:line` 形式的 java-tron 源码引用均相对仓库根（如 `chainbase/...`、`protocol/...`）；Erigon 引用相对其独立仓库 `/Users/boson/GolandProjects/erigon`。
+对 `docs/archiveV3/` 下 **80 份**设计文档（约 6.3 万行；源自 `java-tron-archive-research-docs-20260626.zip`，原始路径 `docs/plans/`）做交叉核实：java-tron 参考 Erigon v3 实现**交易级 (txNum-level) Archive 节点**（[tronprotocol/java-tron#6289](https://github.com/tronprotocol/java-tron/issues/6289)）。报告内 `file:line` 形式的 java-tron 源码引用均相对仓库根（如 `chainbase/...`、`protocol/...`）；Erigon 引用相对其独立仓库 `${ERIGON_ROOT}`。
 
 ### 0.1 三条独立证据线
 
@@ -23,7 +23,7 @@
 
 | 基线 | 值 | 确认 |
 |---|---|---|
-| Erigon 仓库 | `/Users/boson/GolandProjects/erigon` @ `v3.0.0-beta1-3822-g4ccd6f64a6` | `git describe` |
+| Erigon 仓库 | `${ERIGON_ROOT}` @ `v3.0.0-beta1-3822-g4ccd6f64a6` | `git describe` |
 | java-tron 仓库 | 本 worktree @ `3a9ccfe48c`（master 线） | `git log` |
 | 文档目标基线 | java-tron `4e80f8ffa9a2`（"4e80" 系列），**是 HEAD 的直接祖先，落后 14 commits，纯快进** | `git merge-base --is-ancestor` = YES |
 | 权威分层 | `20260603/04/05` 4e80 看板 + `L1..L9` code-plan 为准；早期 `202605*/0601*/0602*` 为推导材料 | 20260609 复审 §1 |

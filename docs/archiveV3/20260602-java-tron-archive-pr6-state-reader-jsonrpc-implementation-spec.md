@@ -16,7 +16,7 @@ S9 JSON-RPC historical getters 编码执行包：[java-tron Archive S9：JSON-RP
 
 逐文件 Patch 清单：[java-tron Archive 模块 05：ArchiveStateReader 逐文件 Patch 清单](./20260602-java-tron-archive-module-05-state-reader-patch-checklist.md)
 
-java-tron 源码路径：`/Users/boson/IdeaProjects/java-tron`
+java-tron 源码路径：`.`
 
 java-tron 旧文档原始基线：`a79693e450`，当前 4e80 实现请看 2026-06-03 细化文档。
 
@@ -50,14 +50,14 @@ PR6 把 PR1-PR5 已经建立的 `txNum/domain/write-set/temporal history` 闭环
 
 | 文件 | 位置 | 当前行为 |
 | --- | --- | --- |
-| `/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/services/jsonrpc/TronJsonRpc.java` | `eth_getBalance` | 只声明 `JsonRpcInvalidParamsException` |
-| `/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/services/jsonrpc/TronJsonRpc.java` | `eth_getStorageAt` | 只声明 `JsonRpcInvalidParamsException` |
-| `/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/services/jsonrpc/TronJsonRpc.java` | `eth_getCode` | 只声明 `JsonRpcInvalidParamsException` |
-| `/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/services/jsonrpc/TronJsonRpcImpl.java:155-167` | tag/error 常量 | 只有 `earliest/pending/latest/finalized`，无 `safe` 常量；tag unsupported error 是 private |
-| `/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/services/jsonrpc/TronJsonRpcImpl.java:394-419` | `getTrxBalance` | 方法内联 latest-only 判断，再走 `wallet.getAccount` |
-| `/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/services/jsonrpc/TronJsonRpcImpl.java:536-568` | `getStorageAt` | 方法内联 latest-only 判断，再读 latest `ContractStore/StorageRowStore/Storage` |
-| `/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/services/jsonrpc/TronJsonRpcImpl.java:572-599` | `getABIOfSmartContract` | 方法内联 latest-only 判断，再 `wallet.getContractInfo` |
-| `/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/services/jsonrpc/TronJsonRpcImpl.java:1001-1044` | `getCall` | string block 参数仍 latest-only；object block 参数校验存在后强制改成 `latest` |
+| `./framework/src/main/java/org/tron/core/services/jsonrpc/TronJsonRpc.java` | `eth_getBalance` | 只声明 `JsonRpcInvalidParamsException` |
+| `./framework/src/main/java/org/tron/core/services/jsonrpc/TronJsonRpc.java` | `eth_getStorageAt` | 只声明 `JsonRpcInvalidParamsException` |
+| `./framework/src/main/java/org/tron/core/services/jsonrpc/TronJsonRpc.java` | `eth_getCode` | 只声明 `JsonRpcInvalidParamsException` |
+| `./framework/src/main/java/org/tron/core/services/jsonrpc/TronJsonRpcImpl.java:155-167` | tag/error 常量 | 只有 `earliest/pending/latest/finalized`，无 `safe` 常量；tag unsupported error 是 private |
+| `./framework/src/main/java/org/tron/core/services/jsonrpc/TronJsonRpcImpl.java:394-419` | `getTrxBalance` | 方法内联 latest-only 判断，再走 `wallet.getAccount` |
+| `./framework/src/main/java/org/tron/core/services/jsonrpc/TronJsonRpcImpl.java:536-568` | `getStorageAt` | 方法内联 latest-only 判断，再读 latest `ContractStore/StorageRowStore/Storage` |
+| `./framework/src/main/java/org/tron/core/services/jsonrpc/TronJsonRpcImpl.java:572-599` | `getABIOfSmartContract` | 方法内联 latest-only 判断，再 `wallet.getContractInfo` |
+| `./framework/src/main/java/org/tron/core/services/jsonrpc/TronJsonRpcImpl.java:1001-1044` | `getCall` | string block 参数仍 latest-only；object block 参数校验存在后强制改成 `latest` |
 
 PR6 的核心改造就是把三个 state getter 的内联 latest-only 判断拆成：
 
@@ -73,9 +73,9 @@ unsupported  -> 明确错误
 
 | 文件 | 位置 | 事实 |
 | --- | --- | --- |
-| `/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/services/jsonrpc/JsonRpcApiUtil.java:518-531` | `getByJsonBlockId` | `pending` 抛 `TAG pending not supported`；empty/latest 返回 `-1`；earliest 返回 `0`；finalized 返回 solid；其他走严格 `jsonHexToLong` |
-| `/Users/boson/IdeaProjects/java-tron/common/src/main/java/org/tron/common/utils/ByteArray.java:146-151` | `hexToBigInteger` | 带 `0x` 前缀按 hex，裸字符串按 decimal |
-| `/Users/boson/IdeaProjects/java-tron/common/src/main/java/org/tron/common/utils/ByteArray.java:154-159` | `jsonHexToLong` | 要求 `0x` 前缀 |
+| `./framework/src/main/java/org/tron/core/services/jsonrpc/JsonRpcApiUtil.java:518-531` | `getByJsonBlockId` | `pending` 抛 `TAG pending not supported`；empty/latest 返回 `-1`；earliest 返回 `0`；finalized 返回 solid；其他走严格 `jsonHexToLong` |
+| `./common/src/main/java/org/tron/common/utils/ByteArray.java:146-151` | `hexToBigInteger` | 带 `0x` 前缀按 hex，裸字符串按 decimal |
+| `./common/src/main/java/org/tron/common/utils/ByteArray.java:154-159` | `jsonHexToLong` | 要求 `0x` 前缀 |
 
 PR6 的 state getter resolver 应复用当前 direct getter 的 quantity 语义：`ByteArray.hexToBigInteger` 加负数/long overflow 校验。不要直接使用 `getByJsonBlockId` 作为主 parser，否则裸 decimal historical 查询会与当前 state getter 校验行为不一致。
 
@@ -83,10 +83,10 @@ PR6 的 state getter resolver 应复用当前 direct getter 的 quantity 语义�
 
 | 文件 | 位置 | 事实 |
 | --- | --- | --- |
-| `/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/Wallet.java:337-350` | `getAccount` | 从 latest `AccountStore` 读账户，并会调用资源处理器更新动态用量视图 |
-| `/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/Wallet.java:3205-3224` | `getContract` | 从 latest `AccountStore/ContractStore/AbiStore` 读合约 |
-| `/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/Wallet.java:3234-3268` | `getContractInfo` | 从 latest `AccountStore/ContractStore/AbiStore/CodeStore/ContractStateStore` 读合约、runtime code 和 contract state |
-| `/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/Wallet.java:3112-3145` | `triggerConstantContract` | 历史 `eth_call` 不能简单复用，合约存在性从 latest `ContractStore` 判断 |
+| `./framework/src/main/java/org/tron/core/Wallet.java:337-350` | `getAccount` | 从 latest `AccountStore` 读账户，并会调用资源处理器更新动态用量视图 |
+| `./framework/src/main/java/org/tron/core/Wallet.java:3205-3224` | `getContract` | 从 latest `AccountStore/ContractStore/AbiStore` 读合约 |
+| `./framework/src/main/java/org/tron/core/Wallet.java:3234-3268` | `getContractInfo` | 从 latest `AccountStore/ContractStore/AbiStore/CodeStore/ContractStateStore` 读合约、runtime code 和 contract state |
+| `./framework/src/main/java/org/tron/core/Wallet.java:3112-3145` | `triggerConstantContract` | 历史 `eth_call` 不能简单复用，合约存在性从 latest `ContractStore` 判断 |
 
 因此 PR6 的历史 `eth_getBalance/code/storage` 必须直接读 archive history，不应调用 `Wallet.getAccount/getContract/getContractInfo`。
 
@@ -94,11 +94,11 @@ PR6 的 state getter resolver 应复用当前 direct getter 的 quantity 语义�
 
 | 文件 | 构造器 | 用途 |
 | --- | --- | --- |
-| `/Users/boson/IdeaProjects/java-tron/chainbase/src/main/java/org/tron/core/capsule/AccountCapsule.java:64` | `new AccountCapsule(byte[])` | archive `ACCOUNT` value -> Account |
-| `/Users/boson/IdeaProjects/java-tron/chainbase/src/main/java/org/tron/core/capsule/ContractCapsule.java:47` | `new ContractCapsule(byte[])` | archive `CONTRACT` value -> SmartContract |
-| `/Users/boson/IdeaProjects/java-tron/chainbase/src/main/java/org/tron/core/capsule/CodeCapsule.java:28` | `new CodeCapsule(byte[])` | archive `CODE` value -> raw runtime code |
-| `/Users/boson/IdeaProjects/java-tron/chainbase/src/main/java/org/tron/core/capsule/StorageRowCapsule.java:50` | `new StorageRowCapsule(byte[])` | physical storage row value wrapper |
-| `/Users/boson/IdeaProjects/java-tron/common/src/main/java/org/tron/common/runtime/vm/DataWord.java:83` | `new DataWord(byte[])` | JSON-RPC slot/value 32-byte normalization |
+| `./chainbase/src/main/java/org/tron/core/capsule/AccountCapsule.java:64` | `new AccountCapsule(byte[])` | archive `ACCOUNT` value -> Account |
+| `./chainbase/src/main/java/org/tron/core/capsule/ContractCapsule.java:47` | `new ContractCapsule(byte[])` | archive `CONTRACT` value -> SmartContract |
+| `./chainbase/src/main/java/org/tron/core/capsule/CodeCapsule.java:28` | `new CodeCapsule(byte[])` | archive `CODE` value -> raw runtime code |
+| `./chainbase/src/main/java/org/tron/core/capsule/StorageRowCapsule.java:50` | `new StorageRowCapsule(byte[])` | physical storage row value wrapper |
+| `./common/src/main/java/org/tron/common/runtime/vm/DataWord.java:83` | `new DataWord(byte[])` | JSON-RPC slot/value 32-byte normalization |
 
 PR6 的 reader 可以先返回 capsule 或 raw bytes，不需要引入新的 protobuf。
 

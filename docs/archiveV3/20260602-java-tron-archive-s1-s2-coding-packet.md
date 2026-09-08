@@ -6,7 +6,7 @@
 
 关联需求：[tronprotocol/java-tron#6289 Implementation of Archive Node on TRON](https://github.com/tronprotocol/java-tron/issues/6289)
 
-java-tron 源码路径：`/Users/boson/IdeaProjects/java-tron`
+java-tron 源码路径：`.`
 
 旧执行包原复核基线：本地 java-tron `a79693e450`。
 
@@ -23,7 +23,7 @@ java-tron 源码路径：`/Users/boson/IdeaProjects/java-tron`
 本文是编码前的 S1/S2 执行包。它不再讨论全局架构，而是回答：
 
 ```text
-从当前 /Users/boson/IdeaProjects/java-tron 源码出发，
+从当前 . 源码出发，
 第一批真实 patch 应该改哪些文件、按什么顺序改、怎么验证。
 ```
 
@@ -42,7 +42,7 @@ S1/S2 合并后仍然不采集 Store write-set、不写 temporal history、不�
 
 ### 2.1 本地工作规则
 
-`/Users/boson/IdeaProjects/java-tron/AGENTS.md` 要求先读 `.codex/memory/CODEX_MEMORY.md`。对 S1/S2 有影响的规则：
+`./AGENTS.md` 要求先读 `.codex/memory/CODEX_MEMORY.md`。对 S1/S2 有影响的规则：
 
 | 规则 | S1/S2 处理 |
 | --- | --- |
@@ -801,7 +801,7 @@ S2b: DefaultArchiveService + Manager hook
 编码前基线：
 
 ```bash
-cd /Users/boson/IdeaProjects/java-tron
+cd .
 git status --short
 ./gradlew :common:test --tests org.tron.core.config.args.StorageTest
 ```

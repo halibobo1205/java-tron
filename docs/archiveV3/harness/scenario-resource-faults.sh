@@ -326,7 +326,7 @@ ah_require_free_ports "$N_P2P" "$N_HTTP" "$N_RPC" "$N_JSONRPC" "$N_METRICS"
 RUN_DIR="$(ah_run_dir resource-faults)"
 ah_log "run directory: $RUN_DIR"
 ah_compile_helpers "$RUN_DIR/classes"
-ETH_P1="$(ah_signer addr 1111111111111111111111111111111111111111111111111111111111111111 | cut -f3)"
+ETH_P1="$(ah_signer addr "$HS_KEY_ZION" | cut -f3)"
 
 # =============================================================================================
 # CASE 1 — ENOSPC

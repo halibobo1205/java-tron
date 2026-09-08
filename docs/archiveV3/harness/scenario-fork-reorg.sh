@@ -100,12 +100,6 @@ READY_TIMEOUT=180
 CONVERGE_TIMEOUT=240
 PUBLISH_TIMEOUT=180
 
-# Deterministic private-chain keys (addresses verified with HarnessSigner at authoring time).
-KEY_W1=1234567890123456789012345678901234567890123456789012345678901234
-KEY_W2=5555555555555555555555555555555555555555555555555555555555555555
-KEY_P1=1111111111111111111111111111111111111111111111111111111111111111
-KEY_ORPHAN=7777777777777777777777777777777777777777777777777777777777777777
-
 # Ports. Node A is slot 0 and node B is slot 1 of this scenario's band; ports.sh derives all six
 # of each node's listeners from that one base, so B can no longer take p2p from one family and
 # rpc/jsonrpc/metrics from another. RELAY_PORT is the band's aux block, owned by no node.
@@ -318,6 +312,11 @@ RUN_DIR="$(ah_run_dir fork-reorg)"
 ah_log "run directory: $RUN_DIR"
 ah_compile_helpers "$RUN_DIR/classes"
 
+KEY_W1="$HS_KEY_WITNESS1"
+KEY_W2="$HS_KEY_WITNESS2"
+KEY_P1="$HS_KEY_ZION"
+KEY_ORPHAN="${HS_TEST_KEYS[32]}"
+
 ETH_W1="$(eth_addr "$KEY_W1")"
 ETH_P1="$(eth_addr "$KEY_P1")"
 B58_P1="$(b58_addr "$KEY_P1")"
@@ -325,12 +324,12 @@ ETH_ORPHAN="$(eth_addr "$KEY_ORPHAN")"
 B58_ORPHAN="$(b58_addr "$KEY_ORPHAN")"
 ah_log "orphan-only recipient: $B58_ORPHAN / $ETH_ORPHAN"
 
-GENESIS_WITNESSES='    { address: TEDapYSVvAZ3aYH7w8N9tMEEFKaNKUD5Bp, url = "http://sr1.local", voteCount = 100 },
-    { address: TWa5cxQFesyCQUm17usvHrVkKce6rMCV4H, url = "http://sr2.local", voteCount = 99 }'
+GENESIS_WITNESSES="    { address: $HS_ADDR_WITNESS1, url = \"http://sr1.local\", voteCount = 100 },
+    { address: $HS_ADDR_WITNESS2, url = \"http://sr2.local\", voteCount = 99 }"
 
 ah_conf_reset
 ah_use_node_ports 0
-AH_CONF_WITNESS_KEY=$KEY_W1
+AH_CONF_WITNESS_KEY="\"$KEY_W1\""
 AH_CONF_GENESIS_WITNESSES="$GENESIS_WITNESSES"
 AH_CONF_ACTIVE_LIST='[]'
 # "head" (not the "solid" default) pins the divergence transaction's TAPOS reference to an orphan
@@ -340,7 +339,7 @@ ah_write_node_conf "$RUN_DIR/a/node.conf"
 
 ah_conf_reset
 ah_use_node_ports 1
-AH_CONF_WITNESS_KEY=$KEY_W2
+AH_CONF_WITNESS_KEY="\"$KEY_W2\""
 AH_CONF_GENESIS_WITNESSES="$GENESIS_WITNESSES"
 AH_CONF_ACTIVE_LIST="[\"127.0.0.1:$RELAY_PORT\"]"
 AH_CONF_TRX_REFERENCE=head
@@ -761,7 +760,7 @@ if [ "$FORK_ASSERT_RESTART" = "1" ]; then
   ah_log "phase 10: restart node A after the reorg (identity.initialize=false)"
   ah_conf_reset
   ah_use_node_ports 0
-  AH_CONF_WITNESS_KEY=$KEY_W1
+  AH_CONF_WITNESS_KEY="\"$KEY_W1\""
   AH_CONF_GENESIS_WITNESSES="$GENESIS_WITNESSES"
   AH_CONF_ACTIVE_LIST='[]'
   AH_CONF_IDENTITY_INIT=false

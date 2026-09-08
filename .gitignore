@@ -56,3 +56,8 @@ Wallet
 
 /framework/propPath
 .cache
+
+# Generated archive-harness key material (never commit run artifacts).
+archive-test-keys.tsv
+archive-test-keys.??????
+addr.cache

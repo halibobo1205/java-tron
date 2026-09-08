@@ -4,7 +4,7 @@
 
 关联需求：[tronprotocol/java-tron#6289 Implementation of Archive Node on TRON](https://github.com/tronprotocol/java-tron/issues/6289)
 
-java-tron 源码路径：`/Users/boson/IdeaProjects/java-tron`
+java-tron 源码路径：`.`
 
 java-tron 当前基线：`4e80f8ffa9a2`
 
@@ -36,7 +36,7 @@ L8 代码级执行包：[java-tron Archive L8：historical eth_call 代码级执
 
 L9 代码级执行包：[java-tron Archive L9：proof/debug API 代码级执行包](./20260605-java-tron-archive-l9-proof-debug-api-4e80-code-plan.md)
 
-本文是编码前执行控制面：把 L1-L9/S1-S14 拆成可合入的 landing board，明确每一步的状态、输入、输出、禁止混入的内容、进入下一步的证据。它用于后续真正修改 `/Users/boson/IdeaProjects/java-tron` 时逐项推进。
+本文是编码前执行控制面：把 L1-L9/S1-S14 拆成可合入的 landing board，明确每一步的状态、输入、输出、禁止混入的内容、进入下一步的证据。它用于后续真正修改 `.` 时逐项推进。
 
 ## 1. 当前实现状态
 

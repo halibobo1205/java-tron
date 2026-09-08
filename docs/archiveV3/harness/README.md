@@ -8,6 +8,12 @@ Everything here is test tooling. **No production source is modified.** The harne
 config files, starts and signals node processes, and talks to the node's own HTTP / JSON-RPC /
 Prometheus endpoints.
 
+Keys are generated per run using `SecureRandom` and the node's `ECKey` implementation.
+The private table (`archive-test-keys.tsv`), address cache and generated configs stay in
+the run directory with restrictive permissions. Never upload these artifacts or fund their
+accounts on a public network. Restarting nodes within a run preserves the same identities;
+a new run gets new identities. `bash test_keys.sh` checks the key and config bindings offline.
+
 ---
 
 ## 1. What this harness proves (and what it does not)
@@ -80,6 +86,9 @@ docs/archiveV3/harness/
   HarnessSigner.java            address derivation + txID signing for the `ah_*` scenarios
   java/Addr.java                private key -> TRON address (used to verify the key table)
   java/Sign.java                txID -> 65-byte signature (there is NO server-side signing servlet)
+  java/HarnessKeys.java         generates a private run-local key/address table
+  java/HarnessKeysTest.java     verifies table permissions and genesis/local-witness bindings
+  test_keys.sh                 offline key/config regression, including 27-SR split configs
 ```
 
 `run-all.sh` discovers scenarios with **two** filters, and both matter: the filename must match
@@ -247,8 +256,8 @@ asserts fail-stop must use `hs_assert_fail_stop`, which accepts only exit `1` (w
 ## 7. `lib.sh` API
 
 Source it, then call `hs_init <name>` first. `hs_init` resolves paths, checks tools, builds/locates
-the jar, compiles the Java helpers, **asserts the hard-coded key table still derives the expected
-addresses**, and installs the cleanup trap.
+the jar, compiles the Java helpers, generates or reloads the private run-local key table,
+checks the account bindings, and installs the cleanup trap.
 
 > **Calling convention — this bites.** Helpers that *assert* (or can abort) must be called
 > **directly**, never inside `$( )`. A command substitution runs in a subshell, so `hs_fail`'s
@@ -339,10 +348,10 @@ an arbitrarily deep fork legal: all of `scenario-fork-reorg.sh`, and the `reorg`
 `scenario-concurrency-under-fault.sh` (`fork_write_conf` → `dual_witness_block`). Both keep their
 2-node / 2-witness partition topology at any `HS_CFG_WITNESS_COUNT`.
 
-Witness 1 is `HS_KEY_WITNESS1` verbatim and `HS_CFG_WITNESS_COUNT=1` regenerates a
-**byte-identical** `node.conf` on all three paths, so existing scenarios are untouched. Witnesses
-2..N come from `HS_WITNESS_KEY_PREFIX` + the 8-hex index (`hs_witness_key_at` /
-`hs_witness_base58_at`).
+Witnesses 1..N select stable entries in the run-local key table (`hs_witness_key_at` /
+`hs_witness_base58_at`). All three configuration paths use that table, including the single-SR
+case. Regenerating a config within a run preserves its keys and genesis addresses; independent
+runs intentionally produce different identities.
 
 What changes for a caller at `N = 27`:
 

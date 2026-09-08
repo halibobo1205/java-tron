@@ -2,7 +2,7 @@
 
 日期：2026-06-29
 分支：`feat/archive-node`（base `release_v4.8.2`，本会话 54 commit 全本地未 push）
-worktree：`/Users/boson/IdeaProjects/java-tron/.claude/worktrees/vibrant-borg-d3617d`
+worktree：`.`
 
 ## 0. 如何无缝接住（新会话开场必读）
 

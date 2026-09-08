@@ -31,6 +31,9 @@ if [ "${HS_LIB_SOURCED:-0}" = "1" ]; then
 fi
 HS_LIB_SOURCED=1
 
+# Generated configs and key tables must remain private even under a permissive caller umask.
+umask 077
+
 # The port map lives in ports.sh so lib.sh, scenario-common.sh, the standalone
 # concurrency scenario and run-all.sh all derive every port from ONE table.
 # Sourced first because hs_init consults it.
@@ -45,24 +48,18 @@ HS_EXIT_SCENARIO_FAIL=1
 HS_EXIT_HARNESS_ERROR=2
 
 # ---------------------------------------------------------------------------
-# Deterministic keys for the private chain.
-#
-# Every key/address binding is ASSERTED at hs_init time (hs_verify_key_table),
-# so drift aborts instead of funding the wrong account.
+# Keys and addresses are generated once per run after the Java helpers are compiled.
+# All nodes in that run, including fork branches, share the same table.
 # ---------------------------------------------------------------------------
-HS_KEY_WITNESS1="1234567890123456789012345678901234567890123456789012345678901234"
-HS_ADDR_WITNESS1="TEDapYSVvAZ3aYH7w8N9tMEEFKaNKUD5Bp"
-
-HS_KEY_WITNESS2="5555555555555555555555555555555555555555555555555555555555555555"
-HS_ADDR_WITNESS2="TWa5cxQFesyCQUm17usvHrVkKce6rMCV4H"
-
-# Genesis-funded "Zion" -- the harness funding source.
-HS_KEY_ZION="1111111111111111111111111111111111111111111111111111111111111111"
-HS_ADDR_ZION="TCLBgkbfVkJroVBJVqBEsxtPNQEQMTQCLQ"
-
-# Genesis-funded "Sun" -- the default transfer sink.
-HS_KEY_SUN="2222222222222222222222222222222222222222222222222222222222222222"
-HS_ADDR_SUN="TBvJUBXorwBPzqvV38vjDgegj5Eh6g2Tsq"
+HS_TEST_KEYS=()
+HS_KEY_WITNESS1=""
+HS_ADDR_WITNESS1=""
+HS_KEY_WITNESS2=""
+HS_ADDR_WITNESS2=""
+HS_KEY_ZION=""
+HS_ADDR_ZION=""
+HS_KEY_SUN=""
+HS_ADDR_SUN=""
 
 # Blackhole (genesis-required; never a sender).
 HS_ADDR_BLACKHOLE="TDvSsdrNM5eeXNL3czpa6AxLDHZA9nwe9K"
@@ -84,13 +81,7 @@ HS_ADDR_BLACKHOLE="TDvSsdrNM5eeXNL3czpa6AxLDHZA9nwe9K"
 # ConsensusService.java:56-69 turns each private key into its own Miner, so
 # DposTask.java:116 finds a local miner for every scheduled slot.
 #
-# Witness 1 is HS_KEY_WITNESS1 VERBATIM, so a 1-witness chain -- i.e. every
-# pre-existing scenario -- keeps a byte-identical node.conf. Witness i > 1 is
-# this 56-hex-char prefix plus the 8-hex-char index: distinct by construction,
-# always a valid secp256k1 scalar (0 < 0xa5a5... < curve order n, whose top
-# limb is 0xffffffff), and -- because it starts with a letter -- always
-# tokenized by HOCON as unquoted text rather than a number.
-HS_WITNESS_KEY_PREFIX="a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
+# Witness indices select stable entries in the run-local table, never public scalar constants.
 
 # Vote count handed to every generated witness. Equal votes are fine: ties in
 # ConsensusDelegate.sortWitness() break on the address bytes, so the schedule
@@ -400,9 +391,12 @@ hs_build_java_helpers() {
   mkdir -p "$HS_CLASSES"
   javac -nowarn -cp "$HS_JAR" -d "$HS_CLASSES" \
     "$HS_HARNESS_DIR/java/Sign.java" "$HS_HARNESS_DIR/java/Addr.java" \
+    "$HS_HARNESS_DIR/java/HarnessKeys.java" \
     || hs_die "cannot compile the harness java helpers against $HS_JAR"
   HS_ADDR_CACHE="$HS_RUN_DIR/addr.cache"
   : >"$HS_ADDR_CACHE"
+  chmod 600 "$HS_ADDR_CACHE" || hs_die "cannot protect address cache"
+  hs_initialize_test_keys
   hs_log "compiled java helpers into $HS_CLASSES"
 }
 
@@ -417,7 +411,7 @@ hs_addr_of_priv() {
     fi
   fi
   out="$(java -cp "$HS_CLASSES:$HS_JAR" Addr "$priv" 2>&1)" \
-    || hs_die "Addr helper failed for key $(printf '%s' "$priv" | cut -c1-8)...: $out"
+    || hs_die "Addr helper failed; inspect the local helper setup"
   if [ -n "$HS_ADDR_CACHE" ]; then
     printf '%s %s\n' "$priv" "$out" >>"$HS_ADDR_CACHE"
   fi
@@ -446,22 +440,16 @@ hs_eth_of_priv() {
   hs_eth_of_hex41 "$(hs_hex41_of_priv "$1")"
 }
 
-# hs_witness_key_at <index> -- the deterministic private key of the <index>'th
-# harness witness (1-based). Index 1 is HS_KEY_WITNESS1, so the single-witness
-# configuration is unchanged; see the HS_WITNESS_KEY_PREFIX block above.
+# hs_witness_key_at <index> -- stable within the run, including config regeneration.
 hs_witness_key_at() {
   local idx="$1"
   case "$idx" in
     ''|*[!0-9]*) hs_die "hs_witness_key_at: not a non-negative integer: '$idx'" ;;
   esac
   [ "$idx" -ge 1 ] || hs_die "hs_witness_key_at: index is 1-based, got $idx"
-  if [ "$idx" -eq 1 ]; then
-    printf '%s\n' "$HS_KEY_WITNESS1"
-    return 0
-  fi
-  [ "${#HS_WITNESS_KEY_PREFIX}" -eq 56 ] \
-    || hs_die "HS_WITNESS_KEY_PREFIX must be 56 hex chars, is ${#HS_WITNESS_KEY_PREFIX}"
-  printf '%s%08x\n' "$HS_WITNESS_KEY_PREFIX" "$idx"
+  [ "$idx" -le "$HS_MAX_WITNESSES" ] || hs_die "witness index exceeds $HS_MAX_WITNESSES"
+  [ "${#HS_TEST_KEYS[@]}" -eq 33 ] || hs_die "test keys have not been initialized"
+  printf '%s\n' "${HS_TEST_KEYS[$((idx - 1))]}"
 }
 
 # hs_witness_base58_at <index> -- base58check address of hs_witness_key_at.
@@ -509,14 +497,49 @@ hs_bind_addr_helper() {
       || hs_die "hs_bind_addr_helper: cannot resolve the harness directory"
   fi
   mkdir -p "$dir" || hs_die "hs_bind_addr_helper: cannot create $dir"
-  if [ ! -f "$dir/Addr.class" ]; then
+  if [ ! -f "$dir/Addr.class" ] || [ ! -f "$dir/HarnessKeys.class" ]; then
     javac -nowarn -cp "$jar" -d "$dir" "$harness_dir/java/Addr.java" \
+      "$harness_dir/java/HarnessKeys.java" \
       || hs_die "cannot compile $harness_dir/java/Addr.java against $jar"
   fi
   HS_JAR="$jar"
   HS_CLASSES="$dir"
   HS_ADDR_CACHE="$dir/addr.cache"
   [ -f "$HS_ADDR_CACHE" ] || : >"$HS_ADDR_CACHE"
+  chmod 600 "$HS_ADDR_CACHE" || hs_die "cannot protect address cache"
+  hs_initialize_test_keys
+}
+
+# The persisted table supports restarting nodes without ever changing their genesis identities.
+hs_initialize_test_keys() {
+  [ "${#HS_TEST_KEYS[@]}" -eq 0 ] || return 0
+  local table="$HS_CLASSES/archive-test-keys.tsv" tmp key address hex extra count=0
+  local addresses=()
+  if [ ! -e "$table" ]; then
+    tmp="$(mktemp "$HS_CLASSES/archive-test-keys.XXXXXX")" || hs_die "cannot create key table"
+    if ! java -cp "$HS_CLASSES:$HS_JAR" HarnessKeys >"$tmp"; then
+      rm -f "$tmp"
+      hs_die "cannot generate test keys"
+    fi
+    mv "$tmp" "$table" || hs_die "cannot install test key table"
+  fi
+  [ -f "$table" ] && [ ! -L "$table" ] || hs_die "invalid test key table"
+  chmod 600 "$table" || hs_die "cannot protect test key table"
+  while read -r key address hex extra; do
+    [ "${#key}" -eq 64 ] && [ "${#hex}" -eq 42 ] && [ -z "$extra" ] \
+      || hs_die "invalid test key table row"
+    case "$key$hex" in *[!0-9a-f]*) hs_die "invalid test key table encoding" ;; esac
+    case "$address" in T*) ;; *) hs_die "invalid test key table address" ;; esac
+    HS_TEST_KEYS[$count]="$key"
+    addresses[$count]="$address"
+    printf '%s %s %s\n' "$key" "$address" "$hex" >>"$HS_ADDR_CACHE"
+    count=$((count + 1))
+  done <"$table"
+  [ "$count" -eq 33 ] || hs_die "test key table must contain 33 rows"
+  HS_KEY_WITNESS1="${HS_TEST_KEYS[0]}"; HS_ADDR_WITNESS1="${addresses[0]}"
+  HS_KEY_WITNESS2="${HS_TEST_KEYS[1]}"; HS_ADDR_WITNESS2="${addresses[1]}"
+  HS_KEY_ZION="${HS_TEST_KEYS[27]}"; HS_ADDR_ZION="${addresses[27]}"
+  HS_KEY_SUN="${HS_TEST_KEYS[28]}"; HS_ADDR_SUN="${addresses[28]}"
 }
 
 # hs_witness_conf_blocks <fullnode-jar> <scratch-dir>
@@ -535,21 +558,19 @@ hs_bind_addr_helper() {
 #                             no indent, because both scenario templates already
 #                             print two spaces ahead of the expansion
 #
-# At count 1 this reproduces the historical single-witness literals byte for byte
-# and never starts a JVM (witness 1 is HS_KEY_WITNESS1 / HS_ADDR_WITNESS1, a pair
-# hs_verify_key_table asserts).
+# Even a single-witness template must use the generated key/address binding.
 HS_WITNESS_GENESIS_BLOCK=""
 HS_WITNESS_LOCAL_BLOCK=""
 hs_witness_conf_blocks() {
   local jar="$1" scratch="$2" count idx priv addr
   count="$(hs_witness_count)" \
     || hs_die "invalid HS_CFG_WITNESS_COUNT (diagnosis above)"
+  hs_bind_addr_helper "$jar" "$scratch"
   HS_WITNESS_GENESIS_BLOCK="    { address: $HS_ADDR_WITNESS1, url = \"http://sr1.local\", voteCount = $HS_WITNESS_VOTES }"
-  HS_WITNESS_LOCAL_BLOCK="$HS_KEY_WITNESS1"
+  HS_WITNESS_LOCAL_BLOCK="\"$HS_KEY_WITNESS1\""
   if [ "$count" -eq 1 ]; then
     return 0
   fi
-  hs_bind_addr_helper "$jar" "$scratch"
   idx=2
   while [ "$idx" -le "$count" ]; do
     priv="$(hs_witness_key_at "$idx")"
@@ -558,13 +579,13 @@ hs_witness_conf_blocks() {
     HS_WITNESS_GENESIS_BLOCK="$HS_WITNESS_GENESIS_BLOCK,
     { address: $addr, url = \"http://sr$idx.local\", voteCount = $HS_WITNESS_VOTES }"
     HS_WITNESS_LOCAL_BLOCK="$HS_WITNESS_LOCAL_BLOCK,
-  $priv"
+  \"$priv\""
     idx=$((idx + 1))
   done
   hs_log "multi-SR chain: $count witnesses on one node (expect solid to trail head by $((count - 1 - count * 30 / 100)) blocks once every SR has produced)"
 }
 
-# hs_verify_key_table -- assert every hard-coded key/address pair still binds.
+# hs_verify_key_table -- assert the generated account bindings before funding them.
 hs_verify_key_table() {
   local pair got want
   for pair in \
@@ -575,7 +596,7 @@ hs_verify_key_table() {
     want="${pair##*:}"
     got="$(hs_base58_of_priv "${pair%%:*}")"
     [ "$got" = "$want" ] \
-      || hs_die "key table drift: ${pair%%:*} derives $got, expected $want"
+      || hs_die "test account address mismatch"
   done
   hs_log "key table verified (4 keys)"
 }
@@ -773,9 +794,8 @@ hs_write_node_config() {
   local local_witness_first="${HS_CFG_LOCAL_WITNESS_FIRST:-1}"
   local local_witness_last="${HS_CFG_LOCAL_WITNESS_LAST:-$witness_count}"
   local max_flush_count="${HS_CFG_MAX_FLUSH_COUNT:-1}"
-  # Single line, two-space indent -- the historical shape of the localwitness
-  # body. Multi-SR replaces it below; count==1 must stay byte-identical.
-  local witness_key_block="  $witness_key"
+  # Quote random keys so HOCON cannot interpret an all-digit scalar as a number.
+  local witness_key_block="  \"$witness_key\""
   local active_peers="${HS_CFG_ACTIVE_PEERS:-}"
   local archive_enable="${HS_CFG_ARCHIVE_ENABLE:-true}"
   local identity_init="${HS_CFG_ARCHIVE_IDENTITY_INIT:-true}"
@@ -840,10 +860,10 @@ hs_write_node_config() {
       fi
       if [ "$w_i" -ge "$local_witness_first" ] && [ "$w_i" -le "$local_witness_last" ]; then
         if [ -z "$witness_key_block" ]; then
-          witness_key_block="  $w_priv"
+          witness_key_block="  \"$w_priv\""
         else
           witness_key_block="$witness_key_block,
-  $w_priv"
+  \"$w_priv\""
         fi
       fi
       w_i=$((w_i + 1))

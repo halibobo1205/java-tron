@@ -10,7 +10,7 @@ S1/S2 编码执行包：[java-tron Archive S1/S2 编码执行包](./20260602-jav
 
 模块 01 逐文件 Patch 清单：[java-tron Archive 模块 01：ArchiveTxNumIndex 逐文件 Patch 清单](./20260602-java-tron-archive-module-01-txnum-index-patch-checklist.md)
 
-java-tron 源码路径：`/Users/boson/IdeaProjects/java-tron`
+java-tron 源码路径：`.`
 
 本轮复核基线：本地 java-tron `a79693e450`。
 

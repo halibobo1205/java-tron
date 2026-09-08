@@ -6,7 +6,7 @@
 
 关联需求：[tronprotocol/java-tron#6289 Implementation of Archive Node on TRON](https://github.com/tronprotocol/java-tron/issues/6289)
 
-java-tron 源码路径：`/Users/boson/IdeaProjects/java-tron`
+java-tron 源码路径：`.`
 
 java-tron 旧文档原始基线：`a79693e450`，当前 4e80 实现请看页头链接。
 
@@ -540,7 +540,7 @@ Hash with fixed SHA-256, independent of consensus crypto engine.
 Focused:
 
 ```bash
-cd /Users/boson/IdeaProjects/java-tron
+cd .
 ./gradlew :chainbase:test --tests 'org.tron.core.archive.domain.*'
 ```
 
