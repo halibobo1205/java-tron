@@ -17,6 +17,8 @@ import org.tron.common.math.StrictMathWrapper;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchiveRocksIterators;
 import org.tron.core.archive.ArchiveSnapshotReleaseException;
+import org.tron.core.archive.ArchiveStartupProgress;
+import org.tron.core.archive.ArchiveValidationCheckpoint;
 import org.tron.core.archive.query.ArchiveSnapshotPermit.SnapshotUse;
 import org.tron.core.archive.query.QueryContext;
 import org.tron.core.archive.query.QueryContextHolder;
@@ -47,6 +49,8 @@ public final class UnifiedArchiveReadView implements AutoCloseable {
   private Throwable closeFailure;
   private byte[] boundedGetProbe = EMPTY_VALUE_BUFFER;
   private Map<Integer, UnifiedArchiveIterator> validationLookups;
+  private ArchiveValidationCheckpoint validationCheckpoint;
+  private AtomicBoolean validationOwner;
 
   UnifiedArchiveReadView(RocksDB db,
       EnumMap<UnifiedArchiveColumnFamily, ColumnFamilyHandle> handles,
@@ -74,6 +78,34 @@ public final class UnifiedArchiveReadView implements AutoCloseable {
     } catch (RocksDBException e) {
       throw readFailure("UNIFIED_V1 snapshot read failed for "
           + columnFamily.getName(), e);
+    }
+  }
+
+  void enableValidationCheckpoint(ArchiveValidationCheckpoint checkpoint) {
+    requireOwnerAndOpen();
+    validationCheckpoint = checkpoint;
+  }
+
+  void claimValidationOwner(AtomicBoolean owner) {
+    requireOwnerAndOpen();
+    validationOwner = owner;
+  }
+
+  long sequenceNumber() {
+    requireOwnerAndOpen();
+    return snapshot.getSequenceNumber();
+  }
+
+  public ArchiveStartupProgress startupProgress(String stage) {
+    requireOwnerAndOpen();
+    return validationCheckpoint == null ? new ArchiveStartupProgress(stage)
+        : validationCheckpoint.progress(stage);
+  }
+
+  public void finishValidation() {
+    requireOwnerAndOpen();
+    if (validationCheckpoint != null) {
+      validationCheckpoint.finish();
     }
   }
 
@@ -391,6 +423,10 @@ public final class UnifiedArchiveReadView implements AutoCloseable {
       try {
         releaseView.run();
         viewReleased = true;
+        if (validationOwner != null) {
+          validationOwner.set(false);
+          validationOwner = null;
+        }
       } catch (Throwable releaseFailure) {
         attemptFailure = collectFailure(attemptFailure, releaseFailure);
       }

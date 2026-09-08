@@ -117,6 +117,32 @@ public class UnifiedArchiveDbTest {
   }
 
   @Test
+  public void resumableValidationHasOneOwnerAndReleasesItOnClose() {
+    try (UnifiedArchiveReadView first = db.openResumableValidationReadView();
+        UnifiedArchiveReadView ordinary = db.openReadView()) {
+      ArchiveException failure = assertThrows(ArchiveException.class,
+          () -> db.openResumableValidationReadView());
+      assertTrue(failure.getMessage().contains("already active"));
+      assertFalse(first.startupProgress("index-keyspace").isComplete());
+      assertFalse(ordinary.startupProgress("index-keyspace").isComplete());
+    }
+    try (UnifiedArchiveReadView second = db.openResumableValidationReadView()) {
+      assertFalse(second.startupProgress("index-keyspace").isComplete());
+    }
+  }
+
+  @Test
+  public void mutationDuringValidationInvalidatesItsCheckpoint() {
+    try (UnifiedArchiveReadView view = db.openResumableValidationReadView()) {
+      db.writeMaintenanceAtomically(new UnifiedArchiveMaintenanceBatch()
+          .put(UnifiedArchiveColumnFamily.LATEST, LATEST_KEY, LATEST_VALUE));
+      ArchiveException failure = assertThrows(ArchiveException.class,
+          () -> view.startupProgress("index-keyspace").complete());
+      assertTrue(failure.getMessage().contains("database changed"));
+    }
+  }
+
+  @Test
   public void publishedRowsAndColumnFamiliesSurviveReopen() throws Exception {
     putJournalBundle();
     db.publishBlockAtomically(publish(), true);
@@ -1626,12 +1652,65 @@ public class UnifiedArchiveDbTest {
     assertEquals(UnifiedArchiveDb.expectedColumnFamilyNames().size(),
         db.ownedBloomFilterCount());
     assertEquals(1, db.ownedBlockCacheCount());
-    assertEquals(72L * 1024L * 1024L, db.configuredBlockCacheBytes());
+    assertEquals(2L * 1024L * 1024L * 1024L, db.configuredBlockCacheBytes());
     assertTrue(db.usesEvictableIndexAndFilterCache());
     assertTrue(db.temporalPayloadMetadataUsesEvictableCache());
     assertTrue(db.temporalPayloadOptimizesFiltersForHits());
     assertTrue(db.usesStableSstTableFormat());
     assertTrue(db.usesDynamicLevelCompaction());
+  }
+
+  @Test
+  public void changingCacheBudgetPreservesPublishedRowsAndRepairMarker() {
+    putJournalBundle();
+    db.publishBlockAtomically(publish(), true);
+    UnifiedArchiveTxNumIndex.markRepairRequired(db, "cache sizing test");
+    db.close();
+    db = UnifiedArchiveDb.open(dbPath, SCHEMA_CHECKSUM, 8L * 1024L * 1024L);
+
+    assertEquals(8L * 1024L * 1024L, db.configuredBlockCacheBytes());
+    assertEquals(1, db.ownedBlockCacheCount());
+    assertTrue(db.usesEvictableIndexAndFilterCache());
+    assertTrue(db.temporalPayloadMetadataUsesEvictableCache());
+    assertTrue(UnifiedArchiveTxNumIndex.hasRepairRequired(db));
+    try (UnifiedArchiveReadView view = db.openReadView()) {
+      assertPublished(view);
+    }
+  }
+
+  @Test
+  public void initializesWithCustomCacheBudget() {
+    Path custom = root.resolve("custom-cache");
+    try (UnifiedArchiveDb initialized = UnifiedArchiveDb.initialize(
+        custom, SCHEMA_CHECKSUM, 1024L * 1024L)) {
+      assertEquals(1024L * 1024L, initialized.configuredBlockCacheBytes());
+      assertEquals(1, initialized.ownedBlockCacheCount());
+    }
+    try (UnifiedArchiveDb reopened = UnifiedArchiveDb.open(custom, SCHEMA_CHECKSUM)) {
+      assertEquals(2L * 1024L * 1024L * 1024L, reopened.configuredBlockCacheBytes());
+    }
+  }
+
+  @Test
+  public void invalidCacheBudgetDoesNotCreateOrReplaceDatabase() {
+    Path missing = root.resolve("invalid-cache");
+    putJournalBundle();
+    db.publishBlockAtomically(publish(), true);
+    db.close();
+    db = null;
+    for (long bytes : new long[] {0L, -1L}) {
+      IllegalArgumentException initialize = assertThrows(IllegalArgumentException.class,
+          () -> UnifiedArchiveDb.initialize(missing, SCHEMA_CHECKSUM, bytes));
+      assertTrue(initialize.getMessage().contains("block cache bytes must be positive"));
+      assertFalse(Files.exists(missing));
+      IllegalArgumentException open = assertThrows(IllegalArgumentException.class,
+          () -> UnifiedArchiveDb.open(dbPath, SCHEMA_CHECKSUM, bytes));
+      assertTrue(open.getMessage().contains("block cache bytes must be positive"));
+    }
+    db = UnifiedArchiveDb.open(dbPath, SCHEMA_CHECKSUM);
+    try (UnifiedArchiveReadView view = db.openReadView()) {
+      assertPublished(view);
+    }
   }
 
   @Test

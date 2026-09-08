@@ -205,27 +205,34 @@ final class UnifiedArchiveBackend {
     // Full startup scrub repeatedly cross-checks related rows before serving any traffic.
     // Reuse this archive DB's existing bounded cache; ordinary scans and RPCs remain isolated.
     try (UnifiedArchiveReadView view = fullScrub
-        ? db.openValidationReadView() : db.openScanView();
+        ? rangeChainAlreadyValidated ? db.openResumableValidationReadView()
+            : db.openValidationReadView() : db.openScanView();
         UnifiedArchiveTxNumIndex.ReadScope ignored = txNumIndex.bindReadView(view)) {
-      if (!fullScrub && rangeChainAlreadyValidated) {
-        // Construction already validated every range. Reconcile mutates only the checked tail.
-        txNumIndex.validateStartupTail(deferRepairValidation);
-      } else {
-        txNumIndex.validateStartup(fullScrub, deferRepairValidation);
+      try {
+        if (!fullScrub && rangeChainAlreadyValidated) {
+          // Construction already validated every range. Reconcile mutates only the checked tail.
+          txNumIndex.validateStartupTail(deferRepairValidation);
+        } else {
+          txNumIndex.validateStartup(fullScrub, deferRepairValidation);
+        }
+        temporalStore.validateStartupTail(view, txNumIndex.getLastRange());
+        if (!fullScrub) {
+          return;
+        }
+        long first = txNumIndex.getFirstArchivedBlock();
+        long last = txNumIndex.getLastArchivedBlock();
+        temporalStore.validateCommittedBlocks(view, first, last,
+            blockNum -> txNumIndex.getBlockRange(blockNum)
+                .orElseThrow(() -> new ArchiveException(
+                    "archive block range missing for block " + blockNum)));
+        temporalStore.validateTxNumsCovered(
+            view, txNum -> txNumIndex.getPosition(txNum).isPresent());
+        temporalStore.validateDomainRows(view);
+        view.finishValidation();
+      } catch (RuntimeException | Error failure) {
+        db.discardValidationCheckpoint(failure);
+        throw failure;
       }
-      temporalStore.validateStartupTail(view, txNumIndex.getLastRange());
-      if (!fullScrub) {
-        return;
-      }
-      long first = txNumIndex.getFirstArchivedBlock();
-      long last = txNumIndex.getLastArchivedBlock();
-      temporalStore.validateCommittedBlocks(view, first, last,
-          blockNum -> txNumIndex.getBlockRange(blockNum)
-              .orElseThrow(() -> new ArchiveException(
-                  "archive block range missing for block " + blockNum)));
-      temporalStore.validateTxNumsCovered(
-          view, txNum -> txNumIndex.getPosition(txNum).isPresent());
-      temporalStore.validateDomainRows(view);
     }
   }
 

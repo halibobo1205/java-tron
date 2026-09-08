@@ -27,6 +27,11 @@ gradle.projectsEvaluated {
         mainClass.set('org.tron.core.archive.ArchiveStartupPayloadBenchmark')
         maxHeapSize = '1g'
         jvmArgs '-XX:ActiveProcessorCount=4'
+        systemProperty 'archive.benchmark.keyCount', root.findProperty('payloadKeys') ?: '32768'
+        systemProperty 'archive.benchmark.hotKeys', root.findProperty('payloadHotKeys') ?: '0'
+        if (root.findProperty('payloadCacheBytes') != null) {
+            systemProperty 'archive.benchmark.cacheBytes', root.property('payloadCacheBytes')
+        }
         if (root.findProperty('payloadTimeoutSeconds')) {
             timeout.set(java.time.Duration.ofSeconds(
                     Long.parseLong(root.property('payloadTimeoutSeconds'))))

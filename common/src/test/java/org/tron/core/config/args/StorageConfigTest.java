@@ -150,6 +150,7 @@ public class StorageConfigTest {
     assertFalse(a.isEnable());
     assertEquals("archive", a.getDb().getDirectory());
     assertFalse(a.getDb().isFullScrubOnStartup());
+    assertEquals(2L * 1024L * 1024L * 1024L, a.getDb().getBlockCacheBytes());
     assertTrue(a.getTxnum().isEnable());
     assertTrue(a.getTemporal().isEnable());
     StorageConfig.ArchiveConfig.PublisherConfig publisher = a.getPublisher();
@@ -193,7 +194,7 @@ public class StorageConfigTest {
   public void testArchiveOverride() {
     StorageConfig.ArchiveConfig a = StorageConfig.fromConfig(withRef(
         "storage.archive { enable = true,"
-            + " db { directory = arc, fullScrubOnStartup = true },"
+            + " db { directory = arc, fullScrubOnStartup = true, blockCacheBytes = 536870912 },"
             + " txnum { enable = true },"
             + " temporal { enable = true },"
             + " commitment { enable = false, persistTxRoots = false },"
@@ -202,6 +203,7 @@ public class StorageConfigTest {
     assertTrue(a.isEnable());
     assertEquals("arc", a.getDb().getDirectory());
     assertTrue(a.getDb().isFullScrubOnStartup());
+    assertEquals(536870912L, a.getDb().getBlockCacheBytes());
     assertTrue(a.getTxnum().isEnable());
     assertTrue(a.getTemporal().isEnable());
     assertFalse(a.getCommitment().isEnable());
@@ -209,6 +211,17 @@ public class StorageConfigTest {
     assertFalse(a.getDebug().isEnable());
     assertEquals("TVM_STATE_ONLY", a.getCoverage());
     assertTrue(a.isWarnUnclassifiedStoreWrites());
+  }
+
+  @Test
+  public void testArchiveRejectsNonPositiveBlockCacheBudget() {
+    for (long bytes : new long[] {0L, -1L}) {
+      IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+          () -> StorageConfig.fromConfig(withRef(
+              "storage.archive.db.blockCacheBytes = " + bytes)));
+      assertTrue(failure.getMessage().contains("storage.archive.db.blockCacheBytes"));
+      assertTrue(failure.getMessage().contains("must be positive"));
+    }
   }
 
   @Test
