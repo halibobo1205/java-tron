@@ -2,7 +2,7 @@
 
 本文把第三个模块 `ArchiveWriteCollector` 落到可编码粒度。S4 对应 PR3：raw Store hook + in-memory `TxWriteSet/BlockWriteSet` collector。S4 不落 temporal DB，不计算 archive root，也不把 `storage-row` physical key 当成 `CONTRACT_STORAGE` 最终 key；storage semantic hook 交给 S5。
 
-java-tron 源码路径：`/Users/boson/IdeaProjects/java-tron`
+java-tron 源码路径：`.`
 
 > 2026-06-03 更新：本文是旧 `a79693e450` 编码包。当前 `4e80f8ffa9a2` 的 S4/S5 编码入口请看 [java-tron Archive S4/S5：WriteCollector 与 Storage Semantic Hook 4e80 编码执行包](./20260603-java-tron-archive-s4-s5-write-collector-storage-4e80-coding-packet.md)，旧行号和部分路径不可直接用于编码。
 

@@ -6,7 +6,7 @@
 
 关联需求：[tronprotocol/java-tron#6289 Implementation of Archive Node on TRON](https://github.com/tronprotocol/java-tron/issues/6289)
 
-java-tron 源码路径：`/Users/boson/IdeaProjects/java-tron`
+java-tron 源码路径：`.`
 
 java-tron 基线：`4e80f8ffa9a2`，`git status --short` 为空，精确冲突标记扫描无命中。
 
@@ -550,7 +550,7 @@ chainbase/src/test/java/org/tron/core/archive/domain/RegistryChecksumTest.java
 Focused：
 
 ```bash
-cd /Users/boson/IdeaProjects/java-tron
+cd .
 ./gradlew :chainbase:test --tests 'org.tron.core.archive.domain.*'
 ```
 

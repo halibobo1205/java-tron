@@ -4,7 +4,7 @@
 
 日期：2026-06-01
 
-java-tron 源码路径：`/Users/boson/IdeaProjects/java-tron`
+java-tron 源码路径：`.`
 
 关联路线图：[java-tron Archive 状态树：Erigon 源码深挖后的落地路线图](./20260601-java-tron-archive-erigon-source-synthesis-implementation-roadmap.md)
 

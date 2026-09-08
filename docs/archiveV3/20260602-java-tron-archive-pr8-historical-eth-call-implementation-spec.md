@@ -17,7 +17,7 @@
 
 模块 05 逐文件 Patch 清单：[java-tron Archive 模块 05：ArchiveStateReader 逐文件 Patch 清单](./20260602-java-tron-archive-module-05-state-reader-patch-checklist.md)
 
-java-tron 源码路径：`/Users/boson/IdeaProjects/java-tron`
+java-tron 源码路径：`.`
 
 ## 1. PR8 目标
 
@@ -64,7 +64,7 @@ eth_call(readSlot, latest)      -> existing latest path
 
 | 文件 | 位置 | 事实 |
 | --- | --- | --- |
-| `/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/services/jsonrpc/TronJsonRpcImpl.java:1001` | `getCall(CallArguments, Object)` | `eth_call` 入口 |
+| `./framework/src/main/java/org/tron/core/services/jsonrpc/TronJsonRpcImpl.java:1001` | `getCall(CallArguments, Object)` | `eth_call` 入口 |
 | `TronJsonRpcImpl.java:1010` | object `blockNumber` | 会 parse block number |
 | `TronJsonRpcImpl.java:1019` | block exists check | 会检查 `wallet.getBlockByNum(blockNumber) != null` |
 | `TronJsonRpcImpl.java:1023` | object `blockHash` | 会 parse block hash |
@@ -114,7 +114,7 @@ formatCallResult(...)
 
 | 文件 | 位置 | 事实 |
 | --- | --- | --- |
-| `/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/services/jsonrpc/types/CallArguments.java:30` | `from` | 默认 `0x000...000` |
+| `./framework/src/main/java/org/tron/core/services/jsonrpc/types/CallArguments.java:30` | `from` | 默认 `0x000...000` |
 | `CallArguments.java:33` | `to` | 可为空 |
 | `CallArguments.java:36` | `gas` | 注释为 not used |
 | `CallArguments.java:39` | `gasPrice` | 注释为 not used |
@@ -148,7 +148,7 @@ to 非合约且 value 非空的 transfer-only call
 
 | 文件 | 位置 | 事实 |
 | --- | --- | --- |
-| `/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/Wallet.java:3086` | `triggerConstantContract` | latest constant call 入口 |
+| `./framework/src/main/java/org/tron/core/Wallet.java:3086` | `triggerConstantContract` | latest constant call 入口 |
 | `Wallet.java:3113` | `chainBaseManager.getContractStore()` | 合约存在性检查读 latest `ContractStore` |
 | `Wallet.java:3131` | `getBlockByLatestNum(1)` | 执行上下文使用 latest block |
 | `Wallet.java:3140` | `new TransactionContext(... StoreFactory.getInstance())` | 使用全局 latest `StoreFactory` |
@@ -167,7 +167,7 @@ Wallet path 只能保留给 latest。
 
 | 文件 | 位置 | 事实 |
 | --- | --- | --- |
-| `/Users/boson/IdeaProjects/java-tron/actuator/src/main/java/org/tron/core/actuator/VMActuator.java:122` | `ConfigLoader.load(context.getStoreFactory())` | VM feature flags 取 latest `DynamicPropertiesStore` |
+| `./actuator/src/main/java/org/tron/core/actuator/VMActuator.java:122` | `ConfigLoader.load(context.getStoreFactory())` | VM feature flags 取 latest `DynamicPropertiesStore` |
 | `VMActuator.java:128` | constant fee limit | `feeLimit / latest energyFee` |
 | `VMActuator.java:141` | `RepositoryImpl.createRoot(context.getStoreFactory())` | root repository 固定 latest |
 | `VMActuator.java:225` | `isConstantCall` branch | constant call 直接 set result and return |
@@ -196,14 +196,14 @@ PR8 必须给 VMActuator 增加 root repository / dynamic properties 注入点�
 
 | 文件 | 位置 | 事实 |
 | --- | --- | --- |
-| `/Users/boson/IdeaProjects/java-tron/actuator/src/main/java/org/tron/core/vm/repository/Repository.java:18` | `getDynamicPropertiesStore()` | 返回具体 `DynamicPropertiesStore` |
+| `./actuator/src/main/java/org/tron/core/vm/repository/Repository.java:18` | `getDynamicPropertiesStore()` | 返回具体 `DynamicPropertiesStore` |
 | `Repository.java:26` | `getAccount` | VM 读账户 |
 | `Repository.java:50` | `getContract` | VM 读合约元数据 |
 | `Repository.java:84` | `getCode` | VM 读 bytecode |
 | `Repository.java:88` | `getStorageValue` | VM 读 storage |
 | `Repository.java:96` | `newRepositoryChild` | internal call child overlay |
 | `Repository.java:100` | `commit` | child overlay merge / root persist |
-| `/Users/boson/IdeaProjects/java-tron/actuator/src/main/java/org/tron/core/vm/repository/RepositoryImpl.java:127` | cache fields | account/code/contract/storage 等 cache |
+| `./actuator/src/main/java/org/tron/core/vm/repository/RepositoryImpl.java:127` | cache fields | account/code/contract/storage 等 cache |
 | `RepositoryImpl.java:180` | `newRepositoryChild` | child 共享 StoreFactory，parent 为 repository |
 | `RepositoryImpl.java:309` | `getAccount` | parent -> cache -> latest store |
 | `RepositoryImpl.java:501` | `getContract` | parent -> cache -> latest store |
@@ -224,7 +224,7 @@ PR8 推荐实现独立 `ArchiveRepositoryAdapter implements Repository`。
 
 | 文件 | 位置 | 事实 |
 | --- | --- | --- |
-| `/Users/boson/IdeaProjects/java-tron/actuator/src/main/java/org/tron/core/vm/program/Storage.java:46` | `compose` | physical key 由 `addrHash` 和 slot 后半段组合 |
+| `./actuator/src/main/java/org/tron/core/vm/program/Storage.java:46` | `compose` | physical key 由 `addrHash` 和 slot 后半段组合 |
 | `Storage.java:47` | contract version 1 | slot 先 `sha3(key)` |
 | `Storage.java:68` | `generateAddrHash` | create2 时用 `address || trxId` 生成地址 hash |
 | `Storage.java:77` | `store.get(compose(...))` | latest path 读 physical `StorageRowStore` |
@@ -242,7 +242,7 @@ PR8 的 `ArchiveRepositoryAdapter.getStorageValue(address, slot)` 必须按 logi
 
 | 文件 | 位置 | 事实 |
 | --- | --- | --- |
-| `/Users/boson/IdeaProjects/java-tron/actuator/src/main/java/org/tron/core/vm/program/invoke/ProgramInvokeFactory.java:27` | top-level invoke | 参数包含 `Block block` 和 `Repository deposit` |
+| `./actuator/src/main/java/org/tron/core/vm/program/invoke/ProgramInvokeFactory.java:27` | top-level invoke | 参数包含 `Block block` 和 `Repository deposit` |
 | `ProgramInvokeFactory.java:83` | balance | `deposit.getBalance(caller)` |
 | `ProgramInvokeFactory.java:99` | block context | 从传入 block 读取 parentHash、witness、timestamp、number |
 | `ProgramInvokeFactory.java:115` | ProgramInvokeImpl | 把 repository 作为 deposit 注入 VM |
@@ -259,11 +259,11 @@ NUMBER/TIMESTAMP/COINBASE/PREVHASH 和 state reads 都能走历史视图。
 
 | 文件 | 位置 | 事实 |
 | --- | --- | --- |
-| `/Users/boson/IdeaProjects/java-tron/actuator/src/main/java/org/tron/core/vm/config/ConfigLoader.java:16` | `load(StoreFactory)` | 只接收 StoreFactory |
+| `./actuator/src/main/java/org/tron/core/vm/config/ConfigLoader.java:16` | `load(StoreFactory)` | 只接收 StoreFactory |
 | `ConfigLoader.java:18` | `getDynamicPropertiesStore()` | 固定 latest dynamic store |
 | `ConfigLoader.java:21` | `checkForEnergyLimit(ds)` | 需要动态参数 |
 | `ConfigLoader.java:22-49` | feature flags | 初始化 TVM feature flags |
-| `/Users/boson/IdeaProjects/java-tron/chainbase/src/main/java/org/tron/core/store/DynamicPropertiesStore.java:30` | class | 具体 Store 类 |
+| `./chainbase/src/main/java/org/tron/core/store/DynamicPropertiesStore.java:30` | class | 具体 Store 类 |
 | `Repository.java:18` | return type | `Repository` 返回具体 `DynamicPropertiesStore` |
 
 VM/actuator 当前会读取这些动态参数：

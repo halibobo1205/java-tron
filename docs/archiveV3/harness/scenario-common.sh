@@ -205,6 +205,7 @@ if ! declare -F ah_compile_helpers >/dev/null 2>&1; then
     javac -nowarn -cp "$AH_JAR" -d "$outdir" \
       "$AH_HARNESS_DIR/ArchiveProbe.java" "$AH_HARNESS_DIR/HarnessSigner.java" \
       || ah_fatal "failed to compile the harness java helpers"
+    hs_bind_addr_helper "$AH_JAR" "$outdir"
   }
 fi
 
@@ -263,8 +264,9 @@ if ! declare -F ah_conf_reset >/dev/null 2>&1; then
     # about to write, so a forgotten override cannot silently reuse another node's block.
     ah_use_node_ports 0
     AH_CONF_P2P_VERSION=20260728
-    AH_CONF_WITNESS_KEY=1234567890123456789012345678901234567890123456789012345678901234
-    AH_CONF_GENESIS_WITNESSES='    { address: TEDapYSVvAZ3aYH7w8N9tMEEFKaNKUD5Bp, url = "http://sr1.local", voteCount = 100 }'
+    [ -n "$HS_KEY_WITNESS1" ] || ah_fatal "compile helpers before generating node configs"
+    AH_CONF_WITNESS_KEY="\"$HS_KEY_WITNESS1\""
+    AH_CONF_GENESIS_WITNESSES="    { address: $HS_ADDR_WITNESS1, url = \"http://sr1.local\", voteCount = 100 }"
     AH_CONF_ACTIVE_LIST='[]'
     AH_CONF_ARCHIVE_DIR='archive'
     AH_CONF_IDENTITY_INIT=true
@@ -370,9 +372,9 @@ seed.node = { ip.list = [] }
 
 genesis.block = {
   assets = [
-    { accountName = "Zion",      accountType = "AssetIssue", address = "TCLBgkbfVkJroVBJVqBEsxtPNQEQMTQCLQ", balance = "90000000000000000" },
-    { accountName = "Sun",       accountType = "AssetIssue", address = "TBvJUBXorwBPzqvV38vjDgegj5Eh6g2Tsq", balance = "10000000000000000" },
-    { accountName = "Blackhole", accountType = "AssetIssue", address = "TDvSsdrNM5eeXNL3czpa6AxLDHZA9nwe9K", balance = "-9223372036854775808" }
+    { accountName = "Zion",      accountType = "AssetIssue", address = "$HS_ADDR_ZION", balance = "90000000000000000" },
+    { accountName = "Sun",       accountType = "AssetIssue", address = "$HS_ADDR_SUN", balance = "10000000000000000" },
+    { accountName = "Blackhole", accountType = "AssetIssue", address = "$HS_ADDR_BLACKHOLE", balance = "-9223372036854775808" }
   ]
 
   witnesses = [

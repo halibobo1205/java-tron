@@ -678,14 +678,6 @@ HA_AMOUNT_NEWSR=12000000000
 HA_FREEZE_TRX=1000
 HA_VOTE_COUNT=500
 
-# Fresh keys: these addresses have never existed on any chain this harness
-# builds, so their pre-transfer state is known a priori (absent).
-HA_KEY_B="3333333333333333333333333333333333333333333333333333333333333333"
-HA_KEY_C="4444444444444444444444444444444444444444444444444444444444444444"
-# The 28th, NON-genesis witness. Distinct from HS_KEY_WITNESS1/2, ZION, SUN and
-# from every HS_WITNESS_KEY_PREFIX-derived key.
-HA_KEY_NEWSR="6666666666666666666666666666666666666666666666666666666666666666"
-
 # ===========================================================================
 # Cleanup: keep the run dir on failure (post-mortem), drop it on a clean pass.
 # ===========================================================================
@@ -706,6 +698,11 @@ ha_on_exit() {
 # ===========================================================================
 hs_init history-accuracy
 trap 'ha_on_exit' EXIT
+
+# These run-local recipients are deliberately absent from the genesis account/witness lists.
+HA_KEY_B="${HS_TEST_KEYS[29]}"
+HA_KEY_C="${HS_TEST_KEYS[30]}"
+HA_KEY_NEWSR="${HS_TEST_KEYS[31]}"
 
 HA_VERDICT_FILE="$HS_RUN_DIR/verdicts.tsv"
 HA_TRACK_FILE="$HS_RUN_DIR/tracked.tsv"
@@ -745,7 +742,7 @@ if not m:
     raise SystemExit('no localwitness block in ' + path)
 if newkey in m.group(1):
     raise SystemExit('the extra witness key collides with a generated one')
-patched = patched[:m.end(1)] + ',\n  ' + newkey + patched[m.end(1):]
+patched = patched[:m.end(1)] + ',\n  "' + newkey + '"' + patched[m.end(1):]
 open(path, 'w').write(patched)
 PY
 hs_log "patched node.conf: maintenanceTimeInterval=$HA_MAINTENANCE_INTERVAL_MS ms," \

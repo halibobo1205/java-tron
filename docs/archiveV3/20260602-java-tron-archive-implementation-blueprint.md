@@ -2,7 +2,7 @@
 
 日期：2026-06-02
 
-> 2026-06-03 源码重校准：本文保留为旧蓝图，部分 java-tron 源码锚点基于 `a79693e450`，已不再匹配当前本地源码。当前权威基线是 `/Users/boson/IdeaProjects/java-tron` 的 `4e80f8ffa9a2`；该源码存在 `StorageConfig.java`、`reference.conf`，且精确冲突标记扫描无命中。编码主入口请看 [java-tron Archive：4e80 统一实现路线](./20260603-java-tron-archive-4e80-implementation-roadmap.md)，逐模块源码对照请看 [java-tron Archive：4e80 六模块源码对照细化](./20260603-java-tron-archive-4e80-six-modules-source-detail.md)。
+> 2026-06-03 源码重校准：本文保留为旧蓝图，部分 java-tron 源码锚点基于 `a79693e450`，已不再匹配当前本地源码。当前权威基线是 `.` 的 `4e80f8ffa9a2`；该源码存在 `StorageConfig.java`、`reference.conf`，且精确冲突标记扫描无命中。编码主入口请看 [java-tron Archive：4e80 统一实现路线](./20260603-java-tron-archive-4e80-implementation-roadmap.md)，逐模块源码对照请看 [java-tron Archive：4e80 六模块源码对照细化](./20260603-java-tron-archive-4e80-six-modules-source-detail.md)。
 
 关联总文档：[java-tron 交易级状态树支持：Erigon V2/V3 模型调研](./20260520-java-tron-archive-state-erigon-v2-v3-research.md)
 
@@ -64,7 +64,7 @@ PR9 Proof/Debug API 当前 4e80 编码入口：[java-tron Archive S14：proof/de
 
 PR9 Proof/Debug API 历史规格：[java-tron Archive PR9 Proof/Debug API 代码级实现规格](./20260602-java-tron-archive-pr9-proof-debug-api-implementation-spec.md)
 
-java-tron 源码路径：`/Users/boson/IdeaProjects/java-tron`
+java-tron 源码路径：`.`
 
 java-tron 基线：本文正文原按本地 `a79693e450` 复核六个模块源码对照，属于历史蓝图；当前权威基线是 `4e80f8ffa9a2`，且源码已经存在 `common/src/main/resources/reference.conf` 和 `StorageConfig.java`。
 
@@ -108,10 +108,10 @@ framework -> chainbase/actuator/consensus/protocol
 
 | 文件 | 事实 |
 | --- | --- |
-| `/Users/boson/IdeaProjects/java-tron/settings.gradle` | 包含 `framework`、`chainbase`、`protocol`、`actuator`、`common` 等模块 |
-| `/Users/boson/IdeaProjects/java-tron/chainbase/build.gradle` | `chainbase` 依赖 `protocol/common/crypto` |
-| `/Users/boson/IdeaProjects/java-tron/actuator/build.gradle` | `actuator` 依赖 `chainbase` |
-| `/Users/boson/IdeaProjects/java-tron/framework/build.gradle` | `framework` 依赖 `chainbase/actuator/consensus` |
+| `./settings.gradle` | 包含 `framework`、`chainbase`、`protocol`、`actuator`、`common` 等模块 |
+| `./chainbase/build.gradle` | `chainbase` 依赖 `protocol/common/crypto` |
+| `./actuator/build.gradle` | `actuator` 依赖 `chainbase` |
+| `./framework/build.gradle` | `framework` 依赖 `chainbase/actuator/consensus` |
 
 结论：
 

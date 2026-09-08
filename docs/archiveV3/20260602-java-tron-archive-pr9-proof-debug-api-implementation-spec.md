@@ -18,7 +18,7 @@
 
 模块 06 逐文件 Patch 清单：[java-tron Archive 模块 06：CommitmentBuilder 逐文件 Patch 清单](./20260602-java-tron-archive-module-06-commitment-builder-patch-checklist.md)
 
-java-tron 源码路径：`/Users/boson/IdeaProjects/java-tron`
+java-tron 源码路径：`.`
 
 ## 1. PR9 目标
 
@@ -73,7 +73,7 @@ PR9 因此只做 archive-native proof/debug，不把结果伪装成 Ethereum `et
 
 | 文件 | 位置 | 事实 |
 | --- | --- | --- |
-| `/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/services/jsonrpc/TronJsonRpc.java:90` | `eth_getBalance` | 已声明 |
+| `./framework/src/main/java/org/tron/core/services/jsonrpc/TronJsonRpc.java:90` | `eth_getBalance` | 已声明 |
 | `TronJsonRpc.java:96` | `eth_getStorageAt` | 已声明 |
 | `TronJsonRpc.java:103` | `eth_getCode` | 已声明 |
 | `TronJsonRpc.java:154` | `eth_getBlockReceipts` | 已声明 |
@@ -92,11 +92,11 @@ PR9 因此只做 archive-native proof/debug，不把结果伪装成 Ethereum `et
 
 | 文件 | 位置 | 事实 |
 | --- | --- | --- |
-| `/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/trie/TrieImpl.java:290` | `getRootHash` | framework 中 MPT-like root |
+| `./framework/src/main/java/org/tron/core/trie/TrieImpl.java:290` | `getRootHash` | framework 中 MPT-like root |
 | `TrieImpl.java:355` | `scanTree` | 可扫描节点和值 |
 | `TrieImpl.java:381` | `prove(byte[] key)` | 生成 proof node map |
 | `TrieImpl.java:490` | `verifyProof` | 验证 proof node map |
-| `/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/db/accountstate/storetrie/AccountStateStoreTrie.java:19` | `AccountStateStoreTrie` | framework 内 account trie backing store |
+| `./framework/src/main/java/org/tron/core/db/accountstate/storetrie/AccountStateStoreTrie.java:19` | `AccountStateStoreTrie` | framework 内 account trie backing store |
 
 模块依赖仍然是：
 
@@ -115,13 +115,13 @@ PR7 已决定 archive commitment tree 在 `chainbase` 内实现，不 import fra
 
 | 文件 | 位置 | 事实 |
 | --- | --- | --- |
-| `/Users/boson/IdeaProjects/java-tron/common/src/main/resources/reference.conf:757` | `vmTrace=false` | 全局配置 |
-| `/Users/boson/IdeaProjects/java-tron/actuator/src/main/java/org/tron/core/vm/config/ConfigLoader.java:19` | `VMConfig.setVmTrace(...)` | 从 `CommonParameter` 写全局 VMConfig |
-| `/Users/boson/IdeaProjects/java-tron/actuator/src/main/java/org/tron/core/vm/VM.java:31` | `VMConfig.vmTrace()` | 每 op 保存 trace |
-| `/Users/boson/IdeaProjects/java-tron/actuator/src/main/java/org/tron/core/vm/program/Program.java:1610` | `trace.addOp(...)` | 记录 op trace |
-| `/Users/boson/IdeaProjects/java-tron/actuator/src/main/java/org/tron/core/vm/trace/ProgramTrace.java:14` | `ProgramTrace` | 内存 trace model |
-| `/Users/boson/IdeaProjects/java-tron/actuator/src/main/java/org/tron/core/actuator/VMActuator.java:297` | save trace branch | 执行后保存 trace |
-| `/Users/boson/IdeaProjects/java-tron/actuator/src/main/java/org/tron/core/vm/VMUtils.java:57` | `./vm_trace` | trace 输出目录 |
+| `./common/src/main/resources/reference.conf:757` | `vmTrace=false` | 全局配置 |
+| `./actuator/src/main/java/org/tron/core/vm/config/ConfigLoader.java:19` | `VMConfig.setVmTrace(...)` | 从 `CommonParameter` 写全局 VMConfig |
+| `./actuator/src/main/java/org/tron/core/vm/VM.java:31` | `VMConfig.vmTrace()` | 每 op 保存 trace |
+| `./actuator/src/main/java/org/tron/core/vm/program/Program.java:1610` | `trace.addOp(...)` | 记录 op trace |
+| `./actuator/src/main/java/org/tron/core/vm/trace/ProgramTrace.java:14` | `ProgramTrace` | 内存 trace model |
+| `./actuator/src/main/java/org/tron/core/actuator/VMActuator.java:297` | save trace branch | 执行后保存 trace |
+| `./actuator/src/main/java/org/tron/core/vm/VMUtils.java:57` | `./vm_trace` | trace 输出目录 |
 | `VMUtils.java:93` | `saveProgramTraceFile` | 写文件 |
 
 结论：
@@ -136,7 +136,7 @@ PR9 需要 per-call trace capture，并把 trace 作为 JSON-RPC result 返回�
 
 | 文件 | 位置 | 事实 |
 | --- | --- | --- |
-| `/Users/boson/IdeaProjects/java-tron/chainbase/src/main/java/org/tron/core/db/TransactionTrace.java:84` | constructor | 接收 `StoreFactory` |
+| `./chainbase/src/main/java/org/tron/core/db/TransactionTrace.java:84` | constructor | 接收 `StoreFactory` |
 | `TransactionTrace.java:100` | dynamic store | `storeFactory.getChainBaseManager().getDynamicPropertiesStore()` |
 | `TransactionTrace.java:101-104` | latest stores | contract/code/abi/account store 都从 latest manager 取 |
 | `TransactionTrace.java:129` | `TransactionContext` | 使用 latest `storeFactory` |

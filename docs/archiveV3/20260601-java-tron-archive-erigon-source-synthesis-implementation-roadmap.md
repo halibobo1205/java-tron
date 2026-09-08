@@ -91,7 +91,7 @@ java-tron 源码对照：
 
 ## 1. 文档边界
 
-已确认 java-tron 源码位于 `/Users/boson/IdeaProjects/java-tron`。本文基于 Erigon V2/V3 源码深挖收敛整体落地路线；java-tron 侧初步源码定位见 [Milestone 0：java-tron Archive 状态树源码定位](./20260601-java-tron-archive-milestone-0-source-map.md)，六个模块的 java-tron 逐项源码对照见上方清单。
+已确认 java-tron 源码位于 `.`。本文基于 Erigon V2/V3 源码深挖收敛整体落地路线；java-tron 侧初步源码定位见 [Milestone 0：java-tron Archive 状态树源码定位](./20260601-java-tron-archive-milestone-0-source-map.md)，六个模块的 java-tron 逐项源码对照见上方清单。
 
 本文回答三个问题：
 
@@ -812,6 +812,6 @@ java-tron ArchiveStateReader RPC 集成方案.md
 - PR9 Proof/Debug API 代码级实现规格。
 - 本文的整体落地路线收敛。
 
-当前已确认 java-tron 源码本地路径：`/Users/boson/IdeaProjects/java-tron`。
+当前已确认 java-tron 源码本地路径：`.`。
 
 下一步如果进入代码实现，建议按 PR1/PR2 代码级规格开始：先补 archive 默认关闭配置、no-op `ArchiveService`、`ArchiveExecutionContext`、`TronStoreWithRevoking.getDbName()` 修复和 `Manager.processBlock` txNum hook，把交易级时间坐标稳定下来。若继续细化文档，下一份可把 PR1/PR2 规格拆成可直接提交的逐文件 patch 清单，或补充多盘 segment/运维迁移方案。

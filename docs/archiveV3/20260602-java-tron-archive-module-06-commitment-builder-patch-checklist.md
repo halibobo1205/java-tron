@@ -32,7 +32,7 @@ S11 历史编码执行包：[java-tron Archive S11：CommitmentBuilder Integrati
 - [模块 04：ArchiveTemporalStore 逐文件 Patch 清单](./20260602-java-tron-archive-module-04-temporal-store-patch-checklist.md)
 - [模块 05：ArchiveStateReader 逐文件 Patch 清单](./20260602-java-tron-archive-module-05-state-reader-patch-checklist.md)
 
-java-tron 源码路径：`/Users/boson/IdeaProjects/java-tron`
+java-tron 源码路径：`.`
 
 旧清单原复核基线：本地 java-tron `a79693e450`。当前实现请以 `4e80f8ffa9a2` 细化文档为准。
 
@@ -74,12 +74,12 @@ coverage = TVM_STATE_ONLY 或 PARTIAL_DOMAIN_SET
 
 | 文件 | 位置 | 源码事实 |
 | --- | --- | --- |
-| `/Users/boson/IdeaProjects/java-tron/protocol/src/main/protos/core/Tron.proto:504-513` | `txTrieRoot/accountStateRoot` | 区块交易列表 Merkle root 与账户状态 root 字段 |
-| `/Users/boson/IdeaProjects/java-tron/chainbase/src/main/java/org/tron/core/capsule/BlockCapsule.java:218-230` | `calcMerkleRoot` | 用交易 `getMerkleHash()` 构建 tx root，空交易返回 `Sha256Hash.ZERO_HASH` |
+| `./protocol/src/main/protos/core/Tron.proto:504-513` | `txTrieRoot/accountStateRoot` | 区块交易列表 Merkle root 与账户状态 root 字段 |
+| `./chainbase/src/main/java/org/tron/core/capsule/BlockCapsule.java:218-230` | `calcMerkleRoot` | 用交易 `getMerkleHash()` 构建 tx root，空交易返回 `Sha256Hash.ZERO_HASH` |
 | `BlockCapsule.java:233-244` | `validateMerkleRoot` | 校验交易 `txTrieRoot` |
 | `BlockCapsule.java:246-253` | `setMerkleRoot` | 写 `txTrieRoot` |
 | `BlockCapsule.java:255-262` | `setAccountStateRoot` | 写 `accountStateRoot` |
-| `/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/services/jsonrpc/types/BlockResult.java:101-104` | JSON-RPC block result | 暴露 `transactionsRoot/stateRoot`，archive root 不静默复用 |
+| `./framework/src/main/java/org/tron/core/services/jsonrpc/types/BlockResult.java:101-104` | JSON-RPC block result | 暴露 `transactionsRoot/stateRoot`，archive root 不静默复用 |
 
 结论：
 
@@ -91,18 +91,18 @@ coverage = TVM_STATE_ONLY 或 PARTIAL_DOMAIN_SET
 
 | 文件 | 位置 | 源码事实 |
 | --- | --- | --- |
-| `/Users/boson/IdeaProjects/java-tron/common/src/main/resources/reference.conf:812` | `allowAccountStateRoot = 0` | 默认关闭 |
-| `/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/config/args/Args.java:462` | `allowAccountStateRoot` | 从配置读取 `cc.getAllowAccountStateRoot()` |
-| `/Users/boson/IdeaProjects/java-tron/chainbase/src/main/java/org/tron/core/store/DynamicPropertiesStore.java:789-793` | init | 缺省时写入 `CommonParameter.getAllowAccountStateRoot()` |
+| `./common/src/main/resources/reference.conf:812` | `allowAccountStateRoot = 0` | 默认关闭 |
+| `./framework/src/main/java/org/tron/core/config/args/Args.java:462` | `allowAccountStateRoot` | 从配置读取 `cc.getAllowAccountStateRoot()` |
+| `./chainbase/src/main/java/org/tron/core/store/DynamicPropertiesStore.java:789-793` | init | 缺省时写入 `CommonParameter.getAllowAccountStateRoot()` |
 | `DynamicPropertiesStore.java:2375-2378` | `saveAllowAccountStateRoot` | governance 开关写入 |
 | `DynamicPropertiesStore.java:2380-2389` | `allowAccountStateRoot` | 开关为 1 时才启用 |
-| `/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/db/accountstate/callback/AccountStateCallBack.java:52-72` | `preExecute` | 从 parent block header 的 `accountStateRoot` 初始化 trie |
+| `./framework/src/main/java/org/tron/core/db/accountstate/callback/AccountStateCallBack.java:52-72` | `preExecute` | 从 parent block header 的 `accountStateRoot` 初始化 trie |
 | `AccountStateCallBack.java:38-42` | `exeTransFinish` | 每 tx 后把 account dirty entries put 到 trie |
 | `AccountStateCallBack.java:74-92` | `executePushFinish` | 接收 block 时校验 header root |
 | `AccountStateCallBack.java:94-105` | `executeGenerateFinish` | 本地产块时写 header `accountStateRoot` |
-| `/Users/boson/IdeaProjects/java-tron/chainbase/src/main/java/org/tron/core/db/accountstate/AccountStateEntity.java:16-22` | constructor | 只保留 `address/balance/allowance` |
-| `/Users/boson/IdeaProjects/java-tron/chainbase/src/main/java/org/tron/core/db/accountstate/AccountStateCallBackUtils.java:13-22` | `accountCallBack` | 只消费 `AccountCapsule` |
-| `/Users/boson/IdeaProjects/java-tron/chainbase/src/main/java/org/tron/core/store/AccountStore.java:68-88` | `AccountStore.put` | 写 account 后触发 callback |
+| `./chainbase/src/main/java/org/tron/core/db/accountstate/AccountStateEntity.java:16-22` | constructor | 只保留 `address/balance/allowance` |
+| `./chainbase/src/main/java/org/tron/core/db/accountstate/AccountStateCallBackUtils.java:13-22` | `accountCallBack` | 只消费 `AccountCapsule` |
+| `./chainbase/src/main/java/org/tron/core/store/AccountStore.java:68-88` | `AccountStore.put` | 写 account 后触发 callback |
 | `AccountStore.java:92-104` | `AccountStore.delete` | 删除 account 时没有触发 `deleteAccount` callback |
 
 结论：
@@ -115,17 +115,17 @@ coverage = TVM_STATE_ONLY 或 PARTIAL_DOMAIN_SET
 
 | 文件 | 位置 | 源码事实 |
 | --- | --- | --- |
-| `/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/trie/Trie.java:8` | `getRootHash` | trie 接口 |
+| `./framework/src/main/java/org/tron/core/trie/Trie.java:8` | `getRootHash` | trie 接口 |
 | `Trie.java:17` | `put` | put |
 | `Trie.java:21` | `delete` | delete |
-| `/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/trie/TrieImpl.java:33` | `TrieImpl` | 实现位于 `framework` |
+| `./framework/src/main/java/org/tron/core/trie/TrieImpl.java:33` | `TrieImpl` | 实现位于 `framework` |
 | `TrieImpl.java:144-155` | `put` | 空 value 走 delete |
 | `TrieImpl.java:286-288` | `getRootHash` | 返回 root hash；空 root 返回 `EMPTY_TRIE_HASH` |
 | `TrieImpl.java:297-305` | `flush` | dirty nodes 持久化后 root 收缩成 hash node |
 | `TrieImpl.java:377-424` | `prove` | RLP Hex Patricia proof 参考 |
 | `TrieImpl.java:486-552` | `verifyProof` | proof verifier 参考 |
 | `TrieImpl.java:559-564` | `setRoot` | 把 `EMPTY_TRIE_HASH` 视为空树 |
-| `/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/db/accountstate/storetrie/AccountStateStoreTrie.java:19` | `AccountStateStoreTrie` | framework 里的 account trie store |
+| `./framework/src/main/java/org/tron/core/db/accountstate/storetrie/AccountStateStoreTrie.java:19` | `AccountStateStoreTrie` | framework 里的 account trie store |
 
 模块依赖方向是：
 

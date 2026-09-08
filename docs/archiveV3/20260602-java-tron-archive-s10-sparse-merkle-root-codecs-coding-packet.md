@@ -23,9 +23,9 @@
 - [模块 06 CommitmentBuilder：4e80 java-tron 源码对照细化](./20260603-java-tron-module-06-commitment-builder-4e80-source-deep-dive.md)
 - [模块 06 CommitmentBuilder：Erigon 源码对照深挖](./20260601-java-tron-module-06-commitment-builder-erigon-source-deep-dive.md)
 
-java-tron 源码路径：`/Users/boson/IdeaProjects/java-tron`
+java-tron 源码路径：`.`
 
-Erigon 源码路径：`/Users/boson/GolandProjects/erigon`
+Erigon 源码路径：`${ERIGON_ROOT}`
 
 旧执行包原复核基线：本地 java-tron `a79693e450`。当前 `4e80f8ffa9a2` 的 Module 06 源码事实请以 [模块 06 CommitmentBuilder：4e80 java-tron 源码对照细化](./20260603-java-tron-module-06-commitment-builder-4e80-source-deep-dive.md) 和 [S10/S11 4e80 编码执行包](./20260603-java-tron-archive-s10-s11-commitment-builder-4e80-coding-packet.md) 为准。
 
@@ -73,7 +73,7 @@ same ArchiveBatch must contain temporal rows and root rows
 
 ### 2.1 Hash primitive 可复用，EMPTY_TRIE_HASH 不可复用
 
-`/Users/boson/IdeaProjects/java-tron/crypto/src/main/java/org/tron/common/crypto/Hash.java:41-78`：
+`./crypto/src/main/java/org/tron/common/crypto/Hash.java:41-78`：
 
 | 源码事实 | 对 S10 的结论 |
 | --- | --- |
@@ -92,13 +92,13 @@ empty[d]   = H("tron.archive.smt.empty.branch.v1" || algorithmId_u16 || depth_u1
 
 ### 2.2 `TrieImpl` 是 framework 里的 RLP Hex Patricia Trie
 
-`/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/trie/Trie.java:6-23` 定义了：
+`./framework/src/main/java/org/tron/core/trie/Trie.java:6-23` 定义了：
 
 ```text
 getRootHash / setRoot / clear / put / get / delete / flush
 ```
 
-`/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/trie/TrieImpl.java:286-305`：
+`./framework/src/main/java/org/tron/core/trie/TrieImpl.java:286-305`：
 
 | 源码事实 | 对 S10 的结论 |
 | --- | --- |
@@ -106,7 +106,7 @@ getRootHash / setRoot / clear / put / get / delete / flush
 | `flush()` 把 dirty nodes 持久化，再把 root 收缩成 hash node | 可借鉴“root hash + node store”思想，但不能复用编码 |
 | `setRoot()` 把 `EMPTY_TRIE_HASH` 当空树 | S10 empty root 来自 SMT empty chain，不使用这个特殊值 |
 
-`/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/trie/TrieImpl.java:377-552` 已有 `prove/verifyProof`，但 proof 逻辑依赖：
+`./framework/src/main/java/org/tron/core/trie/TrieImpl.java:377-552` 已有 `prove/verifyProof`，但 proof 逻辑依赖：
 
 - RLP node encoding。
 - hex nibble path。
@@ -117,7 +117,7 @@ getRootHash / setRoot / clear / put / get / delete / flush
 
 ### 2.3 `AccountStateCallBack` 只能借生命周期
 
-`/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/db/accountstate/callback/AccountStateCallBack.java:52-103` 的流程：
+`./framework/src/main/java/org/tron/core/db/accountstate/callback/AccountStateCallBack.java:52-103` 的流程：
 
 | 阶段 | 现有行为 | S10/S11 借鉴点 |
 | --- | --- | --- |
@@ -132,11 +132,11 @@ ROOT_CURRENT(algorithmId, treeKind, domainId)
 or empty root when bootstrapping from a declared empty/progress state
 ```
 
-当前 `AccountStateCallBack` 的删除入口也不能直接借用为 archive delete 语义：`AccountStore.put` 在 `/Users/boson/IdeaProjects/java-tron/chainbase/src/main/java/org/tron/core/store/AccountStore.java:68-89` 写入 account 后触发 callback，但 `AccountStore.delete` 在 `AccountStore.java:91-105` 没有调用 `AccountStateCallBack.deleteAccount`。S10/S11 的删除必须来自 `DomainWrite.afterValue` tombstone/normalizer，不依赖现有 account callback。
+当前 `AccountStateCallBack` 的删除入口也不能直接借用为 archive delete 语义：`AccountStore.put` 在 `./chainbase/src/main/java/org/tron/core/store/AccountStore.java:68-89` 写入 account 后触发 callback，但 `AccountStore.delete` 在 `AccountStore.java:91-105` 没有调用 `AccountStateCallBack.deleteAccount`。S10/S11 的删除必须来自 `DomainWrite.afterValue` tombstone/normalizer，不依赖现有 account callback。
 
 ### 2.4 `AccountStateStoreTrie` 不是完整 archive 状态
 
-`/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/db/accountstate/storetrie/AccountStateStoreTrie.java:35-42`：
+`./framework/src/main/java/org/tron/core/db/accountstate/storetrie/AccountStateStoreTrie.java:35-42`：
 
 ```text
 getAccount(key, rootHash)
@@ -145,7 +145,7 @@ getAccount(key, rootHash)
   -> AccountStateEntity.parse(value)
 ```
 
-`/Users/boson/IdeaProjects/java-tron/chainbase/src/main/java/org/tron/core/db/accountstate/AccountStateEntity.java:16-21` 只复制：
+`./chainbase/src/main/java/org/tron/core/db/accountstate/AccountStateEntity.java:16-21` 只复制：
 
 ```text
 address
@@ -157,13 +157,13 @@ allowance
 
 ### 2.5 `BlockCapsule` 的两个 root 都不是 archive root
 
-`/Users/boson/IdeaProjects/java-tron/chainbase/src/main/java/org/tron/core/capsule/BlockCapsule.java:218-244`：
+`./chainbase/src/main/java/org/tron/core/capsule/BlockCapsule.java:218-244`：
 
 - `calcMerkleRoot()` 计算交易 Merkle root。
 - `validateMerkleRoot()` 校验交易 Merkle root。
 - 空交易返回 `Sha256Hash.ZERO_HASH`。
 
-`/Users/boson/IdeaProjects/java-tron/chainbase/src/main/java/org/tron/core/capsule/BlockCapsule.java:255-262`：
+`./chainbase/src/main/java/org/tron/core/capsule/BlockCapsule.java:255-262`：
 
 - `setAccountStateRoot(byte[] root)` 写 `BlockHeader.raw.accountStateRoot`。
 
@@ -179,7 +179,7 @@ RootRecord lives only in archive DB
 
 ### 3.1 Commitment trie 不直接绑定 DB
 
-`/Users/boson/GolandProjects/erigon/execution/commitment/commitment.go:91-141`：
+`${ERIGON_ROOT}/execution/commitment/commitment.go:91-141`：
 
 | Erigon 源码事实 | java-tron S10 取舍 |
 | --- | --- |
@@ -191,9 +191,9 @@ S10 的 tree core API 不依赖 `Manager`、`Wallet`、`Store`、`BlockCapsule`�
 
 ### 3.2 更新必须按 hashed path 顺序处理
 
-`/Users/boson/GolandProjects/erigon/execution/commitment/commitment.go:1429-1440` 明确 `Updates` 按 hashed key 排序，注释指出 plain key 顺序会导致 divergent root。
+`${ERIGON_ROOT}/execution/commitment/commitment.go:1429-1440` 明确 `Updates` 按 hashed key 排序，注释指出 plain key 顺序会导致 divergent root。
 
-`/Users/boson/GolandProjects/erigon/execution/commitment/commitment.go:1797-1981` 的 `HashSort` 和 `keyUpdateLessFn` 也是同一个约束：
+`${ERIGON_ROOT}/execution/commitment/commitment.go:1797-1981` 的 `HashSort` 和 `keyUpdateLessFn` 也是同一个约束：
 
 ```text
 sort by hashedKey
@@ -217,15 +217,15 @@ global tree: sort by globalPath ASC, then domainId ASC
 
 ### 3.3 Erigon 保存的不只是 root hash
 
-`/Users/boson/GolandProjects/erigon/execution/commitment/commitmentdb/commitment_context.go:297-324`：
+`${ERIGON_ROOT}/execution/commitment/commitmentdb/commitment_context.go:297-324`：
 
 - `ComputeCommitment` 在没有更新时仍从当前 trie state 读 `RootHash()`。
 
-`/Users/boson/GolandProjects/erigon/execution/commitment/commitmentdb/commitment_context.go:436-485`：
+`${ERIGON_ROOT}/execution/commitment/commitmentdb/commitment_context.go:436-485`：
 
 - `Process(...)` 之后，如果 `saveState`，调用 `encodeAndStoreCommitmentState(...)`。
 
-`/Users/boson/GolandProjects/erigon/execution/commitment/commitmentdb/commitment_context.go:681-705`：
+`${ERIGON_ROOT}/execution/commitment/commitmentdb/commitment_context.go:681-705`：
 
 - commitment state 单独编码并写入 branch storage。
 
@@ -241,9 +241,9 @@ S10 只提供 `CurrentRootRecord` codec；S11 负责更新进度。
 
 ### 3.4 Reader 视角要可拆分
 
-`/Users/boson/GolandProjects/erigon/execution/commitment/commitmentdb/reader.go:9-80` 有 `LatestStateReader` 和 `HistoryStateReader`。
+`${ERIGON_ROOT}/execution/commitment/commitmentdb/reader.go:9-80` 有 `LatestStateReader` 和 `HistoryStateReader`。
 
-`/Users/boson/GolandProjects/erigon/execution/commitment/commitmentdb/reader.go:118-140` 有 `SplitStateReader`，可以把 commitment data 和 plain state data 的 as-of 边界拆开。
+`${ERIGON_ROOT}/execution/commitment/commitmentdb/reader.go:118-140` 有 `SplitStateReader`，可以把 commitment data 和 plain state data 的 as-of 边界拆开。
 
 java-tron P0 不需要先实现 split reader，但 S10 的 codec 必须给 S11/S14 留足信息：
 
@@ -255,7 +255,7 @@ java-tron P0 不需要先实现 split reader，但 S10 的 codec 必须给 S11/S
 
 ### 3.5 并发 commitment 不是 S10 范围
 
-`/Users/boson/GolandProjects/erigon/execution/commitment/hex_concurrent_patricia_hashed.go:207-294` 把 updates 按 nibble 拆并行处理，最后 fold root。
+`${ERIGON_ROOT}/execution/commitment/hex_concurrent_patricia_hashed.go:207-294` 把 updates 按 nibble 拆并行处理，最后 fold root。
 
 S10 不实现并行 tree update。原因：
 

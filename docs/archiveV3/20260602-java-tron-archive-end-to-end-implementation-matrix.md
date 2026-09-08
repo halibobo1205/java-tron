@@ -4,7 +4,7 @@
 
 关联需求：[tronprotocol/java-tron#6289 Implementation of Archive Node on TRON](https://github.com/tronprotocol/java-tron/issues/6289)
 
-java-tron 源码路径：`/Users/boson/IdeaProjects/java-tron`
+java-tron 源码路径：`.`
 
 > 2026-06-03 源码重校准：本文保留为旧执行矩阵，部分源码锚点基于 `a79693e450`，已不再匹配当前本地源码。当前权威基线是 `4e80f8ffa9a2`；当前源码存在 `common/src/main/resources/reference.conf` 和 `StorageConfig.java`，且精确冲突标记扫描无命中。编码主入口以 [java-tron Archive：4e80 统一实现路线](./20260603-java-tron-archive-4e80-implementation-roadmap.md) 为准，逐模块源码对照以 [java-tron Archive：4e80 六模块源码对照细化](./20260603-java-tron-archive-4e80-six-modules-source-detail.md) 为准。
 
@@ -146,9 +146,9 @@ P0 完成不能只看“代码能编译”。需要同时满足以下证据：
 
 | 项 | 命令或证据 |
 | --- | --- |
-| java-tron HEAD | `git -C /Users/boson/IdeaProjects/java-tron rev-parse --short HEAD` |
-| worktree 干净度 | `git -C /Users/boson/IdeaProjects/java-tron status --short` |
-| Gradle wrapper 可用 | `cd /Users/boson/IdeaProjects/java-tron && ./gradlew --version` |
+| java-tron HEAD | `git -C . rev-parse --short HEAD` |
+| worktree 干净度 | `git -C . status --short` |
+| Gradle wrapper 可用 | `cd . && ./gradlew --version` |
 | 配置解析测试基线 | `./gradlew :common:test --tests org.tron.core.config.args.StorageTest` 或新增等价 `ArgsArchiveConfigTest` |
 | Store/VM/RPC 相关测试基线 | 按后续 slice 逐步补 |
 
@@ -876,7 +876,7 @@ S2 Manager lifecycle + TxNumIndex
 S1/S2 编码前还要做一次本地基线：
 
 ```text
-cd /Users/boson/IdeaProjects/java-tron
+cd .
 git status --short
 ./gradlew :common:test --tests org.tron.core.config.args.StorageTest
 ```

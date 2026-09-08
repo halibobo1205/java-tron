@@ -6,7 +6,7 @@
 
 关联总表：[java-tron Archive：4e80 六模块源码对照细化](./20260603-java-tron-archive-4e80-six-modules-source-detail.md)
 
-java-tron 源码路径：`/Users/boson/IdeaProjects/java-tron`
+java-tron 源码路径：`.`
 
 java-tron 基线：`4e80f8ffa9a2`，`git status --short` 为空，精确冲突标记扫描无命中。
 
@@ -32,13 +32,13 @@ java-tron 当前没有 Erigon 式全局 `txNum`。现有持久化坐标只够回
 当前 java-tron 工作区干净，且以下精确冲突标记扫描无命中：
 
 ```bash
-git -C /Users/boson/IdeaProjects/java-tron rev-parse --short=12 HEAD
+git -C . rev-parse --short=12 HEAD
 # 4e80f8ffa9a2
 
-git -C /Users/boson/IdeaProjects/java-tron status --short
+git -C . status --short
 # no output
 
-rg -n '^(<<<<<<< .+|=======$|>>>>>>> .+)' /Users/boson/IdeaProjects/java-tron
+rg -n '^(<<<<<<< .+|=======$|>>>>>>> .+)' .
 # no output
 ```
 

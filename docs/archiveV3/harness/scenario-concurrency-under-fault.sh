@@ -210,18 +210,6 @@ FORK_PARTITION_SECS=35
 FORK_FREEZE_SECS=75
 FORK_SWITCH_TIMEOUT_SECS=210
 
-# deterministic private-chain keys (address derivation verified against ECKey/StringUtil)
-W1_KEY=1234567890123456789012345678901234567890123456789012345678901234
-W1_B58=TEDapYSVvAZ3aYH7w8N9tMEEFKaNKUD5Bp
-W2_KEY=5555555555555555555555555555555555555555555555555555555555555555
-W2_B58=TWa5cxQFesyCQUm17usvHrVkKce6rMCV4H
-ZION_KEY=1111111111111111111111111111111111111111111111111111111111111111
-ZION_B58=TCLBgkbfVkJroVBJVqBEsxtPNQEQMTQCLQ
-ZION_ETH=0x19e7e376e7c213b7e7e7e46cc70a5dd086daff2a
-SUN_B58=TBvJUBXorwBPzqvV38vjDgegj5Eh6g2Tsq
-SUN_ETH=0x1563915e194d8cfba1943570603f7606a3115508
-BLACKHOLE_B58=TDvSsdrNM5eeXNL3czpa6AxLDHZA9nwe9K
-
 # ---------------------------------------------------------------------------
 # phase bookkeeping (bash 3.2: parallel indexed arrays, no associative arrays)
 # ---------------------------------------------------------------------------
@@ -897,7 +885,7 @@ apply_witness_count() {
   local count="${HS_CFG_WITNESS_COUNT:-1}"
   if [ "${count}" = "1" ]; then
     CONF_GENESIS_WITNESSES="$(single_witness_block)"
-    CONF_LOCAL_WITNESS="${W1_KEY}"
+    CONF_LOCAL_WITNESS="\"${W1_KEY}\""
     return 0
   fi
   have_fn hs_witness_conf_blocks \
@@ -1560,7 +1548,7 @@ fork_write_conf() { # dir file identity_init p2p http rpc jsonrpc metrics active
   CONF_METRICS_PORT="$8"
   CONF_ACTIVE="$9"
   CONF_GENESIS_WITNESSES="$(dual_witness_block)"
-  CONF_LOCAL_WITNESS="${10}"
+  CONF_LOCAL_WITNESS="\"${10}\""
   mkdir -p "$1"
   write_node_conf "$2"
 }
@@ -1745,6 +1733,18 @@ fork_teardown() {
 # ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
+have_fn hs_bind_addr_helper || die "lib.sh is required to generate run-local test keys"
+hs_bind_addr_helper "${JAR}" "${ASSET_DIR}/classes"
+W1_KEY="$HS_KEY_WITNESS1"
+W1_B58="$HS_ADDR_WITNESS1"
+W2_KEY="$HS_KEY_WITNESS2"
+W2_B58="$HS_ADDR_WITNESS2"
+ZION_KEY="$HS_KEY_ZION"
+ZION_B58="$HS_ADDR_ZION"
+ZION_ETH="$(hs_eth_of_priv "$HS_KEY_ZION")"
+SUN_B58="$HS_ADDR_SUN"
+SUN_ETH="$(hs_eth_of_priv "$HS_KEY_SUN")"
+BLACKHOLE_B58="$HS_ADDR_BLACKHOLE"
 write_assets
 
 phase_setup || true

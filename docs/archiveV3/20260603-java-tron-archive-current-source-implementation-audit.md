@@ -4,7 +4,7 @@
 
 关联需求：[tronprotocol/java-tron#6289 Implementation of Archive Node on TRON](https://github.com/tronprotocol/java-tron/issues/6289)
 
-java-tron 源码路径：`/Users/boson/IdeaProjects/java-tron`
+java-tron 源码路径：`.`
 
 当前源码基线：`4e80f8ffa9a2`，`git status --short` 为空。
 
@@ -15,13 +15,13 @@ java-tron 源码路径：`/Users/boson/IdeaProjects/java-tron`
 当前工作区是干净的，并且精确冲突标记扫描没有命中：
 
 ```bash
-git -C /Users/boson/IdeaProjects/java-tron rev-parse --short=12 HEAD
+git -C . rev-parse --short=12 HEAD
 # 4e80f8ffa9a2
 
-git -C /Users/boson/IdeaProjects/java-tron status --short
+git -C . status --short
 # no output
 
-rg -n '^(<<<<<<< .+|=======$|>>>>>>> .+)' /Users/boson/IdeaProjects/java-tron
+rg -n '^(<<<<<<< .+|=======$|>>>>>>> .+)' .
 # no output
 ```
 

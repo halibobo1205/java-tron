@@ -8,7 +8,7 @@
 
 逐文件 Patch 清单：[java-tron Archive 模块 06：CommitmentBuilder 逐文件 Patch 清单](./20260602-java-tron-archive-module-06-commitment-builder-patch-checklist.md)
 
-本轮复核基线：本地 Erigon `/Users/boson/GolandProjects/erigon` 当前工作区。
+本轮复核基线：本地 Erigon `${ERIGON_ROOT}` 当前工作区。
 
 前置源码对照：
 

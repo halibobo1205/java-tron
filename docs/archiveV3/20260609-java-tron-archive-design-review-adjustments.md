@@ -34,7 +34,7 @@
 
 1. 本地 java-tron 基线已漂移。
 
-   当前抽样时 `/Users/boson/IdeaProjects/java-tron` 在 `fix/jsonformat-parser-robustness`，HEAD 为 `c9a99d3b216c`，不是文档中的 `4e80f8ffa9a2`。实现前必须跑 L0 baseline guard；如果不是 4e80，应刷新源码行号和局部锚点。
+   当前抽样时 `.` 在 `fix/jsonformat-parser-robustness`，HEAD 为 `c9a99d3b216c`，不是文档中的 `4e80f8ffa9a2`。实现前必须跑 L0 baseline guard；如果不是 4e80，应刷新源码行号和局部锚点。
 
 2. `StatePoint` 旧名与 `ArchiveStatePoint` 新名要避免双实现。
 

@@ -12,7 +12,7 @@ Erigon 对照：[模块 01 ArchiveTxNumIndex：Erigon 源码对照深挖](./2026
 
 逐文件实现清单：[java-tron Archive PR1/PR2 逐文件 Patch 清单](./20260602-java-tron-archive-pr1-pr2-patch-checklist.md)
 
-java-tron 源码路径：`/Users/boson/IdeaProjects/java-tron`
+java-tron 源码路径：`.`
 
 本轮复核基线：本地 java-tron `a79693e450`。
 

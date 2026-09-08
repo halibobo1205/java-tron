@@ -4,11 +4,11 @@
 
 关联需求：[tronprotocol/java-tron#6289 Implementation of Archive Node on TRON](https://github.com/tronprotocol/java-tron/issues/6289)
 
-java-tron 源码路径：`/Users/boson/IdeaProjects/java-tron`
+java-tron 源码路径：`.`
 
 java-tron 当前基线：`4e80f8ffa9a2`
 
-Erigon 源码路径：`/Users/boson/GolandProjects/erigon`
+Erigon 源码路径：`${ERIGON_ROOT}`
 
 主入口：[java-tron Archive：4e80 统一实现路线](./20260603-java-tron-archive-4e80-implementation-roadmap.md)
 
@@ -30,8 +30,8 @@ L7 代码级执行包：[java-tron Archive L7：CommitmentBuilder 代码级执�
 
 ```text
 java-tron HEAD = 4e80f8ffa9a2
-java-tron source root = /Users/boson/IdeaProjects/java-tron
-erigon source root = /Users/boson/GolandProjects/erigon
+java-tron source root = .
+erigon source root = ${ERIGON_ROOT}
 ```
 
 当前 java-tron 已具备的配置结构：
@@ -456,9 +456,9 @@ Do first in every implementation branch.
 Commands:
 
 ```bash
-git -C /Users/boson/IdeaProjects/java-tron rev-parse --short=12 HEAD
-git -C /Users/boson/IdeaProjects/java-tron status --short
-rg -n '^(<<<<<<< .+|=======$|>>>>>>> .+)' /Users/boson/IdeaProjects/java-tron
+git -C . rev-parse --short=12 HEAD
+git -C . status --short
+rg -n '^(<<<<<<< .+|=======$|>>>>>>> .+)' .
 ```
 
 Stop only when:

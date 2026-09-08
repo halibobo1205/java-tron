@@ -29,7 +29,7 @@ S9 历史编码执行包：[java-tron Archive S9：JSON-RPC Historical Getters �
 - [模块 03：ArchiveWriteCollector 逐文件 Patch 清单](./20260602-java-tron-archive-module-03-write-collector-patch-checklist.md)
 - [模块 04：ArchiveTemporalStore 逐文件 Patch 清单](./20260602-java-tron-archive-module-04-temporal-store-patch-checklist.md)
 
-java-tron 源码路径：`/Users/boson/IdeaProjects/java-tron`
+java-tron 源码路径：`.`
 
 java-tron 旧文档原始基线：`a79693e450`，当前 4e80 实现请看页头链接。
 
@@ -58,10 +58,10 @@ P0 不实现 historical `eth_call`。`eth_call` 需要 archive-backed `Repositor
 
 | 文件 | 位置 | 源码事实 |
 | --- | --- | --- |
-| `/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/services/jsonrpc/TronJsonRpc.java:90` | `eth_getBalance` | 只声明 `JsonRpcInvalidParamsException` |
+| `./framework/src/main/java/org/tron/core/services/jsonrpc/TronJsonRpc.java:90` | `eth_getBalance` | 只声明 `JsonRpcInvalidParamsException` |
 | `TronJsonRpc.java:96` | `eth_getStorageAt` | 只声明 `JsonRpcInvalidParamsException` |
 | `TronJsonRpc.java:103` | `eth_getCode` | 只声明 `JsonRpcInvalidParamsException` |
-| `/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/services/jsonrpc/TronJsonRpcImpl.java:155-167` | tag/error 常量 | 只有 `earliest/pending/latest/finalized`；没有 `safe` 常量；`TAG_NOT_SUPPORT_ERROR` 是 private |
+| `./framework/src/main/java/org/tron/core/services/jsonrpc/TronJsonRpcImpl.java:155-167` | tag/error 常量 | 只有 `earliest/pending/latest/finalized`；没有 `safe` 常量；`TAG_NOT_SUPPORT_ERROR` 是 private |
 | `TronJsonRpcImpl.java:394-419` | `getTrxBalance` | 方法内联判断：`earliest/pending/finalized` 抛 tag unsupported；`latest` 走 `wallet.getAccount`；quantity 只校验后抛 quantity unsupported |
 | `TronJsonRpcImpl.java:536-568` | `getStorageAt` | 方法内联判断；`latest` 走 `wallet.getContract`、`manager.getStorageRowStore()`、`Storage` |
 | `TronJsonRpcImpl.java:572-599` | `getABIOfSmartContract` | 方法内联判断；`latest` 走 `wallet.getContractInfo` |
@@ -80,7 +80,7 @@ unsupported/invalid -> 清晰 JSON-RPC 错误
 | --- | --- | --- |
 | `JsonRpcApiUtil.java:518-531` | `getByJsonBlockId(String, Wallet)` | `pending` 抛 `TAG_PENDING_SUPPORT_ERROR`；空或 `latest` 返回 `-1`；`earliest` 返回 `0`；`finalized` 返回 `wallet.getSolidBlockNum()`；其他输入走严格 `ByteArray.jsonHexToLong` |
 | `JsonRpcApiUtil.java:3-7` | static imports | 只导入 `earliest/finalized/latest/pending` 和 pending error；没有 `safe` |
-| `/Users/boson/IdeaProjects/java-tron/common/src/main/java/org/tron/common/utils/ByteArray.java:146-151` | `hexToBigInteger` | 带 `0x` 按 16 进制解析；不带前缀按 10 进制解析 |
+| `./common/src/main/java/org/tron/common/utils/ByteArray.java:146-151` | `hexToBigInteger` | 带 `0x` 按 16 进制解析；不带前缀按 10 进制解析 |
 | `ByteArray.java:154-159` | `jsonHexToLong` | 要求 `0x` 前缀，按 16 进制转 long |
 
 `ArchiveStatePointResolver` 不应按旧文档调用已删除的 block-tag helper。建议 resolver 显式匹配 `LATEST_STR/EARLIEST_STR/PENDING_STR/FINALIZED_STR`，quantity 分支复用 `ByteArray.hexToBigInteger` 并补上 `>= 0`、`<= Long.MAX_VALUE` 校验。不要直接使用 `getByJsonBlockId` 作为 state getter parser，否则裸 decimal 会从当前可校验输入变成 `"Incorrect hex syntax"`。
@@ -101,7 +101,7 @@ PR6 historical path 继续复用 `addressCompatibleToByteArray` 和 `DataWord`�
 
 | 文件 | 位置 | 源码事实 |
 | --- | --- | --- |
-| `/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/Wallet.java:337-350` | `getAccount` | 从 latest `AccountStore` 读账户，并用 latest dynamic/account store 更新资源视图 |
+| `./framework/src/main/java/org/tron/core/Wallet.java:337-350` | `getAccount` | 从 latest `AccountStore` 读账户，并用 latest dynamic/account store 更新资源视图 |
 | `Wallet.java:3205-3224` | `getContract` | 从 latest `AccountStore/ContractStore/AbiStore` 读合约 |
 | `Wallet.java:3234-3268` | `getContractInfo` | 从 latest `AccountStore/ContractStore/AbiStore/CodeStore/ContractStateStore` 读合约、runtime code 和合约状态 |
 | `Wallet.java:4355-4370` | `getAccountBalance` | 只服务 balance trace，不是完整 archive state reader |
@@ -112,7 +112,7 @@ historical `eth_getBalance/code/storage` 不应调用这些 Wallet 方法。late
 
 | 文件 | 位置 | 源码事实 |
 | --- | --- | --- |
-| `/Users/boson/IdeaProjects/java-tron/actuator/src/main/java/org/tron/core/vm/program/Storage.java:46` | `compose` | physical key 由 `addrHash` 和 slot 后 16 bytes 组合 |
+| `./actuator/src/main/java/org/tron/core/vm/program/Storage.java:46` | `compose` | physical key 由 `addrHash` 和 slot 后 16 bytes 组合 |
 | `Storage.java:47` | contract version 1 | slot 先 `sha3(key)` |
 | `Storage.java:68` | `generateAddrHash` | create2 时 `address || trxId` 影响 addrHash |
 | `Storage.java:77` | `getValue` | latest path 读 physical `StorageRowStore` |

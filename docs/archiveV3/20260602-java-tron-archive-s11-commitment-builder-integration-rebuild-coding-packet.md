@@ -23,9 +23,9 @@
 - [模块 06 CommitmentBuilder：4e80 java-tron 源码对照细化](./20260603-java-tron-module-06-commitment-builder-4e80-source-deep-dive.md)
 - [模块 06 CommitmentBuilder：Erigon 源码对照深挖](./20260601-java-tron-module-06-commitment-builder-erigon-source-deep-dive.md)
 
-java-tron 源码路径：`/Users/boson/IdeaProjects/java-tron`
+java-tron 源码路径：`.`
 
-Erigon 源码路径：`/Users/boson/GolandProjects/erigon`
+Erigon 源码路径：`${ERIGON_ROOT}`
 
 旧执行包原复核基线：本地 java-tron `a79693e450`。当前 `4e80f8ffa9a2` 的 Module 06 源码事实请以 [模块 06 CommitmentBuilder：4e80 java-tron 源码对照细化](./20260603-java-tron-module-06-commitment-builder-4e80-source-deep-dive.md) 和 [S10/S11 4e80 编码执行包](./20260603-java-tron-archive-s10-s11-commitment-builder-4e80-coding-packet.md) 为准。
 
@@ -89,7 +89,7 @@ Archive root is ARCHIVE_SIDECAR and never writes block header roots.
 
 ### 2.2 Normal block apply 的安全接入点
 
-`/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/db/Manager.java:1261-1383` 是 normal `pushBlock` 的核心 canonical apply/commit 区段。
+`./framework/src/main/java/org/tron/core/db/Manager.java:1261-1383` 是 normal `pushBlock` 的核心 canonical apply/commit 区段。
 
 关键流程：
 
@@ -115,7 +115,7 @@ S11 不再建议直接在 `Manager.pushBlock` 内塞 root 逻辑。若 S7 helper
 
 ### 2.3 Fork switch 会 erase 后 replay
 
-`/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/db/Manager.java:1094-1206` 是 `switchFork`：
+`./framework/src/main/java/org/tron/core/db/Manager.java:1094-1206` 是 `switchFork`：
 
 | 源码位置 | 事实 | S11 结论 |
 | --- | --- | --- |
@@ -127,7 +127,7 @@ Erigon 的 block-hash-aware changeset 路由正是为这类 fork bounce 服务�
 
 ### 2.4 eraseBlock 的 unwind 接入点
 
-`/Users/boson/IdeaProjects/java-tron/framework/src/main/java/org/tron/core/db/Manager.java:1017-1024`：
+`./framework/src/main/java/org/tron/core/db/Manager.java:1017-1024`：
 
 ```text
 oldHeadBlock = getBlockById(latestBlockHeaderHash)
@@ -176,7 +176,7 @@ S11 的 `stageBlockEnd` 只能消费 `BlockWriteSet`。`CommitmentRebuilder` 可
 
 ### 3.1 Block boundary commitment 必须按 block 归属
 
-`/Users/boson/GolandProjects/erigon/execution/stagedsync/committer.go:99-109` 说明：当需要 changeset/reorg 支持时，必须每个 block boundary 计算 commitment。批量 fold 多个 block 会把 branch delta 合并到最后一个 block changeset，破坏 per-block unwind。
+`${ERIGON_ROOT}/execution/stagedsync/committer.go:99-109` 说明：当需要 changeset/reorg 支持时，必须每个 block boundary 计算 commitment。批量 fold 多个 block 会把 branch delta 合并到最后一个 block changeset，破坏 per-block unwind。
 
 java-tron S11 对应规则：
 
@@ -187,7 +187,7 @@ java-tron S11 对应规则：
 
 ### 3.2 Fork bounce 需要 block hash 参与路由
 
-`/Users/boson/GolandProjects/erigon/execution/stagedsync/committer.go:459-520` 的 `computeWithBlockAccumulator` 使用 `(BlockNum, BlockHash)` 找 changeset，注释说明 number-only lookup 会在 fork bounce 后把 commitment state 写到错误 block changeset。
+`${ERIGON_ROOT}/execution/stagedsync/committer.go:459-520` 的 `computeWithBlockAccumulator` 使用 `(BlockNum, BlockHash)` 找 changeset，注释说明 number-only lookup 会在 fork bounce 后把 commitment state 写到错误 block changeset。
 
 java-tron S11 对应规则：
 
@@ -202,14 +202,14 @@ rootProgress 也必须保存 blockHash
 
 ### 3.3 Integrity 不是只看 root row 存在
 
-`/Users/boson/GolandProjects/erigon/db/integrity/commitment_integrity.go:143-208` 做了这些检查：
+`${ERIGON_ROOT}/db/integrity/commitment_integrity.go:143-208` 做了这些检查：
 
 - commitment state row 是否存在。
 - state row 覆盖的 txNum range 是否匹配 file range。
 - root txNum 是否落在 block min/max txNum 内。
 - block header root 是否匹配。
 
-`/Users/boson/GolandProjects/erigon/db/integrity/commitment_integrity.go:211-270` 又用独立 state reader seek/recompute root，比对 verified root。
+`${ERIGON_ROOT}/db/integrity/commitment_integrity.go:211-270` 又用独立 state reader seek/recompute root，比对 verified root。
 
 java-tron S11 对应：
 
@@ -219,9 +219,9 @@ java-tron S11 对应：
 
 ### 3.4 Rebuild 可以慢，但必须独立于 hot path
 
-`/Users/boson/GolandProjects/erigon/db/state/squeeze.go:921-1012` rebuild commitment files 时，从 account/storage file stream 生成 key iterator，并设置 `FilesOnlyStateReader`。
+`${ERIGON_ROOT}/db/state/squeeze.go:921-1012` rebuild commitment files 时，从 account/storage file stream 生成 key iterator，并设置 `FilesOnlyStateReader`。
 
-`/Users/boson/GolandProjects/erigon/db/state/squeeze.go:1089-1112` 的 shard rebuild 通过 touch key 后 `ComputeCommitment(..., saveState=true)` 生成 root。
+`${ERIGON_ROOT}/db/state/squeeze.go:1089-1112` 的 shard rebuild 通过 touch key 后 `ComputeCommitment(..., saveState=true)` 生成 root。
 
 java-tron S11 P0 采用更简单但等价的独立验证路线：
 
@@ -237,7 +237,7 @@ scan archive LATEST table for rooted domains
 
 ### 3.5 Unwind 边界必须受 changeset/root 约束
 
-`/Users/boson/GolandProjects/erigon/db/rawdb/rawtemporaldb/accessors_commitment.go:12-36` 通过 changeset 和 latest commitment 判断可 unwind 边界。
+`${ERIGON_ROOT}/db/rawdb/rawtemporaldb/accessors_commitment.go:12-36` 通过 changeset 和 latest commitment 判断可 unwind 边界。
 
 java-tron S11 对应：
 
