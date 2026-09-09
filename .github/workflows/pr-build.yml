@@ -65,6 +65,7 @@ jobs:
 
       - name: Upload test logs
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
           name: tron-test-log-macos26-aarch64
@@ -72,6 +73,7 @@ jobs:
             **/logs/tron-test*.log*
           if-no-files-found: warn
           retention-days: 1
+          overwrite: true
 
   build-ubuntu:
     name: Build ubuntu24 (JDK 17 / aarch64)
@@ -114,6 +116,7 @@ jobs:
 
       - name: Upload test logs
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
           name: tron-test-log-ubuntu24-aarch64
@@ -121,6 +124,7 @@ jobs:
             **/logs/tron-test*.log*
           if-no-files-found: warn
           retention-days: 1
+          overwrite: true
 
   docker-build-rockylinux:
     name: Build rockylinux (JDK 8 / x86_64)
@@ -179,6 +183,7 @@ jobs:
 
       - name: Upload test logs
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
           name: tron-test-log-rockylinux-x86_64
@@ -186,6 +191,7 @@ jobs:
             **/logs/tron-test*.log*
           if-no-files-found: warn
           retention-days: 1
+          overwrite: true
 
   docker-build-debian11:
     name: Build debian11 (JDK 8 / x86_64)
@@ -243,6 +249,7 @@ jobs:
 
       - name: Upload test logs
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
           name: tron-test-log-debian11-x86_64
@@ -250,6 +257,7 @@ jobs:
             **/logs/tron-test*.log*
           if-no-files-found: warn
           retention-days: 1
+          overwrite: true
 
       - name: Generate module coverage reports
         run: ./gradlew jacocoTestReport --no-daemon
@@ -313,6 +321,7 @@ jobs:
 
       - name: Upload test logs
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
           name: tron-test-log-coverage-base-x86_64
@@ -320,6 +329,7 @@ jobs:
             **/logs/tron-test*.log*
           if-no-files-found: warn
           retention-days: 1
+          overwrite: true
 
       - name: Generate module coverage reports (base)
         run: ./gradlew jacocoTestReport --no-daemon
