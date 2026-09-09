@@ -63,6 +63,16 @@ jobs:
           java -jar "$JAR" db archive -h
           java -jar "$JAR" keystore --help
 
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: tron-test-log-macos26-aarch64
+          path: |
+            **/logs/tron-test*.log*
+          if-no-files-found: warn
+          retention-days: 1
+
   build-ubuntu:
     name: Build ubuntu24 (JDK 17 / aarch64)
     if: ${{ github.event_name == 'pull_request' || inputs.job == 'all' || inputs.job == 'ubuntu' }}
@@ -101,6 +111,16 @@ jobs:
           java -jar "$JAR" db --help
           java -jar "$JAR" db archive -h
           java -jar "$JAR" keystore --help
+
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: tron-test-log-ubuntu24-aarch64
+          path: |
+            **/logs/tron-test*.log*
+          if-no-files-found: warn
+          retention-days: 1
 
   docker-build-rockylinux:
     name: Build rockylinux (JDK 8 / x86_64)
@@ -157,6 +177,16 @@ jobs:
       - name: Test with RocksDB engine
         run: ./gradlew :framework:testWithRocksDb --no-daemon
 
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: tron-test-log-rockylinux-x86_64
+          path: |
+            **/logs/tron-test*.log*
+          if-no-files-found: warn
+          retention-days: 1
+
   docker-build-debian11:
     name: Build debian11 (JDK 8 / x86_64)
     if: ${{ github.event_name == 'pull_request' || inputs.job == 'all' || inputs.job == 'debian11' }}
@@ -210,6 +240,16 @@ jobs:
 
       - name: Test with RocksDB engine
         run: ./gradlew :framework:testWithRocksDb --no-daemon --no-build-cache
+
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: tron-test-log-debian11-x86_64
+          path: |
+            **/logs/tron-test*.log*
+          if-no-files-found: warn
+          retention-days: 1
 
       - name: Generate module coverage reports
         run: ./gradlew jacocoTestReport --no-daemon
@@ -270,6 +310,16 @@ jobs:
       - name: Test with RocksDB engine (base)
         continue-on-error: true
         run: ./gradlew :framework:testWithRocksDb --no-daemon --no-build-cache
+
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: tron-test-log-coverage-base-x86_64
+          path: |
+            **/logs/tron-test*.log*
+          if-no-files-found: warn
+          retention-days: 1
 
       - name: Generate module coverage reports (base)
         run: ./gradlew jacocoTestReport --no-daemon
