@@ -40,7 +40,7 @@ public class ActuatorFactory {
             actuatorList
                 .add(getActuatorByContract(contract, chainBaseManager, transactionCapsule));
           } catch (IllegalAccessException | InstantiationException e) {
-            e.printStackTrace();
+            logger.error("Failed to create actuator for contract {}.", contract.getType(), e);
           }
         });
     return actuatorList;

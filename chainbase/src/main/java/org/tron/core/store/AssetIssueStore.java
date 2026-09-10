@@ -3,6 +3,8 @@ package org.tron.core.store;
 import static org.tron.common.utils.Commons.ASSET_ISSUE_COUNT_LIMIT_MAX;
 
 import com.google.common.collect.Streams;
+import com.google.protobuf.ByteString;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map.Entry;
 import java.util.stream.Collectors;
@@ -46,12 +48,10 @@ public class AssetIssueStore extends TronStoreWithRevoking<AssetIssueCapsule> {
     if (assetIssueList.size() <= offset) {
       return null;
     }
-    assetIssueList.sort((o1, o2) -> {
-      if (o1.getName() != o2.getName()) {
-        return o1.getName().toStringUtf8().compareTo(o2.getName().toStringUtf8());
-      }
-      return Long.compare(o1.getOrder(), o2.getOrder());
-    });
+    assetIssueList.sort(
+        Comparator.comparing(AssetIssueCapsule::getName,
+                ByteString.unsignedLexicographicalComparator())
+            .thenComparingLong(AssetIssueCapsule::getOrder));
     limit = limit > ASSET_ISSUE_COUNT_LIMIT_MAX ? ASSET_ISSUE_COUNT_LIMIT_MAX : limit;
     long end = offset + limit;
     end = end > assetIssueList.size() ? assetIssueList.size() : end;

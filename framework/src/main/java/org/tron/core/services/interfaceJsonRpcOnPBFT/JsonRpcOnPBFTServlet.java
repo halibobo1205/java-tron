@@ -21,7 +21,7 @@ public class JsonRpcOnPBFTServlet extends JsonRpcServlet {
       try {
         super.doPost(request, response);
       } catch (IOException e) {
-        e.printStackTrace();
+        logger.error("Failed to process JSON-RPC request.", e);
         throw new RuntimeException(e);
       }
     });

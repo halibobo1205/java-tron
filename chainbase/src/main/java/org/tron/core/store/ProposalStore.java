@@ -1,6 +1,7 @@
 package org.tron.core.store;
 
 import com.google.common.collect.Streams;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -32,23 +33,24 @@ public class ProposalStore extends TronStoreWithRevoking<ProposalCapsule> {
   public List<ProposalCapsule> getAllProposals() {
     return Streams.stream(iterator())
         .map(Map.Entry::getValue)
-        .sorted(
-            (ProposalCapsule a, ProposalCapsule b) -> a.getCreateTime() <= b.getCreateTime() ? 1
-                : -1)
+        .sorted(Comparator.comparingLong(ProposalCapsule::getCreateTime).reversed())
         .collect(Collectors.toList());
   }
 
   /**
-   * note: return in asc order by expired time
+   * Returns proposals in ascending expiration order, ties broken by descending proposal ID.
+   *
+   * <p>The descending-id tie-break preserves the execution order for equal-expiration proposals:
+   * live execution applies the highest id first and the lowest id last (final value), and the
+   * energy/bandwidth price-history loaders rebuild from the tail, so the lowest id must be last.
    */
   public List<ProposalCapsule> getSpecifiedProposals(State state, long code) {
     return Streams.stream(iterator())
         .map(Map.Entry::getValue)
         .filter(proposalCapsule -> proposalCapsule.getState().equals(state))
         .filter(proposalCapsule -> proposalCapsule.getParameters().containsKey(code))
-        .sorted(
-            (ProposalCapsule a, ProposalCapsule b) -> a.getExpirationTime() > b.getExpirationTime()
-                ? 1 : -1)
+        .sorted(Comparator.comparingLong(ProposalCapsule::getExpirationTime)
+            .thenComparing(Comparator.comparingLong(ProposalCapsule::getID).reversed()))
         .collect(Collectors.toList());
   }
 }
