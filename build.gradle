@@ -160,6 +160,7 @@ subprojects {
                         '-Xep:StringCharset:ERROR',
                         '-Xep:ByteBufferBackingArray:ERROR',
                         '-Xep:EmptyCatch:ERROR',
+                        '-Xep:IntLongMath:ERROR',
                 ])
             }
         }

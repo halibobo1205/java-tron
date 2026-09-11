@@ -2552,7 +2552,7 @@ public class Manager {
   }
 
   public long getPendingSize() {
-    long value = getPendingTransactions().size() + getRePushTransactions().size()
+    long value = (long) getPendingTransactions().size() + getRePushTransactions().size()
         + getPoppedTransactions().size();
     return value;
   }
