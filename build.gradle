@@ -165,6 +165,7 @@ subprojects {
                         '-Xep:ReferenceEquality:ERROR',
                         '-Xep:ClassNewInstance:ERROR',
                         '-Xep:MissingCasesInEnumSwitch:ERROR',
+                        '-Xep:ModifyCollectionInEnhancedForLoop:ERROR',
                 ])
             }
         }
