@@ -1,5 +1,6 @@
 package org.tron.core.capsule;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.tron.core.config.Parameter.ChainSymbol.TRX_SYMBOL_BYTES;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -177,10 +178,10 @@ public class ExchangeCapsule implements ProtoCapsule<Exchange> {
       byte[] firstTokenID = firstTokenName;
       byte[] secondTokenID = secondTokenName;
       if (!Arrays.equals(firstTokenName, TRX_SYMBOL_BYTES)) {
-        firstTokenID = assetIssueStore.get(firstTokenName).getId().getBytes();
+        firstTokenID = assetIssueStore.get(firstTokenName).getId().getBytes(UTF_8);
       }
       if (!Arrays.equals(secondTokenName, TRX_SYMBOL_BYTES)) {
-        secondTokenID = assetIssueStore.get(secondTokenName).getId().getBytes();
+        secondTokenID = assetIssueStore.get(secondTokenName).getId().getBytes(UTF_8);
       }
       this.exchange = this.exchange.toBuilder()
           .setFirstTokenId(ByteString.copyFrom(firstTokenID))

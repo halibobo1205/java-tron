@@ -15,6 +15,7 @@
 
 package org.tron.core.capsule.utils;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.tron.common.math.Maths.addExact;
 import static org.tron.common.math.Maths.floorDiv;
 import static org.tron.common.math.Maths.multiplyExact;
@@ -283,7 +284,7 @@ public class MarketUtils {
       AssetIssueStore assetIssueStore) {
     byte[] sellTokenId = orderCapsule.getSellTokenId();
     long sellTokenQuantityRemain = orderCapsule.getSellTokenQuantityRemain();
-    if (Arrays.equals(sellTokenId, "_".getBytes())) {
+    if (Arrays.equals(sellTokenId, "_".getBytes(UTF_8))) {
       accountCapsule.setBalance(addExact(
           accountCapsule.getBalance(), sellTokenQuantityRemain,
           dynamicStore.disableJavaLangMath()));
@@ -304,7 +305,7 @@ public class MarketUtils {
   }
 
   public static boolean checkTokenValid(byte[] tokenId) {
-    if (!Arrays.equals("_".getBytes(), tokenId) && !TransactionUtil.isNumber(tokenId)) {
+    if (!Arrays.equals("_".getBytes(UTF_8), tokenId) && !TransactionUtil.isNumber(tokenId)) {
       return false;
     }
 

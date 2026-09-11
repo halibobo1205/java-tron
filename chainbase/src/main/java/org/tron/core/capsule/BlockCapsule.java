@@ -15,6 +15,7 @@
 
 package org.tron.core.capsule;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.tron.core.Constant.PER_SIGN_LENGTH;
 import static org.tron.core.exception.BadBlockException.TypeEnum.CALC_MERKLE_ROOT_FAILED;
 
@@ -264,7 +265,7 @@ public class BlockCapsule implements ProtoCapsule<Block> {
   public void setWitness(String witness) {
     BlockHeader.raw blockHeaderRaw =
         this.block.getBlockHeader().getRawData().toBuilder().setWitnessAddress(
-            ByteString.copyFrom(witness.getBytes())).build();
+            ByteString.copyFrom(witness.getBytes(UTF_8))).build();
 
     this.block = this.block.toBuilder().setBlockHeader(
         this.block.getBlockHeader().toBuilder().setRawData(blockHeaderRaw)).build();

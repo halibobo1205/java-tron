@@ -1,5 +1,6 @@
 package org.tron.core.zen.note;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.tron.common.zksnark.JLibsodium.CRYPTO_AEAD_CHACHA20POLY1305_IETF_NPUBBYTES;
 import static org.tron.core.utils.ZenChainParams.ZC_ENCCIPHERTEXT_SIZE;
 import static org.tron.core.utils.ZenChainParams.ZC_ENCPLAINTEXT_SIZE;
@@ -8,7 +9,6 @@ import static org.tron.core.utils.ZenChainParams.ZC_OUTPLAINTEXT_SIZE;
 import static org.tron.core.zen.note.NoteEncryption.Encryption.NOTEENCRYPTION_CIPHER_KEYSIZE;
 
 import java.math.BigInteger;
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Optional;
 import lombok.AllArgsConstructor;
@@ -122,7 +122,7 @@ public class NoteEncryption {
     public static final int BURN_RESERVED_OFFSET = BURN_NONCE_OFFSET + BURN_NONCE_LEN;
     private static final byte[] BURN_RECORD_V2_MARKER = new byte[]{0, 0, 0, 1};
     private static final byte[] BURN_NONCE_DOMAIN =
-        "Ztron_BurnNonce".getBytes(StandardCharsets.UTF_8);
+        "Ztron_BurnNonce".getBytes(UTF_8);
 
     public static byte[] getBurnRecordV2Marker() {
       return BURN_RECORD_V2_MARKER.clone();
@@ -140,7 +140,7 @@ public class NoteEncryption {
       System.arraycopy(epk, 0, block, 96, 32);
 
       byte[] personalization = new byte[JLibsodium.CRYPTO_GENERICHASH_BLAKE2B_PERSONALBYTES];
-      byte[] temp = "Ztron_Derive_ock".getBytes();
+      byte[] temp = "Ztron_Derive_ock".getBytes(UTF_8);
       System.arraycopy(temp, 0, personalization, 0, temp.length);
       if (JLibsodium.cryptoGenerichashBlack2bSaltPersonal(new Black2bSaltPersonalParams(
           ock, NOTEENCRYPTION_CIPHER_KEYSIZE,
@@ -162,7 +162,7 @@ public class NoteEncryption {
       System.arraycopy(sharedsecret, 0, block, 0, 32);
       System.arraycopy(epk, 0, block, 32, 32);
       byte[] personalization = new byte[JLibsodium.CRYPTO_GENERICHASH_BLAKE2B_PERSONALBYTES];
-      byte[] temp = "Ztron_SaplingKDF".getBytes();
+      byte[] temp = "Ztron_SaplingKDF".getBytes(UTF_8);
       System.arraycopy(temp, 0, personalization, 0, temp.length);
       if (JLibsodium.cryptoGenerichashBlack2bSaltPersonal(new Black2bSaltPersonalParams(
           kEnc, NOTEENCRYPTION_CIPHER_KEYSIZE,

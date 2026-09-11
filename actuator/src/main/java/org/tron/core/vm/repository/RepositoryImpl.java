@@ -1,5 +1,6 @@
 package org.tron.core.vm.repository;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.tron.common.math.Maths.addExact;
 import static org.tron.common.math.Maths.max;
 import static org.tron.common.math.Maths.round;
@@ -82,9 +83,9 @@ import org.tron.protos.contract.SmartContractOuterClass.SmartContract;
 public class RepositoryImpl implements Repository {
 
   private final long precision = Parameter.ChainConstant.PRECISION;
-  private static final byte[] TOTAL_NET_WEIGHT = "TOTAL_NET_WEIGHT".getBytes();
-  private static final byte[] TOTAL_ENERGY_WEIGHT = "TOTAL_ENERGY_WEIGHT".getBytes();
-  private static final byte[] TOTAL_TRON_POWER_WEIGHT = "TOTAL_TRON_POWER_WEIGHT".getBytes();
+  private static final byte[] TOTAL_NET_WEIGHT = "TOTAL_NET_WEIGHT".getBytes(UTF_8);
+  private static final byte[] TOTAL_ENERGY_WEIGHT = "TOTAL_ENERGY_WEIGHT".getBytes(UTF_8);
+  private static final byte[] TOTAL_TRON_POWER_WEIGHT = "TOTAL_TRON_POWER_WEIGHT".getBytes(UTF_8);
 
   private StoreFactory storeFactory;
   @Getter
@@ -405,7 +406,7 @@ public class RepositoryImpl implements Repository {
 
   @Override
   public long getEndCycle(byte[] address) {
-    byte[] key = ("end-" + Hex.toHexString(address)).getBytes();
+    byte[] key = ("end-" + Hex.toHexString(address)).getBytes(UTF_8);
     Key cacheKey = new Key(key);
     BytesCapsule bytesCapsule = getDelegation(cacheKey);
     return bytesCapsule == null ? DelegationStore.REMARK : ByteArray.toLong(bytesCapsule.getData());
@@ -413,7 +414,7 @@ public class RepositoryImpl implements Repository {
 
   @Override
   public AccountCapsule getAccountVote(long cycle, byte[] address) {
-    byte[] key = (cycle + "-" + Hex.toHexString(address) + "-account-vote").getBytes();
+    byte[] key = (cycle + "-" + Hex.toHexString(address) + "-account-vote").getBytes(UTF_8);
     Key cacheKey = new Key(key);
     BytesCapsule bytesCapsule = getDelegation(cacheKey);
     if (bytesCapsule == null) {
@@ -629,14 +630,14 @@ public class RepositoryImpl implements Repository {
   @Override
   public void updateEndCycle(byte[] word, long cycle) {
     BytesCapsule bytesCapsule = new BytesCapsule(ByteArray.fromLong(cycle));
-    byte[] key = ("end-" + Hex.toHexString(word)).getBytes();
+    byte[] key = ("end-" + Hex.toHexString(word)).getBytes(UTF_8);
     updateDelegation(key, bytesCapsule);
   }
 
   @Override
   public void updateAccountVote(byte[] word, long cycle, AccountCapsule accountCapsule) {
     BytesCapsule bytesCapsule = new BytesCapsule(accountCapsule.getData());
-    byte[] key = (cycle + "-" + Hex.toHexString(word) + "-account-vote").getBytes();
+    byte[] key = (cycle + "-" + Hex.toHexString(word) + "-account-vote").getBytes(UTF_8);
     updateDelegation(key, bytesCapsule);
   }
 
@@ -875,7 +876,7 @@ public class RepositoryImpl implements Repository {
     if (accountCapsule == null) {
       accountCapsule = createAccount(address, Protocol.AccountType.Normal);
     }
-    long balance = accountCapsule.getAssetV2(new String(tokenIdWithoutLeadingZero));
+    long balance = accountCapsule.getAssetV2(new String(tokenIdWithoutLeadingZero, UTF_8));
     if (value == 0) {
       return balance;
     }
@@ -896,7 +897,7 @@ public class RepositoryImpl implements Repository {
     Key key = Key.create(address);
     accountCache.put(key, Value.create(accountCapsule,
          accountCache.get(key).getType().addType(Type.DIRTY)));
-    return accountCapsule.getAssetV2(new String(tokenIdWithoutLeadingZero));
+    return accountCapsule.getAssetV2(new String(tokenIdWithoutLeadingZero, UTF_8));
   }
 
   @Override
@@ -905,7 +906,7 @@ public class RepositoryImpl implements Repository {
     if (accountCapsule == null) {
       return 0;
     }
-    String tokenStr = new String(ByteUtil.stripLeadingZeroes(tokenId));
+    String tokenStr = new String(ByteUtil.stripLeadingZeroes(tokenId), UTF_8);
     return accountCapsule.getAssetV2(tokenStr);
   }
 

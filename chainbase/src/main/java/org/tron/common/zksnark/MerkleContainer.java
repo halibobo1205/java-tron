@@ -1,5 +1,6 @@
 package org.tron.common.zksnark;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import com.google.protobuf.ByteString;
 import lombok.Getter;
 import lombok.Setter;
@@ -13,8 +14,8 @@ import org.tron.core.store.TreeBlockIndexStore;
 @Slf4j
 public class MerkleContainer {
 
-  private static final byte[] lastTreeKey = "LAST_TREE".getBytes();
-  private static final byte[] currentTreeKey = "CURRENT_TREE".getBytes();
+  private static final byte[] lastTreeKey = "LAST_TREE".getBytes(UTF_8);
+  private static final byte[] currentTreeKey = "CURRENT_TREE".getBytes(UTF_8);
 
   @Getter
   @Setter

@@ -1,5 +1,6 @@
 package org.tron.core.vm.utils;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import org.tron.common.utils.ForkController;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.config.Parameter;
@@ -46,9 +47,10 @@ public class MUtil {
     if (0 == amount) {
       return;
     }
-    VMUtils.validateForSmartContract(deposit, fromAddress, toAddress, tokenId.getBytes(), amount);
-    deposit.addTokenBalance(toAddress, tokenId.getBytes(), amount);
-    deposit.addTokenBalance(fromAddress, tokenId.getBytes(), -amount);
+    VMUtils.validateForSmartContract(deposit, fromAddress, toAddress,
+        tokenId.getBytes(UTF_8), amount);
+    deposit.addTokenBalance(toAddress, tokenId.getBytes(UTF_8), amount);
+    deposit.addTokenBalance(fromAddress, tokenId.getBytes(UTF_8), -amount);
   }
 
   public static boolean isNullOrEmpty(String str) {
