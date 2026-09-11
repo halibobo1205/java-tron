@@ -1,5 +1,6 @@
 package org.tron.core.services.http;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.apache.commons.lang3.StringUtils.EMPTY;
 import static org.tron.common.utils.Commons.decodeFromBase58Check;
 
@@ -492,7 +493,7 @@ public class Util {
 
   public static String parseMethod(String methodSign, String input) {
     byte[] selector = new byte[4];
-    System.arraycopy(Hash.sha3(methodSign.getBytes()), 0, selector, 0, 4);
+    System.arraycopy(Hash.sha3(methodSign.getBytes(UTF_8)), 0, selector, 0, 4);
     //System.out.println(methodSign + ":" + Hex.toHexString(selector));
     if (StringUtils.isEmpty(input)) {
       return Hex.toHexString(selector);

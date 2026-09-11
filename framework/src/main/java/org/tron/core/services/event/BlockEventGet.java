@@ -1,5 +1,7 @@
 package org.tron.core.services.event;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import com.google.common.collect.Lists;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -267,7 +269,7 @@ public class BlockEventGet {
         }
         signature += signBuilder + ")";
         signatureFull += signFullBuilder + ")";
-        String sha3 = Hex.toHexString(Hash.sha3(signature.getBytes()));
+        String sha3 = Hex.toHexString(Hash.sha3(signature.getBytes(UTF_8)));
         if (sha3.equals(logHash)) {
           eventSignature = signature;
           eventSignatureFull = signatureFull;

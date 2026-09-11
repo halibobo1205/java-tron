@@ -18,6 +18,7 @@
 
 package org.tron.core;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.tron.common.math.Maths.addExact;
 import static org.tron.common.math.Maths.ceil;
 import static org.tron.common.math.Maths.max;
@@ -3968,7 +3969,7 @@ public class Wallet {
 
     String methodSign = "nullifiers(bytes32)";
     byte[] selector = new byte[4];
-    System.arraycopy(Hash.sha3(methodSign.getBytes()), 0, selector, 0, 4);
+    System.arraycopy(Hash.sha3(methodSign.getBytes(UTF_8)), 0, selector, 0, 4);
     byte[] input = ByteUtil.merge(selector, nf);
 
     TriggerSmartContract.Builder triggerBuilder = TriggerSmartContract.newBuilder();
@@ -4263,7 +4264,7 @@ public class Wallet {
       throws ContractExeException {
     String methodSign = "scalingFactor()";
     byte[] selector = new byte[4];
-    System.arraycopy(Hash.sha3(methodSign.getBytes()), 0, selector, 0, 4);
+    System.arraycopy(Hash.sha3(methodSign.getBytes(UTF_8)), 0, selector, 0, 4);
 
     TriggerSmartContract.Builder triggerBuilder = TriggerSmartContract.newBuilder();
     triggerBuilder.setContractAddress(ByteString.copyFrom(contractAddress));

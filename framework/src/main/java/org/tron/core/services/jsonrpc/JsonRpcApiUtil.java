@@ -1,5 +1,7 @@
 package org.tron.core.services.jsonrpc;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import com.google.common.base.Throwables;
 import com.google.common.primitives.Longs;
 import com.google.protobuf.Any;
@@ -90,7 +92,7 @@ public class JsonRpcApiUtil {
 
   public static String getMethodSign(String method) {
     byte[] selector = new byte[4];
-    System.arraycopy(Hash.sha3(method.getBytes()), 0, selector, 0, 4);
+    System.arraycopy(Hash.sha3(method.getBytes(UTF_8)), 0, selector, 0, 4);
     return Hex.toHexString(selector);
   }
 
