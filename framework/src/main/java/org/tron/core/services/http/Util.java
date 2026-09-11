@@ -15,6 +15,7 @@ import java.io.InputStreamReader;
 import java.lang.reflect.Constructor;
 import java.math.BigDecimal;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.security.InvalidParameterException;
 import java.util.ArrayList;
 import java.util.List;
@@ -469,7 +470,7 @@ public class Util {
     if (data.length() > 0) {
       Transaction.raw.Builder raw = transaction.getRawData().toBuilder();
       if (visible) {
-        raw.setData(ByteString.copyFrom(data.getBytes()));
+        raw.setData(ByteString.copyFrom(data.getBytes(StandardCharsets.UTF_8)));
       } else {
         raw.setData(ByteString.copyFrom(ByteArray.fromHexString(data)));
       }
