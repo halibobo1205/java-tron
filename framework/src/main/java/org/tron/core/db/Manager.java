@@ -1659,7 +1659,7 @@ public class Manager {
     HistoryBlockHashUtil.write(this, blockCapsule);
 
     Set<String> accountSet = new HashSet<>();
-    AtomicInteger shieldedTransCounts = new AtomicInteger(0);
+    int shieldedTransCounts = 0;
     List<TransactionCapsule> toBePacked = new ArrayList<>();
     long currentSize = blockCapsule.getInstance().getSerializedSize();
     boolean isSort = Args.getInstance().isOpenTransactionSort();
@@ -1715,7 +1715,7 @@ public class Manager {
       //shielded transaction
       Transaction transaction = trx.getInstance();
       if (isShieldedTransaction(transaction)
-          && shieldedTransCounts.incrementAndGet() > SHIELDED_TRANS_IN_BLOCK_COUNTS) {
+          && ++shieldedTransCounts > SHIELDED_TRANS_IN_BLOCK_COUNTS) {
         continue;
       }
       //multi sign transaction
