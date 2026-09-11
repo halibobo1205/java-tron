@@ -1,6 +1,6 @@
 package org.tron.common.utils;
 
-import java.io.UnsupportedEncodingException;
+import java.nio.charset.StandardCharsets;
 
 public class Base58 {
 
@@ -53,11 +53,7 @@ public class Base58 {
     }
 
     byte[] output = copyOfRange(temp, j, temp.length);
-    try {
-      return new String(output, "US-ASCII");
-    } catch (UnsupportedEncodingException e) {
-      throw new RuntimeException(e);  // Cannot happen.
-    }
+    return new String(output, StandardCharsets.US_ASCII);
   }
 
   public static byte[] decode(String input) throws IllegalArgumentException {

@@ -157,6 +157,7 @@ subprojects {
                         '-Xep:StreamResourceLeak:ERROR',
                         '-Xep:UnnecessaryAsync:ERROR',
                         '-Xep:LockNotBeforeTry:ERROR',
+                        '-Xep:StringCharset:ERROR',
                 ])
             }
         }
