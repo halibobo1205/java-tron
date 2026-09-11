@@ -827,10 +827,8 @@ public class JsonFormat {
           throw tokenizer.parseException("Expected \"" + endToken + "\".");
         }
         mergeField(tokenizer, extensionRegistry, subBuilder, selfType);
-        if (tokenizer.tryConsume(",")) {
-          // there are more fields in the object, so continue
-          continue;
-        }
+        // consume the separator when more fields follow in the object
+        tokenizer.tryConsume(",");
       }
 
       return subBuilder.build();
