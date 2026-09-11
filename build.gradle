@@ -150,6 +150,7 @@ subprojects {
                         '-Xep:CheckReturnValue:ERROR',
                         '-Xep:ReturnValueIgnored:ERROR',
                         '-Xep:FloatCast:ERROR',
+                        '-Xep:IntLiteralCast:ERROR',
                 ])
             }
         }
