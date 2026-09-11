@@ -1,5 +1,6 @@
 package org.tron.core.actuator;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.tron.core.actuator.ActuatorConstant.NOT_EXIST_STR;
 import static org.tron.core.capsule.utils.TransactionUtil.isNumber;
 import static org.tron.core.config.Parameter.ChainSymbol.TRX_SYMBOL_BYTES;
@@ -93,11 +94,11 @@ public class ExchangeCreateActuator extends AbstractExchangeActuator {
         //save to new asset store
         if (!Arrays.equals(firstTokenID, TRX_SYMBOL_BYTES)) {
           String firstTokenRealID = assetIssueStore.get(firstTokenID).getId();
-          firstTokenID = firstTokenRealID.getBytes();
+          firstTokenID = firstTokenRealID.getBytes(UTF_8);
         }
         if (!Arrays.equals(secondTokenID, TRX_SYMBOL_BYTES)) {
           String secondTokenRealID = assetIssueStore.get(secondTokenID).getId();
-          secondTokenID = secondTokenRealID.getBytes();
+          secondTokenID = secondTokenRealID.getBytes(UTF_8);
         }
       }
 
