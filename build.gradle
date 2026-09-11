@@ -162,6 +162,7 @@ subprojects {
                         '-Xep:EmptyCatch:ERROR',
                         '-Xep:IntLongMath:ERROR',
                         '-Xep:NarrowCalculation:ERROR',
+                        '-Xep:ReferenceEquality:ERROR',
                 ])
             }
         }

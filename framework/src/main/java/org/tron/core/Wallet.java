@@ -4448,6 +4448,7 @@ public class Wallet {
     return blockBalanceTraceCapsule.getInstance();
   }
 
+  @SuppressWarnings("ReferenceEquality")
   public void checkBlockIdentifier(BlockBalanceTrace.BlockIdentifier blockIdentifier) {
     if (blockIdentifier == blockIdentifier.getDefaultInstanceForType()) {
       throw new IllegalArgumentException("block_identifier null");
@@ -4461,6 +4462,7 @@ public class Wallet {
 
   }
 
+  @SuppressWarnings("ReferenceEquality")
   public void checkAccountIdentifier(BalanceContract.AccountIdentifier accountIdentifier) {
     if (accountIdentifier == accountIdentifier.getDefaultInstanceForType()) {
       throw new IllegalArgumentException("account_identifier is null");

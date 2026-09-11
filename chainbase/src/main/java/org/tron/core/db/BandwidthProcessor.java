@@ -288,6 +288,7 @@ public class BandwidthProcessor extends ResourceProcessor {
   }
 
 
+  @SuppressWarnings("ReferenceEquality")
   private boolean useAssetAccountNet(Contract contract, AccountCapsule accountCapsule, long now,
       long bytes)
       throws ContractValidateException {

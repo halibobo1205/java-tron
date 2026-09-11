@@ -102,6 +102,7 @@ public class KhaosDatabase extends TronDatabase {
   /**
    * Push the block in the KhoasDB.
    */
+  @SuppressWarnings("ReferenceEquality")
   public BlockCapsule push(BlockCapsule blk)
       throws UnLinkedBlockException, BadNumberBlockException {
     KhaosBlock block = new KhaosBlock(blk);
