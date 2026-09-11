@@ -406,7 +406,7 @@ public class RepositoryImpl implements Repository {
 
   @Override
   public long getEndCycle(byte[] address) {
-    byte[] key = ("end-" + Hex.toHexString(address)).getBytes();
+    byte[] key = ("end-" + Hex.toHexString(address)).getBytes(UTF_8);
     Key cacheKey = new Key(key);
     BytesCapsule bytesCapsule = getDelegation(cacheKey);
     return bytesCapsule == null ? DelegationStore.REMARK : ByteArray.toLong(bytesCapsule.getData());
@@ -414,7 +414,7 @@ public class RepositoryImpl implements Repository {
 
   @Override
   public AccountCapsule getAccountVote(long cycle, byte[] address) {
-    byte[] key = (cycle + "-" + Hex.toHexString(address) + "-account-vote").getBytes();
+    byte[] key = (cycle + "-" + Hex.toHexString(address) + "-account-vote").getBytes(UTF_8);
     Key cacheKey = new Key(key);
     BytesCapsule bytesCapsule = getDelegation(cacheKey);
     if (bytesCapsule == null) {
@@ -630,14 +630,14 @@ public class RepositoryImpl implements Repository {
   @Override
   public void updateEndCycle(byte[] word, long cycle) {
     BytesCapsule bytesCapsule = new BytesCapsule(ByteArray.fromLong(cycle));
-    byte[] key = ("end-" + Hex.toHexString(word)).getBytes();
+    byte[] key = ("end-" + Hex.toHexString(word)).getBytes(UTF_8);
     updateDelegation(key, bytesCapsule);
   }
 
   @Override
   public void updateAccountVote(byte[] word, long cycle, AccountCapsule accountCapsule) {
     BytesCapsule bytesCapsule = new BytesCapsule(accountCapsule.getData());
-    byte[] key = (cycle + "-" + Hex.toHexString(word) + "-account-vote").getBytes();
+    byte[] key = (cycle + "-" + Hex.toHexString(word) + "-account-vote").getBytes(UTF_8);
     updateDelegation(key, bytesCapsule);
   }
 

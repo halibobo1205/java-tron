@@ -1,5 +1,6 @@
 package org.tron.core.store;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.ArrayUtils;
 import org.bouncycastle.util.encoders.Hex;
@@ -146,27 +147,27 @@ public class DelegationStore extends TronStoreWithRevoking<BytesCapsule> {
   }
 
   private byte[] buildVoteKey(long cycle, byte[] address) {
-    return (cycle + "-" + Hex.toHexString(address) + "-vote").getBytes();
+    return (cycle + "-" + Hex.toHexString(address) + "-vote").getBytes(UTF_8);
   }
 
   private byte[] buildRewardKey(long cycle, byte[] address) {
-    return (cycle + "-" + Hex.toHexString(address) + "-reward").getBytes();
+    return (cycle + "-" + Hex.toHexString(address) + "-reward").getBytes(UTF_8);
   }
 
   private byte[] buildAccountVoteKey(long cycle, byte[] address) {
-    return (cycle + "-" + Hex.toHexString(address) + "-account-vote").getBytes();
+    return (cycle + "-" + Hex.toHexString(address) + "-account-vote").getBytes(UTF_8);
   }
 
   private byte[] buildEndCycleKey(byte[] address) {
-    return ("end-" + Hex.toHexString(address)).getBytes();
+    return ("end-" + Hex.toHexString(address)).getBytes(UTF_8);
   }
 
   private byte[] buildBrokerageKey(long cycle, byte[] address) {
-    return (cycle + "-" + Hex.toHexString(address) + "-brokerage").getBytes();
+    return (cycle + "-" + Hex.toHexString(address) + "-brokerage").getBytes(UTF_8);
   }
 
   private byte[] buildViKey(long cycle, byte[] address) {
-    return (cycle + "-" + Hex.toHexString(address) + "-vi").getBytes();
+    return (cycle + "-" + Hex.toHexString(address) + "-vi").getBytes(UTF_8);
   }
 
 }
