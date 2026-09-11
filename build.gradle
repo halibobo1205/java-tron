@@ -151,6 +151,7 @@ subprojects {
                         '-Xep:ReturnValueIgnored:ERROR',
                         '-Xep:FloatCast:ERROR',
                         '-Xep:IntLiteralCast:ERROR',
+                        '-Xep:OperatorPrecedence:ERROR',
                 ])
             }
         }

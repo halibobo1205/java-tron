@@ -3168,7 +3168,7 @@ public class Wallet {
     }
 
     ProgramResult result = context.getProgramResult();
-    if (!isEstimating && result.getException() != null
+    if ((!isEstimating && result.getException() != null)
         || result.getException() instanceof Program.OutOfTimeException) {
       RuntimeException e = result.getException();
       logger.warn("Constant call failed for reason: {}", e.getMessage());
