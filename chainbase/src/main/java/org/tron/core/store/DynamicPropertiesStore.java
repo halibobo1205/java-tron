@@ -1,5 +1,6 @@
 package org.tron.core.store;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.tron.common.math.Maths.max;
 import static org.tron.core.Constant.MAX_PROPOSAL_EXPIRE_TIME;
 import static org.tron.core.Constant.MIN_PROPOSAL_EXPIRE_TIME;
@@ -30,233 +31,248 @@ import org.tron.core.exception.ItemNotFoundException;
 public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule> {
 
   private static final byte[] LATEST_BLOCK_HEADER_TIMESTAMP = "latest_block_header_timestamp"
-      .getBytes();
-  private static final byte[] LATEST_BLOCK_HEADER_NUMBER = "latest_block_header_number".getBytes();
-  private static final byte[] LATEST_BLOCK_HEADER_HASH = "latest_block_header_hash".getBytes();
+      .getBytes(UTF_8);
+  private static final byte[] LATEST_BLOCK_HEADER_NUMBER =
+      "latest_block_header_number".getBytes(UTF_8);
+  private static final byte[] LATEST_BLOCK_HEADER_HASH = "latest_block_header_hash".getBytes(UTF_8);
   private static final byte[] STATE_FLAG = "state_flag"
-      .getBytes(); // 1 : is maintenance, 0 : is not maintenance
+      .getBytes(UTF_8); // 1 : is maintenance, 0 : is not maintenance
   private static final byte[] LATEST_SOLIDIFIED_BLOCK_NUM = "LATEST_SOLIDIFIED_BLOCK_NUM"
-      .getBytes();
+      .getBytes(UTF_8);
 
-  private static final byte[] LATEST_PROPOSAL_NUM = "LATEST_PROPOSAL_NUM".getBytes();
+  private static final byte[] LATEST_PROPOSAL_NUM = "LATEST_PROPOSAL_NUM".getBytes(UTF_8);
 
-  private static final byte[] LATEST_EXCHANGE_NUM = "LATEST_EXCHANGE_NUM".getBytes();
+  private static final byte[] LATEST_EXCHANGE_NUM = "LATEST_EXCHANGE_NUM".getBytes(UTF_8);
 
-  private static final byte[] BLOCK_FILLED_SLOTS = "BLOCK_FILLED_SLOTS".getBytes();
+  private static final byte[] BLOCK_FILLED_SLOTS = "BLOCK_FILLED_SLOTS".getBytes(UTF_8);
 
-  private static final byte[] BLOCK_FILLED_SLOTS_INDEX = "BLOCK_FILLED_SLOTS_INDEX".getBytes();
+  private static final byte[] BLOCK_FILLED_SLOTS_INDEX = "BLOCK_FILLED_SLOTS_INDEX".getBytes(UTF_8);
 
-  private static final byte[] NEXT_MAINTENANCE_TIME = "NEXT_MAINTENANCE_TIME".getBytes();
+  private static final byte[] NEXT_MAINTENANCE_TIME = "NEXT_MAINTENANCE_TIME".getBytes(UTF_8);
 
-  private static final byte[] MAX_FROZEN_TIME = "MAX_FROZEN_TIME".getBytes();
+  private static final byte[] MAX_FROZEN_TIME = "MAX_FROZEN_TIME".getBytes(UTF_8);
 
-  private static final byte[] MIN_FROZEN_TIME = "MIN_FROZEN_TIME".getBytes();
+  private static final byte[] MIN_FROZEN_TIME = "MIN_FROZEN_TIME".getBytes(UTF_8);
 
-  private static final byte[] MAX_FROZEN_SUPPLY_NUMBER = "MAX_FROZEN_SUPPLY_NUMBER".getBytes();
+  private static final byte[] MAX_FROZEN_SUPPLY_NUMBER = "MAX_FROZEN_SUPPLY_NUMBER".getBytes(UTF_8);
 
-  private static final byte[] MAX_FROZEN_SUPPLY_TIME = "MAX_FROZEN_SUPPLY_TIME".getBytes();
+  private static final byte[] MAX_FROZEN_SUPPLY_TIME = "MAX_FROZEN_SUPPLY_TIME".getBytes(UTF_8);
 
-  private static final byte[] MIN_FROZEN_SUPPLY_TIME = "MIN_FROZEN_SUPPLY_TIME".getBytes();
+  private static final byte[] MIN_FROZEN_SUPPLY_TIME = "MIN_FROZEN_SUPPLY_TIME".getBytes(UTF_8);
 
   private static final byte[] WITNESS_ALLOWANCE_FROZEN_TIME = "WITNESS_ALLOWANCE_FROZEN_TIME"
-      .getBytes();
+      .getBytes(UTF_8);
 
-  private static final byte[] MAINTENANCE_TIME_INTERVAL = "MAINTENANCE_TIME_INTERVAL".getBytes();
+  private static final byte[] MAINTENANCE_TIME_INTERVAL =
+      "MAINTENANCE_TIME_INTERVAL".getBytes(UTF_8);
 
-  private static final byte[] ACCOUNT_UPGRADE_COST = "ACCOUNT_UPGRADE_COST".getBytes();
+  private static final byte[] ACCOUNT_UPGRADE_COST = "ACCOUNT_UPGRADE_COST".getBytes(UTF_8);
 
-  private static final byte[] WITNESS_PAY_PER_BLOCK = "WITNESS_PAY_PER_BLOCK".getBytes();
+  private static final byte[] WITNESS_PAY_PER_BLOCK = "WITNESS_PAY_PER_BLOCK".getBytes(UTF_8);
 
-  private static final byte[] WITNESS_127_PAY_PER_BLOCK = "WITNESS_127_PAY_PER_BLOCK".getBytes();
+  private static final byte[] WITNESS_127_PAY_PER_BLOCK =
+      "WITNESS_127_PAY_PER_BLOCK".getBytes(UTF_8);
 
-  private static final byte[] WITNESS_STANDBY_ALLOWANCE = "WITNESS_STANDBY_ALLOWANCE".getBytes();
-  private static final byte[] ENERGY_FEE = "ENERGY_FEE".getBytes();
+  private static final byte[] WITNESS_STANDBY_ALLOWANCE =
+      "WITNESS_STANDBY_ALLOWANCE".getBytes(UTF_8);
+  private static final byte[] ENERGY_FEE = "ENERGY_FEE".getBytes(UTF_8);
   private static final long DEFAULT_ENERGY_FEE = 100L;
   public static final String DEFAULT_ENERGY_PRICE_HISTORY = "0:" + DEFAULT_ENERGY_FEE;
-  private static final byte[] MAX_CPU_TIME_OF_ONE_TX = "MAX_CPU_TIME_OF_ONE_TX".getBytes();
+  private static final byte[] MAX_CPU_TIME_OF_ONE_TX = "MAX_CPU_TIME_OF_ONE_TX".getBytes(UTF_8);
   //abandon
-  private static final byte[] CREATE_ACCOUNT_FEE = "CREATE_ACCOUNT_FEE".getBytes();
+  private static final byte[] CREATE_ACCOUNT_FEE = "CREATE_ACCOUNT_FEE".getBytes(UTF_8);
   private static final byte[] CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT
-      = "CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT".getBytes();
+      = "CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT".getBytes(UTF_8);
   private static final byte[] CREATE_NEW_ACCOUNT_BANDWIDTH_RATE =
       "CREATE_NEW_ACCOUNT_BANDWIDTH_RATE"
-          .getBytes();
-  private static final byte[] TRANSACTION_FEE = "TRANSACTION_FEE".getBytes(); // 1 byte
+          .getBytes(UTF_8);
+  private static final byte[] TRANSACTION_FEE = "TRANSACTION_FEE".getBytes(UTF_8); // 1 byte
   private static final long DEFAULT_TRANSACTION_FEE = 10L;
   public static final String DEFAULT_BANDWIDTH_PRICE_HISTORY = "0:" + DEFAULT_TRANSACTION_FEE;
 
-  private static final byte[] ASSET_ISSUE_FEE = "ASSET_ISSUE_FEE".getBytes();
+  private static final byte[] ASSET_ISSUE_FEE = "ASSET_ISSUE_FEE".getBytes(UTF_8);
   private static final byte[] UPDATE_ACCOUNT_PERMISSION_FEE = "UPDATE_ACCOUNT_PERMISSION_FEE"
-      .getBytes();
+      .getBytes(UTF_8);
   private static final byte[] MULTI_SIGN_FEE = "MULTI_SIGN_FEE"
-      .getBytes();
-  private static final byte[] SHIELDED_TRANSACTION_FEE = "SHIELDED_TRANSACTION_FEE".getBytes();
+      .getBytes(UTF_8);
+  private static final byte[] SHIELDED_TRANSACTION_FEE = "SHIELDED_TRANSACTION_FEE".getBytes(UTF_8);
   private static final byte[] SHIELDED_TRANSACTION_CREATE_ACCOUNT_FEE =
-      "SHIELDED_TRANSACTION_CREATE_ACCOUNT_FEE".getBytes();
+      "SHIELDED_TRANSACTION_CREATE_ACCOUNT_FEE".getBytes(UTF_8);
   //This value should be not negative
-  private static final byte[] TOTAL_SHIELDED_POOL_VALUE = "TOTAL_SHIELDED_POOL_VALUE".getBytes();
-  private static final byte[] EXCHANGE_CREATE_FEE = "EXCHANGE_CREATE_FEE".getBytes();
-  private static final byte[] EXCHANGE_BALANCE_LIMIT = "EXCHANGE_BALANCE_LIMIT".getBytes();
-  private static final byte[] TOTAL_TRANSACTION_COST = "TOTAL_TRANSACTION_COST".getBytes();
-  private static final byte[] TOTAL_CREATE_ACCOUNT_COST = "TOTAL_CREATE_ACCOUNT_COST".getBytes();
-  private static final byte[] TOTAL_CREATE_WITNESS_COST = "TOTAL_CREATE_WITNESS_FEE".getBytes();
-  private static final byte[] TOTAL_STORAGE_POOL = "TOTAL_STORAGE_POOL".getBytes();
-  private static final byte[] TOTAL_STORAGE_TAX = "TOTAL_STORAGE_TAX".getBytes();
-  private static final byte[] TOTAL_STORAGE_RESERVED = "TOTAL_STORAGE_RESERVED".getBytes();
-  private static final byte[] STORAGE_EXCHANGE_TAX_RATE = "STORAGE_EXCHANGE_TAX_RATE".getBytes();
+  private static final byte[] TOTAL_SHIELDED_POOL_VALUE =
+      "TOTAL_SHIELDED_POOL_VALUE".getBytes(UTF_8);
+  private static final byte[] EXCHANGE_CREATE_FEE = "EXCHANGE_CREATE_FEE".getBytes(UTF_8);
+  private static final byte[] EXCHANGE_BALANCE_LIMIT = "EXCHANGE_BALANCE_LIMIT".getBytes(UTF_8);
+  private static final byte[] TOTAL_TRANSACTION_COST = "TOTAL_TRANSACTION_COST".getBytes(UTF_8);
+  private static final byte[] TOTAL_CREATE_ACCOUNT_COST =
+      "TOTAL_CREATE_ACCOUNT_COST".getBytes(UTF_8);
+  private static final byte[] TOTAL_CREATE_WITNESS_COST =
+      "TOTAL_CREATE_WITNESS_FEE".getBytes(UTF_8);
+  private static final byte[] TOTAL_STORAGE_POOL = "TOTAL_STORAGE_POOL".getBytes(UTF_8);
+  private static final byte[] TOTAL_STORAGE_TAX = "TOTAL_STORAGE_TAX".getBytes(UTF_8);
+  private static final byte[] TOTAL_STORAGE_RESERVED = "TOTAL_STORAGE_RESERVED".getBytes(UTF_8);
+  private static final byte[] STORAGE_EXCHANGE_TAX_RATE =
+      "STORAGE_EXCHANGE_TAX_RATE".getBytes(UTF_8);
   private static final String FORK_CONTROLLER = "FORK_CONTROLLER";
   private static final String FORK_PREFIX = "FORK_VERSION_";
-  private static final byte[] VERSION_NUMBER = "VERSION_NUMBER".getBytes();
+  private static final byte[] VERSION_NUMBER = "VERSION_NUMBER".getBytes(UTF_8);
   //This value is only allowed to be 0, 1, -1
-  private static final byte[] REMOVE_THE_POWER_OF_THE_GR = "REMOVE_THE_POWER_OF_THE_GR".getBytes();
+  private static final byte[] REMOVE_THE_POWER_OF_THE_GR =
+      "REMOVE_THE_POWER_OF_THE_GR".getBytes(UTF_8);
   //This value is only allowed to be 0, 1, -1
-  private static final byte[] ALLOW_DELEGATE_RESOURCE = "ALLOW_DELEGATE_RESOURCE".getBytes();
+  private static final byte[] ALLOW_DELEGATE_RESOURCE = "ALLOW_DELEGATE_RESOURCE".getBytes(UTF_8);
   //This value is only allowed to be 0, 1, -1
-  private static final byte[] ALLOW_ADAPTIVE_ENERGY = "ALLOW_ADAPTIVE_ENERGY".getBytes();
+  private static final byte[] ALLOW_ADAPTIVE_ENERGY = "ALLOW_ADAPTIVE_ENERGY".getBytes(UTF_8);
   //This value is only allowed to be 0, 1, -1
-  private static final byte[] ALLOW_UPDATE_ACCOUNT_NAME = "ALLOW_UPDATE_ACCOUNT_NAME".getBytes();
+  private static final byte[] ALLOW_UPDATE_ACCOUNT_NAME =
+      "ALLOW_UPDATE_ACCOUNT_NAME".getBytes(UTF_8);
   //This value is only allowed to be 0, 1, -1
   //Note: there is a space in this key name. This space must not be deleted.
-  private static final byte[] ALLOW_SAME_TOKEN_NAME = " ALLOW_SAME_TOKEN_NAME".getBytes();
+  private static final byte[] ALLOW_SAME_TOKEN_NAME = " ALLOW_SAME_TOKEN_NAME".getBytes(UTF_8);
   //If the parameter is larger than 0, the contract is allowed to be created.
   private static final byte[] ALLOW_CREATION_OF_CONTRACTS = "ALLOW_CREATION_OF_CONTRACTS"
-      .getBytes();
+      .getBytes(UTF_8);
   //Used only for multi sign
-  private static final byte[] TOTAL_SIGN_NUM = "TOTAL_SIGN_NUM".getBytes();
+  private static final byte[] TOTAL_SIGN_NUM = "TOTAL_SIGN_NUM".getBytes(UTF_8);
   //Used only for multi sign, once，value is {0,1}
-  private static final byte[] ALLOW_MULTI_SIGN = "ALLOW_MULTI_SIGN".getBytes();
+  private static final byte[] ALLOW_MULTI_SIGN = "ALLOW_MULTI_SIGN".getBytes(UTF_8);
   //token id,Incremental，The initial value is 1000000
   @Getter
-  private static final byte[] TOKEN_ID_NUM = "TOKEN_ID_NUM".getBytes();
+  private static final byte[] TOKEN_ID_NUM = "TOKEN_ID_NUM".getBytes(UTF_8);
   //Used only for token updates, once，value is {0,1}
-  private static final byte[] TOKEN_UPDATE_DONE = "TOKEN_UPDATE_DONE".getBytes();
+  private static final byte[] TOKEN_UPDATE_DONE = "TOKEN_UPDATE_DONE".getBytes(UTF_8);
   //Used only for abi moves, once，value is {0,1}
-  private static final byte[] ABI_MOVE_DONE = "ABI_MOVE_DONE".getBytes();
+  private static final byte[] ABI_MOVE_DONE = "ABI_MOVE_DONE".getBytes(UTF_8);
   //This value is only allowed to be 0, 1, -1
-  private static final byte[] ALLOW_TVM_TRANSFER_TRC10 = "ALLOW_TVM_TRANSFER_TRC10".getBytes();
+  private static final byte[] ALLOW_TVM_TRANSFER_TRC10 = "ALLOW_TVM_TRANSFER_TRC10".getBytes(UTF_8);
   //If the parameter is larger than 0, allow ZKsnark Transaction
-  private static final byte[] ALLOW_SHIELDED_TRANSACTION = "ALLOW_SHIELDED_TRANSACTION".getBytes();
+  private static final byte[] ALLOW_SHIELDED_TRANSACTION =
+      "ALLOW_SHIELDED_TRANSACTION".getBytes(UTF_8);
   private static final byte[] ALLOW_SHIELDED_TRC20_TRANSACTION =
       "ALLOW_SHIELDED_TRC20_TRANSACTION"
-          .getBytes();
-  private static final byte[] ALLOW_TVM_ISTANBUL = "ALLOW_TVM_ISTANBUL".getBytes();
-  private static final byte[] ALLOW_TVM_CONSTANTINOPLE = "ALLOW_TVM_CONSTANTINOPLE".getBytes();
-  private static final byte[] ALLOW_TVM_SOLIDITY_059 = "ALLOW_TVM_SOLIDITY_059".getBytes();
+          .getBytes(UTF_8);
+  private static final byte[] ALLOW_TVM_ISTANBUL = "ALLOW_TVM_ISTANBUL".getBytes(UTF_8);
+  private static final byte[] ALLOW_TVM_CONSTANTINOPLE = "ALLOW_TVM_CONSTANTINOPLE".getBytes(UTF_8);
+  private static final byte[] ALLOW_TVM_SOLIDITY_059 = "ALLOW_TVM_SOLIDITY_059".getBytes(UTF_8);
   private static final byte[] FORBID_TRANSFER_TO_CONTRACT = "FORBID_TRANSFER_TO_CONTRACT"
-      .getBytes();
+      .getBytes(UTF_8);
   //Used only for protobuf data filter , once，value is 0,1
   private static final byte[] ALLOW_PROTO_FILTER_NUM = "ALLOW_PROTO_FILTER_NUM"
-      .getBytes();
-  private static final byte[] AVAILABLE_CONTRACT_TYPE = "AVAILABLE_CONTRACT_TYPE".getBytes();
-  private static final byte[] ACTIVE_DEFAULT_OPERATIONS = "ACTIVE_DEFAULT_OPERATIONS".getBytes();
+      .getBytes(UTF_8);
+  private static final byte[] AVAILABLE_CONTRACT_TYPE = "AVAILABLE_CONTRACT_TYPE".getBytes(UTF_8);
+  private static final byte[] ACTIVE_DEFAULT_OPERATIONS =
+      "ACTIVE_DEFAULT_OPERATIONS".getBytes(UTF_8);
   //Used only for account state root, once，value is {0,1} allow is 1
-  private static final byte[] ALLOW_ACCOUNT_STATE_ROOT = "ALLOW_ACCOUNT_STATE_ROOT".getBytes();
-  private static final byte[] CURRENT_CYCLE_NUMBER = "CURRENT_CYCLE_NUMBER".getBytes();
-  private static final byte[] CHANGE_DELEGATION = "CHANGE_DELEGATION".getBytes();
-  private static final byte[] ALLOW_PBFT = "ALLOW_PBFT".getBytes();
+  private static final byte[] ALLOW_ACCOUNT_STATE_ROOT = "ALLOW_ACCOUNT_STATE_ROOT".getBytes(UTF_8);
+  private static final byte[] CURRENT_CYCLE_NUMBER = "CURRENT_CYCLE_NUMBER".getBytes(UTF_8);
+  private static final byte[] CHANGE_DELEGATION = "CHANGE_DELEGATION".getBytes(UTF_8);
+  private static final byte[] ALLOW_PBFT = "ALLOW_PBFT".getBytes(UTF_8);
 
-  private static final byte[] ALLOW_MARKET_TRANSACTION = "ALLOW_MARKET_TRANSACTION".getBytes();
-  private static final byte[] MARKET_SELL_FEE = "MARKET_SELL_FEE".getBytes();
-  private static final byte[] MARKET_CANCEL_FEE = "MARKET_CANCEL_FEE".getBytes();
-  private static final byte[] MARKET_QUANTITY_LIMIT = "MARKET_QUANTITY_LIMIT".getBytes();
+  private static final byte[] ALLOW_MARKET_TRANSACTION = "ALLOW_MARKET_TRANSACTION".getBytes(UTF_8);
+  private static final byte[] MARKET_SELL_FEE = "MARKET_SELL_FEE".getBytes(UTF_8);
+  private static final byte[] MARKET_CANCEL_FEE = "MARKET_CANCEL_FEE".getBytes(UTF_8);
+  private static final byte[] MARKET_QUANTITY_LIMIT = "MARKET_QUANTITY_LIMIT".getBytes(UTF_8);
 
-  private static final byte[] ALLOW_TRANSACTION_FEE_POOL = "ALLOW_TRANSACTION_FEE_POOL".getBytes();
-  private static final byte[] TRANSACTION_FEE_POOL = "TRANSACTION_FEE_POOL".getBytes();
+  private static final byte[] ALLOW_TRANSACTION_FEE_POOL =
+      "ALLOW_TRANSACTION_FEE_POOL".getBytes(UTF_8);
+  private static final byte[] TRANSACTION_FEE_POOL = "TRANSACTION_FEE_POOL".getBytes(UTF_8);
 
-  private static final byte[] MAX_FEE_LIMIT = "MAX_FEE_LIMIT".getBytes();
-  private static final byte[] BURN_TRX_AMOUNT = "BURN_TRX_AMOUNT".getBytes();
+  private static final byte[] MAX_FEE_LIMIT = "MAX_FEE_LIMIT".getBytes(UTF_8);
+  private static final byte[] BURN_TRX_AMOUNT = "BURN_TRX_AMOUNT".getBytes(UTF_8);
   private static final byte[] ALLOW_BLACKHOLE_OPTIMIZATION =
-      "ALLOW_BLACKHOLE_OPTIMIZATION".getBytes();
-  private static final byte[] ALLOW_NEW_RESOURCE_MODEL = "ALLOW_NEW_RESOURCE_MODEL".getBytes();
-  private static final byte[] ALLOW_TVM_FREEZE = "ALLOW_TVM_FREEZE".getBytes();
-  private static final byte[] ALLOW_TVM_VOTE = "ALLOW_TVM_VOTE".getBytes();
-  private static final byte[] ALLOW_TVM_LONDON = "ALLOW_TVM_LONDON".getBytes();
-  private static final byte[] ALLOW_TVM_COMPATIBLE_EVM = "ALLOW_TVM_COMPATIBLE_EVM".getBytes();
+      "ALLOW_BLACKHOLE_OPTIMIZATION".getBytes(UTF_8);
+  private static final byte[] ALLOW_NEW_RESOURCE_MODEL = "ALLOW_NEW_RESOURCE_MODEL".getBytes(UTF_8);
+  private static final byte[] ALLOW_TVM_FREEZE = "ALLOW_TVM_FREEZE".getBytes(UTF_8);
+  private static final byte[] ALLOW_TVM_VOTE = "ALLOW_TVM_VOTE".getBytes(UTF_8);
+  private static final byte[] ALLOW_TVM_LONDON = "ALLOW_TVM_LONDON".getBytes(UTF_8);
+  private static final byte[] ALLOW_TVM_COMPATIBLE_EVM = "ALLOW_TVM_COMPATIBLE_EVM".getBytes(UTF_8);
   private static final byte[] NEW_REWARD_ALGORITHM_EFFECTIVE_CYCLE =
-      "NEW_REWARD_ALGORITHM_EFFECTIVE_CYCLE".getBytes();
+      "NEW_REWARD_ALGORITHM_EFFECTIVE_CYCLE".getBytes(UTF_8);
   //This value is only allowed to be 1
   private static final byte[] ALLOW_ACCOUNT_ASSET_OPTIMIZATION =
-      "ALLOW_ACCOUNT_ASSET_OPTIMIZATION".getBytes();
+      "ALLOW_ACCOUNT_ASSET_OPTIMIZATION".getBytes(UTF_8);
 
   private static final byte[] ALLOW_ASSET_OPTIMIZATION =
-      "ALLOW_ASSET_OPTIMIZATION".getBytes();
+      "ALLOW_ASSET_OPTIMIZATION".getBytes(UTF_8);
 
 
-  private static final byte[] ENERGY_PRICE_HISTORY = "ENERGY_PRICE_HISTORY".getBytes();
-  private static final byte[] ENERGY_PRICE_HISTORY_DONE = "ENERGY_PRICE_HISTORY_DONE".getBytes();
-  private static final byte[] BANDWIDTH_PRICE_HISTORY = "BANDWIDTH_PRICE_HISTORY".getBytes();
+  private static final byte[] ENERGY_PRICE_HISTORY = "ENERGY_PRICE_HISTORY".getBytes(UTF_8);
+  private static final byte[] ENERGY_PRICE_HISTORY_DONE =
+      "ENERGY_PRICE_HISTORY_DONE".getBytes(UTF_8);
+  private static final byte[] BANDWIDTH_PRICE_HISTORY = "BANDWIDTH_PRICE_HISTORY".getBytes(UTF_8);
   private static final byte[] BANDWIDTH_PRICE_HISTORY_DONE =
-      "BANDWIDTH_PRICE_HISTORY_DONE".getBytes();
+      "BANDWIDTH_PRICE_HISTORY_DONE".getBytes(UTF_8);
 
   private static final byte[] SET_BLACKHOLE_ACCOUNT_PERMISSION =
-      "SET_BLACKHOLE_ACCOUNT_PERMISSION".getBytes();
+      "SET_BLACKHOLE_ACCOUNT_PERMISSION".getBytes(UTF_8);
   private static final byte[] ALLOW_HIGHER_LIMIT_FOR_MAX_CPU_TIME_OF_ONE_TX =
-      "ALLOW_HIGHER_LIMIT_FOR_MAX_CPU_TIME_OF_ONE_TX".getBytes();
+      "ALLOW_HIGHER_LIMIT_FOR_MAX_CPU_TIME_OF_ONE_TX".getBytes(UTF_8);
 
-  private static final byte[] ALLOW_NEW_REWARD = "ALLOW_NEW_REWARD".getBytes();
-  private static final byte[] MEMO_FEE = "MEMO_FEE".getBytes();
-  private static final byte[] MEMO_FEE_HISTORY = "MEMO_FEE_HISTORY".getBytes();
+  private static final byte[] ALLOW_NEW_REWARD = "ALLOW_NEW_REWARD".getBytes(UTF_8);
+  private static final byte[] MEMO_FEE = "MEMO_FEE".getBytes(UTF_8);
+  private static final byte[] MEMO_FEE_HISTORY = "MEMO_FEE_HISTORY".getBytes(UTF_8);
   private static final byte[] ALLOW_DELEGATE_OPTIMIZATION =
-      "ALLOW_DELEGATE_OPTIMIZATION".getBytes();
+      "ALLOW_DELEGATE_OPTIMIZATION".getBytes(UTF_8);
   private static final byte[] ALLOW_DYNAMIC_ENERGY =
-      "ALLOW_DYNAMIC_ENERGY".getBytes();
+      "ALLOW_DYNAMIC_ENERGY".getBytes(UTF_8);
   private static final byte[] DYNAMIC_ENERGY_THRESHOLD =
-      "DYNAMIC_ENERGY_THRESHOLD".getBytes();
+      "DYNAMIC_ENERGY_THRESHOLD".getBytes(UTF_8);
   private static final byte[] DYNAMIC_ENERGY_INCREASE_FACTOR =
-      "DYNAMIC_ENERGY_INCREASE_FACTOR".getBytes();
+      "DYNAMIC_ENERGY_INCREASE_FACTOR".getBytes(UTF_8);
   private static final byte[] DYNAMIC_ENERGY_MAX_FACTOR =
-      "DYNAMIC_ENERGY_MAX_FACTOR".getBytes();
+      "DYNAMIC_ENERGY_MAX_FACTOR".getBytes(UTF_8);
 
-  private static final byte[] UNFREEZE_DELAY_DAYS = "UNFREEZE_DELAY_DAYS".getBytes();
+  private static final byte[] UNFREEZE_DELAY_DAYS = "UNFREEZE_DELAY_DAYS".getBytes(UTF_8);
 
   private static final byte[] ALLOW_OPTIMIZED_RETURN_VALUE_OF_CHAIN_ID =
-      "ALLOW_OPTIMIZED_RETURN_VALUE_OF_CHAIN_ID".getBytes();
+      "ALLOW_OPTIMIZED_RETURN_VALUE_OF_CHAIN_ID".getBytes(UTF_8);
 
-  private static final byte[] ALLOW_TVM_SHANGHAI = "ALLOW_TVM_SHANGHAI".getBytes();
+  private static final byte[] ALLOW_TVM_SHANGHAI = "ALLOW_TVM_SHANGHAI".getBytes(UTF_8);
 
   private static final byte[] ALLOW_CANCEL_ALL_UNFREEZE_V2 = "ALLOW_CANCEL_ALL_UNFREEZE_V2"
-      .getBytes();
+      .getBytes(UTF_8);
 
   private static final byte[] MAX_DELEGATE_LOCK_PERIOD =
-      "MAX_DELEGATE_LOCK_PERIOD".getBytes();
+      "MAX_DELEGATE_LOCK_PERIOD".getBytes(UTF_8);
 
-  private static final byte[] ALLOW_OLD_REWARD_OPT = "ALLOW_OLD_REWARD_OPT".getBytes();
+  private static final byte[] ALLOW_OLD_REWARD_OPT = "ALLOW_OLD_REWARD_OPT".getBytes(UTF_8);
 
-  private static final byte[] ALLOW_ENERGY_ADJUSTMENT = "ALLOW_ENERGY_ADJUSTMENT".getBytes();
+  private static final byte[] ALLOW_ENERGY_ADJUSTMENT = "ALLOW_ENERGY_ADJUSTMENT".getBytes(UTF_8);
 
-  private static final byte[] MAX_CREATE_ACCOUNT_TX_SIZE = "MAX_CREATE_ACCOUNT_TX_SIZE".getBytes();
-  private static final byte[] ALLOW_STRICT_MATH = "ALLOW_STRICT_MATH".getBytes();
+  private static final byte[] MAX_CREATE_ACCOUNT_TX_SIZE =
+      "MAX_CREATE_ACCOUNT_TX_SIZE".getBytes(UTF_8);
+  private static final byte[] ALLOW_STRICT_MATH = "ALLOW_STRICT_MATH".getBytes(UTF_8);
 
   private static final byte[] CONSENSUS_LOGIC_OPTIMIZATION
-      = "CONSENSUS_LOGIC_OPTIMIZATION".getBytes();
+      = "CONSENSUS_LOGIC_OPTIMIZATION".getBytes(UTF_8);
 
-  private static final byte[] ALLOW_TVM_CANCUN = "ALLOW_TVM_CANCUN".getBytes();
+  private static final byte[] ALLOW_TVM_CANCUN = "ALLOW_TVM_CANCUN".getBytes(UTF_8);
 
-  private static final byte[] ALLOW_TVM_BLOB = "ALLOW_TVM_BLOB".getBytes();
-  private static final byte[] PROPOSAL_EXPIRE_TIME = "PROPOSAL_EXPIRE_TIME".getBytes();
+  private static final byte[] ALLOW_TVM_BLOB = "ALLOW_TVM_BLOB".getBytes(UTF_8);
+  private static final byte[] PROPOSAL_EXPIRE_TIME = "PROPOSAL_EXPIRE_TIME".getBytes(UTF_8);
 
   private static final byte[] ALLOW_TVM_SELFDESTRUCT_RESTRICTION =
-      "ALLOW_TVM_SELFDESTRUCT_RESTRICTION".getBytes();
+      "ALLOW_TVM_SELFDESTRUCT_RESTRICTION".getBytes(UTF_8);
 
-  private static final byte[] ALLOW_TVM_OSAKA = "ALLOW_TVM_OSAKA".getBytes();
+  private static final byte[] ALLOW_TVM_OSAKA = "ALLOW_TVM_OSAKA".getBytes(UTF_8);
 
-  private static final byte[] ALLOW_TVM_PRAGUE = "ALLOW_TVM_PRAGUE".getBytes();
+  private static final byte[] ALLOW_TVM_PRAGUE = "ALLOW_TVM_PRAGUE".getBytes(UTF_8);
 
   // TIP-2935 install marker — flipped to 1 inside HistoryBlockHashUtil.deploy()
   // only after the three store writes succeed. Stays 0 when deploy() skips on
   // foreign-state collision; HistoryBlockHashUtil.write() reads this to decide
   // whether StorageRowStore at the canonical address is ours to mutate.
   private static final byte[] BLOCK_HASH_HISTORY_INSTALLED =
-      "BLOCK_HASH_HISTORY_INSTALLED".getBytes();
+      "BLOCK_HASH_HISTORY_INSTALLED".getBytes(UTF_8);
 
   private static final byte[] ALLOW_HARDEN_RESOURCE_CALCULATION =
-      "ALLOW_HARDEN_RESOURCE_CALCULATION".getBytes();
+      "ALLOW_HARDEN_RESOURCE_CALCULATION".getBytes(UTF_8);
 
   private static final byte[] ALLOW_HARDEN_EXCHANGE_CALCULATION =
-      "ALLOW_HARDEN_EXCHANGE_CALCULATION".getBytes();
+      "ALLOW_HARDEN_EXCHANGE_CALCULATION".getBytes(UTF_8);
 
   private static final byte[] TURKISH_KEY_MIGRATION_DONE =
-      "TURKISH_KEY_MIGRATION_DONE".getBytes();
+      "TURKISH_KEY_MIGRATION_DONE".getBytes(UTF_8);
 
   @Autowired
   private DynamicPropertiesStore(@Value("properties") String dbName) {
@@ -3085,32 +3101,34 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule> 
 
   private static class DynamicResourceProperties {
 
-    private static final byte[] ONE_DAY_NET_LIMIT = "ONE_DAY_NET_LIMIT".getBytes();
+    private static final byte[] ONE_DAY_NET_LIMIT = "ONE_DAY_NET_LIMIT".getBytes(UTF_8);
     //public free bandwidth
-    private static final byte[] PUBLIC_NET_USAGE = "PUBLIC_NET_USAGE".getBytes();
+    private static final byte[] PUBLIC_NET_USAGE = "PUBLIC_NET_USAGE".getBytes(UTF_8);
     //fixed
-    private static final byte[] PUBLIC_NET_LIMIT = "PUBLIC_NET_LIMIT".getBytes();
-    private static final byte[] PUBLIC_NET_TIME = "PUBLIC_NET_TIME".getBytes();
-    private static final byte[] FREE_NET_LIMIT = "FREE_NET_LIMIT".getBytes();
-    private static final byte[] TOTAL_NET_WEIGHT = "TOTAL_NET_WEIGHT".getBytes();
+    private static final byte[] PUBLIC_NET_LIMIT = "PUBLIC_NET_LIMIT".getBytes(UTF_8);
+    private static final byte[] PUBLIC_NET_TIME = "PUBLIC_NET_TIME".getBytes(UTF_8);
+    private static final byte[] FREE_NET_LIMIT = "FREE_NET_LIMIT".getBytes(UTF_8);
+    private static final byte[] TOTAL_NET_WEIGHT = "TOTAL_NET_WEIGHT".getBytes(UTF_8);
     //ONE_DAY_NET_LIMIT - PUBLIC_NET_LIMIT，current TOTAL_NET_LIMIT
-    private static final byte[] TOTAL_NET_LIMIT = "TOTAL_NET_LIMIT".getBytes();
-    private static final byte[] TOTAL_ENERGY_TARGET_LIMIT = "TOTAL_ENERGY_TARGET_LIMIT".getBytes();
+    private static final byte[] TOTAL_NET_LIMIT = "TOTAL_NET_LIMIT".getBytes(UTF_8);
+    private static final byte[] TOTAL_ENERGY_TARGET_LIMIT =
+        "TOTAL_ENERGY_TARGET_LIMIT".getBytes(UTF_8);
     private static final byte[] TOTAL_ENERGY_CURRENT_LIMIT = "TOTAL_ENERGY_CURRENT_LIMIT"
-        .getBytes();
+        .getBytes(UTF_8);
     private static final byte[] TOTAL_ENERGY_AVERAGE_USAGE = "TOTAL_ENERGY_AVERAGE_USAGE"
-        .getBytes();
-    private static final byte[] TOTAL_ENERGY_AVERAGE_TIME = "TOTAL_ENERGY_AVERAGE_TIME".getBytes();
-    private static final byte[] TOTAL_ENERGY_WEIGHT = "TOTAL_ENERGY_WEIGHT".getBytes();
-    private static final byte[] TOTAL_TRON_POWER_WEIGHT = "TOTAL_TRON_POWER_WEIGHT".getBytes();
-    private static final byte[] TOTAL_ENERGY_LIMIT = "TOTAL_ENERGY_LIMIT".getBytes();
-    private static final byte[] BLOCK_ENERGY_USAGE = "BLOCK_ENERGY_USAGE".getBytes();
+        .getBytes(UTF_8);
+    private static final byte[] TOTAL_ENERGY_AVERAGE_TIME =
+        "TOTAL_ENERGY_AVERAGE_TIME".getBytes(UTF_8);
+    private static final byte[] TOTAL_ENERGY_WEIGHT = "TOTAL_ENERGY_WEIGHT".getBytes(UTF_8);
+    private static final byte[] TOTAL_TRON_POWER_WEIGHT = "TOTAL_TRON_POWER_WEIGHT".getBytes(UTF_8);
+    private static final byte[] TOTAL_ENERGY_LIMIT = "TOTAL_ENERGY_LIMIT".getBytes(UTF_8);
+    private static final byte[] BLOCK_ENERGY_USAGE = "BLOCK_ENERGY_USAGE".getBytes(UTF_8);
     private static final byte[] ADAPTIVE_RESOURCE_LIMIT_MULTIPLIER =
         "ADAPTIVE_RESOURCE_LIMIT_MULTIPLIER"
-            .getBytes();
+            .getBytes(UTF_8);
     private static final byte[] ADAPTIVE_RESOURCE_LIMIT_TARGET_RATIO =
         "ADAPTIVE_RESOURCE_LIMIT_TARGET_RATIO"
-            .getBytes();
+            .getBytes(UTF_8);
 
   }
 
