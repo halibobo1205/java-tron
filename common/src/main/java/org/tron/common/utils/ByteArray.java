@@ -1,5 +1,6 @@
 package org.tron.common.utils;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.tron.common.utils.ByteUtil.EMPTY_BYTE_ARRAY;
 
 import com.google.common.primitives.Ints;
@@ -74,14 +75,14 @@ public class ByteArray {
    * get bytes data from string data.
    */
   public static byte[] fromString(String s) {
-    return StringUtils.isBlank(s) ? null : s.getBytes();
+    return StringUtils.isBlank(s) ? null : s.getBytes(UTF_8);
   }
 
   /**
    * get string data from bytes data.
    */
   public static String toStr(byte[] b) {
-    return ArrayUtils.isEmpty(b) ? null : new String(b);
+    return ArrayUtils.isEmpty(b) ? null : new String(b, UTF_8);
   }
 
   public static byte[] fromLong(long val) {
