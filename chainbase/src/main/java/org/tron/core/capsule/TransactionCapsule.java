@@ -774,6 +774,10 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
     return this.transaction;
   }
 
+  private static String renderAddress(byte[] address) {
+    return address.length == 0 ? "" : encode58Check(address);
+  }
+
   @Override
   public String toString() {
     StringBuilder toStringBuff = new StringBuilder();
@@ -786,8 +790,10 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
       getInstance().getRawData().getContractList().forEach(contract -> {
         toStringBuff.append("[" + i + "] ").append("type: ").append(contract.getType())
             .append("\n");
-        toStringBuff.append("from address=").append(getOwner(contract)).append("\n");
-        toStringBuff.append("to address=").append(getToAddress(contract)).append("\n");
+        toStringBuff.append("from address=").append(renderAddress(getOwner(contract)))
+            .append("\n");
+        toStringBuff.append("to address=").append(renderAddress(getToAddress(contract)))
+            .append("\n");
         if (contract.getType().equals(ContractType.TransferContract)) {
           TransferContract transferContract;
           try {
