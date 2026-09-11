@@ -3186,14 +3186,11 @@ public class Wallet {
     ret.setStatus(0, code.SUCESS);
     if (StringUtils.isNoneEmpty(result.getRuntimeError())) {
       ret.setStatus(0, code.FAILED);
-      retBuilder
-          .setMessage(ByteString.copyFromUtf8(result.getRuntimeError()))
-          .build();
+      retBuilder.setMessage(ByteString.copyFromUtf8(result.getRuntimeError()));
     }
     if (result.isRevert()) {
       ret.setStatus(0, code.FAILED);
-      retBuilder.setMessage(ByteString.copyFromUtf8("REVERT opcode executed"))
-          .build();
+      retBuilder.setMessage(ByteString.copyFromUtf8("REVERT opcode executed"));
     }
     trxCap.setResult(ret);
     return trxCap.getInstance();

@@ -145,6 +145,7 @@ subprojects {
                         '-Xep:CatchAndPrintStackTrace:ERROR',
                         '-Xep:ArrayToString:ERROR',
                         '-Xep:ComparisonOutOfRange:ERROR',
+                        '-Xep:ProtoBuilderReturnValueIgnored:ERROR',
                 ])
             }
         }
