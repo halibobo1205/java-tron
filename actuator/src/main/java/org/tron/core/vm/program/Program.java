@@ -626,6 +626,7 @@ public class Program {
     }
   }
 
+  @SuppressWarnings("MissingCasesInEnumSwitch")
   private long transferFrozenV2BalanceToInheritor(byte[] ownerAddr, byte[] inheritorAddr, Repository repo) {
     AccountCapsule ownerCapsule = repo.getAccount(ownerAddr);
     AccountCapsule inheritorCapsule = repo.getAccount(inheritorAddr);

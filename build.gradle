@@ -164,6 +164,7 @@ subprojects {
                         '-Xep:NarrowCalculation:ERROR',
                         '-Xep:ReferenceEquality:ERROR',
                         '-Xep:ClassNewInstance:ERROR',
+                        '-Xep:MissingCasesInEnumSwitch:ERROR',
                 ])
             }
         }
