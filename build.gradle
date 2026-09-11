@@ -156,6 +156,7 @@ subprojects {
                         '-Xep:ReturnFromVoid:ERROR',
                         '-Xep:StreamResourceLeak:ERROR',
                         '-Xep:UnnecessaryAsync:ERROR',
+                        '-Xep:LockNotBeforeTry:ERROR',
                 ])
             }
         }
