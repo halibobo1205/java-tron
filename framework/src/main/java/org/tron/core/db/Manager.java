@@ -1078,7 +1078,7 @@ public class Manager {
       revokingStore.setMaxFlushCount(maxFlushCount);
       if (Args.getInstance().getShutdownBlockTime() != null
           && Args.getInstance().getShutdownBlockTime().getNextValidTimeAfter(
-            new Date(block.getTimeStamp() - maxFlushCount * 1000 * 3L))
+            new Date(block.getTimeStamp() - maxFlushCount * 1000L * 3L))
           .compareTo(new Date(block.getTimeStamp())) <= 0) {
         revokingStore.setMaxFlushCount(SnapshotManager.DEFAULT_MIN_FLUSH_COUNT);
       }

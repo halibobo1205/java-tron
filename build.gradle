@@ -161,6 +161,7 @@ subprojects {
                         '-Xep:ByteBufferBackingArray:ERROR',
                         '-Xep:EmptyCatch:ERROR',
                         '-Xep:IntLongMath:ERROR',
+                        '-Xep:NarrowCalculation:ERROR',
                 ])
             }
         }

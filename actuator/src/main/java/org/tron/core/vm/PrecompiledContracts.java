@@ -507,6 +507,7 @@ public class PrecompiledContracts {
     }
 
     @Override
+    @SuppressWarnings("NarrowCalculation")
     public long getEnergyForData(byte[] data) {
 
       // energy charge for the execution:
@@ -527,6 +528,7 @@ public class PrecompiledContracts {
 
 
     @Override
+    @SuppressWarnings("NarrowCalculation")
     public long getEnergyForData(byte[] data) {
 
       // energy charge for the execution:
@@ -553,6 +555,7 @@ public class PrecompiledContracts {
 
 
     @Override
+    @SuppressWarnings("NarrowCalculation")
     public long getEnergyForData(byte[] data) {
 
       // TODO #POC9 Replace magic numbers with constants
