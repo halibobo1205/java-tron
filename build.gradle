@@ -158,6 +158,7 @@ subprojects {
                         '-Xep:UnnecessaryAsync:ERROR',
                         '-Xep:LockNotBeforeTry:ERROR',
                         '-Xep:StringCharset:ERROR',
+                        '-Xep:ByteBufferBackingArray:ERROR',
                 ])
             }
         }
