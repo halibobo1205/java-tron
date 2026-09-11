@@ -1,5 +1,6 @@
 package org.tron.common.utils;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.tron.common.math.Maths.addExact;
 import static org.tron.common.math.Maths.subtractExact;
 
@@ -133,14 +134,14 @@ public class Commons {
       DynamicPropertiesStore dynamicPropertiesStore)
       throws BalanceInsufficientException {
     if (amount < 0) {
-      if (!account.reduceAssetAmountV2(AssetID.getBytes(), -amount, dynamicPropertiesStore,
+      if (!account.reduceAssetAmountV2(AssetID.getBytes(UTF_8), -amount, dynamicPropertiesStore,
           assetIssueStore)) {
         throw new BalanceInsufficientException(
             String.format("reduceAssetAmount failed! account: %s",
                     StringUtil.encode58Check(account.createDbKey())));
       }
     } else if (amount > 0 &&
-        !account.addAssetAmountV2(AssetID.getBytes(), amount, dynamicPropertiesStore,
+        !account.addAssetAmountV2(AssetID.getBytes(UTF_8), amount, dynamicPropertiesStore,
             assetIssueStore)) {
       throw new BalanceInsufficientException(
           String.format("addAssetAmount failed! account: %s",

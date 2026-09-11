@@ -15,6 +15,7 @@
 
 package org.tron.core.capsule;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.tron.common.math.Maths.addExact;
 import static org.tron.common.math.Maths.max;
 import static org.tron.common.math.Maths.subtractExact;
@@ -855,14 +856,14 @@ public class AccountCapsule implements ProtoCapsule<Account>, Comparable<Account
     if (dynamicStore.getAllowSameTokenName() == 0) {
       balance = this.account.getAssetMap().get(key);
     } else {
-      importAsset(key.getBytes());
+      importAsset(key.getBytes(UTF_8));
       balance = this.account.getAssetV2Map().get(key);
     }
     return balance;
   }
 
   public long getAssetV2(String key) {
-    importAsset(key.getBytes());
+    importAsset(key.getBytes(UTF_8));
     Long balance = this.account.getAssetV2Map().get(key);
     return balance == null ? 0 : balance;
   }
