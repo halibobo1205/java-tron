@@ -596,6 +596,7 @@ public class PrecompiledContracts {
     }
 
     @Override
+    @SuppressWarnings("EmptyCatch")
     public Pair<Boolean, byte[]> execute(byte[] data) {
 
       byte[] h = new byte[32];

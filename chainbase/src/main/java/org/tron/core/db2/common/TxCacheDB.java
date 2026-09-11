@@ -325,8 +325,8 @@ public class TxCacheDB implements DB<byte[], byte[]>, Flusher {
     try {
       Files.deleteIfExists(this.cacheFile0);
       Files.deleteIfExists(this.cacheFile1);
-    } catch (Exception ignored) {
-
+    } catch (Exception deleteError) {
+      logger.warn("delete tx cache file failed", deleteError);
     }
     logger.info("recovery bloomFilters failed. {}", e.getMessage());
     logger.info("rollback to previous mode.");

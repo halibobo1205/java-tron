@@ -159,6 +159,7 @@ subprojects {
                         '-Xep:LockNotBeforeTry:ERROR',
                         '-Xep:StringCharset:ERROR',
                         '-Xep:ByteBufferBackingArray:ERROR',
+                        '-Xep:EmptyCatch:ERROR',
                 ])
             }
         }
