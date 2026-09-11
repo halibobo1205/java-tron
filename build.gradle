@@ -153,6 +153,7 @@ subprojects {
                         '-Xep:IntLiteralCast:ERROR',
                         '-Xep:OperatorPrecedence:ERROR',
                         '-Xep:RedundantControlFlow:ERROR',
+                        '-Xep:ReturnFromVoid:ERROR',
                 ])
             }
         }
