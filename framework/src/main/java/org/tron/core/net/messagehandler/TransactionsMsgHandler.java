@@ -19,6 +19,7 @@ import org.tron.common.prometheus.MetricKeys;
 import org.tron.common.prometheus.MetricLabels;
 import org.tron.common.prometheus.Metrics;
 import org.tron.common.utils.Sha256Hash;
+import org.tron.common.utils.StringUtil;
 import org.tron.core.ChainBaseManager;
 import org.tron.core.Constant;
 import org.tron.core.actuator.ActuatorConstant;
@@ -164,7 +165,7 @@ public class TransactionsMsgHandler implements TronMsgHandler {
       }
       int contractCount = trx.getRawData().getContractCount();
       if (contractCount != 1) {
-        throw new P2pException(TypeEnum.BAD_TRX, String.format(
+        throw new P2pException(TypeEnum.BAD_TRX, StringUtil.format(
             "tx %s " + ActuatorConstant.CONTRACT_SIZE_NOT_EQUAL_TO_ONE, id, contractCount));
       }
     }

@@ -19,6 +19,7 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Collections;
 import java.util.EnumSet;
+import java.util.Locale;
 import java.util.NoSuchElementException;
 import java.util.Scanner;
 import java.util.Set;
@@ -155,7 +156,7 @@ public class WalletUtils {
 
   public static String getWalletFileName(WalletFile walletFile) {
     DateTimeFormatter format = DateTimeFormatter.ofPattern(
-        "'UTC--'yyyy-MM-dd'T'HH-mm-ss.nVV'--'");
+        "'UTC--'yyyy-MM-dd'T'HH-mm-ss.nVV'--'", Locale.ROOT);
     ZonedDateTime now = ZonedDateTime.now(ZoneOffset.UTC);
 
     return now.format(format) + walletFile.getAddress() + ".json";

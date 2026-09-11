@@ -17,6 +17,7 @@ import org.apache.commons.collections4.CollectionUtils;
 import org.springframework.stereotype.Component;
 import org.tron.common.utils.Pair;
 import org.tron.common.utils.Sha256Hash;
+import org.tron.common.utils.StringUtil;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.BlockCapsule.BlockId;
 import org.tron.core.exception.BadItemException;
@@ -66,6 +67,7 @@ public class KhaosDatabase {
   /**
    * Push the block in the KhoasDB.
    */
+  @SuppressWarnings("ReferenceEquality")
   public BlockCapsule push(BlockCapsule blk)
       throws UnLinkedBlockException, BadNumberBlockException {
     KhaosBlock block = new KhaosBlock(blk);
@@ -74,8 +76,8 @@ public class KhaosDatabase {
       if (kblock != null) {
         if (blk.getNum() != kblock.num + 1) {
           throw new BadNumberBlockException(
-              String.format("parent number: %d , block number: %d", kblock.num, blk.getNum())
-              );
+              StringUtil.format(
+                  "parent number: %d , block number: %d", kblock.num, blk.getNum()));
         }
         block.setParent(kblock);
       } else {

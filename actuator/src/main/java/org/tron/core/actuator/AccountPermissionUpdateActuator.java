@@ -230,7 +230,8 @@ public class AccountPermissionUpdateActuator extends AbstractActuator {
     long fee = calcFee();
     if (accountCapsule.getBalance() < fee) {
       throw new ContractValidateException(
-          String.format("%s insufficient balance, balance: %d, amount: %d",
+          StringUtil.format(
+              "%s insufficient balance, balance: %d, amount: %d",
               StringUtil.createReadableString(accountCapsule.createDbKey()),
               accountCapsule.getBalance(), fee));
     }

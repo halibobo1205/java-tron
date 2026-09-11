@@ -250,7 +250,8 @@ public class MortgageService {
 
     if (amount < 0 && allowance < -amount) {
       throw new BalanceInsufficientException(
-          String.format("%s insufficient balance, amount: %d, allowance: %d",
+          StringUtil.format(
+              "%s insufficient balance, amount: %d, allowance: %d",
               StringUtil.createReadableString(accountAddress), amount, allowance));
     }
     account.setAllowance(allowance + amount);

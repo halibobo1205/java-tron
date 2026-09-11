@@ -64,6 +64,7 @@ public class ActuatorCreator {
     if (clazz == null) {
       throw new ContractValidateException("not exist contract " + contract);
     }
+    @SuppressWarnings("ClassNewInstance")
     AbstractActuator abstractActuator = (AbstractActuator) clazz.newInstance();
     abstractActuator.setChainBaseManager(chainBaseManager).setContract(contract)
         .setForkUtils(forkController).setTx(tx);

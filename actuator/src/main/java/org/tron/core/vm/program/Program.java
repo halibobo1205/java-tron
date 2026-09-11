@@ -41,6 +41,7 @@ import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.utils.BIUtil;
 import org.tron.common.utils.ByteUtil;
 import org.tron.common.utils.FastByteComparisons;
+import org.tron.common.utils.StringUtil;
 import org.tron.common.utils.Utils;
 import org.tron.common.utils.WalletUtil;
 import org.tron.core.ChainBaseManager;
@@ -633,6 +634,7 @@ public class Program {
     }
   }
 
+  @SuppressWarnings("MissingCasesInEnumSwitch")
   private long transferFrozenV2BalanceToInheritor(byte[] ownerAddr, byte[] inheritorAddr, Repository repo) {
     AccountCapsule ownerCapsule = repo.getAccount(ownerAddr);
     AccountCapsule inheritorCapsule = repo.getAccount(inheritorAddr);
@@ -2219,7 +2221,7 @@ public class Program {
       }
 
       if (internalTx != null && CommonParameter.getInstance().saveCancelAllUnfreezeV2Details) {
-        internalTx.setExtra(String.format("{\"%s\":%d,\"%s\":%d,\"%s\":%d}",
+        internalTx.setExtra(StringUtil.format("{\"%s\":%d,\"%s\":%d,\"%s\":%d}",
             BANDWIDTH.name(), result.getOrDefault(BANDWIDTH.name(), 0L),
             ENERGY.name(), result.getOrDefault(ENERGY.name(), 0L),
             TRON_POWER.name(), result.getOrDefault(TRON_POWER.name(), 0L)));
@@ -2591,10 +2593,9 @@ public class Program {
 
     public ReturnDataCopyIllegalBoundsException(DataWord off, DataWord size,
         long returnDataSize) {
-      super(String
-          .format(
-              "Illegal RETURNDATACOPY arguments: offset (%s) + size (%s) > RETURNDATASIZE (%d)",
-              off, size, returnDataSize));
+      super(StringUtil.format(
+          "Illegal RETURNDATACOPY arguments: offset (%s) + size (%s) > RETURNDATASIZE (%d)",
+          off, size, returnDataSize));
     }
   }
 

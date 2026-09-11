@@ -21,6 +21,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import org.tron.common.utils.StringUtil;
 
 public class CacheStrategies {
 
@@ -30,20 +31,20 @@ public class CacheStrategies {
   public static final List<CacheType> CACHE_BIG_DBS = Collections.singletonList(delegation);
   private static final int CPUS = Runtime.getRuntime().availableProcessors();
   public static final String CACHE_STRATEGY_DEFAULT =
-      String.format(PATTERNS, 1000, 1000, "30s", CPUS);
+      StringUtil.format(PATTERNS, 1000, 1000, "30s", CPUS);
   private static final String CACHE_STRATEGY_SMALL_DEFAULT =
-      String.format(PATTERNS, 100, 100, "30s", CPUS);
+      StringUtil.format(PATTERNS, 100, 100, "30s", CPUS);
   private static final List<CacheType> CACHE_SMALL_DBS = Arrays.asList(recentBlock, witness,
       witnessSchedule, delegatedResource, delegatedResourceAccountIndex,
       votes, abi);
   private static final String CACHE_STRATEGY_NORMAL_DEFAULT =
-      String.format(PATTERNS, 500, 500, "30s", CPUS);
+      StringUtil.format(PATTERNS, 500, 500, "30s", CPUS);
   private static final List<CacheType> CACHE_NORMAL_DBS = Arrays.asList(code, contract,
       assetIssueV2, properties);
   private static final String CACHE_STRATEGY_BIG_DEFAULT =
-      String.format(PATTERNS, 10000, 10000, "30s", CPUS);
+      StringUtil.format(PATTERNS, 10000, 10000, "30s", CPUS);
   private static final String CACHE_STRATEGY_HUGE_DEFAULT =
-      String.format(PATTERNS, 20000, 20000, "30s", CPUS);
+      StringUtil.format(PATTERNS, 20000, 20000, "30s", CPUS);
   private static final List<CacheType> CACHE_HUGE_DBS = Arrays.asList(storageRow, account);
 
   public static final List<String> CACHE_DBS = Stream.of(CACHE_SMALL_DBS, CACHE_NORMAL_DBS,

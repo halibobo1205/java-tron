@@ -8,6 +8,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import lombok.extern.slf4j.Slf4j;
 import org.tron.common.utils.ByteArray;
@@ -73,7 +74,7 @@ public final class VMUtils {
     try {
       out = new FileOutputStream(file);
       if (data != null) {
-        out.write(data.getBytes("UTF-8"));
+        out.write(data.getBytes(StandardCharsets.UTF_8));
       }
     } catch (Exception e) {
       logger.error(format("Cannot write to file '%s': ", file.getAbsolutePath()), e);

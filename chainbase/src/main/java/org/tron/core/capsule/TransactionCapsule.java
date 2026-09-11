@@ -53,6 +53,7 @@ import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.ForkController;
 import org.tron.common.utils.ReflectUtils;
 import org.tron.common.utils.Sha256Hash;
+import org.tron.common.utils.StringUtil;
 import org.tron.core.actuator.TransactionFactory;
 import org.tron.core.config.Parameter;
 import org.tron.core.db.TransactionContext;
@@ -869,7 +870,7 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
 
   public void checkExpiration(long nextSlotTime) throws TransactionExpirationException {
     if (getExpiration() < nextSlotTime) {
-      throw new TransactionExpirationException(String.format(
+      throw new TransactionExpirationException(StringUtil.format(
           "Transaction expiration time is %d, but next slot time is %d",
           getExpiration(), nextSlotTime));
     }

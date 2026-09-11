@@ -32,6 +32,7 @@ import org.tron.common.exit.ExitManager;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.FileUtil;
 import org.tron.common.utils.StorageUtils;
+import org.tron.common.utils.StringUtil;
 import org.tron.core.db.RevokingDatabase;
 import org.tron.core.db.TronDatabase;
 import org.tron.core.db2.ISession;
@@ -222,12 +223,14 @@ public class SnapshotManager implements RevokingDatabase {
   public synchronized void pop() {
     if (activeSession != 0) {
       throw new RevokingStoreIllegalStateException(
-          String.format("activeSession has to be equal 0, current %d", activeSession));
+          StringUtil.format(
+              "activeSession has to be equal 0, current %d", activeSession));
     }
 
     if (size <= 0) {
       throw new RevokingStoreIllegalStateException(
-          String.format("there is not snapshot to be popped, current: %d", size));
+          StringUtil.format(
+              "there is not snapshot to be popped, current: %d", size));
     }
 
     disabled = true;

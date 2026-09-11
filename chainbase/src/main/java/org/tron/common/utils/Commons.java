@@ -85,7 +85,8 @@ public class Commons {
 
     if (amount < 0 && balance < -amount) {
       throw new BalanceInsufficientException(
-          String.format("%s insufficient balance, balance: %d, amount: %d",
+          StringUtil.format(
+              "%s insufficient balance, balance: %d, amount: %d",
               StringUtil.createReadableString(account.createDbKey()), balance, -amount));
     }
     account.setBalance(addExact(balance, amount, useStrict));
@@ -152,7 +153,7 @@ public class Commons {
         dynamicPropertiesStore.getTotalShieldedPoolValue(), valueBalance,
         dynamicPropertiesStore.disableJavaLangMath());
     if (totalShieldedPoolValue < 0) {
-      throw new BalanceInsufficientException(String.format(
+      throw new BalanceInsufficientException(StringUtil.format(
           "total shielded pool value can not below 0, actual: %d", totalShieldedPoolValue));
     }
     dynamicPropertiesStore.saveTotalShieldedPoolValue(totalShieldedPoolValue);

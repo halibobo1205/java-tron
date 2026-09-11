@@ -338,7 +338,7 @@ public class Util {
     JSONArray contracts = new JSONArray();
     JSONArray rawContractArray = rawData.getJSONArray("contract");
     if (rawContractArray.size() > 1) {
-      throw new ContractSizeNotEqualToOneException(String.format(
+      throw new ContractSizeNotEqualToOneException(org.tron.common.utils.StringUtil.format(
           ActuatorConstant.CONTRACT_SIZE_NOT_EQUAL_TO_ONE, rawContractArray.size()));
     }
 

@@ -22,6 +22,7 @@ import java.util.List;
 import org.apache.commons.lang3.StringUtils;
 import org.tron.common.utils.Bech32;
 import org.tron.common.utils.Bech32.Bech32Data;
+import org.tron.common.utils.StringUtil;
 
 
 public class KeyIo {
@@ -77,7 +78,8 @@ public class KeyIo {
       int value = in[i + inStart] & 0xff;
       if ((value >>> fromBits) != 0) {
         throw new IllegalArgumentException(
-            String.format("Input value '%X' exceeds '%d' bit size", value, fromBits));
+            StringUtil.format(
+                "Input value '%X' exceeds '%d' bit size", value, fromBits));
       }
       acc = ((acc << fromBits) | value) & maxAcc;
       bits += fromBits;

@@ -37,6 +37,7 @@ import org.tron.common.crypto.SignInterface;
 import org.tron.common.crypto.SignUtils;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.Sha256Hash;
+import org.tron.common.utils.StringUtil;
 import org.tron.common.utils.Time;
 import org.tron.core.capsule.utils.MerkleTree;
 import org.tron.core.config.Parameter.ChainConstant;
@@ -235,7 +236,8 @@ public class BlockCapsule implements ProtoCapsule<Block> {
     Sha256Hash actual = calcMerkleRoot();
     if (!actual.equals(getMerkleRoot())) {
       throw new BadBlockException(CALC_MERKLE_ROOT_FAILED,
-          String.format("merkle root mismatch for block %d: expected %s, actual %s",
+          StringUtil.format(
+              "merkle root mismatch for block %d: expected %s, actual %s",
               getNum(), getMerkleRoot(), actual));
     }
   }

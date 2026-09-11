@@ -115,6 +115,7 @@ public abstract class PbftBaseMessage extends Message {
         : Hex.toHexString(pbftMessage.getRawData().getData().toByteArray());
   }
 
+  @SuppressWarnings("EmptyCatch")
   private String decode() {
     try {
       SRL srList = SRL.parseFrom(pbftMessage.getRawData().getData().toByteArray());

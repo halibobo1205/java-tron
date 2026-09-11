@@ -13,6 +13,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.tron.common.bloom.Bloom;
 import org.tron.common.crypto.Hash;
 import org.tron.common.runtime.vm.DataWord;
+import org.tron.common.utils.StringUtil;
 import org.tron.core.config.args.Args;
 import org.tron.core.exception.jsonrpc.JsonRpcInvalidParamsException;
 import org.tron.core.services.jsonrpc.TronJsonRpc.FilterRequest;
@@ -60,14 +61,16 @@ public class LogFilter {
       for (Object s : (ArrayList) fr.getAddress()) {
         if (!(s instanceof String)) {
           throw new JsonRpcInvalidParamsException(
-              String.format("invalid address at index %d: %s", i, s));
+              StringUtil.format(
+                  "invalid address at index %d: %s", i, s));
         }
         try {
           addr.add(addressToByteArray((String) s));
           i++;
         } catch (JsonRpcInvalidParamsException e) {
           throw new JsonRpcInvalidParamsException(
-              String.format("invalid address at index %d: %s", i, s));
+              StringUtil.format(
+                  "invalid address at index %d: %s", i, s));
         }
       }
       withContractAddress(addr.toArray(new byte[addr.size()][]));

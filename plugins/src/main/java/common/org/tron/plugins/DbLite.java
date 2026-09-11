@@ -14,6 +14,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Optional;
@@ -24,6 +25,7 @@ import java.util.stream.Stream;
 import lombok.extern.slf4j.Slf4j;
 import me.tongfei.progressbar.ProgressBar;
 import org.rocksdb.RocksDBException;
+import org.tron.common.utils.StringUtil;
 import org.tron.plugins.utils.ByteArray;
 import org.tron.plugins.utils.DBUtils;
 import org.tron.plugins.utils.FileUtils;
@@ -198,7 +200,8 @@ public class DbLite implements Callable<Integer> {
     }
     long during = (System.currentTimeMillis() - start) / 1000;
     logger.info("Create snapshot finished, take {} s.", during);
-    spec.commandLine().getOut().format("Create snapshot finished, take %d s.", during).println();
+    spec.commandLine().getOut()
+        .format(Locale.ROOT, "Create snapshot finished, take %d s.", during).println();
   }
 
   /**
@@ -232,7 +235,8 @@ public class DbLite implements Callable<Integer> {
     }
     long during = (System.currentTimeMillis() - start) / 1000;
     logger.info("Create history finished, take {} s.", during);
-    spec.commandLine().getOut().format("Create history finished, take %d s.", during).println();
+    spec.commandLine().getOut()
+        .format(Locale.ROOT, "Create history finished, take %d s.", during).println();
   }
 
   /**
@@ -276,7 +280,8 @@ public class DbLite implements Callable<Integer> {
     }
     long during = (System.currentTimeMillis() - start) / 1000;
     logger.info("Merge history finished, take {} s.", during);
-    spec.commandLine().getOut().format("Merge history finished, take %d s.", during).println();
+    spec.commandLine().getOut()
+        .format(Locale.ROOT, "Merge history finished, take %d s.", during).println();
   }
 
   /**
@@ -449,7 +454,7 @@ public class DbLite implements Callable<Integer> {
   private void fillSnapshotBlockAndTransDb(String sourceDir, String snapshotDir)
           throws IOException, RocksDBException {
     logger.info("Begin to fill {} block, genesis block and trans to snapshot.", RECENT_BLKS);
-    spec.commandLine().getOut().format(
+    spec.commandLine().getOut().format(Locale.ROOT,
         "Begin to fill %d block, genesis block and trans to snapshot.", RECENT_BLKS).println();
     DBInterface sourceBlockIndexDb = DbTool.getDB(sourceDir, BLOCK_INDEX_DB_NAME);
     DBInterface sourceBlockDb = DbTool.getDB(sourceDir, BLOCK_DB_NAME);
@@ -540,9 +545,9 @@ public class DbLite implements Callable<Integer> {
             .SPLIT_BLOCK_NUM));
     if (historyMaxNum < snapshotMinNum) {
       throw new RuntimeException(
-          String.format(
+          StringUtil.format(
               "History max block is lower than snapshot min number, history: %d, snapshot: %d",
-          historyMaxNum, snapshotMinNum));
+              historyMaxNum, snapshotMinNum));
     }
     // check genesis block is equal
     if (!Arrays.equals(getGenesisBlockHash(liteDir), getGenesisBlockHash(historyDir))) {
@@ -578,12 +583,14 @@ public class DbLite implements Callable<Integer> {
     if (start > end) {
       logger.info("Ignore trimming the history data, from {} to {}.", start, end);
       spec.commandLine().getOut()
-          .format("Ignore trimming the history data, from %d to %d.", start, end).println();
+          .format(Locale.ROOT, "Ignore trimming the history data, from %d to %d.",
+              start, end).println();
       return;
     }
     logger.info("Begin to trim the history data, from {} to {}.", start, end);
     spec.commandLine().getOut()
-        .format("Begin to trim the history data, from %d to %d.", start, end).println();
+        .format(Locale.ROOT, "Begin to trim the history data, from %d to %d.",
+            start, end).println();
     DBInterface blockIndexDb = DbTool.getDB(liteDir, BLOCK_INDEX_DB_NAME);
     DBInterface blockDb = DbTool.getDB(liteDir, BLOCK_DB_NAME);
     DBInterface transDb = DbTool.getDB(liteDir, TRANS_DB_NAME);
@@ -620,7 +627,8 @@ public class DbLite implements Callable<Integer> {
     if (start > end) {
       logger.info("Ignore merging the bak data, start {} end {}.", start, end);
       spec.commandLine().getOut()
-          .format("Ignore merging the bak data, start %d end %d.", start, end).println();
+          .format(Locale.ROOT, "Ignore merging the bak data, start %d end %d.",
+              start, end).println();
       return;
     }
 
@@ -628,7 +636,8 @@ public class DbLite implements Callable<Integer> {
     Path bakDir = Paths.get(liteDir, BACKUP_DIR_PREFIX + START_TIME);
     logger.info("Begin to merge {} to database, start {} end {}.", bakDir, start, end);
     spec.commandLine().getOut()
-        .format("Begin to merge %s to database, start %d end %d.", bakDir, start, end).println();
+        .format(Locale.ROOT, "Begin to merge %s to database, start %d end %d.",
+            bakDir, start, end).println();
     byte[] head = ByteArray.fromLong(start);
     // use seek to skip
     archiveDbs.stream().parallel().forEach(dbName -> {
@@ -710,8 +719,9 @@ public class DbLite implements Callable<Integer> {
     long second = getSecondBlock(sourceDir);
     if (latest - second + 1 < RECENT_BLKS) {
       throw new NoSuchElementException(
-          String.format("At least %d blocks in block store, actual latestBlock:%d, firstBlock:%d.",
-          RECENT_BLKS, latest, second));
+          StringUtil.format(
+              "At least %d blocks in block store, actual latestBlock:%d, firstBlock:%d.",
+              RECENT_BLKS, latest, second));
     }
   }
 

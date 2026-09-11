@@ -64,6 +64,7 @@ public class DataWord implements Comparable<DataWord> {
     this(ByteBuffer.allocate(8).putLong(num));
   }
 
+  @SuppressWarnings("ByteBufferBackingArray")
   private DataWord(ByteBuffer buffer) {
     final ByteBuffer targetByteBuffer = ByteBuffer.allocate(WORD_SIZE);
     final byte[] array = buffer.array();

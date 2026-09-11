@@ -5,6 +5,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.tron.common.utils.ByteArray;
+import org.tron.common.utils.StringUtil;
 import org.tron.core.capsule.BytesCapsule;
 import org.tron.core.db.TronStoreWithRevoking;
 import org.tron.core.exception.ItemNotFoundException;
@@ -27,7 +28,8 @@ public class TreeBlockIndexStore extends TronStoreWithRevoking<BytesCapsule> {
       throws ItemNotFoundException {
     BytesCapsule value = getUnchecked(ByteArray.fromLong(num));
     if (value == null || value.getData() == null) {
-      throw new ItemNotFoundException(String.format("number: %d is not found!", num));
+      throw new ItemNotFoundException(StringUtil.format(
+          "number: %d is not found!", num));
     }
 
     return value.getData();
@@ -38,8 +40,8 @@ public class TreeBlockIndexStore extends TronStoreWithRevoking<BytesCapsule> {
       throws ItemNotFoundException {
     byte[] value = revokingDB.getUnchecked(key);
     if (ArrayUtils.isEmpty(value)) {
-      throw new ItemNotFoundException(String.format("number: %d is not found!",
-          ByteArray.toLong(key)));
+      throw new ItemNotFoundException(StringUtil.format(
+          "number: %d is not found!", ByteArray.toLong(key)));
     }
     return new BytesCapsule(value);
   }
