@@ -49,6 +49,7 @@ public class ActuatorFactory {
   private static Actuator getActuatorByContract(Contract contract, ChainBaseManager manager,
       TransactionCapsule tx) throws IllegalAccessException, InstantiationException {
     Class<? extends Actuator> clazz = TransactionFactory.getActuator(contract.getType());
+    @SuppressWarnings("ClassNewInstance")
     AbstractActuator abstractActuator = (AbstractActuator) clazz.newInstance();
     abstractActuator.setChainBaseManager(manager).setContract(contract)
         .setForkUtils(manager.getForkController()).setTx(tx);

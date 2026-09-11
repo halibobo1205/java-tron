@@ -163,6 +163,7 @@ subprojects {
                         '-Xep:IntLongMath:ERROR',
                         '-Xep:NarrowCalculation:ERROR',
                         '-Xep:ReferenceEquality:ERROR',
+                        '-Xep:ClassNewInstance:ERROR',
                 ])
             }
         }
