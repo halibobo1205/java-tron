@@ -113,8 +113,8 @@ public class Memory implements ProgramListenerAware {
 
     toAllocate = newSize - softSize;
     if (toAllocate > 0) {
-      toAllocate = (int) ceil((double) toAllocate / WORD_SIZE,
-          VMConfig.disableJavaLangMath()) * WORD_SIZE;
+      toAllocate = ((int) ceil((double) toAllocate / WORD_SIZE,
+          VMConfig.disableJavaLangMath())) * WORD_SIZE;
       softSize = addExact(softSize, toAllocate, VMConfig.disableJavaLangMath());
 
       if (programListener != null) {

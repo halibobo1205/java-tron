@@ -149,6 +149,7 @@ subprojects {
                         // Mutual altNames: enabling either name enables both checks.
                         '-Xep:CheckReturnValue:ERROR',
                         '-Xep:ReturnValueIgnored:ERROR',
+                        '-Xep:FloatCast:ERROR',
                 ])
             }
         }
