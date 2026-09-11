@@ -1,6 +1,7 @@
 package org.tron.core.net.service.nodepersist;
 
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -21,7 +22,7 @@ import org.tron.p2p.discover.Node;
 @Slf4j(topic = "net")
 @Component
 public class NodePersistService {
-  private static final byte[] DB_KEY_PEERS = "peers".getBytes();
+  private static final byte[] DB_KEY_PEERS = "peers".getBytes(StandardCharsets.UTF_8);
   private static final long DB_COMMIT_RATE = 60 * 1000L;
   private static final int MAX_NODES_WRITE_TO_DB = 30;
   private final boolean isNodePersist = CommonParameter.getInstance().isNodeDiscoveryPersist();

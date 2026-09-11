@@ -7,6 +7,7 @@ import com.google.common.collect.Streams;
 import com.google.common.primitives.Bytes;
 import com.google.protobuf.ByteString;
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -275,12 +276,14 @@ public class RewardViCalService {
   }
 
   private long getNewRewardAlgorithmEffectiveCycle() {
-    byte[] value =  this.propertiesStore.get("NEW_REWARD_ALGORITHM_EFFECTIVE_CYCLE".getBytes());
+    byte[] value =  this.propertiesStore
+        .get("NEW_REWARD_ALGORITHM_EFFECTIVE_CYCLE".getBytes(StandardCharsets.UTF_8));
     return value == null ? Long.MAX_VALUE : ByteArray.toLong(value);
   }
 
   private long getLatestBlockHeaderNumber() {
-    byte[] value =  this.propertiesStore.get("latest_block_header_number".getBytes());
+    byte[] value =  this.propertiesStore
+        .get("latest_block_header_number".getBytes(StandardCharsets.UTF_8));
     return value == null ? 1 : ByteArray.toLong(value);
   }
 }

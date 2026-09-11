@@ -1,6 +1,7 @@
 package org.tron.core.store;
 
 import com.google.protobuf.ByteString;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -16,8 +17,10 @@ import org.tron.core.db.TronStoreWithRevoking;
 @Component
 public class WitnessScheduleStore extends TronStoreWithRevoking<BytesCapsule> {
 
-  private static final byte[] ACTIVE_WITNESSES = "active_witnesses".getBytes();
-  private static final byte[] CURRENT_SHUFFLED_WITNESSES = "current_shuffled_witnesses".getBytes();
+  private static final byte[] ACTIVE_WITNESSES =
+      "active_witnesses".getBytes(StandardCharsets.UTF_8);
+  private static final byte[] CURRENT_SHUFFLED_WITNESSES =
+      "current_shuffled_witnesses".getBytes(StandardCharsets.UTF_8);
 
   private static final int ADDRESS_BYTE_ARRAY_LENGTH = 21;
 
