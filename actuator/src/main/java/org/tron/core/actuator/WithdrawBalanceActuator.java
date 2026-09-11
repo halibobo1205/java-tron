@@ -132,7 +132,7 @@ public class WithdrawBalanceActuator extends AbstractActuator {
       throw new ContractValidateException("witnessAccount does not have any reward");
     }
     try {
-      LongMath.checkedAdd(accountCapsule.getBalance(), accountCapsule.getAllowance());
+      long unused = LongMath.checkedAdd(accountCapsule.getBalance(), accountCapsule.getAllowance());
     } catch (ArithmeticException e) {
       logger.debug(e.getMessage(), e);
       throw new ContractValidateException(e.getMessage());

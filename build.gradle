@@ -146,6 +146,9 @@ subprojects {
                         '-Xep:ArrayToString:ERROR',
                         '-Xep:ComparisonOutOfRange:ERROR',
                         '-Xep:ProtoBuilderReturnValueIgnored:ERROR',
+                        // Mutual altNames: enabling either name enables both checks.
+                        '-Xep:CheckReturnValue:ERROR',
+                        '-Xep:ReturnValueIgnored:ERROR',
                 ])
             }
         }
