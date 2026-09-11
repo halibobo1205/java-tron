@@ -1,5 +1,6 @@
 package org.tron.core.config;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import lombok.Getter;
 
 public class Parameter {
@@ -59,7 +60,7 @@ public class Parameter {
 
   public static class ChainSymbol {
 
-    public static final byte[] TRX_SYMBOL_BYTES = "_".getBytes(); // TRX symbol
+    public static final byte[] TRX_SYMBOL_BYTES = "_".getBytes(UTF_8); // TRX symbol
   }
 
   public class ChainConstant {

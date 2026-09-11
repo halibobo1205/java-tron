@@ -1,5 +1,6 @@
 package org.tron.core.vm.repository;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.tron.common.math.Maths.addExact;
 import static org.tron.common.math.Maths.max;
 import static org.tron.common.math.Maths.round;
@@ -82,9 +83,9 @@ import org.tron.protos.contract.SmartContractOuterClass.SmartContract;
 public class RepositoryImpl implements Repository {
 
   private final long precision = Parameter.ChainConstant.PRECISION;
-  private static final byte[] TOTAL_NET_WEIGHT = "TOTAL_NET_WEIGHT".getBytes();
-  private static final byte[] TOTAL_ENERGY_WEIGHT = "TOTAL_ENERGY_WEIGHT".getBytes();
-  private static final byte[] TOTAL_TRON_POWER_WEIGHT = "TOTAL_TRON_POWER_WEIGHT".getBytes();
+  private static final byte[] TOTAL_NET_WEIGHT = "TOTAL_NET_WEIGHT".getBytes(UTF_8);
+  private static final byte[] TOTAL_ENERGY_WEIGHT = "TOTAL_ENERGY_WEIGHT".getBytes(UTF_8);
+  private static final byte[] TOTAL_TRON_POWER_WEIGHT = "TOTAL_TRON_POWER_WEIGHT".getBytes(UTF_8);
 
   private StoreFactory storeFactory;
   @Getter
