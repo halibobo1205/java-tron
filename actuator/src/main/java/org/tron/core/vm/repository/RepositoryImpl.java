@@ -876,7 +876,7 @@ public class RepositoryImpl implements Repository {
     if (accountCapsule == null) {
       accountCapsule = createAccount(address, Protocol.AccountType.Normal);
     }
-    long balance = accountCapsule.getAssetV2(new String(tokenIdWithoutLeadingZero));
+    long balance = accountCapsule.getAssetV2(new String(tokenIdWithoutLeadingZero, UTF_8));
     if (value == 0) {
       return balance;
     }
@@ -897,7 +897,7 @@ public class RepositoryImpl implements Repository {
     Key key = Key.create(address);
     accountCache.put(key, Value.create(accountCapsule,
          accountCache.get(key).getType().addType(Type.DIRTY)));
-    return accountCapsule.getAssetV2(new String(tokenIdWithoutLeadingZero));
+    return accountCapsule.getAssetV2(new String(tokenIdWithoutLeadingZero, UTF_8));
   }
 
   @Override
@@ -906,7 +906,7 @@ public class RepositoryImpl implements Repository {
     if (accountCapsule == null) {
       return 0;
     }
-    String tokenStr = new String(ByteUtil.stripLeadingZeroes(tokenId));
+    String tokenStr = new String(ByteUtil.stripLeadingZeroes(tokenId), UTF_8);
     return accountCapsule.getAssetV2(tokenStr);
   }
 
