@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.Console;
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.Charset;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -221,7 +222,7 @@ public class WalletUtils {
 
   private static synchronized Scanner getSharedStdinScanner() {
     if (sharedStdinScanner == null) {
-      sharedStdinScanner = new Scanner(System.in);
+      sharedStdinScanner = new Scanner(System.in, Charset.defaultCharset());
     }
     return sharedStdinScanner;
   }
