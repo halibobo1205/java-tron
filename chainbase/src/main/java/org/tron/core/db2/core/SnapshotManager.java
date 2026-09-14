@@ -1,5 +1,7 @@
 package org.tron.core.db2.core;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import com.google.common.collect.Maps;
 import com.google.common.primitives.Bytes;
 import com.google.common.primitives.Ints;
@@ -109,7 +111,7 @@ public class SnapshotManager implements RevokingDatabase {
     byte[] lengthBytes = Arrays.copyOf(bytes, 4);
     int length = Ints.fromByteArray(lengthBytes);
     byte[] value = Arrays.copyOfRange(bytes, 4, 4 + length);
-    return new String(value);
+    return new String(value, UTF_8);
   }
 
   public ISession buildSession() {
@@ -531,7 +533,7 @@ public class SnapshotManager implements RevokingDatabase {
       if (dbMap.get(db) == null) {
         continue;
       }
-      byte[] realKey = Arrays.copyOfRange(key, db.getBytes().length + 4, key.length);
+      byte[] realKey = Arrays.copyOfRange(key, db.getBytes(UTF_8).length + 4, key.length);
       byte[] realValue = value.length == 1 ? null : Arrays.copyOfRange(value, 1, value.length);
       if (realValue != null) {
         dbMap.get(db).getHead().put(realKey, realValue);
@@ -554,7 +556,7 @@ public class SnapshotManager implements RevokingDatabase {
   }
 
   private byte[] simpleEncode(String s) {
-    byte[] bytes = s.getBytes();
+    byte[] bytes = s.getBytes(UTF_8);
     byte[] length = Ints.toByteArray(bytes.length);
     byte[] r = new byte[4 + bytes.length];
     System.arraycopy(length, 0, r, 0, 4);
