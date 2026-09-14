@@ -215,7 +215,7 @@ public class Manager {
   @Setter
   private boolean isSyncMode;
   @Getter
-  private Object forkLock = new Object();
+  private final Object forkLock = new Object();
   // map<Long, IncrementalMerkleTree>
   @Getter
   @Setter
@@ -275,7 +275,7 @@ public class Manager {
   private final ThreadLocal<Histogram.Timer> blockedTimer = new ThreadLocal<>();
 
   private AtomicInteger blockWaitLock = new AtomicInteger(0);
-  private Object transactionLock = new Object();
+  private final Object transactionLock = new Object();
 
   private ExecutorService rePushEs;
   private static final String rePushEsName = "repush";

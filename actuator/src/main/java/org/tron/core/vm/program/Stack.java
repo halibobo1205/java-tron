@@ -47,6 +47,7 @@ public class Stack extends java.util.Stack<DataWord> implements ProgramListenerA
   }
 
   @Override
+  @SuppressWarnings("UnsynchronizedOverridesSynchronized") // thread-confined per Program
   public boolean equals(Object o) {
     if (o == null) {
       return false;
@@ -66,6 +67,7 @@ public class Stack extends java.util.Stack<DataWord> implements ProgramListenerA
 
 
   @Override
+  @SuppressWarnings("UnsynchronizedOverridesSynchronized")
   public int hashCode() {
     return Objects.hash(super.hashCode(), programListener);
   }
