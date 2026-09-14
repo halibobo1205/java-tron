@@ -2338,23 +2338,23 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule> 
 
   public void forked(int version, boolean value) {
     String forkKey = FORK_CONTROLLER + version;
-    put(forkKey.getBytes(), new BytesCapsule(Boolean.toString(value).getBytes()));
+    put(forkKey.getBytes(UTF_8), new BytesCapsule(Boolean.toString(value).getBytes(UTF_8)));
   }
 
   public void statsByVersion(int version, byte[] stats) {
     String statsKey = FORK_PREFIX + version;
-    put(statsKey.getBytes(), new BytesCapsule(stats));
+    put(statsKey.getBytes(UTF_8), new BytesCapsule(stats));
   }
 
   public byte[] statsByVersion(int version) {
     String statsKey = FORK_PREFIX + version;
-    return revokingDB.getUnchecked(statsKey.getBytes());
+    return revokingDB.getUnchecked(statsKey.getBytes(UTF_8));
   }
 
   public Boolean getForked(int version) {
     String forkKey = FORK_CONTROLLER + version;
-    byte[] value = revokingDB.getUnchecked(forkKey.getBytes());
-    return value == null ? null : Boolean.valueOf(new String(value));
+    byte[] value = revokingDB.getUnchecked(forkKey.getBytes(UTF_8));
+    return value == null ? null : Boolean.valueOf(new String(value, UTF_8));
   }
 
   public void saveLatestVersion(int version) {
