@@ -3,6 +3,7 @@ package org.tron.core.archive.capture;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.tron.core.archive.domain.ArchiveDomain;
+import org.tron.protos.Protocol.Account;
 
 /**
  * Process-wide bridge from the Store path to the active {@link ArchiveCaptureEngine}, mirroring
@@ -162,6 +163,46 @@ public final class ArchiveCaptureHolder {
     } catch (Exception e) {
       active.recordFailure("captureDelete(" + dbName + ")", e);
       logFailureBestEffort("captureDelete(" + dbName + ")", e);
+    }
+  }
+
+  /** Captures the same immutable account snapshot that supplies the canonical store write. */
+  public static void captureAccountPut(String dbName, byte[] key, byte[] prevValue,
+      AccountWriteInput input) {
+    ArchiveCaptureEngine active = engine;
+    if (active == null || !ensureCurrentTx(active, "capturePut(" + dbName + ")")) {
+      return;
+    }
+    try {
+      active.captureAccountPut(dbName, key, prevValue, input);
+    } catch (Exception e) {
+      active.recordFailure("capturePut(" + dbName + ")", e);
+      logFailureBestEffort("capturePut(" + dbName + ")", e);
+    }
+  }
+
+  /** One store write owns this input; never retain it in the capture engine or a query cache. */
+  public static final class AccountWriteInput {
+
+    private final Account account;
+    private final byte[] bytes;
+
+    private AccountWriteInput(Account account) {
+      this.account = account;
+      this.bytes = account.toByteArray();
+    }
+
+    public static AccountWriteInput freeze(Account account) {
+      return new AccountWriteInput(account);
+    }
+
+    public Account getAccount() {
+      return account;
+    }
+
+    /** Borrowed store-write bytes: callers must not modify or retain this array. */
+    public byte[] getBytes() {
+      return bytes;
     }
   }
 

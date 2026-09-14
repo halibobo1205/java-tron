@@ -13,6 +13,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -43,6 +44,7 @@ import org.tron.core.archive.ArchiveSource;
 import org.tron.core.archive.capture.ArchiveCaptureEngine;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
 import org.tron.core.archive.capture.ArchiveChangeRecord;
+import org.tron.core.archive.codec.AccountCanonicalValueCodec;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
 import org.tron.core.archive.domain.DefaultArchiveDomainCatalog;
@@ -78,6 +80,97 @@ public class AccountStoreArchiveCaptureTest {
     CommonParameter.getInstance().setHistoryBalanceLookup(historyBalanceLookup);
     AssetUtil.setAccountAssetStore(previousAssetUtilStore);
     AssetUtil.setDynamicPropertiesStore(previousAssetUtilDynamicStore);
+  }
+
+  @Test
+  public void putFreezesOneAccountForCanonicalBytesAndBothArchiveDomains() throws Exception {
+    byte[] address = address();
+    AccountCapsule oldAccount = account(address, false, "1000001", 5L);
+    Account frozen = account(address, false, "1000001", 9L).getInstance().toBuilder()
+        .setBalance(101L).build();
+    Account changed = frozen.toBuilder().setBalance(404L).putAssetV2("1000001", 99L).build();
+    AccountCapsule item = spy(new AccountCapsule(frozen));
+    AccountAssetStore assets = mock(AccountAssetStore.class);
+    IRevokingDB db = mock(IRevokingDB.class);
+    when(db.getUnchecked(same(address))).thenAnswer(invocation -> {
+      item.setInstance(changed);
+      return oldAccount.getData();
+    });
+    AccountStore store = accountStore(assets, db);
+    ArchiveCaptureEngine engine = startCapture();
+
+    store.put(address, item);
+
+    verify(item, times(1)).getInstance();
+    verify(item, never()).getData();
+    verify(db).put(same(address), aryEq(frozen.toByteArray()));
+    assertEquals(2, engine.records().size());
+    assertArrayEquals(
+        new AccountCanonicalValueCodec().normalizePut(frozen.toByteArray()).getValue(),
+        engine.records().get(0).getValue().getValue());
+    assertAsset(engine.records().get(1), address, "1000001", 5L, 9L);
+    assertFalse(engine.failure().isPresent());
+    verifyNoInteractions(assets);
+  }
+
+  @Test
+  public void archiveOffPutDoesNotFreezeOrReadPreviousAccount() throws Exception {
+    byte[] address = address();
+    AccountCapsule item = spy(account(address, false, "1000001", 9L));
+    byte[] expected = item.getInstance().toByteArray();
+    AccountAssetStore assets = mock(AccountAssetStore.class);
+    IRevokingDB db = mock(IRevokingDB.class);
+    AccountStore store = accountStore(assets, db);
+
+    store.put(address, item);
+
+    verify(item, times(1)).getInstance(); // Only the fixture read, not the store path.
+    verify(item, times(1)).getData();
+    verify(db, never()).getUnchecked(any(byte[].class));
+    verify(db).put(same(address), aryEq(expected));
+    verifyNoInteractions(assets);
+  }
+
+  @Test
+  public void malformedPreviousAccountFailsCaptureWithoutSkippingCanonicalPut() throws Exception {
+    byte[] address = address();
+    AccountCapsule item = account(address, true, "1000001", 9L);
+    AccountAssetStore assets = mock(AccountAssetStore.class);
+    IRevokingDB db = mock(IRevokingDB.class);
+    when(db.getUnchecked(same(address))).thenReturn(new byte[] {(byte) 0xff});
+    AccountStore store = accountStore(assets, db);
+    ArchiveCaptureEngine engine = startCapture();
+
+    store.put(address, item);
+
+    verify(db).put(same(address), aryEq(item.getData()));
+    assertTrue(engine.failure().isPresent());
+    assertTrue(engine.failure().get().getCause().getMessage()
+        .contains("not a valid Account proto"));
+    assertTrue(engine.records().isEmpty());
+    verifyNoInteractions(assets);
+  }
+
+  @Test
+  public void emptyPreviousBytesRemainPresentWhileNullIsTombstone() throws Exception {
+    byte[] address = address();
+    for (byte[] previous : new byte[][] {null, new byte[0]}) {
+      AccountAssetStore assets = mock(AccountAssetStore.class);
+      IRevokingDB db = mock(IRevokingDB.class);
+      when(db.getUnchecked(same(address))).thenReturn(previous);
+      AccountStore store = accountStore(assets, db);
+      ArchiveCaptureEngine engine = startCapture();
+
+      store.put(address, new AccountCapsule(Account.getDefaultInstance()));
+
+      verify(db).put(same(address), aryEq(new byte[0]));
+      assertEquals(1, engine.records().size());
+      assertEquals(previous == null, engine.records().get(0).getPrevValue().isDeleted());
+      assertFalse(engine.records().get(0).getValue().isDeleted());
+      assertArrayEquals(new byte[0], engine.records().get(0).getValue().getValue());
+      assertFalse(engine.failure().isPresent());
+      verifyNoInteractions(assets);
+    }
   }
 
   @Test

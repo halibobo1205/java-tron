@@ -18,6 +18,7 @@ import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.Commons;
 import org.tron.core.archive.ArchiveMetrics;
 import org.tron.core.archive.capture.ArchiveCaptureHolder;
+import org.tron.core.archive.capture.ArchiveCaptureHolder.AccountWriteInput;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.db.TronStoreWithRevoking;
@@ -112,7 +113,9 @@ public class AccountStore extends TronStoreWithRevoking<AccountCapsule> {
     }
     // L4c: read the pre-put account so ACCOUNT_ASSET can value-diff assetV2 (gated to avoid the
     // extra read + serialize when archive is off).
-    byte[] archiveValue = archiveActive ? item.getData() : null;
+    AccountWriteInput archiveInput = archiveActive
+        ? AccountWriteInput.freeze(item.getInstance()) : null;
+    byte[] archiveValue = archiveInput == null ? null : archiveInput.getBytes();
     if (archiveActive && previous == null) {
       previous = readArchivePreviousValue(getDbName(), key);
     }
@@ -121,12 +124,12 @@ public class AccountStore extends TronStoreWithRevoking<AccountCapsule> {
       // Preserve the established ACCOUNT -> ACCOUNT_ASSET capture order while still reading the
       // physical asset prefix before SnapshotRoot mutates it. These records remain block-local, so
       // a later canonical write failure is discarded by the normal archive abort path.
-      ArchiveCaptureHolder.capturePut(
-          getDbName(), key, previous.getValue(), archiveValue);
+      ArchiveCaptureHolder.captureAccountPut(
+          getDbName(), key, previous.getValue(), archiveInput);
       // SnapshotRoot may migrate/delete account-asset physical rows as part of the account write.
       // Capture the effective transition while the previous physical prefix is still visible.
       captureAccountAssetTransitions(
-          key, previous.getValue(), archiveValue, item.getInstance());
+          key, previous.getValue(), archiveValue, archiveInput.getAccount());
     }
     if (archiveActive) {
       revokingDB.put(key, archiveValue);

@@ -17,6 +17,8 @@ import org.tron.common.math.StrictMathWrapper;
 import org.tron.core.archive.ArchiveException;
 import org.tron.core.archive.ArchiveExecutionContext;
 import org.tron.core.archive.ArchiveResourceEstimator;
+import org.tron.core.archive.capture.ArchiveCaptureHolder.AccountWriteInput;
+import org.tron.core.archive.codec.AccountCanonicalValueCodec;
 import org.tron.core.archive.codec.DomainValue;
 import org.tron.core.archive.domain.ArchiveDomain;
 import org.tron.core.archive.domain.ArchiveDomainCatalog;
@@ -118,11 +120,16 @@ public final class ArchiveCaptureEngine {
   }
 
   public void capturePut(String dbName, byte[] key, byte[] prevValue, byte[] value) {
-    capture(dbName, key, prevValue, value, false);
+    capture(dbName, key, prevValue, value, false, null);
+  }
+
+  public void captureAccountPut(String dbName, byte[] key, byte[] prevValue,
+      AccountWriteInput input) {
+    capture(dbName, key, prevValue, input.getBytes(), false, input);
   }
 
   public void captureDelete(String dbName, byte[] key, byte[] prevValue) {
-    capture(dbName, key, prevValue, null, true);
+    capture(dbName, key, prevValue, null, true, null);
   }
 
   /**
@@ -326,7 +333,8 @@ public final class ArchiveCaptureEngine {
     }
   }
 
-  private void capture(String dbName, byte[] key, byte[] prevValue, byte[] value, boolean delete) {
+  private void capture(String dbName, byte[] key, byte[] prevValue, byte[] value, boolean delete,
+      AccountWriteInput accountInput) {
     if (failure != null) {
       return;
     }
@@ -343,12 +351,22 @@ public final class ArchiveCaptureEngine {
     if (descriptor == null) {
       throw missingDescriptor(binding.getDomain().get());
     }
+    if (accountInput != null && binding.getDomain().get() != ArchiveDomain.ACCOUNT) {
+      throw new ArchiveException("account input requires the ACCOUNT domain");
+    }
     reserveRawRecord(length(key), length(prevValue), delete ? 0 : length(value));
     byte[] canonicalKey = descriptor.getKeyCodec().normalize(key);
     DomainValue prev = prevDomainValue(descriptor, prevValue);
-    DomainValue domainValue = delete
-        ? descriptor.getValueCodec().normalizeDelete()
-        : descriptor.getValueCodec().normalizePut(value);
+    DomainValue domainValue;
+    if (delete) {
+      domainValue = descriptor.getValueCodec().normalizeDelete();
+    } else if (accountInput != null
+        && descriptor.getValueCodec() instanceof AccountCanonicalValueCodec) {
+      domainValue = ((AccountCanonicalValueCodec) descriptor.getValueCodec())
+          .normalizeAccount(accountInput.getAccount());
+    } else {
+      domainValue = descriptor.getValueCodec().normalizePut(value);
+    }
     append(position, binding.getDomain().get(), canonicalKey, prev, domainValue);
   }
 

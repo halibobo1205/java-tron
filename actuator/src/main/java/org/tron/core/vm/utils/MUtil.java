@@ -2,7 +2,9 @@ package org.tron.core.vm.utils;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import org.tron.common.utils.ForkController;
 import org.tron.core.capsule.AccountCapsule;
+import org.tron.core.config.Parameter;
 import org.tron.core.exception.ContractValidateException;
 import org.tron.core.vm.VMUtils;
 import org.tron.core.vm.archive.ArchiveRepositoryAdapter;

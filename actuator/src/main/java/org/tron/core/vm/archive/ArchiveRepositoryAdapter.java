@@ -110,6 +110,7 @@ public class ArchiveRepositoryAdapter implements Repository {
   private final Map<Key, Map<Key, Long>> tokenBalances = new HashMap<>();
   private final Map<Key, Map<Key, byte[]>> transientStorage = new HashMap<>();
   private final Set<Key> newContracts = new HashSet<>();
+  private final Set<Key> selfDestructs = new HashSet<>();
 
   public ArchiveRepositoryAdapter(ArchiveStateReader reader, VmDynamicProperties vmProperties) {
     this(reader, vmProperties, true);
@@ -317,6 +318,21 @@ public class ArchiveRepositoryAdapter implements Repository {
   }
 
   @Override
+  public void markSelfDestruct(byte[] address) {
+    reserveOverlay(address);
+    selfDestructs.add(Key.create(address));
+  }
+
+  @Override
+  public boolean isSelfDestructed(byte[] address) {
+    Key key = Key.create(address);
+    if (selfDestructs.contains(key)) {
+      return true;
+    }
+    return parent != null && parent.isSelfDestructed(address);
+  }
+
+  @Override
   public VmDynamicProperties getVmDynamicProperties() {
     return parent != null ? parent.getVmDynamicProperties() : vmProperties;
   }
@@ -452,6 +468,7 @@ public class ArchiveRepositoryAdapter implements Repository {
     delegations.forEach((key, value) ->
         parent.updateDelegation(key.getData(), value));
     newContracts.forEach(key -> parent.putNewContract(key.getData()));
+    selfDestructs.forEach(key -> parent.markSelfDestruct(key.getData()));
     storage.forEach((addrKey, slots) -> {
       // Canonical commit replaces the parent's cached view, including read-only child snapshots.
       reserveOverlay(addrKey.getData());

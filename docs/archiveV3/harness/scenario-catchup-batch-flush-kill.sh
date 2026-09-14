@@ -42,13 +42,15 @@ cfk_positive_int() {
   [ "$2" -gt 0 ] || hs_die "$1 must be positive, got '$2'"
 }
 
-cfk_local_witness_count() {
-  awk '
-    /^localwitness[[:space:]]*=/ { inside = 1; next }
-    inside && /^[[:space:]]*\]/ { inside = 0; next }
-    inside && /^[[:space:]]*[0-9a-fA-F]+,?[[:space:]]*$/ { count++ }
-    END { print count + 0 }
-  ' "$1/node.conf"
+cfk_check_witness_config() {
+  local node="$1" first="$2" last="$3"
+  if java -cp "$HS_CLASSES:$HS_JAR" HarnessKeysTest \
+      "$HS_CLASSES/archive-test-keys.tsv" "$node/node.conf" 27 "$first" "$last" \
+      >"$node/key-config-check.log" 2>&1; then
+    hs_pass "$(basename "$node") HOCON witness identities/order: 27 genesis, local $first..$last"
+  else
+    hs_fail "$(basename "$node") witness config mismatch (see key-config-check.log)"
+  fi
 }
 
 # The flush anchor is a SEMANTIC descriptor (`cfk.flush` in anchor.sh), not a line number and not
@@ -197,12 +199,11 @@ export HS_CFG_ARCHIVE_IDENTITY_INIT=true
 export HS_CFG_ACTIVE_PEERS="127.0.0.1:$(hs_p2p_port "$SOURCE_NODE")"
 TARGET_NODE="$(hs_new_node archive-sr27 1)"
 
-hs_assert_eq "27" "$(grep -c 'url = \"http://' "$TARGET_NODE/node.conf")" \
-  "target genesis witness count"
-hs_assert_eq "26" "$(cfk_local_witness_count "$SOURCE_NODE")" \
-  "source local witness count"
-hs_assert_eq "1" "$(cfk_local_witness_count "$TARGET_NODE")" \
-  "catch-up node local witness count"
+# Reuse the actual HOCON parser and key binding oracle, including quoted key strings.
+javac -nowarn -cp "$HS_JAR" -d "$HS_CLASSES" "$CFK_DIR/java/HarnessKeysTest.java" \
+  || hs_die "cannot compile witness config validator"
+cfk_check_witness_config "$SOURCE_NODE" 1 26
+cfk_check_witness_config "$TARGET_NODE" 27 27
 hs_assert_contains "$(grep 'snapshot.maxFlushCount' "$TARGET_NODE/node.conf")" \
   "= $CFK_MAX_FLUSH_COUNT" "target maxFlushCount config"
 hs_assert_contains "$(grep 'softInFlightBlocks' "$TARGET_NODE/node.conf")" \

@@ -36,7 +36,15 @@ public final class AccountCanonicalValueCodec implements CanonicalValueCodec {
     if (value == null) {
       throw new ArchiveException(codecId() + ": account value must not be null");
     }
-    return DomainValue.present(canonicalize(parse(value)));
+    return normalizeAccount(parse(value));
+  }
+
+  /** Normalizes an immutable account without reparsing its store-write bytes. */
+  public DomainValue normalizeAccount(Account account) {
+    if (account == null) {
+      throw new ArchiveException(codecId() + ": account must not be null");
+    }
+    return DomainValue.present(canonicalize(account));
   }
 
   @Override

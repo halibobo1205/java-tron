@@ -119,6 +119,10 @@ public class OperationRegistry {
     return getTable(isConstantCall);
   }
 
+  public static JumpTable getTable() {
+    return getTable(false);
+  }
+
   public static JumpTable getTable(boolean isConstantCall) {
     // Always start from an immutable base table; per-call VMConfig adjustments must not mutate
     // shared tables or a latest fork view can leak into historical replay/trace calls.

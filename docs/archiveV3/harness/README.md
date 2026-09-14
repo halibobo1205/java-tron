@@ -148,7 +148,17 @@ HS_CFG_SOFT_IN_FLIGHT_BLOCKS=8 ./scenario-catchup-batch-flush-kill.sh
 
 # Structured logs and callTracer, with bytecode/receipt-based expectations.
 HS_SKIP_BUILD=1 ./scenario-debug-trace.sh
+
+# The trace scenario defaults to physical account-asset optimization. Also test inline assets.
+HS_SKIP_BUILD=1 DT_ASSET_OPTIMIZATION=0 ./scenario-debug-trace.sh
 ```
+
+The trace scenario covers both a zero-balance victim and a victim holding 123456 SUN plus two
+TRC10 assets. A fixed TOKENBALANCE contract checks both assets on the victim and beneficiary
+before/after destruction, alongside both trace formats and repeated queries after restart.
+In the default optimized mode, it waits for the funding blocks to flush and checks the live
+account's `asset_optimized` flag and balances before destruction. This exercises physical asset
+enumeration instead of only short-lived inline balances in the reversible tail.
 
 `scenario-history-accuracy.sh` and `scenario-debug-trace.sh` default `HS_CFG_WITNESS_COUNT` to **27**
 rather than 1 (a one-SR chain has `solid == head`, so "historical" barely means anything), and the

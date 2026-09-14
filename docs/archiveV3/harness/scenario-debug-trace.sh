@@ -18,6 +18,9 @@ HS_CFG_ARCHIVE_ENABLE=true
 HS_CFG_ARCHIVE_DEBUG=true
 HS_CFG_ARCHIVE_IDENTITY_INIT=true
 HS_CFG_ARCHIVE_DB_DIR=archive
+HS_CFG_COMMITTEE="${HS_CFG_COMMITTEE:-$HS_DEFAULT_COMMITTEE}
+  allowAccountAssetOptimization = ${DT_ASSET_OPTIMIZATION:-1}
+  allowAssetOptimization = ${DT_ASSET_OPTIMIZATION:-1}"
 unset HS_CFG_WITNESS_KEY HS_CFG_GENESIS_WITNESSES HS_JDWP_PORT HS_JDWP_SUSPEND
 hs_init debug-trace
 shasum -a 256 "$HS_JAR" "$HS_HARNESS_DIR/scenario-debug-trace.sh" >"$HS_RUN_DIR/artifacts.sha256"
@@ -60,10 +63,75 @@ dt_receipt() {
     and .contractResult == [\"$2\"]" "$1 canonical receipt/output"
 }
 
+dt_transaction() {
+  local label="$1" key="$2" endpoint="$3" body="$4" tx
+  tx="$(hs_curl_json -X POST -H 'Content-Type: application/json' --data "$body" \
+    "$(hs_http_url "$node")/wallet/$endpoint")" || hs_abort "$label HTTP failure"
+  HS_LAST_TXID="$(hs_broadcast "$node" "$key" "$tx")" || hs_abort "$label broadcast failed"
+  DT_RESPONSE="$HS_RUN_DIR/$label.receipt.json"
+  hs_tx_wait_receipt "$node" "$HS_LAST_TXID" 120 >"$DT_RESPONSE" \
+    || hs_abort "$label receipt unavailable"
+  dt_expect ".id == \"$HS_LAST_TXID\" and (.blockNumber | type == \"number\")
+    and ((.result // \"SUCESS\") == \"SUCESS\")
+    and ((.receipt.result // \"SUCCESS\") == \"SUCCESS\")" "$label canonical receipt"
+  HS_LAST_BLOCK="$(jq -r '.blockNumber' "$DT_RESPONSE")"
+}
+
+dt_issue_asset() {
+  local label="$1" key="$2" name="$3" account start
+  account="$(hs_hex41_of_priv "$key")"
+  start=$(( $(date +%s) * 1000 + 60000 ))
+  dt_transaction "$label" "$key" createassetissue \
+    "{\"owner_address\":\"$account\",\"name\":\"$name\",\"abbr\":\"45453245\",
+      \"total_supply\":1000000,\"trx_num\":1,\"num\":1,\"precision\":0,
+      \"start_time\":$start,\"end_time\":$((start + 86400000)),
+      \"description\":\"6172636869766520653265\",\"url\":\"687474703a2f2f746573742e6c6f63616c\",
+      \"free_asset_net_limit\":0,\"public_free_asset_net_limit\":0}"
+  dt_expect '.assetIssueID | test("^[0-9]+$")' "$label assigned token ID"
+  DT_TOKEN="$(jq -r '.assetIssueID' "$DT_RESPONSE")"
+}
+
+dt_transfer_asset() {
+  local label="$1" key="$2" token="$3" amount="$4" account token_hex
+  account="$(hs_hex41_of_priv "$key")"
+  token_hex="$(printf '%s' "$token" | od -An -v -tx1 | tr -d ' \n')"
+  dt_transaction "$label" "$key" transferasset \
+    "{\"owner_address\":\"$account\",\"to_address\":\"$rich_destroy\",
+      \"asset_name\":\"$token_hex\",\"amount\":$amount}"
+}
+
+dt_token_value() {
+  local label="$1" address="$2" token="$3" tag="$4" expected="$5" data
+  data="$(printf '%064s' "${address#0x}" | tr ' ' 0)$(printf '%064x' "$token")"
+  dt_value "$label" eth_call \
+    "[{\"from\":\"$owner\",\"to\":\"$token_reader_eth\",\"data\":\"0x$data\"},\"$tag\"]" \
+    "0x$(printf '%064x' "$expected")"
+}
+
+dt_asset_replay() {
+  local prefix="$1" before after
+  before="$(hs_dec_to_hexblock "$((hrich - 1))")"; after="$(hs_dec_to_hexblock "$hrich")"
+  dt_token_value "$prefix.asset.a.before" "$rich_destroy_eth" "$token_a" "$before" 111
+  dt_token_value "$prefix.asset.b.before" "$rich_destroy_eth" "$token_b" "$before" 222
+  dt_token_value "$prefix.asset.a.after" "$rich_destroy_eth" "$token_a" "$after" 0
+  dt_token_value "$prefix.asset.b.after" "$rich_destroy_eth" "$token_b" "$after" 0
+  dt_token_value "$prefix.recipient.a.before" "$owner" "$token_a" "$before" 999889
+  dt_token_value "$prefix.recipient.b.before" "$owner" "$token_b" "$before" 0
+  dt_token_value "$prefix.recipient.a.after" "$owner" "$token_a" "$after" 1000000
+  dt_token_value "$prefix.recipient.b.after" "$owner" "$token_b" "$after" 222
+  dt_value "$prefix.funded.before" eth_getBalance "[\"$rich_destroy_eth\",\"$before\"]" 0x1e240
+  dt_value "$prefix.funded.after" eth_getBalance "[\"$rich_destroy_eth\",\"$after\"]" 0x0
+  dt_trace "$prefix.tx.fundedDestroy" debug_traceTransaction "[\"0x$trich\"]" \
+    "$rich_destroy_eth" "0x$zero" '' destroy 0x1e240
+  dt_token_value "$prefix.live.asset.a.unchanged" "$owner" "$token_a" latest 1000000
+  dt_token_value "$prefix.live.asset.b.unchanged" "$owner" "$token_b" latest 222
+}
+
 # Both tracers must succeed. Expected output/storage comes from chosen bytecode,
 # with receipts independently checked before any historical query is made.
 dt_trace() {
   local label="$1" method="$2" base="$3" to="$4" input="$5" old="$6" mode="$7"
+  local destroyed_value="${8:-0x0}"
   local opts params output="0x${old}ab" ops tracer
   [ "$mode" != destroy ] || output=0x
   for tracer in struct call; do
@@ -104,7 +172,7 @@ dt_trace() {
       if [ "$mode" = destroy ]; then
         dt_expect ".result | (has(\"output\") | not) and (.calls | length == 1)
           and (.calls[0] | .type == \"SELFDESTRUCT\" and .from == \"$to\"
-            and .to == \"$owner\" and .value == \"0x0\" and (has(\"error\") | not))" "$label destruction frame"
+            and .to == \"$owner\" and .value == \"$destroyed_value\" and (has(\"error\") | not))" "$label destruction frame"
       else
         dt_expect ".result | .output == \"$output\" and (has(\"calls\") | not)" "$label call output"
       fi
@@ -124,6 +192,7 @@ dt_replay() {
   dt_trace "$prefix.tx.a" debug_traceTransaction "[\"0x$ta\"]" "$contract_eth" "0x$a" "$zero" write
   dt_trace "$prefix.tx.b" debug_traceTransaction "[\"0x$tb\"]" "$contract_eth" "0x$b" "$a" write
   dt_trace "$prefix.tx.destroy" debug_traceTransaction "[\"0x$td\"]" "$destroy_eth" "0x$zero" '' destroy
+  dt_asset_replay "$prefix"
   dt_value "$prefix.code.beforeDestroy" eth_getCode \
     "[\"$destroy_eth\",\"$(hs_dec_to_hexblock "$((hd - 1))")\"]" 0x33ff
   dt_value "$prefix.code.afterDestroy" eth_getCode \
@@ -177,24 +246,67 @@ hs_wait_blocks "$node" 1 180 >/dev/null
 hs_contract_set "$node" "$HS_KEY_ZION" "$destroy" "$zero"
 td="$HS_LAST_TXID"; hd="$HS_LAST_BLOCK"; dt_receipt destroy ''
 dt_value live.destroy.deleted eth_getCode "[\"$destroy_eth\",\"latest\"]" 0x
+
+hs_step "deploy a TOKENBALANCE reader and a victim with TRX and two TRC10 assets"
+# TOKENBALANCE pops token ID first, then address; calldata contains address followed by ID.
+token_runtime=600035602035d160005260206000f3
+HS_CONTRACT_DEPLOY_HEX="600f80600b6000396000f3$token_runtime"
+hs_contract_deploy "$node" "$HS_KEY_ZION"
+dt_receipt deploy-token-reader "$token_runtime"
+token_reader_eth="$(hs_eth_of_hex41 "$HS_LAST_CONTRACT")"
+dt_transaction deploy-funded-victim "$HS_KEY_ZION" deploycontract \
+  "{\"owner_address\":\"$(hs_hex41_of_priv "$HS_KEY_ZION")\",\"abi\":\"[]\",
+    \"bytecode\":\"600280600b6000396000f333ff\",\"name\":\"ArchiveFundedVictim\",
+    \"fee_limit\":1000000000,\"call_value\":123456,
+    \"consume_user_resource_percent\":100,\"origin_energy_limit\":10000000}"
+dt_expect '.contractResult == ["33ff"] and (.contract_address | test("^41[0-9a-f]{40}$"))' \
+  "funded victim canonical deployment"
+rich_destroy="$(jq -r '.contract_address' "$DT_RESPONSE")"
+rich_destroy_eth="$(hs_eth_of_hex41 "$rich_destroy")"
+dt_issue_asset issue-a "$HS_KEY_ZION" 4172636869766541; token_a="$DT_TOKEN"
+dt_issue_asset issue-b "$HS_KEY_SUN" 4172636869766542; token_b="$DT_TOKEN"
+dt_transfer_asset fund-asset-a "$HS_KEY_ZION" "$token_a" 111
+dt_transfer_asset fund-asset-b "$HS_KEY_SUN" "$token_b" 222
+if [ "${DT_ASSET_OPTIMIZATION:-1}" = 1 ]; then
+  hs_step "flush victim assets into the physical account-asset store before destruction"
+  hs_wait_solidified "$node" "$HS_LAST_BLOCK" 300 >/dev/null
+  hs_wait_hist_available "$node" "$owner" "$HS_LAST_BLOCK" 300
+  DT_RESPONSE="$HS_RUN_DIR/funded-victim.account.json"
+  hs_curl_json -X POST -H 'Content-Type: application/json' \
+    --data "{\"address\":\"$rich_destroy\"}" "$(hs_http_url "$node")/wallet/getaccount" \
+    >"$DT_RESPONSE" || hs_abort "funded victim canonical account unavailable"
+  dt_expect ".asset_optimized == true and .balance == 123456
+    and ([.assetV2[] | select(.key == \"$token_a\") | .value] == [111])
+    and ([.assetV2[] | select(.key == \"$token_b\") | .value] == [222])" \
+    "physical asset layout and canonical TRC10 balances"
+fi
+dt_token_value live.asset.a "$rich_destroy_eth" "$token_a" latest 111
+dt_token_value live.asset.b "$rich_destroy_eth" "$token_b" latest 222
+dt_value live.funded.balance eth_getBalance "[\"$rich_destroy_eth\",\"latest\"]" 0x1e240
+hs_contract_set "$node" "$HS_KEY_ZION" "$rich_destroy" "$zero"
+trich="$HS_LAST_TXID"; hrich="$HS_LAST_BLOCK"; dt_receipt funded-destroy ''
+dt_value live.funded.deleted eth_getCode "[\"$rich_destroy_eth\",\"latest\"]" 0x
 jq -n --arg runtime "$runtime" --arg ta "$ta" --arg tb "$tb" --arg td "$td" \
   --argjson ha "$ha" --argjson hb "$hb" --argjson hd "$hd" \
-  '{runtime:$runtime,a:{tx:$ta,height:$ha},b:{tx:$tb,height:$hb},destroy:{tx:$td,height:$hd}}' \
+  --arg trich "$trich" --argjson hrich "$hrich" --arg tokenA "$token_a" --arg tokenB "$token_b" \
+  '{runtime:$runtime,a:{tx:$ta,height:$ha},b:{tx:$tb,height:$hb},destroy:{tx:$td,height:$hd},
+    fundedDestroy:{tx:$trich,height:$hrich,tokenA:$tokenA,tokenB:$tokenB}}' \
   >"$HS_RUN_DIR/coordinates.json"
 
 hs_step "wait for finality/publication, then validate both trace surfaces"
-hs_wait_solidified "$node" "$hd" 300 >/dev/null
-hs_wait_hist_available "$node" "$owner" "$hd" 300
+hs_wait_solidified "$node" "$hrich" 300 >/dev/null
+hs_wait_hist_available "$node" "$owner" "$hrich" 300
 dt_replay before-restart
 hs_assert_repair_not_required "$node" "before restart"
 hs_node_stop "$node" 120 || hs_abort "clean shutdown timed out"
 hs_assert_clean_stop "$node" "first SIGTERM"
 verdict="$(hs_node_restart "$node" 300)"
 hs_assert_startup_verdict "$node" READY "$verdict" "clean restart"
-hs_wait_hist_available "$node" "$owner" "$hd" 300
+hs_wait_hist_available "$node" "$owner" "$hrich" 300
 dt_replay after-restart
 hs_assert_repair_not_required "$node" "after repeated traces"
 hs_assert_eq 0 "$(hs_metric_work_int "$node" publish_failures)" "no publication failures"
 hs_node_stop "$node" 120 || hs_abort "final shutdown timed out"
 hs_assert_clean_stop "$node" "final SIGTERM"
-hs_finish DEBUG_TRACE_OK "witnesses=$HS_CFG_WITNESS_COUNT" "storageHeights=$ha,$hb" "destroyHeight=$hd"
+hs_finish DEBUG_TRACE_OK "witnesses=$HS_CFG_WITNESS_COUNT" "storageHeights=$ha,$hb" \
+  "destroyHeight=$hd" "fundedDestroyHeight=$hrich" "assetOptimization=${DT_ASSET_OPTIMIZATION:-1}"

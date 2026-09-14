@@ -144,9 +144,13 @@ public class AccountCanonicalValueCodecTest {
         Account account = builder.build();
         byte[] input = account.toByteArray();
         DomainValue canonical = codec.normalizePut(input);
+        DomainValue typed = codec.normalizeAccount(account);
 
         assertArrayEquals("sample=" + sample + ", mask=" + mask,
             originalCanonicalBytes(account), canonical.getValue());
+        assertArrayEquals("typed sample=" + sample + ", mask=" + mask,
+            originalCanonicalBytes(account), typed.getValue());
+        assertEquals(base.getAccountResource(), parse(typed).getAccountResource());
         assertArrayEquals(account.toByteArray(), input);
         assertEquals(base.getAccountResource(), parse(canonical).getAccountResource());
         assertArrayEquals(canonical.getValue(),
@@ -159,6 +163,9 @@ public class AccountCanonicalValueCodecTest {
   @Test
   public void emptyAndLargeValuesPreserveOriginalBytesAndBufferOwnership() throws Exception {
     assertArrayEquals(new byte[0], codec.normalizePut(new byte[0]).getValue());
+    assertFalse(codec.normalizeAccount(Account.getDefaultInstance()).isDeleted());
+    assertArrayEquals(new byte[0],
+        codec.normalizeAccount(Account.getDefaultInstance()).getValue());
     codec.validate(codec.normalizePut(new byte[0]));
     byte[] name = new byte[128 * 1024];
     Arrays.fill(name, (byte) 'a');
@@ -170,12 +177,22 @@ public class AccountCanonicalValueCodecTest {
     byte[] expected = originalCanonicalBytes(account);
     byte[] input = account.toByteArray();
     DomainValue actual = codec.normalizePut(input);
+    DomainValue typed = codec.normalizeAccount(account);
+    assertArrayEquals(expected, typed.getValue());
     Arrays.fill(input, (byte) 0);
     byte[] returned = actual.getValue();
     assertArrayEquals(expected, returned);
     Arrays.fill(returned, (byte) 0);
     assertArrayEquals(expected, actual.getValue());
+    assertArrayEquals(expected, typed.getValue());
     codec.validate(actual);
+  }
+
+  @Test
+  public void typedNormalizationRejectsNull() {
+    ArchiveException failure = assertThrows(ArchiveException.class,
+        () -> codec.normalizeAccount(null));
+    assertTrue(failure.getMessage().contains("account must not be null"));
   }
 
   @Test
