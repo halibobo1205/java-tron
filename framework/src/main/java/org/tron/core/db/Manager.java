@@ -1,5 +1,6 @@
 package org.tron.core.db;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.tron.common.math.Maths.floorDiv;
 import static org.tron.common.math.Maths.max;
 import static org.tron.common.math.Maths.min;
@@ -2049,7 +2050,7 @@ public class Manager {
     RecentTransactionItem item = new RecentTransactionItem(block.getNum(), list);
     chainBaseManager.getRecentTransactionStore().put(
             ByteArray.subArray(ByteArray.fromLong(block.getNum()), 6, 8),
-            new BytesCapsule(JsonUtil.obj2Json(item).getBytes()));
+            new BytesCapsule(JsonUtil.obj2Json(item).getBytes(UTF_8)));
   }
 
   public void updateFork(BlockCapsule block) {
@@ -2588,7 +2589,7 @@ public class Manager {
           chainBaseManager.getRecentTransactionStore()) {
         byte[] data = entry.getValue().getData();
         RecentTransactionItem trx =
-            JsonUtil.json2Obj(new String(data), RecentTransactionItem.class);
+            JsonUtil.json2Obj(new String(data, UTF_8), RecentTransactionItem.class);
         if (trx == null) {
           continue;
         }

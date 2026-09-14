@@ -166,7 +166,7 @@ public class TxCacheDB implements DB<byte[], byte[]>, Flusher {
     for (Entry<byte[], BytesCapsule> bytesCapsuleEntry : recentTransactionStore) {
       byte[] data = bytesCapsuleEntry.getValue().getData();
       RecentTransactionItem trx =
-          JsonUtil.json2Obj(new String(data), RecentTransactionItem.class);
+          JsonUtil.json2Obj(new String(data, StandardCharsets.UTF_8), RecentTransactionItem.class);
 
       trx.getTransactionIds().forEach(tid -> bloomFilters[1].put(Hex.decode(tid)));
     }
