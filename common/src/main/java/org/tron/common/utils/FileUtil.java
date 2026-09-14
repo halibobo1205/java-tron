@@ -15,6 +15,8 @@
 
 package org.tron.common.utils;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.File;
@@ -87,7 +89,7 @@ public class FileUtil {
     File priFile = new File(filePath);
     try {
       priFile.createNewFile();
-      try (BufferedWriter bw = new BufferedWriter(new FileWriter(priFile, append))) {
+      try (BufferedWriter bw = new BufferedWriter(new FileWriter(priFile, UTF_8, append))) {
         bw.write(data);
         bw.flush();
       }
@@ -99,7 +101,7 @@ public class FileUtil {
   public static int readData(String filePath, char[] buf) {
     int len;
     File file = new File(filePath);
-    try (BufferedReader bufRead = new BufferedReader(new FileReader(file))) {
+    try (BufferedReader bufRead = new BufferedReader(new FileReader(file, UTF_8))) {
       len = bufRead.read(buf, 0, buf.length);
     } catch (IOException ex) {
       logger.warn("Failed to read data from file.", ex);
