@@ -168,6 +168,7 @@ subprojects {
                         '-Xep:ModifyCollectionInEnhancedForLoop:ERROR',
                         '-Xep:DefaultCharset:ERROR',
                         '-Xep:SynchronizeOnNonFinalField:ERROR',
+                        '-Xep:UnsynchronizedOverridesSynchronized:ERROR',
                 ])
             }
         }
