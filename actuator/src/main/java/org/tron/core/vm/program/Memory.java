@@ -1,6 +1,7 @@
 package org.tron.core.vm.program;
 
 import static java.lang.String.format;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.tron.common.math.Maths.addExact;
 import static org.tron.common.math.Maths.ceil;
 import static org.tron.common.math.Maths.min;
@@ -150,8 +151,8 @@ public class Memory implements ProgramListenerAware {
       byte value = readByte(i);
 
       // Check if value is ASCII
-      String character =
-          ((byte) 0x20 <= value && value <= (byte) 0x7e) ? new String(new byte[]{value}) : "?";
+      String character = ((byte) 0x20 <= value && value <= (byte) 0x7e)
+          ? new String(new byte[]{value}, UTF_8) : "?";
       firstLine.append(character).append("");
       secondLine.append(oneByteToHexString(value)).append(" ");
 

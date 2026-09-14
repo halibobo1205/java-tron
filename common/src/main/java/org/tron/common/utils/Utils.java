@@ -18,6 +18,8 @@
 
 package org.tron.common.utils;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import java.security.SecureRandom;
 import java.util.Arrays;
 
@@ -51,8 +53,8 @@ public interface Utils {
   static String repeat(String s, int n) {
     if (s.length() == 1) {
       byte[] bb = new byte[n];
-      Arrays.fill(bb, s.getBytes()[0]);
-      return new String(bb);
+      Arrays.fill(bb, s.getBytes(UTF_8)[0]);
+      return new String(bb, UTF_8);
     } else {
       StringBuilder ret = new StringBuilder();
       for (int i = 0; i < n; i++) {

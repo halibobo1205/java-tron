@@ -17,6 +17,7 @@
  */
 package org.tron.common.runtime.vm;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.tron.common.math.Maths.min;
 import static org.tron.common.math.Maths.signum;
 
@@ -516,7 +517,7 @@ public class DataWord implements Comparable<DataWord> {
   }
 
   public String asString() {
-    return new String(getNoLeadZeroesData());
+    return new String(getNoLeadZeroesData(), UTF_8);
   }
 
   public String toHexString() {
