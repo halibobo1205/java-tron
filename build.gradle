@@ -167,6 +167,7 @@ subprojects {
                         '-Xep:MissingCasesInEnumSwitch:ERROR',
                         '-Xep:ModifyCollectionInEnhancedForLoop:ERROR',
                         '-Xep:DefaultCharset:ERROR',
+                        '-Xep:SynchronizeOnNonFinalField:ERROR',
                 ])
             }
         }
