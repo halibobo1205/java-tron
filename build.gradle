@@ -166,6 +166,7 @@ subprojects {
                         '-Xep:ClassNewInstance:ERROR',
                         '-Xep:MissingCasesInEnumSwitch:ERROR',
                         '-Xep:ModifyCollectionInEnhancedForLoop:ERROR',
+                        '-Xep:DefaultCharset:ERROR',
                 ])
             }
         }
