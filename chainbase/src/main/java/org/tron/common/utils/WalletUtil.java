@@ -73,6 +73,7 @@ public class WalletUtil {
     }
   }
 
+  @SuppressWarnings("DefaultCharset") // consensus: TransactionTrace rejects on this selector
   public static boolean isConstant(SmartContract.ABI abi, byte[] selector) {
 
     if (selector == null || selector.length != 4

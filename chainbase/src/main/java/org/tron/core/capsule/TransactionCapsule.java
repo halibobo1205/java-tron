@@ -281,6 +281,7 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
     return null;
   }
 
+  @SuppressWarnings("DefaultCharset") // shielded transaction hash: frozen wire format
   public static byte[] hashShieldTransaction(Transaction tx, String tokenId)
       throws ContractValidateException, InvalidProtocolBufferException {
     Any contractParameter = tx.getRawData().getContract(0).getParameter();
