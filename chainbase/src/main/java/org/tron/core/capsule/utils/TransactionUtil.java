@@ -167,7 +167,7 @@ public class TransactionUtil {
       )
     );
     // Token for loop end here
-    itBuilder.setNote(ByteString.copyFrom(it.getNote().getBytes()));
+    itBuilder.setNote(ByteString.copyFrom(it.getNote().getBytes(UTF_8)));
     itBuilder.setRejected(it.isRejected());
     itBuilder.setExtra(it.getExtra());
     return itBuilder.build();

@@ -272,7 +272,7 @@ public class RewardViCalService {
     if (suffix != null) {
       sb.append("-").append(suffix);
     }
-    return sb.toString().getBytes();
+    return sb.toString().getBytes(StandardCharsets.UTF_8);
   }
 
   private long getNewRewardAlgorithmEffectiveCycle() {
