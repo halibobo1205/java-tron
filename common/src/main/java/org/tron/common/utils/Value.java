@@ -17,6 +17,8 @@
  */
 package org.tron.common.utils;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import com.cedarsoftware.util.DeepEquals;
 import java.math.BigInteger;
 import java.util.Arrays;
@@ -98,7 +100,7 @@ public class Value {
   public String asString() {
     // decode();
     if (isBytes()) {
-      return new String((byte[]) value);
+      return new String((byte[]) value, UTF_8);
     } else if (isString()) {
       return (String) value;
     }
@@ -110,7 +112,7 @@ public class Value {
     if (isBytes()) {
       return (byte[]) value;
     } else if (isString()) {
-      return asString().getBytes();
+      return asString().getBytes(UTF_8);
     }
     return ByteUtil.EMPTY_BYTE_ARRAY;
   }
