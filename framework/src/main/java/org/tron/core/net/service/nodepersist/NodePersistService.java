@@ -54,7 +54,8 @@ public class NodePersistService {
       if (ByteArray.isEmpty(nodeBytes)) {
         return nodes;
       }
-      DBNodes dbNodes = JsonUtil.json2Obj(new String(nodeBytes), DBNodes.class);
+      DBNodes dbNodes = JsonUtil.json2Obj(new String(nodeBytes, StandardCharsets.UTF_8),
+          DBNodes.class);
       logger.info("Read node from store: {} nodes", dbNodes.getNodes().size());
       dbNodes.getNodes().forEach(n -> nodes.add(new InetSocketAddress(n.getHost(), n.getPort())));
     } catch (Exception e) {
@@ -82,7 +83,8 @@ public class NodePersistService {
 
       logger.info("Write nodes to store: {}/{} nodes", batch.size(), tableNodes.size());
 
-      commonStore.put(DB_KEY_PEERS, new BytesCapsule(JsonUtil.obj2Json(dbNodes).getBytes()));
+      commonStore.put(DB_KEY_PEERS,
+          new BytesCapsule(JsonUtil.obj2Json(dbNodes).getBytes(StandardCharsets.UTF_8)));
     } catch (Exception e) {
       logger.warn("DB write nodes failed, {}", e.getMessage());
     }
