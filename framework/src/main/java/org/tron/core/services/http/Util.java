@@ -366,7 +366,7 @@ public class Util {
   @Deprecated
   public static void checkBodySize(String body) throws Exception {
     CommonParameter parameter = Args.getInstance();
-    if (body.getBytes().length > parameter.getHttpMaxMessageSize()) {
+    if (body.getBytes(UTF_8).length > parameter.getHttpMaxMessageSize()) {
       throw new Exception("body size is too big, the limit is "
           + parameter.getHttpMaxMessageSize());
     }
@@ -605,7 +605,8 @@ public class Util {
   }
 
   public static String getRequestValue(HttpServletRequest request) throws IOException {
-    BufferedReader reader = new BufferedReader(new InputStreamReader(request.getInputStream()));
+    BufferedReader reader =
+        new BufferedReader(new InputStreamReader(request.getInputStream(), UTF_8));
     String line;
     StringBuilder sb = new StringBuilder();
     while ((line = reader.readLine()) != null) {
