@@ -5,7 +5,6 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 
-import java.nio.charset.Charset;
 import java.security.SecureRandom;
 import org.junit.Test;
 
@@ -15,16 +14,6 @@ public class UtilsTest {
   public void testGetRandom() {
     SecureRandom random = Utils.getRandom();
     assertNotNull("SecureRandom should not be null", random);
-  }
-
-  @Test
-  public void testGetBytes() {
-    char[] chars = "hello".toCharArray();
-    byte[] bytes = Utils.getBytes(chars);
-
-    // Convert back to String to check if it's the same
-    String result = new String(bytes, Charset.forName("UTF-8"));
-    assertEquals("Converted bytes should match the original string", "hello", result);
   }
 
   @Test

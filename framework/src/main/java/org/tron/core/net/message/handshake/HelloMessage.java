@@ -1,5 +1,7 @@
 package org.tron.core.net.message.handshake;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import com.google.protobuf.ByteString;
 import lombok.Getter;
 import org.apache.commons.lang3.StringUtils;
@@ -64,7 +66,7 @@ public class HelloMessage extends TronMessage {
     builder.setNodeType(chainBaseManager.getNodeType().getType());
     builder.setLowestBlockNum(chainBaseManager.isLiteNode()
         ? chainBaseManager.getLowestBlockNum() : 0);
-    builder.setCodeVersion(ByteString.copyFrom(Version.getVersion().getBytes()));
+    builder.setCodeVersion(ByteString.copyFrom(Version.getVersion().getBytes(UTF_8)));
 
     this.helloMessage = builder.build();
     this.type = MessageTypes.P2P_HELLO.asByte();
@@ -145,7 +147,7 @@ public class HelloMessage extends TronMessage {
     ByteString codeVersion = helloMessage.getCodeVersion();
     if (!codeVersion.isEmpty()) {
       builder.append("codeVersion:")
-          .append(new String(codeVersion.toByteArray())).append("\n");
+          .append(new String(codeVersion.toByteArray(), UTF_8)).append("\n");
     }
 
     return builder.toString();

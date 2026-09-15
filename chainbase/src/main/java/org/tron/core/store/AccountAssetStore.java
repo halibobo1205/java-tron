@@ -1,5 +1,7 @@
 package org.tron.core.store;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import com.google.common.primitives.Bytes;
 import com.google.common.primitives.Longs;
 import org.apache.commons.lang3.ArrayUtils;
@@ -59,7 +61,7 @@ public class AccountAssetStore extends TronDatabase<byte[]> {
   public Map<WrappedByteArray, WrappedByteArray> getAssets(Protocol.Account account) {
     Map<WrappedByteArray, WrappedByteArray> assets = new HashMap<>();
     account.getAssetV2Map().forEach((k, v) -> {
-      byte[] key = Bytes.concat(account.getAddress().toByteArray(), k.getBytes());
+      byte[] key = Bytes.concat(account.getAddress().toByteArray(), k.getBytes(UTF_8));
       if (v == 0) {
         assets.put(WrappedByteArray.of(key), WrappedByteArray.of(null));
       } else {

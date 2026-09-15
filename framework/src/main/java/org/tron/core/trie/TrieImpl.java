@@ -428,6 +428,7 @@ public class TrieImpl implements Trie<byte[]> {
     return nodeMap;
   }
 
+  @SuppressWarnings("ReturnValueIgnored")
   private byte[] childrenHash(Node n, List<Node> cpList, int level, boolean forceHash) {
     n.toString();//init children
     Node cp = new Node(n.children.length);

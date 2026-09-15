@@ -2,6 +2,7 @@ package org.tron.program;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.Charset;
 import java.util.Locale;
 import java.util.Scanner;
 import lombok.extern.slf4j.Slf4j;
@@ -81,7 +82,7 @@ public class KeystoreFactory {
   }
 
   private void importPrivateKey() throws CipherException, IOException {
-    Scanner in = new Scanner(System.in);
+    Scanner in = new Scanner(System.in, Charset.defaultCharset());
     String privateKey;
     System.out.println("Please input private key.");
     while (true) {
@@ -117,7 +118,7 @@ public class KeystoreFactory {
   }
 
   private void run() {
-    Scanner in = new Scanner(System.in);
+    Scanner in = new Scanner(System.in, Charset.defaultCharset());
     help();
     while (in.hasNextLine()) {
       try {

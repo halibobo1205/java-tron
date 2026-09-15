@@ -1,5 +1,6 @@
 package org.tron.core.capsule.utils;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Arrays.copyOfRange;
 import static org.bouncycastle.util.Arrays.concatenate;
 import static org.bouncycastle.util.BigIntegers.asUnsignedByteArray;
@@ -213,7 +214,7 @@ public class RLP {
       // shortcut
       return "";
     } else {
-      return new String(valueBytes);
+      return new String(valueBytes, UTF_8);
     }
   }
 
@@ -830,7 +831,7 @@ public class RLP {
   }
 
   public static byte[] encodeString(String srcString) {
-    return Hash.encodeElement(srcString.getBytes());
+    return Hash.encodeElement(srcString.getBytes(UTF_8));
   }
 
   public static byte[] encodeBigInteger(BigInteger srcBigInteger) {
@@ -1082,7 +1083,7 @@ public class RLP {
       return (byte[]) input;
     } else if (input instanceof String) {
       String inputString = (String) input;
-      return inputString.getBytes();
+      return inputString.getBytes(UTF_8);
     } else if (input instanceof Long) {
       Long inputLong = (Long) input;
       return (inputLong == 0) ? ByteUtil.EMPTY_BYTE_ARRAY

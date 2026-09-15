@@ -47,7 +47,7 @@ public class SyncService {
 
   private Map<UnparsedBlock, PeerConnection> blockWaitToProcess = new ConcurrentHashMap<>();
 
-  private Map<UnparsedBlock, PeerConnection> blockJustReceived = new ConcurrentHashMap<>();
+  private final Map<UnparsedBlock, PeerConnection> blockJustReceived = new ConcurrentHashMap<>();
 
   private long blockCacheTimeout = Args.getInstance().getBlockCacheTimeout();
   private Cache<BlockId, PeerConnection> requestBlockIds = CacheBuilder.newBuilder()

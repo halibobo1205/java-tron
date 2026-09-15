@@ -166,7 +166,7 @@ public class TxCacheDB implements DB<byte[], byte[]>, Flusher {
     for (Entry<byte[], BytesCapsule> bytesCapsuleEntry : recentTransactionStore) {
       byte[] data = bytesCapsuleEntry.getValue().getData();
       RecentTransactionItem trx =
-          JsonUtil.json2Obj(new String(data), RecentTransactionItem.class);
+          JsonUtil.json2Obj(new String(data, StandardCharsets.UTF_8), RecentTransactionItem.class);
 
       trx.getTransactionIds().forEach(tid -> bloomFilters[1].put(Hex.decode(tid)));
     }
@@ -325,8 +325,8 @@ public class TxCacheDB implements DB<byte[], byte[]>, Flusher {
     try {
       Files.deleteIfExists(this.cacheFile0);
       Files.deleteIfExists(this.cacheFile1);
-    } catch (Exception ignored) {
-
+    } catch (Exception deleteError) {
+      logger.warn("delete tx cache file failed", deleteError);
     }
     logger.info("recovery bloomFilters failed. {}", e.getMessage());
     logger.info("rollback to previous mode.");

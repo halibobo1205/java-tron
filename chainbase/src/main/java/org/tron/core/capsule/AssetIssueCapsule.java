@@ -15,6 +15,8 @@
 
 package org.tron.core.capsule;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 import java.util.List;
@@ -48,7 +50,8 @@ public class AssetIssueCapsule implements ProtoCapsule<AssetIssueContract> {
                            long totalSupply, int precision) {
     this.assetIssueContract = AssetIssueContract.newBuilder()
             .setOwnerAddress(ByteString.copyFrom(ownerAddress)).setId(id)
-            .setName(ByteString.copyFrom(name.getBytes())).setAbbr(ByteString.copyFrom(abbr.getBytes()))
+            .setName(ByteString.copyFrom(name.getBytes(UTF_8)))
+        .setAbbr(ByteString.copyFrom(abbr.getBytes(UTF_8)))
             .setTotalSupply(totalSupply).setPrecision(precision).build();
   }
 

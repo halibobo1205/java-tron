@@ -1,5 +1,7 @@
 package org.tron.common.crypto.sm2;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import java.math.BigInteger;
 import java.security.SecureRandom;
 import javax.annotation.Nullable;
@@ -163,7 +165,7 @@ public class SM2Signer
     ECPoint q = ((ECPublicKeyParameters) ecKey).getQ();
 
     if (userID != null) {
-      this.userID = userID.getBytes();
+      this.userID = userID.getBytes(UTF_8);
     }
     byte[] eHash = generateSM3Hash(message);
 

@@ -1077,7 +1077,7 @@ public class SM2 implements Serializable, SignInterface {
           try {
             decoder.close();
           } catch (IOException x) {
-
+            logger.debug("close signature decoder failed", x);
           }
         }
       }

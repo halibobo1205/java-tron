@@ -1,5 +1,7 @@
 package org.tron.core.db;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.tron.common.utils.ByteUtil;
@@ -55,10 +57,10 @@ public class PbftSignDataStore extends TronDatabase<PbftSignCapsule> {
   }
 
   private byte[] buildSrSignKey(long epoch) {
-    return (DataType.SRL.toString() + epoch).getBytes();
+    return (DataType.SRL.toString() + epoch).getBytes(UTF_8);
   }
 
   private byte[] buildBlockSignKey(long blockNum) {
-    return (DataType.BLOCK.toString() + blockNum).getBytes();
+    return (DataType.BLOCK.toString() + blockNum).getBytes(UTF_8);
   }
 }

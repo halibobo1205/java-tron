@@ -1,5 +1,6 @@
 package org.tron.core.db;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.tron.common.math.Maths.floorDiv;
 import static org.tron.common.math.Maths.max;
 import static org.tron.common.math.Maths.min;
@@ -208,7 +209,7 @@ public class Manager {
   @Setter
   private boolean isSyncMode;
   @Getter
-  private Object forkLock = new Object();
+  private final Object forkLock = new Object();
   // map<Long, IncrementalMerkleTree>
   @Getter
   @Setter
@@ -267,7 +268,7 @@ public class Manager {
   private final ThreadLocal<Histogram.Timer> blockedTimer = new ThreadLocal<>();
 
   private AtomicInteger blockWaitLock = new AtomicInteger(0);
-  private Object transactionLock = new Object();
+  private final Object transactionLock = new Object();
 
   private ExecutorService rePushEs;
   private static final String rePushEsName = "repush";
@@ -1078,7 +1079,7 @@ public class Manager {
       revokingStore.setMaxFlushCount(maxFlushCount);
       if (Args.getInstance().getShutdownBlockTime() != null
           && Args.getInstance().getShutdownBlockTime().getNextValidTimeAfter(
-            new Date(block.getTimeStamp() - maxFlushCount * 1000 * 3L))
+            new Date(block.getTimeStamp() - maxFlushCount * 1000L * 3L))
           .compareTo(new Date(block.getTimeStamp())) <= 0) {
         revokingStore.setMaxFlushCount(SnapshotManager.DEFAULT_MIN_FLUSH_COUNT);
       }
@@ -1659,7 +1660,7 @@ public class Manager {
     HistoryBlockHashUtil.write(this, blockCapsule);
 
     Set<String> accountSet = new HashSet<>();
-    AtomicInteger shieldedTransCounts = new AtomicInteger(0);
+    int shieldedTransCounts = 0;
     List<TransactionCapsule> toBePacked = new ArrayList<>();
     long currentSize = blockCapsule.getInstance().getSerializedSize();
     boolean isSort = Args.getInstance().isOpenTransactionSort();
@@ -1715,7 +1716,7 @@ public class Manager {
       //shielded transaction
       Transaction transaction = trx.getInstance();
       if (isShieldedTransaction(transaction)
-          && shieldedTransCounts.incrementAndGet() > SHIELDED_TRANS_IN_BLOCK_COUNTS) {
+          && ++shieldedTransCounts > SHIELDED_TRANS_IN_BLOCK_COUNTS) {
         continue;
       }
       //multi sign transaction
@@ -2049,7 +2050,7 @@ public class Manager {
     RecentTransactionItem item = new RecentTransactionItem(block.getNum(), list);
     chainBaseManager.getRecentTransactionStore().put(
             ByteArray.subArray(ByteArray.fromLong(block.getNum()), 6, 8),
-            new BytesCapsule(JsonUtil.obj2Json(item).getBytes()));
+            new BytesCapsule(JsonUtil.obj2Json(item).getBytes(UTF_8)));
   }
 
   public void updateFork(BlockCapsule block) {
@@ -2552,7 +2553,7 @@ public class Manager {
   }
 
   public long getPendingSize() {
-    long value = getPendingTransactions().size() + getRePushTransactions().size()
+    long value = (long) getPendingTransactions().size() + getRePushTransactions().size()
         + getPoppedTransactions().size();
     return value;
   }
@@ -2588,7 +2589,7 @@ public class Manager {
           chainBaseManager.getRecentTransactionStore()) {
         byte[] data = entry.getValue().getData();
         RecentTransactionItem trx =
-            JsonUtil.json2Obj(new String(data), RecentTransactionItem.class);
+            JsonUtil.json2Obj(new String(data, UTF_8), RecentTransactionItem.class);
         if (trx == null) {
           continue;
         }

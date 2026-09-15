@@ -1,5 +1,6 @@
 package org.tron.core.store;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.List;
@@ -51,7 +52,7 @@ public class SectionBloomStore extends TronStoreWithRevoking<BytesCapsule> {
 
   public BitSet get(int section, int bitIndex) throws EventBloomException {
     long keyLong = combineKey(section, bitIndex);
-    byte[] key = Long.toHexString(keyLong).getBytes();
+    byte[] key = Long.toHexString(keyLong).getBytes(UTF_8);
     BytesCapsule bytesCapsule = get(key);
     if (bytesCapsule == null) {
       return null;
@@ -67,7 +68,7 @@ public class SectionBloomStore extends TronStoreWithRevoking<BytesCapsule> {
 
   public void put(int section, int bitIndex, BitSet bitSet) throws EventBloomException {
     long keyLong = combineKey(section, bitIndex);
-    byte[] key = Long.toHexString(keyLong).getBytes();
+    byte[] key = Long.toHexString(keyLong).getBytes(UTF_8);
     byte[] compressData = ByteUtil.compress(bitSet.toByteArray());
     super.put(key, new BytesCapsule(compressData));
   }

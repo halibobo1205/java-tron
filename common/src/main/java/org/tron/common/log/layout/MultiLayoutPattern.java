@@ -29,7 +29,7 @@ public class MultiLayoutPattern extends PatternLayoutEncoder {
   private byte[] convertToBytes(String s) {
     Charset charset = getCharset();
     if (charset == null) {
-      return s.getBytes();
+      return s.getBytes(Charset.defaultCharset());
     } else {
       return s.getBytes(charset);
     }
