@@ -1,16 +1,22 @@
 package org.tron.core.services.http;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.util.Collections;
 import org.junit.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.tron.core.capsule.TransactionCapsule;
+import org.tron.json.JSONObject;
 import org.tron.protos.Protocol;
 import org.tron.protos.contract.SmartContractOuterClass.CreateSmartContract;
 
@@ -81,5 +87,28 @@ public class DeployContractServletTest extends BaseHttpTest {
                 .getOutputsCount() == 0),
         eq(Protocol.Transaction.Contract.ContractType.CreateSmartContract));
     assertTransactionResponse(response);
+  }
+
+  @Test
+  public void testDeployContractRejectsStringAbiOverTokenLimit() throws Exception {
+    // The outer document sees one string; its ABI expands to over 100,000 JSON tokens.
+    String abi = "[" + String.join(",", Collections.nCopies(50_000, "{}")) + "]";
+    String jsonParam = "{"
+        + "\"owner_address\":\"4199357684BC659F5166046B56C95A0E99F1265CD1\","
+        + "\"abi\":\"" + abi + "\","
+        + "\"bytecode\":\"6000\""
+        + "}";
+    assertTrue(jsonParam.getBytes(UTF_8).length < 4 * 1024 * 1024);
+    assertEquals(abi, JSONObject.parseObject(jsonParam).getString("abi"));
+
+    MockHttpServletResponse response = newResponse();
+    servlet.doPost(postRequest(jsonParam), response);
+
+    assertEquals(200, response.getStatus());
+    String content = response.getContentAsString();
+    assertEquals("Token count exceeds the maximum allowed (100000).",
+        JSONObject.parseObject(content).getString("Error"));
+    assertFalse(content.contains("internal server error"));
+    verify(wallet, never()).createTransactionCapsule(any(), any());
   }
 }
