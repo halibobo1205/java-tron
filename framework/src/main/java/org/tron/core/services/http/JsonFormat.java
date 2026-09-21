@@ -1344,6 +1344,7 @@ public class JsonFormat {
     private int previousLine = 0;
     private int previousColumn = 0;
     private int currentDepth = 0;
+    private int tokenCount = 0;
 
     public void enterRecursion() throws ParseException {
       if (currentDepth >= Constant.MAX_NESTING_DEPTH) {
@@ -1359,7 +1360,7 @@ public class JsonFormat {
     /**
      * Construct a tokenizer that parses tokens from the given text.
      */
-    public Tokenizer(CharSequence text) {
+    public Tokenizer(CharSequence text) throws ParseException {
       this.text = text;
       matcher = WHITESPACE.matcher(text);
       skipWhitespace();
@@ -1410,7 +1411,7 @@ public class JsonFormat {
     /**
      * Advance to the next token.
      */
-    public void nextToken() {
+    public void nextToken() throws ParseException {
       previousLine = line;
       previousColumn = column;
 
@@ -1440,6 +1441,14 @@ public class JsonFormat {
           matcher.region(pos + 1, matcher.regionEnd());
         }
 
+        // Match Jackson's token count for JSON: separators are not tokens, but field names,
+        // values and container boundaries are. Each parsed document has its own budget.
+        if (!",".equals(currentToken) && !":".equals(currentToken)
+            && ++tokenCount > Constant.MAX_TOKEN_COUNT) {
+          throw new ParseException("Token count exceeds the maximum allowed ("
+              + Constant.MAX_TOKEN_COUNT + ").");
+        }
+
         skipWhitespace();
       }
     }
@@ -1458,7 +1467,7 @@ public class JsonFormat {
      * If the next token exactly matches {@code token}, consume it and return {@code true}.
      * Otherwise, return {@code false} without doing anything.
      */
-    public boolean tryConsume(String token) {
+    public boolean tryConsume(String token) throws ParseException {
       if (currentToken.equals(token)) {
         nextToken();
         return true;
