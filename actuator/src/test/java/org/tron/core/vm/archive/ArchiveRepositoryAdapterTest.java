@@ -186,7 +186,10 @@ public class ArchiveRepositoryAdapterTest {
     returned[0] = 9;
     assertArrayEquals(code, adapter.getCode(ADDR));
     reader.code = ArchiveReadResult.missing();
-    assertNull(adapter.getCode(ADDR));
+    assertArrayEquals(code, adapter.getCode(ADDR));
+    ArchiveRepositoryAdapter fresh =
+        new ArchiveRepositoryAdapter(reader, adapter.getVmDynamicProperties());
+    assertNull(fresh.getCode(ADDR));
   }
 
   @Test

@@ -28,11 +28,11 @@ import org.tron.common.parameter.CommonParameter;
 import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.ByteUtil;
+import org.tron.core.archive.query.QueryContext;
+import org.tron.core.archive.query.QueryContextHolder;
 import org.tron.core.archive.reader.ArchiveReadResult;
 import org.tron.core.archive.reader.ArchiveReaderException;
 import org.tron.core.archive.reader.ArchiveStateReader;
-import org.tron.core.archive.query.QueryContext;
-import org.tron.core.archive.query.QueryContextHolder;
 import org.tron.core.archive.txnum.ArchiveBlockRange;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.AssetIssueCapsule;
@@ -54,6 +54,7 @@ import org.tron.core.vm.config.VMConfig;
 import org.tron.core.vm.program.Storage;
 import org.tron.core.vm.repository.Key;
 import org.tron.core.vm.repository.Repository;
+import org.tron.core.vm.repository.Type;
 import org.tron.core.vm.repository.Value;
 import org.tron.protos.Protocol;
 import org.tron.protos.Protocol.Permission;
@@ -65,7 +66,8 @@ import org.tron.protos.contract.Common.ResourceCode;
  * {@link #newRepositoryChild() child} whose writes land in request-local overlays and are discarded
  * at the top (a constant call persists nothing). Storage views preserve the canonical fork-specific
  * sharing rules within that request. Other reads resolve overlay first, then the parent chain, then
- * the archive root; a value absent from the archive is reported absent, never read from latest stores.
+ * the archive root; a value absent from the archive is reported absent, never read from latest
+ * stores.
  *
  * <p>Hard-fork / proposal flags come from the thread-local {@link VMConfig} snapshot the executor
  * installs. Mutable VM side effects for votes, delegation, and resource weights are isolated in
@@ -99,13 +101,13 @@ public class ArchiveRepositoryAdapter implements Repository {
 
   // Copy-on-write overlay. containsKey decides; a null value marks a deletion at this level.
   private final Map<Key, AccountCapsule> accounts = new HashMap<>();
-  private final Map<Key, byte[]> codes = new HashMap<>();
+  private final Map<Key, Value<byte[]>> codes = new HashMap<>();
   private final Map<Key, ContractCapsule> contracts = new HashMap<>();
   private final Map<Key, ContractStateCapsule> contractStates = new HashMap<>();
   private final Map<Key, BytesCapsule> dynamicProperties = new HashMap<>();
   private final Map<Key, VotesCapsule> votes = new HashMap<>();
   private final Map<Key, BytesCapsule> delegations = new HashMap<>();
-  // Cached storage views, shared before ENERGY_LIMIT and copied afterwards, within one request only.
+  // Request-local storage views, shared before ENERGY_LIMIT and copied afterwards.
   private final Map<Key, Map<DataWord, DataWord>> storage = new HashMap<>();
   private final Map<Key, Map<Key, Long>> tokenBalances = new HashMap<>();
   private final Map<Key, Map<Key, byte[]>> transientStorage = new HashMap<>();
@@ -229,13 +231,15 @@ public class ArchiveRepositoryAdapter implements Repository {
   public byte[] getCode(byte[] address) {
     Key key = Key.create(address);
     if (codes.containsKey(key)) {
-      byte[] code = codes.get(key);
+      Value<byte[]> value = codes.get(key);
+      byte[] code = value == null ? null : value.getValue();
       return code == null ? null : code.clone();
     }
-    if (parent != null) {
-      return parent.getCode(address);
+    byte[] code = parent != null ? parent.getCode(address)
+        : present(read(() -> reader.getCode(address), "code"), "code");
+    if (code != null) {
+      cacheCode(address, code, Type.NORMAL);
     }
-    byte[] code = present(read(() -> reader.getCode(address), "code"), "code");
     return code == null ? null : code.clone();
   }
 
@@ -376,7 +380,7 @@ public class ArchiveRepositoryAdapter implements Repository {
 
   @Override
   public void saveCode(byte[] address, byte[] code) {
-    cacheCode(address, code);
+    cacheCode(address, code, Type.CREATE);
     if (VMConfig.allowTvmConstantinople()) {
       ContractCapsule contract = getContract(address);
       contract.setCodeHash(Hash.sha3(code));
@@ -384,9 +388,10 @@ public class ArchiveRepositoryAdapter implements Repository {
     }
   }
 
-  private void cacheCode(byte[] address, byte[] code) {
+  private void cacheCode(byte[] address, byte[] code, int type) {
     reserveOverlay(address, code);
-    codes.put(Key.create(address), code == null ? null : code.clone());
+    // Value captures the proposal gate now. A null map entry is reserved for deletion only.
+    codes.put(Key.create(address), Value.create(code, type));
   }
 
   @Override
@@ -435,25 +440,32 @@ public class ArchiveRepositoryAdapter implements Repository {
   }
 
   // ---------------------------------------------------------------------------------------------
-  // Commit: merge this overlay into the parent; the root discards (constant calls persist nothing).
+  // Commit: preserve canonical code-type checks, but only merge into request-local parents.
   // ---------------------------------------------------------------------------------------------
 
   @Override
   public void commit() {
+    if (parent != null) {
+      accounts.forEach((key, account) -> {
+        if (account != null) {
+          parent.putAccountValue(key.getData(), account);
+        }
+      });
+    }
+    codes.forEach((key, value) -> {
+      // Before allowMultiSign, empty code deliberately has a null Type: its commit-time NPE is
+      // historical VM behavior, including root commits. Do not treat it as an archive read failure.
+      if (value != null && (value.getType().isDirty() || value.getType().isCreate())) {
+        if (parent != null) {
+          parent.reserveOverlay(key.getData(), value.getValue());
+          // Preserve the child's Type; contract merging below already carries its code hash.
+          parent.codes.put(key, value);
+        }
+      }
+    });
     if (parent == null) {
       return;
     }
-    accounts.forEach((key, account) -> {
-      if (account != null) {
-        parent.putAccountValue(key.getData(), account);
-      }
-    });
-    codes.forEach((key, code) -> {
-      if (code != null) {
-        // The child's contract overlay already carries the runtime hash, as in RepositoryImpl.
-        parent.cacheCode(key.getData(), code);
-      }
-    });
     contracts.forEach((key, contract) -> {
       if (contract == null) {
         parent.deleteContract(key.getData());
