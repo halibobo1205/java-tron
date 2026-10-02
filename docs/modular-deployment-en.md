@@ -6,12 +6,12 @@ After modularization, the recommended way to launch java-tron is via the shell s
 
 ## Prerequisites
 
-The JDK version required to build and run java-tron is currently tied to the CPU architecture; the two versions are not interchangeable:
+The minimum JDK version required to build and run java-tron is tied to the CPU architecture. Newer JDKs are supported, and the build output remains compatible with Java 8:
 
-| CPU Architecture | Required JDK |
+| CPU Architecture | Minimum JDK |
 | :--------------- | :----------- |
-| `x86_64` / `amd64` | JDK 8 |
-| `ARM64` / `aarch64` | JDK 17 |
+| `x86_64` / `amd64` | JDK 8 or newer |
+| `ARM64` / `aarch64` | JDK 17 or newer |
 
 > **Note**: `ARM64` / `aarch64` support is available starting with GreatVoyage-v4.8.1.
 
@@ -54,11 +54,14 @@ java-tron-1.0.0/bin/FullNode -c config.conf -w
 
 ## JVM configuration
 
-JVM options can also be specified, located in `bin/java-tron.vmoptions`:
+The packaged defaults use the JDK 17+ JVM options when built with JDK 17 or newer;
+otherwise they use the CMS options.
+
+JVM options can also be specified in `bin/java-tron.vmoptions`:
 ```
 # Heap-size customization example
 -Xms2g
 -Xmx9g
 ```
 
-The generated `java-tron.vmoptions` file already contains GC options appropriate for the build architecture and its required JDK. Keep those architecture-specific options when changing the heap size; do not copy GC options between JDK 8 and JDK 17 deployments.
+The generated `java-tron.vmoptions` file already contains GC options appropriate for the build architecture and its required JDK. Keep those architecture-specific options when changing the heap size; do not copy GC options between deployments on JDK versions below 17 and JDK 17 or newer.
