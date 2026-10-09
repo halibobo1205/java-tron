@@ -357,7 +357,7 @@ public class Util {
       } catch (JSONException e) {
         logger.debug("JSONException: {}", e.getMessage());
       } catch (Exception e) {
-        logger.warn("{}", contractType, e);
+        logger.debug("Skip invalid contract: {}", contractType, e);
       }
     }
     rawData.put("contract", contracts);
