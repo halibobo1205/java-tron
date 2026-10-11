@@ -1,2 +1,2 @@
-# protobuf generated code (rebuilt by ./gradlew :p2p:generateProto)
+# legacy protobuf codegen output, purged by :p2p:generateProto and clean
 src/main/java/org/tron/p2p/protos/

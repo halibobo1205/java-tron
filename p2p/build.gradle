@@ -30,8 +30,8 @@ def releaseBinary = hasProperty('binaryRelease') ? getProperty('binaryRelease') 
 if (releaseBinary == 'true') {
     artifacts {
         archives(tasks.create('buildStandaloneJar', Jar) {
-            baseName = 'p2p-standalone'
-            version = null
+            archiveBaseName = 'p2p-standalone'
+            archiveVersion = ''
             from(sourceSets.main.output) {
                 include '/**'
             }
@@ -61,8 +61,18 @@ if (releaseBinary == 'true') {
 // `import "Discover.proto"` and every type it brings in showed as unresolved
 // in the editor.
 //
-// Generated sources still land in src/main/java/org/tron/p2p/protos via
-// generatedFilesBaseDir below, and are gitignored.
+// Generated sources land in build/generated/sources/proto/main/java. Earlier
+// builds wrote them to src/main/java/org/tron/p2p/protos; exclude that package
+// from the java srcDir so leftovers can never shadow the generated classes, even
+// when generateProto is UP-TO-DATE.
+def legacyGeneratedDir = file('src/main/java/org/tron/p2p/protos')
+sourceSets {
+    main {
+        java {
+            exclude { it.file.toPath().startsWith(legacyGeneratedDir.toPath()) }
+        }
+    }
+}
 
 // These exclusions used to live on the `libp2p` dependency in common/build.gradle.
 // Internalizing the module moves the same transitive dom4j tail (pulled in by the
@@ -132,7 +142,6 @@ dependencies {
 }
 
 protobuf {
-    generatedFilesBaseDir = "$projectDir/src"
     protoc {
         artifact = "com.google.protobuf:protoc:${rootProject.protobufVersion}"
     }
@@ -145,9 +154,12 @@ protobuf {
     }
 }
 
-clean.doFirst {
-    delete "src/main/java/org/tron/p2p/protos"
+// Disk hygiene only: sweep pre-relocation codegen leftovers from src/.
+def purgeLegacyGeneratedSources = {
+    project.delete(legacyGeneratedDir)
 }
+generateProto.doFirst { purgeLegacyGeneratedSources() }
+clean.doFirst { purgeLegacyGeneratedSources() }
 
 processResources.dependsOn(generateProto)
 
