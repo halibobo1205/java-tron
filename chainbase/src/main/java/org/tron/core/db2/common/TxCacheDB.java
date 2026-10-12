@@ -318,6 +318,8 @@ public class TxCacheDB implements DB<byte[], byte[]>, Flusher {
   }
 
   private boolean handleException(Throwable e) {
+    filterStartBlock = INVALID_BLOCK;
+    currentFilterIndex = 0;
     bloomFilters[0] = BloomFilter.create(Funnels.byteArrayFunnel(),
         MAX_BLOCK_SIZE * TRANSACTION_COUNT);
     bloomFilters[1] = BloomFilter.create(Funnels.byteArrayFunnel(),
