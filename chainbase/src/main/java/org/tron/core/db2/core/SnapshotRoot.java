@@ -31,6 +31,9 @@ public class SnapshotRoot extends AbstractSnapshot<byte[], byte[]> {
   private static final List<String> CACHE_DBS = CommonParameter.getInstance()
       .getStorage().getCacheDbs();
 
+  private final Object cacheLock = new Object();
+  private volatile long cacheGen = 0L;
+
   public SnapshotRoot(DB<byte[], byte[]> db) {
     this.db = db;
     solidity = this;
@@ -52,8 +55,9 @@ public class SnapshotRoot extends AbstractSnapshot<byte[], byte[]> {
     if (cache != null) {
       return cache.getBytes();
     }
+    long observed = cacheGen;
     byte[] value = db.get(key);
-    putCache(key, value);
+    refillCache(key, value, observed);
     return value;
   }
 
@@ -153,13 +157,29 @@ public class SnapshotRoot extends AbstractSnapshot<byte[], byte[]> {
 
   private void putCache(byte[] key, byte[] value) {
     if (cached()) {
-      cache.put(WrappedByteArray.of(key), WrappedByteArray.of(value));
+      synchronized (cacheLock) {
+        cacheGen++;
+        cache.put(WrappedByteArray.of(key), WrappedByteArray.of(value));
+      }
     }
   }
 
   private void putCache(Map<WrappedByteArray, WrappedByteArray> values) {
     if (cached()) {
-      values.forEach(cache::put);
+      synchronized (cacheLock) {
+        cacheGen++;
+        values.forEach(cache::put);
+      }
+    }
+  }
+
+  private void refillCache(byte[] key, byte[] value, long observed) {
+    if (cached() && cacheGen == observed) {
+      synchronized (cacheLock) {
+        if (cacheGen == observed) {
+          cache.put(WrappedByteArray.of(key), WrappedByteArray.of(value));
+        }
+      }
     }
   }
 
