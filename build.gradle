@@ -2,7 +2,7 @@ import org.gradle.nativeplatform.platform.internal.Architectures
 import org.gradle.internal.os.OperatingSystem
 
 plugins {
-    id 'net.ltgt.errorprone' version '5.0.0' apply false
+    id 'net.ltgt.errorprone' version '5.1.1' apply false
 }
 
 ext {
@@ -86,7 +86,7 @@ subprojects {
         }
     }
     jacoco {
-        toolVersion = "0.8.12" // see https://www.jacoco.org/jacoco/trunk/doc/changes.html
+        toolVersion = "0.8.16" // see https://www.jacoco.org/jacoco/trunk/doc/changes.html
     }
     // jacocoTestReport reads this project's class and resource output; declare
     // the edge explicitly so Gradle 8 task validation holds even when 'test'
@@ -130,10 +130,10 @@ subprojects {
         implementation "org.apache.commons:commons-collections4:4.6.0"
         implementation group: 'org.bouncycastle', name: 'bcprov-jdk18on', version: '1.84'
 
-        compileOnly 'org.projectlombok:lombok:1.18.34'
-        annotationProcessor 'org.projectlombok:lombok:1.18.34'
-        testCompileOnly 'org.projectlombok:lombok:1.18.34'
-        testAnnotationProcessor 'org.projectlombok:lombok:1.18.34'
+        compileOnly 'org.projectlombok:lombok:1.18.48'
+        annotationProcessor 'org.projectlombok:lombok:1.18.48'
+        testCompileOnly 'org.projectlombok:lombok:1.18.48'
+        testAnnotationProcessor 'org.projectlombok:lombok:1.18.48'
 
         // https://www.oracle.com/java/technologies/javase/11-relnote-issues.html#JDK-8190378
         implementation group: 'javax.annotation', name: 'javax.annotation-api', version: '1.3.2'
