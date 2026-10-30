@@ -8,7 +8,6 @@ import org.springframework.beans.factory.support.DefaultListableBeanFactory;
 import org.tron.common.application.Application;
 import org.tron.common.application.ApplicationFactory;
 import org.tron.common.application.TronApplicationContext;
-import org.tron.common.arch.Arch;
 import org.tron.common.exit.ExitManager;
 import org.tron.common.log.LogService;
 import org.tron.common.parameter.CommonParameter;
@@ -33,7 +32,6 @@ public class FullNode {
     }
 
     ExitManager.initExceptionHandler();
-    checkJdkVersion();
     Args.setParam(arguments, "config.conf");
     CommonParameter parameter = Args.getInstance();
     LogService.load(parameter.getLogbackPath());
@@ -84,7 +82,7 @@ public class FullNode {
 
   /** Returns node arguments, or null when command-line handling has completed. */
   private static CommandLineArguments handleCommandLine(String[] args) {
-    // Do not initialize loggers, Args, Arch, or ExitManager before dispatching attach mode:
+    // Do not initialize loggers, Args, or ExitManager before dispatching attach mode:
     // their static initializers open the node's Logback appenders.
     CommandLineArguments arguments;
     boolean attachMode;
@@ -113,14 +111,5 @@ public class FullNode {
       System.exit(exitCode);
     }
     return null;
-  }
-
-  private static void checkJdkVersion() {
-    try {
-      Arch.throwIfUnsupportedJavaVersion();
-    } catch (UnsupportedOperationException e) {
-      System.err.println(e.getMessage());
-      throw new TronError(e, TronError.ErrCode.JDK_VERSION);
-    }
   }
 }
