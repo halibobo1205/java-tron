@@ -84,9 +84,14 @@ subprojects {
         if (project.name != 'errorprone' && javaVersion.isJava9Compatible()) {
             options.release.set(8)
         }
+        // Lombok reads lombok.config while compiling; declare it so that editing
+        // it invalidates up-to-date checks and build cache entries.
+        inputs.file(rootProject.file('lombok.config'))
+                .withPropertyName('lombokConfig')
+                .withPathSensitivity(PathSensitivity.NONE)
     }
     jacoco {
-        toolVersion = "0.8.12" // see https://www.jacoco.org/jacoco/trunk/doc/changes.html
+        toolVersion = "0.8.16" // see https://www.jacoco.org/jacoco/trunk/doc/changes.html
     }
     // jacocoTestReport reads this project's class and resource output; declare
     // the edge explicitly so Gradle 8 task validation holds even when 'test'
@@ -130,10 +135,10 @@ subprojects {
         implementation "org.apache.commons:commons-collections4:4.6.0"
         implementation group: 'org.bouncycastle', name: 'bcprov-jdk18on', version: '1.84'
 
-        compileOnly 'org.projectlombok:lombok:1.18.34'
-        annotationProcessor 'org.projectlombok:lombok:1.18.34'
-        testCompileOnly 'org.projectlombok:lombok:1.18.34'
-        testAnnotationProcessor 'org.projectlombok:lombok:1.18.34'
+        compileOnly 'org.projectlombok:lombok:1.18.48'
+        annotationProcessor 'org.projectlombok:lombok:1.18.48'
+        testCompileOnly 'org.projectlombok:lombok:1.18.48'
+        testAnnotationProcessor 'org.projectlombok:lombok:1.18.48'
 
         // https://www.oracle.com/java/technologies/javase/11-relnote-issues.html#JDK-8190378
         implementation group: 'javax.annotation', name: 'javax.annotation-api', version: '1.3.2'
