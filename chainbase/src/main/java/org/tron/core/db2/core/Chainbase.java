@@ -9,6 +9,7 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -297,11 +298,16 @@ public class Chainbase implements IRevokingDB {
     }
 
     if (snapshot.getPrevious() == null && tmp != 0) {
+      Set<byte[]> rootValues = Collections.emptySet();
       if (((SnapshotRoot) head.getRoot()).db.getClass() == LevelDB.class) {
-        result.addAll(((LevelDB) ((SnapshotRoot) snapshot).db).getDb().getlatestValues(tmp));
+        rootValues = ((LevelDB) ((SnapshotRoot) snapshot).db).getDb().getlatestValues(limit);
       } else if (((SnapshotRoot) head.getRoot()).db.getClass() == RocksDB.class) {
-        result.addAll(((RocksDB) ((SnapshotRoot) snapshot).db).getDb().getlatestValues(tmp));
+        rootValues = ((RocksDB) ((SnapshotRoot) snapshot).db).getDb().getlatestValues(limit);
       }
+      Set<WrappedByteArray> seen = result.stream().filter(Objects::nonNull)
+          .map(WrappedByteArray::of).collect(Collectors.toSet());
+      rootValues.stream().filter(value -> seen.add(WrappedByteArray.of(value)))
+          .forEach(result::add);
     }
 
     return result;
