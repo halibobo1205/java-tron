@@ -31,6 +31,7 @@ import org.tron.core.db.PbftSignDataStore;
 import org.tron.core.db.RecentBlockStore;
 import org.tron.core.db.RecentTransactionStore;
 import org.tron.core.db.TransactionStore;
+import org.tron.core.db2.view.QueryViewScope;
 import org.tron.core.exception.BadItemException;
 import org.tron.core.exception.HeaderNotFound;
 import org.tron.core.exception.ItemNotFoundException;
@@ -350,7 +351,7 @@ public class ChainBaseManager {
    */
   public BlockCapsule getBlockById(final Sha256Hash hash)
       throws BadItemException, ItemNotFoundException {
-    BlockCapsule block = this.khaosDb.getBlock(hash);
+    BlockCapsule block = QueryViewScope.isBound() ? null : this.khaosDb.getBlock(hash);
     if (block == null) {
       block = getBlockStore().get(hash.getBytes());
     }

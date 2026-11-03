@@ -64,6 +64,7 @@ import org.tron.core.services.http.servlets.ListWitnessesServlet;
 import org.tron.core.services.http.servlets.RateLimiterServlet;
 import org.tron.protos.Protocol.Account;
 import org.tron.protos.Protocol.Transaction.Contract.ContractType;
+import org.tron.protos.contract.BalanceContract.TransferContract;
 import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
 
 public class CommittedHeadQueryIntegrationTest extends BaseMethodTest {
@@ -452,6 +453,36 @@ public class CommittedHeadQueryIntegrationTest extends BaseMethodTest {
     MockHttpServletResponse plainWitnesses = new MockHttpServletResponse();
     context.getBean(ListWitnessesServlet.class).service(getRequest(false), plainWitnesses);
     assertEquals(plainWitnesses.getContentAsString(), witnesses.getContentAsString());
+  }
+
+  @Test
+  public void blockAndTransactionLookupsInScopeSkipKhaos() throws Exception {
+    witnessKeys = addWitnesses();
+    dbManager.markCommittedHeadReady();
+    HeadViewRegistry registry = dbManager.getHeadViewRegistry();
+    Wallet wallet = context.getBean(Wallet.class);
+    ByteString owner = witnessKeys.keySet().iterator().next();
+    TransactionCapsule forkTx = new TransactionCapsule(TransferContract.newBuilder()
+        .setOwnerAddress(owner).setToAddress(owner).setAmount(1).build(),
+        ContractType.TransferContract);
+    ByteString txId = ByteString.copyFrom(forkTx.getTransactionId().getBytes());
+    forkTx.setBlockNum(2);
+    chain.getTransactionStore().put(txId.toByteArray(), forkTx);
+
+    BlockCapsule block1 = pushNext(BASE_TIME + 3000);
+    block1.addTransaction(forkTx);
+    BlockCapsule fork = createBlock(BASE_TIME + 6000, 2, block1.getBlockId().getByteString());
+    fork.addTransaction(forkTx);
+    context.getBean(KhaosDatabase.class).push(fork);
+    assertEquals(1, chain.getBlockByNum(1).getTransactions().size());
+    assertNotNull(wallet.getTransactionById(txId));
+
+    try (HeadLease lease = registry.acquire();
+        QueryViewScope ignored = QueryViewScope.bind(lease)) {
+      assertEquals(0, chain.getBlockByNum(1).getTransactions().size());
+      assertNull(wallet.getTransactionById(txId));
+      assertTrue(lease.seal());
+    }
   }
 
   @Test

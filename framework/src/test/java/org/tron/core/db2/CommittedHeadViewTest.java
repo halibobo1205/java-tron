@@ -8,6 +8,7 @@ import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import com.google.protobuf.ByteString;
+import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -18,6 +19,7 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
@@ -57,9 +59,11 @@ import org.tron.core.db2.view.HeadViewRegistry;
 import org.tron.core.db2.view.QueryViewScope;
 import org.tron.core.exception.ItemNotFoundException;
 import org.tron.core.exception.TronError;
+import org.tron.core.service.RewardViCalService;
 import org.tron.core.store.AccountAssetStore;
 import org.tron.core.store.AccountStore;
 import org.tron.core.store.DynamicPropertiesStore;
+import org.tron.core.store.RewardViStore;
 import org.tron.protos.Protocol.Account;
 import org.tron.protos.Protocol.BlockHeader;
 
@@ -333,6 +337,37 @@ public class CommittedHeadViewTest extends BaseMethodTest {
           .collect(Collectors.toList());
     }
     assertEquals(Arrays.asList("b1", "b2", "b3"), latest);
+    assertTrue(lease.seal());
+    lease.close();
+  }
+
+  @Test(timeout = 10_000)
+  public void pendingRewardCalculationFailsFastInScope() throws Exception {
+    RewardViCalService rewards = rewardService();
+    commit(KEY, "v1");
+    publish(1);
+    HeadLease lease = registry.acquire();
+    try (QueryViewScope ignored = QueryViewScope.bind(lease)) {
+      HeadViewException pending = assertThrows(HeadViewException.class,
+          () -> rewards.getNewRewardAlgorithmReward(1, 2, Collections.emptyList()));
+      assertEquals(Reason.UNAVAILABLE, pending.getReason());
+    }
+    assertFalse(lease.seal());
+    lease.close();
+  }
+
+  @Test(timeout = 10_000)
+  public void releasedRewardCalculationStillAnswersInScope() throws Exception {
+    RewardViCalService rewards = rewardService();
+    Field lock = RewardViCalService.class.getDeclaredField("lock");
+    lock.setAccessible(true);
+    ((CountDownLatch) lock.get(rewards)).countDown();
+    commit(KEY, "v1");
+    publish(1);
+    HeadLease lease = registry.acquire();
+    try (QueryViewScope ignored = QueryViewScope.bind(lease)) {
+      assertEquals(0, rewards.getNewRewardAlgorithmReward(1, 2, Collections.emptyList()));
+    }
     assertTrue(lease.seal());
     lease.close();
   }
@@ -613,6 +648,16 @@ public class CommittedHeadViewTest extends BaseMethodTest {
       }
       session.commit();
     }
+  }
+
+  private RewardViCalService rewardService() throws Exception {
+    RewardViCalService rewards = new RewardViCalService(
+        chainBaseManager.getDynamicPropertiesStore(), chainBaseManager.getDelegationStore(),
+        chainBaseManager.getWitnessStore());
+    Field rewardViStore = RewardViCalService.class.getDeclaredField("rewardViStore");
+    rewardViStore.setAccessible(true);
+    rewardViStore.set(rewards, context.getBean(RewardViStore.class));
+    return rewards;
   }
 
   private void commitNumbered(long number) {
