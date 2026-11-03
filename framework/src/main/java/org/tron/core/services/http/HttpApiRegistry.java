@@ -7,6 +7,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
@@ -49,7 +50,9 @@ import org.tron.core.services.http.servlets.RateLimiterServlet;
  *       cursor-switched thread, and the standalone SolidityNode surface cannot propagate
  *       transactions;</li>
  *   <li>every endpoint exposed on PBFT extends {@link RateLimiterServlet}, which selects the
- *       PBFT cursor once a request passes rate limiting.</li>
+ *       PBFT cursor once a request passes rate limiting;</li>
+ *   <li>every endpoint that opts into the committed-head view is a READ endpoint on the FULL
+ *       surface and extends {@link RateLimiterServlet}, which routes the selector.</li>
  * </ul>
  *
  * <p>Annotations are read with {@link Class#getDeclaredAnnotation} and {@link HttpApi} is not
@@ -73,6 +76,8 @@ public final class HttpApiRegistry {
 
   private static final List<Entry> ENTRIES = init();
 
+  private static final Set<Class<? extends HttpServlet>> COMMITTED_HEAD = committedHead(ENTRIES);
+
   private HttpApiRegistry() {
   }
 
@@ -82,12 +87,14 @@ public final class HttpApiRegistry {
     private final String suffix;
     private final Class<? extends HttpServlet> servlet;
     private final EnumSet<Surface> surfaces;
+    private final boolean committedHead;
 
     private Entry(String suffix, Class<? extends HttpServlet> servlet,
-        EnumSet<Surface> surfaces) {
+        EnumSet<Surface> surfaces, boolean committedHead) {
       this.suffix = suffix;
       this.servlet = servlet;
       this.surfaces = surfaces;
+      this.committedHead = committedHead;
     }
 
     public String getSuffix() {
@@ -101,6 +108,10 @@ public final class HttpApiRegistry {
     public Set<Surface> getSurfaces() {
       return Collections.unmodifiableSet(surfaces);
     }
+
+    public boolean isCommittedHead() {
+      return committedHead;
+    }
   }
 
   /** Endpoints exposed on {@code surface}, ordered by suffix. */
@@ -112,6 +123,21 @@ public final class HttpApiRegistry {
       }
     }
     return Collections.unmodifiableList(result);
+  }
+
+  /** Servlets that accept the committed-head selector on the FULL surface. */
+  public static Set<Class<? extends HttpServlet>> committedHeadServlets() {
+    return COMMITTED_HEAD;
+  }
+
+  private static Set<Class<? extends HttpServlet>> committedHead(List<Entry> entries) {
+    Set<Class<? extends HttpServlet>> servlets = new HashSet<>();
+    for (Entry entry : entries) {
+      if (entry.committedHead) {
+        servlets.add(entry.servlet);
+      }
+    }
+    return Collections.unmodifiableSet(servlets);
   }
 
   private static List<Entry> init() {
@@ -233,7 +259,27 @@ public final class HttpApiRegistry {
       throw new IllegalStateException(clazz.getName()
           + " is exposed on the PBFT surface and must extend RateLimiterServlet");
     }
-    return new Entry(suffix, clazz.asSubclass(HttpServlet.class), surfaces);
+    if (api.committedHead()) {
+      validateCommittedHead(clazz, api.access(), surfaces);
+    }
+    return new Entry(suffix, clazz.asSubclass(HttpServlet.class), surfaces,
+        api.committedHead());
+  }
+
+  private static void validateCommittedHead(Class<?> clazz, Access access,
+      Set<Surface> surfaces) {
+    if (access != Access.READ) {
+      throw new IllegalStateException(clazz.getName()
+          + " opts into the committed-head view and must be READ, found " + access);
+    }
+    if (!surfaces.contains(Surface.FULL)) {
+      throw new IllegalStateException(clazz.getName()
+          + " opts into the committed-head view and must be exposed on the FULL surface");
+    }
+    if (!RateLimiterServlet.class.isAssignableFrom(clazz)) {
+      throw new IllegalStateException(clazz.getName()
+          + " opts into the committed-head view and must extend RateLimiterServlet");
+    }
   }
 
   private static Class<?> load(String name) {

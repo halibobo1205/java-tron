@@ -154,6 +154,31 @@ public class HttpApiRegistryTest {
     assertBuildFails(REGTEST + "pbftplain", "must extend RateLimiterServlet");
   }
 
+  @Test
+  public void testCommittedHeadReadEndpointBuilds() {
+    List<HttpApiRegistry.Entry> entries =
+        HttpApiRegistry.buildFromPackage(REGTEST + "headviewvalid");
+    Assert.assertEquals(1, entries.size());
+    Assert.assertTrue(entries.get(0).isCommittedHead());
+  }
+
+  @Test
+  public void testCommittedHeadBuildEndpointRejected() {
+    assertBuildFails(REGTEST + "headviewbuild", "committed-head view and must be READ");
+  }
+
+  @Test
+  public void testCommittedHeadOffFullSurfaceRejected() {
+    assertBuildFails(REGTEST + "headviewsolidity",
+        "committed-head view and must be exposed on the FULL surface");
+  }
+
+  @Test
+  public void testCommittedHeadWithoutRateLimiterServletRejected() {
+    assertBuildFails(REGTEST + "headviewplain",
+        "committed-head view and must extend RateLimiterServlet");
+  }
+
   private void assertBuildFails(String pkg, String fragment) {
     try {
       HttpApiRegistry.buildFromPackage(pkg);

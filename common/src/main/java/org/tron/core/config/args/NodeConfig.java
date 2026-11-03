@@ -76,6 +76,7 @@ public class NodeConfig {
   private boolean enableIpv6 = false;
   private boolean effectiveCheckEnable = false;
   private boolean allowNumericFieldAlias = false;
+  private CommittedHeadQueryConfig committedHeadQuery = new CommittedHeadQueryConfig();
   private int maxFastForwardNum = 4;
   private ValidContractProtoConfig validContractProto = new ValidContractProtoConfig();
   private int shieldedTransInPendingMaxCounts = 10;
@@ -177,6 +178,15 @@ public class NodeConfig {
   public static class SolidityConfig {
 
     private int threads = 0; // 0 = auto (availableProcessors)
+  }
+
+  @Getter
+  @Setter
+  public static class CommittedHeadQueryConfig {
+
+    private boolean enable = false;
+    private int maxActiveRequests = 64;
+    private long maxResponseSize = 8388608;
   }
 
   @Getter
@@ -543,6 +553,14 @@ public class NodeConfig {
     if (jsonrpc.maxMessageSize < 0) {
       throw new TronError("node.jsonrpc.maxMessageSize must be non-negative, got: "
           + jsonrpc.maxMessageSize, PARAMETER_INIT);
+    }
+    if (committedHeadQuery.enable && committedHeadQuery.maxActiveRequests <= 0) {
+      throw new TronError("node.committedHeadQuery.maxActiveRequests must be positive, got: "
+          + committedHeadQuery.maxActiveRequests, PARAMETER_INIT);
+    }
+    if (committedHeadQuery.enable && committedHeadQuery.maxResponseSize <= 0) {
+      throw new TronError("node.committedHeadQuery.maxResponseSize must be positive, got: "
+          + committedHeadQuery.maxResponseSize, PARAMETER_INIT);
     }
   }
 

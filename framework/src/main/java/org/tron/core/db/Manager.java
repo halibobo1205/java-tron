@@ -119,6 +119,9 @@ import org.tron.core.db.api.MoveAbiHelper;
 import org.tron.core.db2.ISession;
 import org.tron.core.db2.core.Chainbase;
 import org.tron.core.db2.core.SnapshotManager;
+import org.tron.core.db2.core.StoreLayers;
+import org.tron.core.db2.view.HeadView;
+import org.tron.core.db2.view.HeadViewRegistry;
 import org.tron.core.exception.AccountResourceInsufficientException;
 import org.tron.core.exception.BadBlockException;
 import org.tron.core.exception.BadItemException;
@@ -172,6 +175,7 @@ import org.tron.core.store.VotesStore;
 import org.tron.core.store.WitnessScheduleStore;
 import org.tron.core.store.WitnessStore;
 import org.tron.core.utils.TransactionRegister;
+import org.tron.core.vm.OperationRegistry;
 import org.tron.protos.Protocol;
 import org.tron.protos.Protocol.AccountType;
 import org.tron.protos.Protocol.Permission;
@@ -215,6 +219,8 @@ public class Manager {
   private boolean isSyncMode;
   @Getter
   private Object forkLock = new Object();
+  @Getter
+  private volatile HeadViewRegistry headViewRegistry;
   // map<Long, IncrementalMerkleTree>
   @Getter
   @Setter
@@ -557,6 +563,7 @@ public class Manager {
       logger.info("Lite node lowestNum: {}", chainBaseManager.getLowestBlockNum());
     }
     revokingStore.enable();
+    initCommittedHeadQuery();
     validateSignService = ExecutorServiceManager
         .newFixedThreadPool(validateSignName, Args.getInstance().getValidateSignThreadNum());
     rePushEs = ExecutorServiceManager.newSingleThreadExecutor(rePushEsName, true);
@@ -1049,10 +1056,75 @@ public class Manager {
   }
 
 
+  private void initCommittedHeadQuery() {
+    CommonParameter parameter = Args.getInstance();
+    boolean headSurface = parameter.isFullNodeHttpEnable() || parameter.isRpcEnable();
+    if (!parameter.isCommittedHeadQueryEnable() || parameter.isSolidityNode() || !headSurface) {
+      return;
+    }
+    OperationRegistry.prepareCommittedHeadTables();
+    HeadViewRegistry registry =
+        new HeadViewRegistry(parameter.getCommittedHeadQueryMaxActiveRequests());
+    revokingStore.setRefreshObserver(registry);
+    headViewRegistry = registry;
+    publishCommittedHead();
+  }
+
+  private void publishCommittedHead() {
+    HeadViewRegistry registry = headViewRegistry;
+    if (registry == null) {
+      return;
+    }
+    try {
+      if (session.valid()) {
+        registry.observerFailed(new IllegalStateException("pending session at publish"));
+        return;
+      }
+      long generation = registry.currentGeneration();
+      Map<Chainbase, StoreLayers> layers = revokingStore.captureCommittedLayers(registry);
+      BlockId headId = chainBaseManager.getHeadBlockId();
+      BlockCapsule head = chainBaseManager.getBlockById(headId);
+      HeadView view = new HeadView(headId, head.getInstance().getBlockHeader(), layers);
+      registry.publish(view, generation);
+    } catch (Throwable t) {
+      registry.observerFailed(t);
+    }
+  }
+
+  public void markCommittedHeadReady() {
+    HeadViewRegistry registry = headViewRegistry;
+    if (registry == null) {
+      return;
+    }
+    synchronized (this) {
+      try {
+        boolean genesis = chainBaseManager.getHeadBlockNum() == 0;
+        if (genesis && (session.valid() || revokingStore.size() != 0)) {
+          registry.markReadyOnNextPublish();
+        } else {
+          registry.markReady();
+        }
+      } catch (Throwable t) {
+        registry.observerFailed(t);
+      }
+    }
+  }
+
+  public void beginCommittedHeadClosing() {
+    HeadViewRegistry registry = headViewRegistry;
+    if (registry != null) {
+      registry.beginClosing();
+    }
+  }
+
   /**
    * when switch fork need erase blocks on fork branch.
    */
   public void eraseBlock() {
+    HeadViewRegistry registry = headViewRegistry;
+    if (registry != null && !(Thread.holdsLock(forkLock) && Thread.holdsLock(this))) {
+      registry.observerFailed(new IllegalStateException("eraseBlock outside switchFork"));
+    }
     session.reset();
     try {
       BlockCapsule oldHeadBlock = chainBaseManager.getBlockById(
@@ -1383,7 +1455,11 @@ public class Manager {
                   chainBaseManager.getDynamicPropertiesStore().getLatestBlockHeaderTimestamp(),
                   khaosDb.getHeadId(), khaosDb.getMiniStore().size());
               synchronized (forkLock) {
-                switchFork(newBlock);
+                try {
+                  switchFork(newBlock);
+                } finally {
+                  publishCommittedHead();
+                }
               }
               onBlockApplied(block);
               logger.info(SAVE_BLOCK, newBlock);
@@ -1412,6 +1488,7 @@ public class Manager {
               clearSolidityContractTriggerCache(block.getNum());
               throw throwable;
             }
+            publishCommittedHead();
             long newSolidNum = getDynamicPropertiesStore().getLatestSolidifiedBlockNum();
             blockTrigger(newBlock, oldSolidNum, newSolidNum);
           }

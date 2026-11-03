@@ -15,7 +15,8 @@ import org.tron.protos.Protocol.Account;
 @Component
 @Slf4j(topic = "API")
 @HttpApi(value = "getaccount", access = Access.READ,
-    surfaces = {Surface.FULL, Surface.SOLIDITY, Surface.PBFT, Surface.SOLIDITY_NODE})
+    surfaces = {Surface.FULL, Surface.SOLIDITY, Surface.PBFT, Surface.SOLIDITY_NODE},
+    committedHead = true)
 public class GetAccountServlet extends RateLimiterServlet {
 
   @Autowired

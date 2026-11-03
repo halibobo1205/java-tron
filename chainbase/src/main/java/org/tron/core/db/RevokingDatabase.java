@@ -1,8 +1,12 @@
 package org.tron.core.db;
 
+import java.util.Map;
 import org.tron.core.db2.ISession;
 import org.tron.core.db2.common.IRevokingDB;
 import org.tron.core.db2.core.Chainbase;
+import org.tron.core.db2.core.FrozenLayerListener;
+import org.tron.core.db2.core.RefreshObserver;
+import org.tron.core.db2.core.StoreLayers;
 import org.tron.core.exception.RevokingStoreIllegalStateException;
 
 public interface RevokingDatabase {
@@ -40,5 +44,9 @@ public interface RevokingDatabase {
   void setMaxFlushCount(int maxFlushCount);
 
   void shutdown();
+
+  void setRefreshObserver(RefreshObserver observer);
+
+  Map<Chainbase, StoreLayers> captureCommittedLayers(FrozenLayerListener listener);
 
 }

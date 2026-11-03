@@ -27,7 +27,8 @@ import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
 @Component
 @Slf4j(topic = "API")
 @HttpApi(value = "triggerconstantcontract", access = Access.READ,
-    surfaces = {Surface.FULL, Surface.SOLIDITY, Surface.PBFT, Surface.SOLIDITY_NODE})
+    surfaces = {Surface.FULL, Surface.SOLIDITY, Surface.PBFT, Surface.SOLIDITY_NODE},
+    committedHead = true)
 public class TriggerConstantContractServlet extends RateLimiterServlet {
 
   @Autowired

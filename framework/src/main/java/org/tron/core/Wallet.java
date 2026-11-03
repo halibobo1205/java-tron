@@ -171,6 +171,8 @@ import org.tron.core.db.Manager;
 import org.tron.core.db.TransactionContext;
 import org.tron.core.db2.core.Chainbase;
 import org.tron.core.db2.core.Chainbase.Cursor;
+import org.tron.core.db2.view.HeadLease;
+import org.tron.core.db2.view.QueryViewScope;
 import org.tron.core.exception.AccountResourceInsufficientException;
 import org.tron.core.exception.BadItemException;
 import org.tron.core.exception.ContractExeException;
@@ -3329,6 +3331,19 @@ public class Wallet {
     return callConstantContract(trxCap, builder, retBuilder, isEstimating);
   }
 
+  private Block constantCallHeadBlock() throws HeaderNotFound {
+    HeadLease headLease = QueryViewScope.current();
+    if (headLease != null) {
+      return headLease.getView().getHeaderOnlyBlock();
+    }
+    List<BlockCapsule> blockCapsuleList = chainBaseManager.getBlockStore()
+        .getBlockByLatestNum(1);
+    if (CollectionUtils.isEmpty(blockCapsuleList)) {
+      throw new HeaderNotFound("latest block not found");
+    }
+    return blockCapsuleList.get(0).getInstance();
+  }
+
   public Transaction callConstantContract(TransactionCapsule trxCap,
       Builder builder, Return.Builder retBuilder, boolean isEstimating)
       throws ContractValidateException, ContractExeException, HeaderNotFound, VMIllegalException {
@@ -3337,16 +3352,7 @@ public class Wallet {
       throw new ContractValidateException("this node does not support constant");
     }
 
-    Block headBlock;
-    List<BlockCapsule> blockCapsuleList = chainBaseManager.getBlockStore()
-        .getBlockByLatestNum(1);
-    if (CollectionUtils.isEmpty(blockCapsuleList)) {
-      throw new HeaderNotFound("latest block not found");
-    } else {
-      headBlock = blockCapsuleList.get(0).getInstance();
-    }
-
-    BlockCapsule headBlockCapsule = new BlockCapsule(headBlock);
+    BlockCapsule headBlockCapsule = new BlockCapsule(constantCallHeadBlock());
     TransactionContext context = new TransactionContext(headBlockCapsule, trxCap,
         StoreFactory.getInstance(), true, false);
     VMActuator vmActuator = new VMActuator(true);

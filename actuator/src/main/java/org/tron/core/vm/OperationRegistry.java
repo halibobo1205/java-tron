@@ -3,6 +3,7 @@ package org.tron.core.vm;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
+import org.tron.core.db2.view.QueryViewScope;
 import org.tron.core.vm.config.VMConfig;
 
 public class OperationRegistry {
@@ -44,6 +45,12 @@ public class OperationRegistry {
   private static final Operation RESTRICTED_SUICIDE =
       DEFAULT_SUICIDE.adjustCost(EnergyCost::getSuicideCost3)
           .adjustAction(OperationActions::suicideAction2);
+
+  private static final int HIGHER_CPU_LIMIT = 1;
+  private static final int OSAKA = 1 << 1;
+  private static final int ENERGY_ADJUSTMENT = 1 << 2;
+  private static final int SELFDESTRUCT_RESTRICTION = 1 << 3;
+  private static final int ADJUSTMENT_COMBINATIONS = SELFDESTRUCT_RESTRICTION << 1;
 
   public enum Version {
     TRON_V1_5,
@@ -116,6 +123,9 @@ public class OperationRegistry {
   public static void init() {}
 
   public static JumpTable prepareAndGetTable(boolean isConstantCall) {
+    if (isConstantCall && QueryViewScope.isBound()) {
+      return CommittedHeadTables.select();
+    }
     JumpTable table = getTable(isConstantCall);
     // Apply configuration-dependent changes once at the top level.
     adjustTable(table);
@@ -123,14 +133,39 @@ public class OperationRegistry {
   }
 
   public static JumpTable getTable(boolean isConstantCall) {
-    return isConstantCall ? CONSTANT_CALL_TABLE : tableMap.get(LATEST_VERSION);
+    if (!isConstantCall) {
+      return tableMap.get(LATEST_VERSION);
+    }
+    return QueryViewScope.isBound() ? CommittedHeadTables.select() : CONSTANT_CALL_TABLE;
   }
 
   private static void adjustTable(JumpTable table) {
     // Make the corresponding changes, excluding opcode activation.
-    adjustMemOperations(table);
-    adjustVoteWitness(table);
-    adjustSelfdestruct(table);
+    adjustTable(table, currentAdjustments());
+  }
+
+  private static void adjustTable(JumpTable table, int adjustments) {
+    boolean energyAdjustment = (adjustments & ENERGY_ADJUSTMENT) != 0;
+    adjustMemOperations(table, (adjustments & HIGHER_CPU_LIMIT) != 0);
+    adjustVoteWitness(table, (adjustments & OSAKA) != 0, energyAdjustment);
+    adjustSelfdestruct(table, (adjustments & SELFDESTRUCT_RESTRICTION) != 0, energyAdjustment);
+  }
+
+  private static int currentAdjustments() {
+    int adjustments = 0;
+    if (VMConfig.allowHigherLimitForMaxCpuTimeOfOneTx()) {
+      adjustments |= HIGHER_CPU_LIMIT;
+    }
+    if (VMConfig.allowTvmOsaka()) {
+      adjustments |= OSAKA;
+    }
+    if (VMConfig.allowEnergyAdjustment()) {
+      adjustments |= ENERGY_ADJUSTMENT;
+    }
+    if (VMConfig.allowTvmSelfdestructRestriction()) {
+      adjustments |= SELFDESTRUCT_RESTRICTION;
+    }
+    return adjustments;
   }
 
   public static JumpTable newBaseOperationSet() {
@@ -712,16 +747,24 @@ public class OperationRegistry {
   }
 
   public static void adjustMemOperations(JumpTable table) {
-    boolean adjusted = VMConfig.allowHigherLimitForMaxCpuTimeOfOneTx();
+    adjustMemOperations(table, VMConfig.allowHigherLimitForMaxCpuTimeOfOneTx());
+  }
+
+  private static void adjustMemOperations(JumpTable table, boolean adjusted) {
     table.set(adjusted ? ADJUSTED_MLOAD : DEFAULT_MLOAD);
     table.set(adjusted ? ADJUSTED_MSTORE : DEFAULT_MSTORE);
     table.set(adjusted ? ADJUSTED_MSTORE8 : DEFAULT_MSTORE8);
   }
 
   public static void adjustVoteWitness(JumpTable table) {
-    if (VMConfig.allowTvmOsaka()) {
+    adjustVoteWitness(table, VMConfig.allowTvmOsaka(), VMConfig.allowEnergyAdjustment());
+  }
+
+  private static void adjustVoteWitness(JumpTable table, boolean osaka,
+      boolean energyAdjustment) {
+    if (osaka) {
       table.set(OSAKA_VOTEWITNESS);
-    } else if (VMConfig.allowEnergyAdjustment()) {
+    } else if (energyAdjustment) {
       table.set(ADJUSTED_VOTEWITNESS);
     } else {
       table.set(DEFAULT_VOTEWITNESS);
@@ -729,12 +772,44 @@ public class OperationRegistry {
   }
 
   public static void adjustSelfdestruct(JumpTable table) {
-    if (VMConfig.allowTvmSelfdestructRestriction()) {
+    adjustSelfdestruct(table, VMConfig.allowTvmSelfdestructRestriction(),
+        VMConfig.allowEnergyAdjustment());
+  }
+
+  private static void adjustSelfdestruct(JumpTable table, boolean restriction,
+      boolean energyAdjustment) {
+    if (restriction) {
       table.set(RESTRICTED_SUICIDE);
-    } else if (VMConfig.allowEnergyAdjustment()) {
+    } else if (energyAdjustment) {
       table.set(ADJUSTED_SUICIDE);
     } else {
       table.set(DEFAULT_SUICIDE);
+    }
+  }
+
+  public static void prepareCommittedHeadTables() {
+    CommittedHeadTables.select();
+  }
+
+  static final class CommittedHeadTables {
+
+    private static final JumpTable[] TABLES = buildAll();
+
+    private CommittedHeadTables() {
+    }
+
+    static JumpTable select() {
+      return TABLES[currentAdjustments()];
+    }
+
+    private static JumpTable[] buildAll() {
+      JumpTable[] tables = new JumpTable[ADJUSTMENT_COMBINATIONS];
+      for (int adjustments = 0; adjustments < tables.length; adjustments++) {
+        JumpTable table = newLatestOperationSet();
+        adjustTable(table, adjustments);
+        tables[adjustments] = table;
+      }
+      return tables;
     }
   }
 }
