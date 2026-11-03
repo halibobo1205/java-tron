@@ -17,7 +17,8 @@ import org.tron.json.JSONObject;
 @Component
 @Slf4j(topic = "API")
 @HttpApi(value = "getexchangebyid", access = Access.READ,
-    surfaces = {Surface.FULL, Surface.SOLIDITY, Surface.PBFT, Surface.SOLIDITY_NODE})
+    surfaces = {Surface.FULL, Surface.SOLIDITY, Surface.PBFT, Surface.SOLIDITY_NODE},
+    committedHead = true)
 public class GetExchangeByIdServlet extends RateLimiterServlet {
 
   @Autowired

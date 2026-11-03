@@ -18,7 +18,8 @@ import org.tron.protos.Protocol.Transaction;
 @Component
 @Slf4j(topic = "API")
 @HttpApi(value = "gettransactionbyid", access = Access.READ,
-    surfaces = {Surface.FULL, Surface.SOLIDITY, Surface.PBFT, Surface.SOLIDITY_NODE})
+    surfaces = {Surface.FULL, Surface.SOLIDITY, Surface.PBFT, Surface.SOLIDITY_NODE},
+    committedHead = true)
 public class GetTransactionByIdServlet extends RateLimiterServlet {
 
   @Autowired

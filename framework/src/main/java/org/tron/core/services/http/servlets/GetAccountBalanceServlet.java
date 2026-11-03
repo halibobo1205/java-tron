@@ -14,7 +14,7 @@ import org.tron.protos.contract.BalanceContract;
 @Component
 @Slf4j(topic = "API")
 @HttpApi(value = "getaccountbalance", access = Access.READ,
-    surfaces = {Surface.FULL})
+    surfaces = {Surface.FULL}, committedHead = true)
 public class GetAccountBalanceServlet extends RateLimiterServlet {
 
   @Autowired

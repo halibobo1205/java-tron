@@ -14,7 +14,8 @@ import org.tron.core.services.http.HttpApi.Surface;
 @Component
 @Slf4j(topic = "API")
 @HttpApi(value = "getenergyprices", access = Access.READ,
-    surfaces = {Surface.FULL, Surface.SOLIDITY, Surface.PBFT, Surface.SOLIDITY_NODE})
+    surfaces = {Surface.FULL, Surface.SOLIDITY, Surface.PBFT, Surface.SOLIDITY_NODE},
+    committedHead = true)
 public class GetEnergyPricesServlet extends RateLimiterServlet {
 
   @Autowired

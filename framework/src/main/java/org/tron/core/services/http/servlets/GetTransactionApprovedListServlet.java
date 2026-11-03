@@ -16,7 +16,7 @@ import org.tron.protos.Protocol.Transaction;
 @Component
 @Slf4j(topic = "API")
 @HttpApi(value = "getapprovedlist", access = Access.READ,
-    surfaces = {Surface.FULL})
+    surfaces = {Surface.FULL}, committedHead = true)
 public class GetTransactionApprovedListServlet extends RateLimiterServlet {
 
   @Autowired

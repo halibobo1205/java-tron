@@ -16,7 +16,7 @@ import org.tron.core.services.http.HttpApi.Surface;
 @Component
 @Slf4j(topic = "API")
 @HttpApi(value = "getpaginatedexchangelist", access = Access.READ,
-    surfaces = {Surface.FULL})
+    surfaces = {Surface.FULL}, committedHead = true)
 public class GetPaginatedExchangeListServlet extends RateLimiterServlet {
 
   @Autowired

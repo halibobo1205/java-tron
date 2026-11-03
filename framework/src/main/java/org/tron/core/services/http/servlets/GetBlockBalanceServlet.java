@@ -14,7 +14,7 @@ import org.tron.protos.contract.BalanceContract.BlockBalanceTrace;
 @Component
 @Slf4j(topic = "API")
 @HttpApi(value = "getblockbalance", access = Access.READ,
-    surfaces = {Surface.FULL})
+    surfaces = {Surface.FULL}, committedHead = true)
 public class GetBlockBalanceServlet extends RateLimiterServlet {
 
   @Autowired

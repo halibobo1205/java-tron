@@ -19,7 +19,8 @@ import org.tron.json.JSONObject;
 @Component
 @Slf4j(topic = "API")
 @HttpApi(value = "getassetissuelistbyname", access = Access.READ,
-    surfaces = {Surface.FULL, Surface.SOLIDITY, Surface.PBFT, Surface.SOLIDITY_NODE})
+    surfaces = {Surface.FULL, Surface.SOLIDITY, Surface.PBFT, Surface.SOLIDITY_NODE},
+    committedHead = true)
 public class GetAssetIssueListByNameServlet extends RateLimiterServlet {
 
   @Autowired

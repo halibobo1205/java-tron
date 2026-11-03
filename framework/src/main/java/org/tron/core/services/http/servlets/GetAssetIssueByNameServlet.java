@@ -18,7 +18,8 @@ import org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract;
 @Component
 @Slf4j(topic = "API")
 @HttpApi(value = "getassetissuebyname", access = Access.READ,
-    surfaces = {Surface.FULL, Surface.SOLIDITY, Surface.PBFT, Surface.SOLIDITY_NODE})
+    surfaces = {Surface.FULL, Surface.SOLIDITY, Surface.PBFT, Surface.SOLIDITY_NODE},
+    committedHead = true)
 public class GetAssetIssueByNameServlet extends RateLimiterServlet {
 
   @Autowired

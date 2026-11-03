@@ -15,7 +15,8 @@ import org.tron.core.services.http.HttpApi.Surface;
 @Component
 @Slf4j(topic = "API")
 @HttpApi(value = "isshieldedtrc20contractnotespent", access = Access.READ,
-    surfaces = {Surface.FULL, Surface.SOLIDITY, Surface.PBFT, Surface.SOLIDITY_NODE})
+    surfaces = {Surface.FULL, Surface.SOLIDITY, Surface.PBFT, Surface.SOLIDITY_NODE},
+    committedHead = true)
 public class IsShieldedTRC20ContractNoteSpentServlet extends RateLimiterServlet {
 
   @Autowired
