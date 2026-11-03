@@ -119,6 +119,11 @@ public class Chainbase implements IRevokingDB {
     return queryViewEnabled ? QueryViewScope.current() : null;
   }
 
+  private Snapshot readHead() {
+    HeadLease lease = boundLease();
+    return lease == null ? head() : lease.top(this);
+  }
+
   private void rejectInQueryView(String operation) {
     HeadLease lease = boundLease();
     if (lease != null) {
@@ -189,14 +194,12 @@ public class Chainbase implements IRevokingDB {
 
   @Override
   public synchronized Iterator<Map.Entry<byte[], byte[]>> iterator() {
-    rejectInQueryView("iterator");
-    return head().iterator();
+    return readHead().iterator();
   }
 
   @Override
   public Set<byte[]> getValuesNext(byte[] key, long limit) {
-    rejectInQueryView("getValuesNext");
-    return getValuesNext(head(), key, limit);
+    return getValuesNext(readHead(), key, limit);
   }
 
   // for blockstore
@@ -237,8 +240,7 @@ public class Chainbase implements IRevokingDB {
 
   @Override
   public List<byte[]> getKeysNext(byte[] key, long limit) {
-    rejectInQueryView("getKeysNext");
-    return getKeysNext(head(), key, limit);
+    return getKeysNext(readHead(), key, limit);
   }
 
   /**
@@ -307,8 +309,7 @@ public class Chainbase implements IRevokingDB {
   // for blockstore
   @Override
   public Set<byte[]> getlatestValues(long limit) {
-    rejectInQueryView("getlatestValues");
-    return getlatestValues(head(), limit);
+    return getlatestValues(readHead(), limit);
   }
 
   // for blockstore
@@ -349,8 +350,7 @@ public class Chainbase implements IRevokingDB {
   // for accout-trace
   @Override
   public Map<byte[], byte[]> getNext(byte[] key, long limit) {
-    rejectInQueryView("getNext");
-    return getNext(head(), key, limit);
+    return getNext(readHead(), key, limit);
   }
 
   // for accout-trace
@@ -389,8 +389,7 @@ public class Chainbase implements IRevokingDB {
   }
 
   public Map<WrappedByteArray, byte[]> prefixQuery(byte[] key) {
-    rejectInQueryView("prefixQuery");
-    Map<WrappedByteArray, byte[]> snapshot = prefixQuerySnapshot(head(), key);
+    Map<WrappedByteArray, byte[]> snapshot = prefixQuerySnapshot(readHead(), key);
     Map<WrappedByteArray, byte[]> result = prefixQueryRoot(key);
     result.putAll(snapshot);
     result.entrySet().removeIf(e -> e.getValue() == null);

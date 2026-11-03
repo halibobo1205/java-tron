@@ -2,32 +2,48 @@ package org.tron.core.db2;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import com.google.protobuf.ByteString;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 import org.apache.commons.lang3.ArrayUtils;
 import org.junit.Test;
 import org.mockito.MockedStatic;
 import org.tron.common.BaseMethodTest;
 import org.tron.common.exit.ExitManager;
 import org.tron.common.exit.ExitManagerTestUtil;
+import org.tron.common.parameter.CommonParameter;
+import org.tron.common.storage.leveldb.LevelDbDataSourceImpl;
+import org.tron.common.storage.rocksdb.RocksDbDataSourceImpl;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.Sha256Hash;
+import org.tron.common.utils.StorageUtils;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockCapsule.BlockId;
+import org.tron.core.capsule.utils.MarketUtils;
 import org.tron.core.db.TronStoreWithRevoking;
 import org.tron.core.db2.RevokingDbWithCacheNewValueTest.TestRevokingTronStore;
 import org.tron.core.db2.SnapshotRootTest.ProtoCapsuleTest;
 import org.tron.core.db2.common.DB;
 import org.tron.core.db2.common.Flusher;
+import org.tron.core.db2.common.LevelDB;
+import org.tron.core.db2.common.RocksDB;
 import org.tron.core.db2.common.WrappedByteArray;
 import org.tron.core.db2.core.Chainbase;
 import org.tron.core.db2.core.RefreshObserver;
@@ -187,18 +203,12 @@ public class CommittedHeadViewTest extends BaseMethodTest {
   }
 
   @Test
-  public void rangeReadsAndWritesAreRejectedInScope() {
+  public void writesAndRootReadsAreRejectedInScope() {
     commit(KEY, "v1");
     publish(1);
     HeadLease lease = registry.acquire();
     Chainbase db = (Chainbase) store.getRevokingDB();
     List<Runnable> rejected = new ArrayList<>();
-    rejected.add(() -> db.prefixQuery(bytes(KEY)));
-    rejected.add(db::iterator);
-    rejected.add(() -> db.getValuesNext(bytes(KEY), 1));
-    rejected.add(() -> db.getKeysNext(bytes(KEY), 1));
-    rejected.add(() -> db.getlatestValues(1));
-    rejected.add(() -> db.getNext(bytes(KEY), 1));
     rejected.add(() -> {
       try {
         db.getFromRoot(bytes(KEY));
@@ -221,13 +231,146 @@ public class CommittedHeadViewTest extends BaseMethodTest {
   }
 
   @Test
+  public void rangeReadsInScopeStayOnTheView() {
+    commitPairs("a", 1, 2, 3);
+    try (ISession session = snapshots.buildSession()) {
+      putPair(2, "b");
+      store.delete(pair(3));
+      session.commit();
+    }
+    publish(2);
+    List<String> expected = rangeReads();
+    HeadLease lease = registry.acquire();
+
+    commitPairs("c", 1, 4);
+    try (ISession pending = snapshots.buildSession()) {
+      putPair(2, "p");
+      store.delete(pair(4));
+      assertNotEquals(expected, rangeReads());
+      assertEquals(expected, rangeReadsInScope(lease));
+    }
+    assertTrue(lease.seal());
+    lease.close();
+  }
+
+  @Test
+  public void rangeReadsOnARootOnlyViewStayOnTheView() {
+    putPair(1, "a");
+    putPair(2, "a");
+    publish(0);
+    List<String> expected = rangeReads();
+    HeadLease lease = registry.acquire();
+
+    commitPairs("b", 1, 3);
+    try (ISession pending = snapshots.buildSession()) {
+      putPair(2, "p");
+      store.delete(pair(3));
+      assertNotEquals(expected, rangeReads());
+      assertEquals(expected, rangeReadsInScope(lease));
+    }
+    assertTrue(lease.seal());
+    lease.close();
+  }
+
+  @Test
+  public void prefixQueryReadsTheLayersBeforeTheRoot() throws Exception {
+    AtomicReference<Runnable> afterRootScan = new AtomicReference<>();
+    FailingStore hooked = new FailingStore(hookedRoot("committed-head-prefix-test",
+        afterRootScan));
+    snapshots.add(hooked.getRevokingDB());
+    snapshots.setMaxSize(2);
+    ExecutorService writer = Executors.newSingleThreadExecutor();
+    try {
+      commitTo(hooked, pair(1), "k1");
+      commitTo(hooked, pair(2), "x2");
+      publish(2);
+      HeadLease lease = registry.acquire();
+      afterRootScan.set(() -> {
+        try {
+          writer.submit(() -> {
+            commitTo(hooked, pair(3), "x3");
+            commitTo(hooked, pair(4), "x4");
+          }).get();
+        } catch (Exception e) {
+          throw new AssertionError(e);
+        }
+      });
+
+      Map<WrappedByteArray, byte[]> found;
+      try (QueryViewScope ignored = QueryViewScope.bind(lease)) {
+        found = hooked.getRevokingDB().prefixQuery(
+            MarketUtils.createPairKey(bytes(TOKEN_A), bytes(TOKEN_B)));
+      }
+      assertEquals("k1", rootValueOf(hooked, pair(1)));
+      assertEquals(2, found.size());
+      assertEquals("k1", new String(found.get(WrappedByteArray.of(pair(1))),
+          StandardCharsets.UTF_8));
+      assertTrue(lease.seal());
+      lease.close();
+    } finally {
+      writer.shutdownNow();
+      hooked.close();
+    }
+  }
+
+  @Test
+  public void latestValuesStayDistinctAfterTheViewTopIsFlushed() {
+    snapshots.setMaxSize(2);
+    for (long number = 1; number <= 3; number++) {
+      commitNumbered(number);
+    }
+    publish(3);
+    HeadLease lease = registry.acquire();
+    for (long number = 4; number <= 6; number++) {
+      commitNumbered(number);
+    }
+    assertEquals("b3", rootValue(ByteArray.fromLong(3)));
+
+    List<String> latest;
+    try (QueryViewScope ignored = QueryViewScope.bind(lease)) {
+      latest = store.getRevokingDB().getlatestValues(3).stream()
+          .map(value -> new String(value, StandardCharsets.UTF_8)).sorted()
+          .collect(Collectors.toList());
+    }
+    assertEquals(Arrays.asList("b1", "b2", "b3"), latest);
+    assertTrue(lease.seal());
+    lease.close();
+  }
+
+  @Test
+  public void rangeReadsSurviveSafeFlushesAndExpireAfterAnUnsafeOne() {
+    snapshots.setMaxSize(2);
+    commitPairs("a", 1, 2);
+    commitPairs("b", 2, 3);
+    publish(2);
+    List<String> expected = stateReads();
+    HeadLease lease = registry.acquire();
+
+    commitPairs("c", 1, 4);
+    commitPairs("d", 3);
+    assertEquals("a1", rootValue(pair(1)));
+    assertEquals(expected, stateReadsInScope(lease));
+
+    commitPairs("e", 2);
+    assertEquals("b3", rootValue(pair(3)));
+    assertEquals(expected, stateReadsInScope(lease));
+
+    commitPairs("f", 1);
+    HeadViewException expired =
+        assertThrows(HeadViewException.class, () -> stateReadsInScope(lease));
+    assertEquals(Reason.EXPIRED, expired.getReason());
+    assertFalse(lease.seal());
+    lease.close();
+  }
+
+  @Test
   public void swallowedFaultStillFailsTheSeal() {
     commit(KEY, "v1");
     publish(1);
     HeadLease lease = registry.acquire();
     try (QueryViewScope ignored = QueryViewScope.bind(lease)) {
       try {
-        store.getRevokingDB().iterator();
+        store.getRevokingDB().put(bytes(KEY), bytes("x"));
       } catch (HeadViewException expected) {
         assertEquals(Reason.UNSUPPORTED, expected.getReason());
       }
@@ -463,8 +606,133 @@ public class CommittedHeadViewTest extends BaseMethodTest {
     return false;
   }
 
+  private void commitPairs(String prefix, int... prices) {
+    try (ISession session = snapshots.buildSession()) {
+      for (int price : prices) {
+        putPair(price, prefix);
+      }
+      session.commit();
+    }
+  }
+
+  private void commitNumbered(long number) {
+    try (ISession session = snapshots.buildSession()) {
+      store.put(ByteArray.fromLong(number), new ProtoCapsuleTest(bytes("b" + number)));
+      session.commit();
+    }
+  }
+
+  private void putPair(int price, String prefix) {
+    store.put(pair(price), new ProtoCapsuleTest(bytes(prefix + price)));
+  }
+
+  private static byte[] pair(int price) {
+    return MarketUtils.createPairPriceKey(bytes(TOKEN_A), bytes(TOKEN_B), 1, price);
+  }
+
+  private List<String> rangeReadsInScope(HeadLease lease) {
+    try (QueryViewScope ignored = QueryViewScope.bind(lease)) {
+      return rangeReads();
+    }
+  }
+
+  private List<String> stateReadsInScope(HeadLease lease) {
+    try (QueryViewScope ignored = QueryViewScope.bind(lease)) {
+      return stateReads();
+    }
+  }
+
+  private List<String> rangeReads() {
+    List<String> reads = stateReads();
+    Chainbase db = (Chainbase) store.getRevokingDB();
+    reads.add("getlatestValues " + sorted(db.getlatestValues(2)));
+    return reads;
+  }
+
+  private List<String> stateReads() {
+    Chainbase db = (Chainbase) store.getRevokingDB();
+    List<String> iterated = new ArrayList<>();
+    db.iterator().forEachRemaining(e -> iterated.add(entry(e.getKey(), e.getValue())));
+    List<String> next = db.getNext(pair(1), 2).entrySet().stream()
+        .map(e -> entry(e.getKey(), e.getValue())).collect(Collectors.toList());
+    List<String> prefixed = db.prefixQuery(MarketUtils.createPairKey(bytes(TOKEN_A),
+        bytes(TOKEN_B))).entrySet().stream()
+        .map(e -> entry(e.getKey().getBytes(), e.getValue())).collect(Collectors.toList());
+    List<String> reads = new ArrayList<>();
+    reads.add("iterator " + sortedStrings(iterated));
+    reads.add("getValuesNext " + sorted(db.getValuesNext(pair(1), 10)));
+    reads.add("getKeysNext " + db.getKeysNext(pair(1), 10).stream()
+        .map(CommittedHeadViewTest::hex).collect(Collectors.toList()));
+    reads.add("getNext " + sortedStrings(next));
+    reads.add("prefixQuery " + sortedStrings(prefixed));
+    return reads;
+  }
+
+  private static List<String> sorted(Collection<byte[]> values) {
+    return values.stream().map(CommittedHeadViewTest::hex).sorted().collect(Collectors.toList());
+  }
+
+  private static List<String> sortedStrings(List<String> values) {
+    Collections.sort(values);
+    return values;
+  }
+
+  private static String entry(byte[] key, byte[] value) {
+    return hex(key) + "=" + hex(value);
+  }
+
+  private static String hex(byte[] value) {
+    return value == null ? "null" : ByteArray.toHexString(value);
+  }
+
+  private void commitTo(TronStoreWithRevoking<ProtoCapsuleTest> target, byte[] key,
+      String value) {
+    try (ISession session = snapshots.buildSession()) {
+      target.put(key, new ProtoCapsuleTest(bytes(value)));
+      session.commit();
+    }
+  }
+
+  private static String rootValueOf(TronStoreWithRevoking<ProtoCapsuleTest> target,
+      byte[] key) {
+    byte[] value = ((Chainbase) target.getRevokingDB()).getHead().getRoot().get(key);
+    return value == null ? null : new String(value, StandardCharsets.UTF_8);
+  }
+
+  private static DB<byte[], byte[]> hookedRoot(String name, AtomicReference<Runnable> hook) {
+    String dir = StorageUtils.getOutputDirectoryByDbName(name);
+    if ("LEVELDB".equalsIgnoreCase(CommonParameter.getInstance().getStorage().getDbEngine())) {
+      return new LevelDB(new LevelDbDataSourceImpl(dir, name) {
+        @Override
+        public Map<WrappedByteArray, byte[]> prefixQuery(byte[] key) {
+          return runAfter(super.prefixQuery(key), hook);
+        }
+      });
+    }
+    String parent = Paths.get(dir, CommonParameter.getInstance().getStorage().getDbDirectory())
+        .toString();
+    return new RocksDB(new RocksDbDataSourceImpl(parent, name) {
+      @Override
+      public Map<WrappedByteArray, byte[]> prefixQuery(byte[] key) {
+        return runAfter(super.prefixQuery(key), hook);
+      }
+    });
+  }
+
+  private static <T> T runAfter(T result, AtomicReference<Runnable> hook) {
+    Runnable action = hook.getAndSet(null);
+    if (action != null) {
+      action.run();
+    }
+    return result;
+  }
+
   private String rootValue(String key) {
-    byte[] value = ((Chainbase) store.getRevokingDB()).getHead().getRoot().get(bytes(key));
+    return rootValue(bytes(key));
+  }
+
+  private String rootValue(byte[] key) {
+    byte[] value = ((Chainbase) store.getRevokingDB()).getHead().getRoot().get(key);
     return value == null ? null : new String(value, StandardCharsets.UTF_8);
   }
 

@@ -2,6 +2,7 @@ package org.tron.core.db2.view;
 
 import java.util.Map;
 import org.tron.core.db2.core.Chainbase;
+import org.tron.core.db2.core.Snapshot;
 import org.tron.core.db2.core.StoreLayers;
 import org.tron.core.db2.view.HeadViewException.Reason;
 
@@ -26,16 +27,11 @@ public final class HeadLease implements AutoCloseable {
   }
 
   public byte[] read(Chainbase db, byte[] key) {
-    checkUsable();
-    Map<Chainbase, StoreLayers> layers = view.layers();
-    if (layers == null) {
-      throw fail(Reason.EXPIRED, "committed head view expired");
-    }
-    StoreLayers storeLayers = layers.get(db);
-    if (storeLayers == null) {
-      throw fail(Reason.UNSUPPORTED, "store not captured: " + db.getDbName());
-    }
-    return storeLayers.get(key);
+    return captured(db).get(key);
+  }
+
+  public Snapshot top(Chainbase db) {
+    return captured(db).top();
   }
 
   public HeadViewException unsupported(String what) {
@@ -66,6 +62,19 @@ public final class HeadLease implements AutoCloseable {
       closed = true;
     }
     registry.release(this);
+  }
+
+  private StoreLayers captured(Chainbase db) {
+    checkUsable();
+    Map<Chainbase, StoreLayers> layers = view.layers();
+    if (layers == null) {
+      throw fail(Reason.EXPIRED, "committed head view expired");
+    }
+    StoreLayers storeLayers = layers.get(db);
+    if (storeLayers == null) {
+      throw fail(Reason.UNSUPPORTED, "store not captured: " + db.getDbName());
+    }
+    return storeLayers;
   }
 
   private void checkUsable() {

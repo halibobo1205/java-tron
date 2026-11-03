@@ -25,6 +25,10 @@ public final class StoreLayers {
     return layer != null && members.contains(layer);
   }
 
+  public Snapshot top() {
+    return newestFirst.length == 0 ? root : newestFirst[0];
+  }
+
   public byte[] get(byte[] key) {
     Key wrapped = Key.of(key);
     for (SnapshotImpl layer : newestFirst) {
