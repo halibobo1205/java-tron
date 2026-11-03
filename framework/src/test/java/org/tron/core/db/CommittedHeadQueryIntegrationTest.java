@@ -1,6 +1,7 @@
 package org.tron.core.db;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
@@ -20,6 +21,7 @@ import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.Test;
@@ -28,11 +30,13 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.mock.web.MockServletContext;
 import org.tron.api.GrpcAPI.Return;
 import org.tron.api.GrpcAPI.TransactionExtention;
+import org.tron.api.GrpcAPI.WitnessList;
 import org.tron.api.WalletGrpc;
 import org.tron.common.BaseMethodTest;
 import org.tron.common.crypto.ECKey;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.Sha256Hash;
+import org.tron.common.utils.StringUtil;
 import org.tron.common.utils.Utils;
 import org.tron.consensus.dpos.DposSlot;
 import org.tron.core.ChainBaseManager;
@@ -55,6 +59,8 @@ import org.tron.core.services.headview.CommittedHeadQuery;
 import org.tron.core.services.http.HttpApi.Surface;
 import org.tron.core.services.http.servlets.GetAccountServlet;
 import org.tron.core.services.http.servlets.GetNodeInfoServlet;
+import org.tron.core.services.http.servlets.GetNowBlockServlet;
+import org.tron.core.services.http.servlets.ListWitnessesServlet;
 import org.tron.core.services.http.servlets.RateLimiterServlet;
 import org.tron.protos.Protocol.Account;
 import org.tron.protos.Protocol.Transaction.Contract.ContractType;
@@ -408,6 +414,77 @@ public class CommittedHeadQueryIntegrationTest extends BaseMethodTest {
     MockHttpServletResponse rejected = new MockHttpServletResponse();
     context.getBean(GetNodeInfoServlet.class).service(nonPilot, rejected);
     assertEquals(400, rejected.getStatus());
+  }
+
+  @Test
+  public void rangeReadsSeeTheBlockOfTheView() throws Exception {
+    witnessKeys = addWitnesses();
+    dbManager.markCommittedHeadReady();
+    HeadViewRegistry registry = dbManager.getHeadViewRegistry();
+    Wallet wallet = context.getBean(Wallet.class);
+
+    pushNext(BASE_TIME + 3000);
+    HashSet<Object> witnessesAt1 = witnessSet(wallet.getWitnessList());
+    HeadLease pinned = registry.acquire();
+    pushNext(BASE_TIME + 6000);
+    assertNotEquals(witnessesAt1, witnessSet(wallet.getWitnessList()));
+    assertEquals(2, new BlockCapsule(wallet.getNowBlock()).getNum());
+
+    try (QueryViewScope ignored = QueryViewScope.bind(pinned)) {
+      assertEquals(1, new BlockCapsule(wallet.getNowBlock()).getNum());
+      assertEquals(witnessesAt1, witnessSet(wallet.getWitnessList()));
+    }
+    assertTrue(pinned.seal());
+    pinned.close();
+
+    MockHttpServletResponse committed = new MockHttpServletResponse();
+    context.getBean(GetNowBlockServlet.class).service(getRequest(true), committed);
+    assertEquals(200, committed.getStatus());
+    assertEquals("2", committed.getHeader(CommittedHeadQuery.HTTP_BLOCK_NUMBER));
+    MockHttpServletResponse plain = new MockHttpServletResponse();
+    context.getBean(GetNowBlockServlet.class).service(getRequest(false), plain);
+    assertEquals(plain.getContentAsString(), committed.getContentAsString());
+
+    MockHttpServletResponse witnesses = new MockHttpServletResponse();
+    context.getBean(ListWitnessesServlet.class).service(getRequest(true), witnesses);
+    assertEquals(200, witnesses.getStatus());
+    assertEquals("2", witnesses.getHeader(CommittedHeadQuery.HTTP_BLOCK_NUMBER));
+    MockHttpServletResponse plainWitnesses = new MockHttpServletResponse();
+    context.getBean(ListWitnessesServlet.class).service(getRequest(false), plainWitnesses);
+    assertEquals(plainWitnesses.getContentAsString(), witnesses.getContentAsString());
+  }
+
+  @Test
+  public void formPostKeepsItsParameters() throws Exception {
+    witnessKeys = addWitnesses();
+    dbManager.markCommittedHeadReady();
+    pushNext(BASE_TIME + 3000);
+
+    MockHttpServletRequest request = new MockHttpServletRequest(fullContext(Surface.FULL));
+    request.setMethod("POST");
+    request.setContentType("application/x-www-form-urlencoded");
+    request.setContent("visible=true".getBytes(StandardCharsets.UTF_8));
+    request.addHeader(CommittedHeadQuery.HTTP_SELECTOR, CommittedHeadQuery.COMMITTED_HEAD);
+    MockHttpServletResponse response = new MockHttpServletResponse();
+    context.getBean(ListWitnessesServlet.class).service(request, response);
+
+    assertEquals(200, response.getStatus());
+    ByteString witness = witnessKeys.keySet().iterator().next();
+    assertTrue(response.getContentAsString()
+        .contains(StringUtil.encode58Check(witness.toByteArray())));
+  }
+
+  private static HashSet<Object> witnessSet(WitnessList witnesses) {
+    return new HashSet<>(witnesses.getWitnessesList());
+  }
+
+  private static MockHttpServletRequest getRequest(boolean selector) {
+    MockHttpServletRequest request = new MockHttpServletRequest(fullContext(Surface.FULL));
+    request.setMethod("GET");
+    if (selector) {
+      request.addHeader(CommittedHeadQuery.HTTP_SELECTOR, CommittedHeadQuery.COMMITTED_HEAD);
+    }
+    return request;
   }
 
   @Test

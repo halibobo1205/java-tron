@@ -36,6 +36,9 @@ public final class CommittedHeadGrpcInterceptor implements ServerInterceptor {
       WalletGrpc.getGetAccountResourceMethod().getFullMethodName(),
       WalletGrpc.getGetContractMethod().getFullMethodName(),
       WalletGrpc.getGetContractInfoMethod().getFullMethodName(),
+      WalletGrpc.getGetNowBlockMethod().getFullMethodName(),
+      WalletGrpc.getGetNowBlock2Method().getFullMethodName(),
+      WalletGrpc.getListWitnessesMethod().getFullMethodName(),
       WalletGrpc.getTriggerConstantContractMethod().getFullMethodName());
 
   private final CommittedHeadQuery query;

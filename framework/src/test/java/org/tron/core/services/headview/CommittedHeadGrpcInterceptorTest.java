@@ -42,6 +42,9 @@ public class CommittedHeadGrpcInterceptorTest {
       WalletGrpc.getGetAccountResourceMethod(),
       WalletGrpc.getGetContractMethod(),
       WalletGrpc.getGetContractInfoMethod(),
+      WalletGrpc.getGetNowBlockMethod(),
+      WalletGrpc.getGetNowBlock2Method(),
+      WalletGrpc.getListWitnessesMethod(),
       WalletGrpc.getTriggerConstantContractMethod());
 
   private HeadViewRegistry registry;
