@@ -349,8 +349,8 @@ public class Chainbase implements IRevokingDB {
   }
 
   public Map<WrappedByteArray, byte[]> prefixQuery(byte[] key) {
+    Map<WrappedByteArray, byte[]> snapshot = prefixQuerySnapshot(head(), key);
     Map<WrappedByteArray, byte[]> result = prefixQueryRoot(key);
-    Map<WrappedByteArray, byte[]>  snapshot = prefixQuerySnapshot(key);
     result.putAll(snapshot);
     result.entrySet().removeIf(e -> e.getValue() == null);
     return result;
@@ -366,9 +366,8 @@ public class Chainbase implements IRevokingDB {
     return result;
   }
 
-  private Map<WrappedByteArray, byte[]> prefixQuerySnapshot(byte[] key) {
+  private Map<WrappedByteArray, byte[]> prefixQuerySnapshot(Snapshot snapshot, byte[] key) {
     Map<WrappedByteArray, byte[]> result = new HashMap<>();
-    Snapshot snapshot = head();
     if (!snapshot.equals(head.getRoot())) {
       Map<WrappedByteArray, WrappedByteArray> all = new HashMap<>();
       ((SnapshotImpl) snapshot).collect(all, key);
