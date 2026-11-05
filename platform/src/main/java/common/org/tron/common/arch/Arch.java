@@ -1,9 +1,7 @@
 package org.tron.common.arch;
 
 import java.util.Locale;
-import lombok.extern.slf4j.Slf4j;
 
-@Slf4j(topic = "arch")
 public final class Arch {
 
   private Arch() {
@@ -60,27 +58,6 @@ public final class Arch {
   public static boolean isArm64() {
     String osArch = getOsArch();
     return osArch.contains("arm64") || osArch.contains("aarch64");
-  }
-
-  public static boolean isX86() {
-    return !isArm64();
-  }
-
-  public static boolean isJava8() {
-    return javaSpecificationVersion().equals("1.8");
-  }
-
-  public static boolean isJava17() {
-    return javaSpecificationVersion().equals("17");
-  }
-
-  public static void throwIfUnsupportedJavaVersion() {
-    if ((isX86() && !isJava8()) || (isArm64() && !isJava17())) {
-      logger.info(withAll());
-      throw new UnsupportedOperationException(String.format(
-          "Java %s is required for %s architecture. Detected version %s", isX86() ? "1.8" : "17",
-          getOsArch(), javaSpecificationVersion()));
-    }
   }
 
   public static void throwIfUnsupportedArm64Exception(String message) {
