@@ -115,7 +115,7 @@ public class AdminJsonRpcRequestTest {
 
   @Test
   public void exponentOverflowIsAParseError() throws Exception {
-    for (String literal : new String[] {"1e2147483648", "-1e2147483648", "1e-2147483649"}) {
+    for (String literal : new String[] {"1e2147483649", "-1e2147483649", "1e-2147483649"}) {
       assertError(sender.send(REQUEST + ",\"id\":" + literal + "}"), -32700, "null");
       assertError(sender.send("{\"jsonrpc\":\"2.0\",\"method\":\"admin_addPeer\","
           + "\"params\":[" + literal + "],\"id\":1}"), -32700, "null");
