@@ -10,7 +10,7 @@ Guidance for AI coding assistants and new contributors working on java-tron: how
 
 ## Build & Test
 
-Supported platforms: **Linux** and **macOS** only. The JDK requirement is determined by CPU architecture: **JDK 8** on x86_64, **JDK 17** on ARM64/aarch64 (Apple Silicon, AWS Graviton). The build fails fast if the JDK major version does not match the architecture.
+Supported platforms: **Linux** and **macOS** only. The minimum JDK is determined by CPU architecture: **JDK 8** or newer on x86_64, **JDK 17** or newer on ARM64/aarch64 (Apple Silicon, AWS Graviton). The build fails fast if the JDK is older than that minimum; the compiled bytecode still targets Java 8.
 
 ```bash
 ./gradlew clean build -x test                # build without tests
@@ -26,7 +26,7 @@ Supported platforms: **Linux** and **macOS** only. The JDK requirement is determ
 - Main entry point: `org.tron.program.FullNode`.
 - Tests also run in parallel in CI: `framework/build.gradle` sets `maxParallelForks` without checking the `CI` env var. Each module configures its own test parallelism in its `build.gradle`.
 - On ARM64/aarch64, only the RocksDB storage engine is supported; the build forces RocksDB and skips the LevelDB tests.
-- CI builds the full matrix: **JDK 8 / x86_64** (rockylinux, debian11) and **JDK 17 / aarch64** (macOS, ubuntu24). A change must compile on both.
+- CI builds the full matrix: **x86_64** on JDK 8 (debian11), JDK 17 (rockylinux) and JDK 21 (ubuntu24); **aarch64** on JDK 17 (ubuntu24) and JDK 21 (macOS, ubuntu24). A change must compile on all of them.
 
 ## Pre-Commit Checklist
 
@@ -160,7 +160,7 @@ crypto    → common
 
 ## Common Pitfalls
 
-1. **ErrorProne is skipped below JDK 17.** An x86/JDK 8 build therefore does not report `StringCaseLocaleUsage` violations, while the same code fails to compile in the aarch64/JDK 17 CI jobs.
+1. **ErrorProne is skipped below JDK 17.** An x86/JDK 8 build therefore does not report `StringCaseLocaleUsage` violations, while the same code fails to compile in the JDK 17+ CI jobs.
 2. **`./gradlew checkstyleMain` is not the CI gate.** Use the exact module-scoped command in checklist step 3.
 3. **Adding a config key without a comment fails CI**, even if the key itself is valid.
 4. **Changing a dependency without regenerating `verification-metadata.xml` breaks the build for everyone**, not just you.
