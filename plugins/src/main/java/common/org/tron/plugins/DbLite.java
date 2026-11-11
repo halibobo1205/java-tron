@@ -9,11 +9,15 @@ import com.google.common.primitives.Longs;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.FileVisitOption;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Optional;
@@ -257,9 +261,10 @@ public class DbLite implements Callable<Integer> {
       //    and return the block numbers of snapshot and history
       BlockNumInfo blockNumInfo = checkAndGetBlockNumInfo(historyDir, liteDir);
       // 2. move archive dbs to bak
-      backupArchiveDbs(liteDir);
+      Map<String, Path> movedDbs = getMovedArchiveDbs(liteDir);
+      backupArchiveDbs(liteDir, movedDbs);
       // 3. copy history data to liteDir
-      copyHistory2Database(historyDir, liteDir);
+      copyHistory2Database(historyDir, liteDir, movedDbs);
       // 4. delete the extra block data in history data
       trimExtraHistory(liteDir, blockNumInfo);
       // 5. merge bak to database
@@ -554,7 +559,24 @@ public class DbLite implements Callable<Integer> {
     return new BlockNumInfo(snapshotMinNum, historyMaxNum, snapshotMaxNum);
   }
 
-  private void backupArchiveDbs(String databaseDir) throws IOException {
+  @VisibleForTesting
+  static Map<String, Path> getMovedArchiveDbs(String databaseDir) {
+    Map<String, Path> movedDbs = Maps.newHashMap();
+    try {
+      for (String db : archiveDbs) {
+        Path path = Paths.get(databaseDir, db);
+        if (Files.isSymbolicLink(path)) {
+          movedDbs.put(db, path.toRealPath());
+        }
+      }
+    } catch (IOException e) {
+      throw new UncheckedIOException(e);
+    }
+    return movedDbs;
+  }
+
+  private void backupArchiveDbs(String databaseDir, Map<String, Path> movedDbs)
+      throws IOException {
     Path bakDir = Paths.get(databaseDir, BACKUP_DIR_PREFIX + START_TIME);
     logger.info("Backup the archive dbs to {}.", bakDir);
     spec.commandLine().getOut().format("Backup the archive dbs to %s.", bakDir).println();
@@ -562,13 +584,61 @@ public class DbLite implements Callable<Integer> {
       throw new RuntimeException(String.format("create bak dir %s failed", bakDir));
     }
     FileUtils.copyDatabases(Paths.get(databaseDir), bakDir, archiveDbs);
-    archiveDbs.forEach(db -> FileUtils.deleteDir(new File(databaseDir, db)));
+    for (String db : archiveDbs) {
+      Path moved = movedDbs.get(db);
+      if (moved == null) {
+        FileUtils.deleteDir(new File(databaseDir, db));
+      } else {
+        clearDir(moved);
+      }
+    }
   }
 
-  private void copyHistory2Database(String historyDir, String databaseDir) throws IOException {
+  private void copyHistory2Database(String historyDir, String databaseDir,
+      Map<String, Path> movedDbs) throws IOException {
     logger.info("Begin to copy history to database.");
     spec.commandLine().getOut().println("Begin to copy history to database.");
-    FileUtils.copyDatabases(Paths.get(historyDir), Paths.get(databaseDir), archiveDbs);
+    List<String> localDbs = archiveDbs.stream()
+        .filter(db -> !movedDbs.containsKey(db))
+        .collect(Collectors.toList());
+    FileUtils.copyDatabases(Paths.get(historyDir), Paths.get(databaseDir), localDbs);
+    for (Map.Entry<String, Path> moved : movedDbs.entrySet()) {
+      copyInto(Paths.get(historyDir, moved.getKey()), moved.getValue());
+    }
+  }
+
+  @VisibleForTesting
+  static void clearDir(Path dir) {
+    try (Stream<Path> walk = Files.walk(dir)) {
+      List<Path> entries = walk.filter(entry -> !entry.equals(dir))
+          .sorted(Comparator.reverseOrder())
+          .collect(Collectors.toList());
+      for (Path entry : entries) {
+        Files.delete(entry);
+      }
+    } catch (IOException e) {
+      throw new UncheckedIOException(e);
+    }
+  }
+
+  @VisibleForTesting
+  static void copyInto(Path source, Path target) {
+    if (!Files.exists(source)) {
+      return;
+    }
+    try (Stream<Path> walk = Files.walk(source, FileVisitOption.FOLLOW_LINKS)) {
+      List<Path> entries = walk.collect(Collectors.toList());
+      for (Path entry : entries) {
+        Path dest = target.resolve(source.relativize(entry));
+        if (Files.isDirectory(entry)) {
+          Files.createDirectories(dest);
+        } else {
+          FileUtils.copy(entry, dest);
+        }
+      }
+    } catch (IOException e) {
+      throw new UncheckedIOException(e);
+    }
   }
 
   private void trimExtraHistory(String liteDir, BlockNumInfo blockNumInfo)
