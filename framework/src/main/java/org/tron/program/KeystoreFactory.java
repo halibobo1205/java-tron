@@ -82,7 +82,7 @@ public class KeystoreFactory {
   }
 
   private void importPrivateKey() throws CipherException, IOException {
-    Scanner in = new Scanner(System.in, Charset.defaultCharset());
+    Scanner in = new Scanner(System.in, Charset.defaultCharset().name());
     String privateKey;
     System.out.println("Please input private key.");
     while (true) {
@@ -118,7 +118,7 @@ public class KeystoreFactory {
   }
 
   private void run() {
-    Scanner in = new Scanner(System.in, Charset.defaultCharset());
+    Scanner in = new Scanner(System.in, Charset.defaultCharset().name());
     help();
     while (in.hasNextLine()) {
       try {

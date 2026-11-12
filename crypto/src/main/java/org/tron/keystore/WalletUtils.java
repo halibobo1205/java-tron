@@ -222,7 +222,7 @@ public class WalletUtils {
 
   private static synchronized Scanner getSharedStdinScanner() {
     if (sharedStdinScanner == null) {
-      sharedStdinScanner = new Scanner(System.in, Charset.defaultCharset());
+      sharedStdinScanner = new Scanner(System.in, Charset.defaultCharset().name());
     }
     return sharedStdinScanner;
   }

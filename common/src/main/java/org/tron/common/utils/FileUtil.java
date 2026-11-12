@@ -20,9 +20,11 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.File;
-import java.io.FileReader;
-import java.io.FileWriter;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
 import java.nio.file.FileVisitResult;
 import java.nio.file.FileVisitor;
 import java.nio.file.Files;
@@ -89,7 +91,8 @@ public class FileUtil {
     File priFile = new File(filePath);
     try {
       priFile.createNewFile();
-      try (BufferedWriter bw = new BufferedWriter(new FileWriter(priFile, UTF_8, append))) {
+      try (BufferedWriter bw = new BufferedWriter(
+          new OutputStreamWriter(new FileOutputStream(priFile, append), UTF_8))) {
         bw.write(data);
         bw.flush();
       }
@@ -101,7 +104,8 @@ public class FileUtil {
   public static int readData(String filePath, char[] buf) {
     int len;
     File file = new File(filePath);
-    try (BufferedReader bufRead = new BufferedReader(new FileReader(file, UTF_8))) {
+    try (BufferedReader bufRead = new BufferedReader(
+        new InputStreamReader(new FileInputStream(file), UTF_8))) {
       len = bufRead.read(buf, 0, buf.length);
     } catch (IOException ex) {
       logger.warn("Failed to read data from file.", ex);
