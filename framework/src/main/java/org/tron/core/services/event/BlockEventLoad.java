@@ -58,6 +58,7 @@ public class BlockEventLoad {
     }
   }
 
+  @SuppressWarnings("SynchronizeOnNonFinalField") // shares Manager's lock with pushBlock
   public synchronized void load() throws Exception {
     long cacheHeadNum = BlockEventCache.getHead().getBlockId().getNum();
     long tmpNum =  manager.getDynamicPropertiesStore().getLatestBlockHeaderNumber();

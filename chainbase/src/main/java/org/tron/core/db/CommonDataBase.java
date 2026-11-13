@@ -1,5 +1,6 @@
 package org.tron.core.db;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -9,7 +10,7 @@ import org.tron.common.utils.ByteArray;
 @Component
 public class CommonDataBase extends TronDatabase<byte[]> {
 
-  private static final byte[] LATEST_PBFT_BLOCK_NUM = "LATEST_PBFT_BLOCK_NUM".getBytes();
+  private static final byte[] LATEST_PBFT_BLOCK_NUM = "LATEST_PBFT_BLOCK_NUM".getBytes(UTF_8);
 
   public CommonDataBase() {
     super("common-database");

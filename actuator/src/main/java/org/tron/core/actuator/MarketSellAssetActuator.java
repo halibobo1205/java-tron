@@ -15,6 +15,7 @@
 
 package org.tron.core.actuator;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.tron.core.actuator.ActuatorConstant.CONTRACT_NOT_EXIST;
 import static org.tron.core.actuator.ActuatorConstant.STORE_NOT_EXIST;
 import static org.tron.core.actuator.ActuatorConstant.TX_RESULT_NULL;
@@ -209,10 +210,10 @@ public class MarketSellAssetActuator extends AbstractActuator {
       throw new ContractValidateException("Account does not exist!");
     }
 
-    if (!Arrays.equals(sellTokenID, "_".getBytes()) && !isNumber(sellTokenID)) {
+    if (!Arrays.equals(sellTokenID, "_".getBytes(UTF_8)) && !isNumber(sellTokenID)) {
       throw new ContractValidateException("sellTokenId is not a valid number");
     }
-    if (!Arrays.equals(buyTokenID, "_".getBytes()) && !isNumber(buyTokenID)) {
+    if (!Arrays.equals(buyTokenID, "_".getBytes(UTF_8)) && !isNumber(buyTokenID)) {
       throw new ContractValidateException("buyTokenId is not a valid number");
     }
 
@@ -242,7 +243,7 @@ public class MarketSellAssetActuator extends AbstractActuator {
       // Whether the balance is enough
       long fee = calcFee();
 
-      if (Arrays.equals(sellTokenID, "_".getBytes())) {
+      if (Arrays.equals(sellTokenID, "_".getBytes(UTF_8))) {
         if (ownerAccount.getBalance() < addExact(sellTokenQuantity, fee)) {
           throw new ContractValidateException("No enough balance !");
         }
@@ -263,7 +264,7 @@ public class MarketSellAssetActuator extends AbstractActuator {
         }
       }
 
-      if (!Arrays.equals(buyTokenID, "_".getBytes())) {
+      if (!Arrays.equals(buyTokenID, "_".getBytes(UTF_8))) {
         // Whether have the token
         AssetIssueCapsule assetIssueCapsule = Commons
             .getAssetIssueStoreFinal(dynamicStore, assetIssueStore, assetIssueV2Store)
@@ -525,7 +526,7 @@ public class MarketSellAssetActuator extends AbstractActuator {
   }
 
   private void transferBalanceOrToken(AccountCapsule accountCapsule) {
-    if (Arrays.equals(sellTokenID, "_".getBytes())) {
+    if (Arrays.equals(sellTokenID, "_".getBytes(UTF_8))) {
       accountCapsule.setBalance(subtractExact(
           accountCapsule.getBalance(), sellTokenQuantity));
     } else {
@@ -539,7 +540,7 @@ public class MarketSellAssetActuator extends AbstractActuator {
       AccountCapsule accountCapsule) {
 
     byte[] buyTokenId = orderCapsule.getBuyTokenId();
-    if (Arrays.equals(buyTokenId, "_".getBytes())) {
+    if (Arrays.equals(buyTokenId, "_".getBytes(UTF_8))) {
       accountCapsule.setBalance(addExact(accountCapsule.getBalance(), num));
     } else {
       accountCapsule
@@ -552,7 +553,7 @@ public class MarketSellAssetActuator extends AbstractActuator {
         .get(orderCapsule.getOwnerAddress().toByteArray());
 
     byte[] buyTokenId = orderCapsule.getBuyTokenId();
-    if (Arrays.equals(buyTokenId, "_".getBytes())) {
+    if (Arrays.equals(buyTokenId, "_".getBytes(UTF_8))) {
       accountCapsule.setBalance(addExact(accountCapsule.getBalance(), num));
     } else {
       accountCapsule

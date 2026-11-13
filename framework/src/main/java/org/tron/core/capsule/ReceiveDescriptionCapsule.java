@@ -14,7 +14,7 @@ public class ReceiveDescriptionCapsule implements ProtoCapsule<ReceiveDescriptio
     receiveDescription = ReceiveDescription.newBuilder().build();
   }
 
-  public ReceiveDescriptionCapsule(final ReceiveDescription outputDescription) {
+  public ReceiveDescriptionCapsule(final ReceiveDescription receiveDescription) {
     this.receiveDescription = receiveDescription;
   }
 

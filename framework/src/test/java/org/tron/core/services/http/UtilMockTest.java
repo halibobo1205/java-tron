@@ -2,6 +2,7 @@ package org.tron.core.services.http;
 
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Descriptors;
+import java.nio.charset.StandardCharsets;
 import java.security.InvalidParameterException;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -306,6 +307,17 @@ public class UtilMockTest  {
     Protocol.Transaction out = Util.setTransactionExtraData(jsonObject,
         transactionCapsule.getInstance(), true);
     Assert.assertNotNull(out);
+  }
+
+  @Test
+  public void testSetTransactionExtraDataEncodesMemoAsUtf8() {
+    TransactionCapsule transactionCapsule = new TransactionCapsule(
+        Protocol.Transaction.newBuilder().build());
+    String memo = "中文memo";
+    Protocol.Transaction out = Util.setTransactionExtraData(memo,
+        transactionCapsule.getInstance(), true);
+    Assert.assertArrayEquals(memo.getBytes(StandardCharsets.UTF_8),
+        out.getRawData().getData().toByteArray());
   }
 
   @Test

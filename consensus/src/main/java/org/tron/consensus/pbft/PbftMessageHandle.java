@@ -262,6 +262,7 @@ public class PbftMessageHandle {
   }
 
   //Cleanup related status
+  @SuppressWarnings("EmptyCatch")
   private synchronized void remove(String no) {
     String pre = String.valueOf(no) + "_";
     preVotes.remove(no);

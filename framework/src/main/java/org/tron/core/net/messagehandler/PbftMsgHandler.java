@@ -32,6 +32,7 @@ public class PbftMsgHandler {
   @Autowired
   private TronNetDelegate tronNetDelegate;
 
+  @SuppressWarnings("LockNotBeforeTry")
   public void processMessage(PeerConnection peer, PbftMessage msg) throws Exception {
     if (!tronNetDelegate.allowPBFT()) {
       return;

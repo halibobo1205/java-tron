@@ -1,5 +1,6 @@
 package org.tron.core.vm.program.invoke;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import com.google.protobuf.ByteString;
 import org.bouncycastle.util.Arrays;
 import org.bouncycastle.util.encoders.Hex;
@@ -78,7 +79,7 @@ public class ProgramInvokeMockImpl implements ProgramInvoke {
   /*           ORIGIN op         */
   public DataWord getOriginAddress() {
 
-    byte[] cowPrivKey = Hash.sha3("horse".getBytes());
+    byte[] cowPrivKey = Hash.sha3("horse".getBytes(UTF_8));
     byte[] addr = SignUtils.fromPrivate(cowPrivKey
         , CommonParameter.getInstance().isECKeyCryptoEngine()).getAddress();
 
@@ -88,7 +89,7 @@ public class ProgramInvokeMockImpl implements ProgramInvoke {
   /*           CALLER op         */
   public DataWord getCallerAddress() {
 
-    byte[] cowPrivKey = Hash.sha3("monkey".getBytes());
+    byte[] cowPrivKey = Hash.sha3("monkey".getBytes(UTF_8));
     byte[] addr = SignUtils.fromPrivate(cowPrivKey
         , CommonParameter.getInstance().isECKeyCryptoEngine()).getAddress();
     return new DataWord(addr);

@@ -68,7 +68,7 @@ public class MerklePath {
     long result = 0;
     for (int i = 0; i < v.size(); i++) {
       if (v.get(i)) {
-        result |= (long) 1 << ((v.size() - 1) - i);
+        result |= 1L << ((v.size() - 1) - i);
       }
     }
     return result;

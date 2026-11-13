@@ -1,5 +1,6 @@
 package org.tron.common.logsfilter.capsule;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.tron.common.logsfilter.EventPluginLoader.matchFilter;
 
 import java.util.List;
@@ -82,7 +83,7 @@ public class ContractTriggerCapsule extends TriggerCapsule {
         }
         signature += signBuilder.toString() + ")";
         signatureFull += signFullBuilder.toString() + ")";
-        String sha3 = Hex.toHexString(Hash.sha3(signature.getBytes()));
+        String sha3 = Hex.toHexString(Hash.sha3(signature.getBytes(UTF_8)));
         if (sha3.equals(logHash)) {
           eventSignature = signature;
           eventSignatureFull = signatureFull;

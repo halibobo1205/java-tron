@@ -1,10 +1,13 @@
 package org.tron.common.utils;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import java.math.BigInteger;
 
 public class MarketComparator {
 
-  public static final int TOKEN_ID_LENGTH = Long.toString(Long.MAX_VALUE).getBytes().length; // 19
+  // 19
+  public static final int TOKEN_ID_LENGTH = Long.toString(Long.MAX_VALUE).getBytes(UTF_8).length;
 
 
   public static int comparePriceKey(byte[] o1, byte[] o2) {

@@ -77,7 +77,7 @@ public class TronNetDelegate {
   private WitnessScheduleStore witnessScheduleStore;
 
   @Getter
-  private Object blockLock = new Object();
+  private final Object blockLock = new Object();
 
   @Autowired
   private BackupServer backupServer;

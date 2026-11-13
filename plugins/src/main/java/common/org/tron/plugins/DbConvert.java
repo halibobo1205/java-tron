@@ -250,8 +250,6 @@ public class DbConvert implements Callable<Integer> {
     /**
      * https://github.com/facebook/rocksdb/wiki/RocksDB-FAQ .
      *  What's the fastest way to load data into RocksDB?
-     *
-     * @return if ok
      */
     public void convertLevelToRocks() throws Exception {
       List<byte[]> keys = new ArrayList<>(BATCH);

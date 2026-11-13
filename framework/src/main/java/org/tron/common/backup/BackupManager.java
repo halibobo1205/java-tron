@@ -208,7 +208,7 @@ public class BackupManager implements EventHandler {
         logger.info("DNS refresh: backup member {} IP changed {} -> {}", domain, oldIp, newIp);
         members.remove(oldIp);
         members.add(newIp);
-        domainIpCache.put(domain, newIp);
+        entry.setValue(newIp);
       }
     }
   }

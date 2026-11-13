@@ -1,5 +1,7 @@
 package org.tron.plugins;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
@@ -386,7 +388,7 @@ public class DbLite implements Callable<Integer> {
         if (TRANS_CACHE_DB_NAME.equalsIgnoreCase(dbName)) {
           continue;
         }
-        byte[] realKey = Arrays.copyOfRange(key, dbName.getBytes().length + 4, key.length);
+        byte[] realKey = Arrays.copyOfRange(key, dbName.getBytes(UTF_8).length + 4, key.length);
         byte[] realValue =
             value.length == 1 ? null : Arrays.copyOfRange(value, 1, value.length);
         if (destDbs != null && destDbs.contains(dbName)) {
@@ -423,7 +425,7 @@ public class DbLite implements Callable<Integer> {
     final String latestBlockHeaderNumber = "latest_block_header_number";
     DBInterface checkpointDb = getCheckpointDb(databaseDir);
     Long blockNumber = getLatestBlockHeaderNumFromCP(checkpointDb,
-        latestBlockHeaderNumber.getBytes());
+        latestBlockHeaderNumber.getBytes(UTF_8));
     if (blockNumber != null) {
       return blockNumber;
     }
@@ -510,7 +512,7 @@ public class DbLite implements Callable<Integer> {
   }
 
   private static byte[] simpleEncode(String s) {
-    byte[] bytes = s.getBytes();
+    byte[] bytes = s.getBytes(UTF_8);
     byte[] length = Ints.toByteArray(bytes.length);
     byte[] r = new byte[4 + bytes.length];
     System.arraycopy(length, 0, r, 0, 4);

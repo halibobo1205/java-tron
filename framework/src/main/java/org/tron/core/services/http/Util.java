@@ -1,5 +1,6 @@
 package org.tron.core.services.http;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.apache.commons.lang3.StringUtils.EMPTY;
 import static org.tron.common.utils.Commons.decodeFromBase58Check;
 
@@ -15,6 +16,7 @@ import java.io.InputStreamReader;
 import java.lang.reflect.Constructor;
 import java.math.BigDecimal;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.security.InvalidParameterException;
 import java.util.ArrayList;
 import java.util.List;
@@ -364,7 +366,7 @@ public class Util {
   @Deprecated
   public static void checkBodySize(String body) throws Exception {
     CommonParameter parameter = Args.getInstance();
-    if (body.getBytes().length > parameter.getHttpMaxMessageSize()) {
+    if (body.getBytes(UTF_8).length > parameter.getHttpMaxMessageSize()) {
       throw new Exception("body size is too big, the limit is "
           + parameter.getHttpMaxMessageSize());
     }
@@ -469,7 +471,7 @@ public class Util {
     if (data.length() > 0) {
       Transaction.raw.Builder raw = transaction.getRawData().toBuilder();
       if (visible) {
-        raw.setData(ByteString.copyFrom(data.getBytes()));
+        raw.setData(ByteString.copyFrom(data.getBytes(StandardCharsets.UTF_8)));
       } else {
         raw.setData(ByteString.copyFrom(ByteArray.fromHexString(data)));
       }
@@ -491,7 +493,7 @@ public class Util {
 
   public static String parseMethod(String methodSign, String input) {
     byte[] selector = new byte[4];
-    System.arraycopy(Hash.sha3(methodSign.getBytes()), 0, selector, 0, 4);
+    System.arraycopy(Hash.sha3(methodSign.getBytes(UTF_8)), 0, selector, 0, 4);
     //System.out.println(methodSign + ":" + Hex.toHexString(selector));
     if (StringUtils.isEmpty(input)) {
       return Hex.toHexString(selector);
@@ -603,7 +605,8 @@ public class Util {
   }
 
   public static String getRequestValue(HttpServletRequest request) throws IOException {
-    BufferedReader reader = new BufferedReader(new InputStreamReader(request.getInputStream()));
+    BufferedReader reader =
+        new BufferedReader(new InputStreamReader(request.getInputStream(), UTF_8));
     String line;
     StringBuilder sb = new StringBuilder();
     while ((line = reader.readLine()) != null) {

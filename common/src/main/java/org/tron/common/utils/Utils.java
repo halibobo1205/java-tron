@@ -18,9 +18,8 @@
 
 package org.tron.common.utils;
 
-import java.nio.ByteBuffer;
-import java.nio.CharBuffer;
-import java.nio.charset.Charset;
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import java.security.SecureRandom;
 import java.util.Arrays;
 
@@ -30,16 +29,6 @@ public interface Utils {
 
   static SecureRandom getRandom() {
     return random;
-  }
-
-  static byte[] getBytes(char[] chars) {
-    Charset cs = Charset.forName("UTF-8");
-    CharBuffer cb = CharBuffer.allocate(chars.length);
-    cb.put(chars);
-    cb.flip();
-    ByteBuffer bb = cs.encode(cb);
-
-    return bb.array();
   }
 
   static String getIdShort(String Id) {
@@ -64,8 +53,8 @@ public interface Utils {
   static String repeat(String s, int n) {
     if (s.length() == 1) {
       byte[] bb = new byte[n];
-      Arrays.fill(bb, s.getBytes()[0]);
-      return new String(bb);
+      Arrays.fill(bb, s.getBytes(UTF_8)[0]);
+      return new String(bb, UTF_8);
     } else {
       StringBuilder ret = new StringBuilder();
       for (int i = 0; i < n; i++) {

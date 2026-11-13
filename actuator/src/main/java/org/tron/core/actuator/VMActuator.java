@@ -464,6 +464,7 @@ public class VMActuator implements Actuator2 {
     }
   }
 
+  @SuppressWarnings("DefaultCharset") // pre-fork replay: keep the historical charset
   static void checkContractNameLength(SmartContract contract) throws ContractValidateException {
     int contractNameLength =
         ForkController.instance().pass(Parameter.ForkBlockVersionEnum.VERSION_4_8_2_2)

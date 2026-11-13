@@ -15,6 +15,7 @@ import com.typesafe.config.Config;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.reflect.Field;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.text.ParseException;
@@ -1306,7 +1307,7 @@ public class Args extends CommonParameter {
     for (String[] optionList : optionGroupMap.values()) {
       for (String option : optionList) {
         try {
-          CLIParameter.class.getField(option);
+          Field unused = CLIParameter.class.getField(option);
         } catch (NoSuchFieldException e) {
           logger.warn("NoSuchFieldException:{},{}", option, e.getMessage());
         }

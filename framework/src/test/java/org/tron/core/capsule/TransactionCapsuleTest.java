@@ -20,6 +20,7 @@ import org.junit.Test;
 import org.slf4j.LoggerFactory;
 import org.tron.common.BaseTest;
 import org.tron.common.TestConstants;
+import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.StringUtil;
 import org.tron.core.Wallet;
 import org.tron.core.config.args.Args;
@@ -29,16 +30,20 @@ import org.tron.protos.Protocol.Transaction.Contract.ContractType;
 import org.tron.protos.Protocol.Transaction.Result;
 import org.tron.protos.Protocol.Transaction.Result.contractResult;
 import org.tron.protos.Protocol.Transaction.raw;
+import org.tron.protos.contract.AccountContract.AccountCreateContract;
+import org.tron.protos.contract.BalanceContract.TransferContract;
 
 @Slf4j
 public class TransactionCapsuleTest extends BaseTest {
 
   private static String OWNER_ADDRESS;
+  private static String TO_ADDRESS;
 
   @BeforeClass
   public static void init() {
     Args.setParam(new String[]{"-d", dbPath()}, TestConstants.TEST_CONF);
     OWNER_ADDRESS = Wallet.getAddressPreFixString() + "03702350064AD5C1A8AA6B4D74B051199CFF8EA7";
+    TO_ADDRESS = Wallet.getAddressPreFixString() + "548794500882809695A8A687866E76D4271A1ABC";
   }
 
   /**
@@ -133,5 +138,33 @@ public class TransactionCapsuleTest extends BaseTest {
       capsuleLogger.detachAppender(appender);
       capsuleLogger.setLevel(originalLevel);
     }
+  }
+
+  @Test
+  public void toStringRendersTransferAddressesAsBase58() {
+    byte[] owner = ByteArray.fromHexString(OWNER_ADDRESS);
+    byte[] to = ByteArray.fromHexString(TO_ADDRESS);
+    TransferContract transfer = TransferContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(owner))
+        .setToAddress(ByteString.copyFrom(to))
+        .setAmount(1L)
+        .build();
+    TransactionCapsule capsule = new TransactionCapsule(transfer, ContractType.TransferContract);
+
+    String rendered = capsule.toString();
+    Assert.assertTrue(rendered.contains("from address=" + StringUtil.encode58Check(owner)));
+    Assert.assertTrue(rendered.contains("to address=" + StringUtil.encode58Check(to)));
+  }
+
+  @Test
+  public void toStringRendersAbsentAddressAsEmpty() {
+    // AccountCreateContract carries no to_address, so getToAddress returns an empty array.
+    AccountCreateContract create = AccountCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .build();
+    TransactionCapsule capsule =
+        new TransactionCapsule(create, ContractType.AccountCreateContract);
+
+    Assert.assertTrue(capsule.toString().contains("to address=\n"));
   }
 }

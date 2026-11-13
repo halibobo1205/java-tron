@@ -1,6 +1,7 @@
 package org.tron.core.vm.program;
 
 import static java.lang.String.format;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.apache.commons.lang3.ArrayUtils.EMPTY_BYTE_ARRAY;
 import static org.apache.commons.lang3.ArrayUtils.getLength;
 import static org.apache.commons.lang3.ArrayUtils.isEmpty;
@@ -626,6 +627,7 @@ public class Program {
     }
   }
 
+  @SuppressWarnings("MissingCasesInEnumSwitch")
   private long transferFrozenV2BalanceToInheritor(byte[] ownerAddr, byte[] inheritorAddr, Repository repo) {
     AccountCapsule ownerCapsule = repo.getAccount(ownerAddr);
     AccountCapsule inheritorCapsule = repo.getAccount(inheritorAddr);
@@ -1066,7 +1068,7 @@ public class Program {
       }
     } else {
       // transfer trc10 token validation
-      tokenId = String.valueOf(msg.getTokenId().longValue()).getBytes();
+      tokenId = String.valueOf(msg.getTokenId().longValue()).getBytes(UTF_8);
       long senderBalance = deposit.getTokenBalance(senderAddress, tokenId);
       if (senderBalance < endowment) {
         stackPushZero();
@@ -1124,7 +1126,7 @@ public class Program {
     increaseNonce();
     HashMap<String, Long> tokenInfo = new HashMap<>();
     if (isTokenTransfer) {
-      tokenInfo.put(new String(stripLeadingZeroes(tokenId)), endowment);
+      tokenInfo.put(new String(stripLeadingZeroes(tokenId), UTF_8), endowment);
     }
     InternalTransaction internalTx = addInternalTx(null, senderAddress, contextAddress,
         !isTokenTransfer ? endowment : 0, data, "call", nonce,
@@ -1460,7 +1462,7 @@ public class Program {
   public DataWord getTokenBalance(DataWord address, DataWord tokenId) {
     checkTokenIdInTokenBalance(tokenId);
     long ret = getContractState().getTokenBalance(address.toTronAddress(),
-        String.valueOf(tokenId.longValue()).getBytes());
+        String.valueOf(tokenId.longValue()).getBytes(UTF_8));
     return new DataWord(ret);
   }
 
@@ -1698,7 +1700,7 @@ public class Program {
       senderBalance = deposit.getBalance(senderAddress);
     } else {
       // transfer trc10 token validation
-      tokenId = String.valueOf(msg.getTokenId().longValue()).getBytes();
+      tokenId = String.valueOf(msg.getTokenId().longValue()).getBytes(UTF_8);
       senderBalance = deposit.getTokenBalance(senderAddress, tokenId);
     }
     if (senderBalance < endowment) {

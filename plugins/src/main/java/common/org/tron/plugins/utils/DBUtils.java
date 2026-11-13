@@ -1,5 +1,6 @@
 package org.tron.plugins.utils;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.fusesource.leveldbjni.JniDBFactory.factory;
 
 import com.google.common.primitives.Ints;
@@ -135,7 +136,7 @@ public class DBUtils {
     byte[] lengthBytes = Arrays.copyOf(bytes, 4);
     int length = Ints.fromByteArray(lengthBytes);
     byte[] value = Arrays.copyOfRange(bytes, 4, 4 + length);
-    return new String(value);
+    return new String(value, UTF_8);
   }
 
   public static Sha256Hash getTransactionId(Protocol.Transaction transaction) {

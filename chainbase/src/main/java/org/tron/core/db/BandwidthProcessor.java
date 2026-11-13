@@ -140,6 +140,7 @@ public class BandwidthProcessor extends ResourceProcessor {
         if (optimizeTxs) {
           long maxCreateAccountTxSize = dynamicPropertiesStore.getMaxCreateAccountTxSize();
           int signatureCount = trx.getInstance().getSignatureCount();
+          @SuppressWarnings("IntLongMath")
           long createAccountBytesSize = trx.getInstance().toBuilder().clearRet()
               .build().getSerializedSize() - (signatureCount * PER_SIGN_LENGTH);
           if (createAccountBytesSize > maxCreateAccountTxSize) {
@@ -287,6 +288,7 @@ public class BandwidthProcessor extends ResourceProcessor {
   }
 
 
+  @SuppressWarnings("ReferenceEquality")
   private boolean useAssetAccountNet(Contract contract, AccountCapsule accountCapsule, long now,
       long bytes)
       throws ContractValidateException {

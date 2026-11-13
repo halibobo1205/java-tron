@@ -3,7 +3,6 @@ package org.tron.core.capsule;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 import lombok.extern.slf4j.Slf4j;
-import org.tron.common.utils.ByteArray;
 import org.tron.common.zksnark.JLibrustzcash;
 import org.tron.common.zksnark.LibrustzcashParam.MerkleHashParams;
 import org.tron.core.exception.ZksnarkException;
@@ -53,26 +52,6 @@ public class PedersenHashCapsule implements ProtoCapsule<PedersenHash> {
     compressCapsule.setContent(ByteString.copyFrom(res));
 
     return compressCapsule;
-  }
-
-  public static void main(String[] args) {
-    try {
-      byte[] a =
-          ByteArray
-              .fromHexString("05655316a07e6ec8c9769af54ef98b30667bfb6302b32987d552227dae86a087");
-      byte[] b =
-          ByteArray
-              .fromHexString("06041357de59ba64959d1b60f93de24dfe5ea1e26ed9e8a73d35b225a1845ba7");
-
-      PedersenHash sa = PedersenHash.newBuilder().setContent(ByteString.copyFrom(a)).build();
-      PedersenHash sb = PedersenHash.newBuilder().setContent(ByteString.copyFrom(b)).build();
-
-      PedersenHash result = combine(sa, sb, 25).getInstance();
-      // 61a50a5540b4944da27cbd9b3d6ec39234ba229d2c461f4d719bc136573bf45b
-      System.out.println(ByteArray.toHexString(result.getContent().toByteArray()));
-    } catch (ZksnarkException e) {
-      e.printStackTrace();
-    }
   }
 
   public ByteString getContent() {
