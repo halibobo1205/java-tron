@@ -5,6 +5,8 @@ import com.google.common.collect.Sets;
 import com.google.common.primitives.Bytes;
 import java.io.File;
 import java.io.IOException;
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -30,6 +32,7 @@ import org.rocksdb.RocksIterator;
 import org.rocksdb.Status;
 import org.rocksdb.WriteBatch;
 import org.rocksdb.WriteOptions;
+import org.tron.common.arch.Arch;
 import org.tron.common.error.TronDBException;
 import org.tron.common.setting.RocksDbSettings;
 import org.tron.common.storage.WriteOptionsWrapper;
@@ -47,12 +50,50 @@ import org.tron.core.exception.TronError;
 public class RocksDbDataSourceImpl extends DbStat implements DbSourceInter<byte[]>,
     Iterable<Map.Entry<byte[], byte[]>>, Instance<RocksDbDataSourceImpl> {
 
+  // RocksDB 9.7.4 does not close its internally allocated ReadOptions and has no public accessor.
+  // Resolve the pinned library layout before opening any DB; remove after upgrading to a fixed JNI.
+  // https://github.com/meta/rocksdb/issues/15036
+  private static final Field DEFAULT_READ_OPTIONS_FIELD = findDefaultReadOptionsField();
+
   private String dataBaseName;
   private RocksDB database;
   private volatile boolean alive;
   private String parentPath;
   private ReadWriteLock resetDbLock = new ReentrantReadWriteLock();
   private Options options;
+  private ReadOptions defaultReadOptions;
+
+  private static Field findDefaultReadOptionsField() {
+    try {
+      Field field = RocksDB.class.getDeclaredField("defaultReadOptions_");
+      if (field.getType() != ReadOptions.class || Modifier.isStatic(field.getModifiers())) {
+        throw new IllegalStateException("Unexpected RocksDB defaultReadOptions_ field layout");
+      }
+      field.setAccessible(true);
+      return field;
+    } catch (NoSuchFieldException e) {
+      // The x86 build uses RocksDB 5.15.10, which does not allocate this internal ReadOptions.
+      if (!Arch.isArm64()) {
+        return null;
+      }
+      throw new IllegalStateException("RocksDB defaultReadOptions_ field is missing", e);
+    }
+  }
+
+  private static ReadOptions getDefaultReadOptions(RocksDB database) {
+    if (DEFAULT_READ_OPTIONS_FIELD == null) {
+      return null;
+    }
+    try {
+      ReadOptions readOptions = (ReadOptions) DEFAULT_READ_OPTIONS_FIELD.get(database);
+      if (readOptions == null) {
+        throw new IllegalStateException("RocksDB defaultReadOptions_ is not initialized");
+      }
+      return readOptions;
+    } catch (IllegalAccessException e) {
+      throw new IllegalStateException("Cannot access RocksDB defaultReadOptions_", e);
+    }
+  }
 
   public RocksDbDataSourceImpl(String parentPath, String name) {
     this.dataBaseName = name;
@@ -76,18 +117,32 @@ public class RocksDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
   public void closeDB() {
     resetDbLock.writeLock().lock();
     try {
-      if (!isAlive()) {
-        return;
-      }
-      if (this.options != null) {
-        this.options.close();
-      }
-      database.close();
       alive = false;
+      closeResources();
     } catch (Exception e) {
       logger.error("Failed to find the dbStore file on the closeDB: {}.", dataBaseName, e);
     } finally {
       resetDbLock.writeLock().unlock();
+    }
+  }
+
+  private void closeResources() {
+    try {
+      if (database != null) {
+        database.close();
+      }
+    } finally {
+      try {
+        if (defaultReadOptions != null) {
+          defaultReadOptions.close();
+          defaultReadOptions = null;
+        }
+      } finally {
+        if (options != null) {
+          options.close();
+          options = null;
+        }
+      }
     }
   }
 
@@ -200,6 +255,8 @@ public class RocksDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
               TronError.ErrCode.ROCKSDB_INIT);
           this.options = RocksDbSettings.getOptionsByDbName(dataBaseName);
           database = RocksDB.open(this.options, dbPath.toString());
+          defaultReadOptions = getDefaultReadOptions(database);
+          alive = true;
         } catch (RocksDBException e) {
           if (Objects.equals(e.getStatus().getCode(), Status.Code.Corruption)) {
             logger.error("Database {} corrupted, please delete database directory({}) "
@@ -208,13 +265,12 @@ public class RocksDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
             logger.error("Open Database {} failed", dataBaseName, e);
           }
 
-          if (this.options != null) {
-            this.options.close();
-          }
           throw new TronError(e, TronError.ErrCode.ROCKSDB_INIT);
+        } finally {
+          if (!alive) {
+            closeResources();
+          }
         }
-
-        alive = true;
       } catch (IOException ioe) {
         throw new RuntimeException(
             String.format("failed to init database: %s", dataBaseName), ioe);
