@@ -16,7 +16,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
 import lombok.NoArgsConstructor;
@@ -36,7 +35,7 @@ import org.tron.common.storage.WriteOptionsWrapper;
 import org.tron.common.storage.metric.DbStat;
 import org.tron.common.utils.FileUtil;
 import org.tron.core.db.common.DbSourceInter;
-import org.tron.core.db.common.iterator.RockStoreIterator;
+import org.tron.core.db.common.iterator.IteratorGuard;
 import org.tron.core.db2.common.Instance;
 import org.tron.core.db2.common.WrappedByteArray;
 import org.tron.core.exception.TronError;
@@ -51,7 +50,8 @@ public class RocksDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
   private RocksDB database;
   private volatile boolean alive;
   private String parentPath;
-  private ReadWriteLock resetDbLock = new ReentrantReadWriteLock();
+  private final ReentrantReadWriteLock resetDbLock = new ReentrantReadWriteLock();
+  private final IteratorGuard iteratorGuard = new IteratorGuard(this::getDBName, resetDbLock);
   private Options options;
 
   public RocksDbDataSourceImpl(String parentPath, String name) {
@@ -79,6 +79,7 @@ public class RocksDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
       if (!isAlive()) {
         return;
       }
+      iteratorGuard.invalidateAll();
       if (this.options != null) {
         this.options.close();
       }
@@ -294,8 +295,7 @@ public class RocksDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
    */
   @Override
   public org.tron.core.db.common.iterator.DBIterator iterator() {
-    ReadOptions readOptions = getReadOptions();
-    return new RockStoreIterator(getRocksIterator(readOptions), readOptions);
+    return iteratorGuard.openRocksDb(this::getReadOptions, this::getRocksIterator);
   }
 
   private void updateByBatchInner(Map<byte[], byte[]> rows, WriteOptions options)
