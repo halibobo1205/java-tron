@@ -3,19 +3,19 @@ package org.tron.core.service;
 import static org.tron.core.store.DelegationStore.DECIMAL_OF_VI_REWARD;
 import static org.tron.core.store.DelegationStore.REMARK;
 
-import com.google.common.collect.Streams;
 import com.google.common.primitives.Bytes;
+import com.google.common.util.concurrent.Uninterruptibles;
 import com.google.protobuf.ByteString;
+import java.io.IOException;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
-import java.util.stream.LongStream;
 import javax.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.bouncycastle.util.encoders.Hex;
@@ -50,6 +50,8 @@ public class RewardViCalService {
   private static final byte[] IS_DONE_KEY = new byte[]{0x00};
   private static final byte[] IS_DONE_VALUE = new byte[]{0x01};
 
+  private static final long STOP_WARN_INTERVAL_SECONDS = 5;
+
   private long newRewardCalStartCycle = Long.MAX_VALUE;
 
   private volatile long lastBlockNumber = -1;
@@ -61,6 +63,8 @@ public class RewardViCalService {
       "reward-vi", Sha256Hash.wrap(ByteString.fromHex(MAIN_NET_ROOT_HEX)));
 
   private final CountDownLatch lock = new CountDownLatch(1);
+
+  private volatile boolean stopped;
 
   private final ScheduledExecutorService es = ExecutorServiceManager
       .newSingleThreadScheduledExecutor("rewardViCalService");
@@ -120,15 +124,19 @@ public class RewardViCalService {
           logger.info("rewardViCalService is no need to run");
         }
       }
+    } catch (CancellationException e) {
+      logger.info("rewardViCalService is stopped before finishing");
+      markStoppedAndReleaseWaiters();
     } catch (Exception e) {
       logger.error(" Find fatal error, program will be exited soon.", e);
+      markStoppedAndReleaseWaiters();
       throw new TronError(e, TronError.ErrCode.REWARD_VI_CALCULATOR);
     }
   }
 
-  private void clearUp(boolean isDone) {
+  private void clearUp(boolean verifyMerkleRoot) throws IOException {
     lock.countDown();
-    if (isDone) {
+    if (verifyMerkleRoot) {
       calcMerkleRoot();
     }
     es.shutdown();
@@ -137,6 +145,23 @@ public class RewardViCalService {
   @PreDestroy
   private void destroy() {
     es.shutdownNow();
+    while (!Uninterruptibles.awaitTerminationUninterruptibly(
+        es, STOP_WARN_INTERVAL_SECONDS, TimeUnit.SECONDS)) {
+      logger.warn("rewardViCalService is still running, waiting for it to stop before"
+          + " its stores are closed");
+    }
+    markStoppedAndReleaseWaiters();
+  }
+
+  private void markStoppedAndReleaseWaiters() {
+    stopped = true;
+    lock.countDown();
+  }
+
+  private void checkInterrupted() {
+    if (Thread.currentThread().isInterrupted()) {
+      throw new CancellationException("rewardViCalService is interrupted");
+    }
   }
 
 
@@ -149,6 +174,9 @@ public class RewardViCalService {
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
         throw new TronDBException(e);
+      }
+      if (stopped && !isDone()) {
+        throw new TronDBException("rewardViCalService stopped before the calculation finished");
       }
     }
 
@@ -171,15 +199,18 @@ public class RewardViCalService {
 
   }
 
-  private void calcMerkleRoot() {
+  private void calcMerkleRoot() throws IOException {
     logger.info("calcMerkleRoot start");
-    DBIterator iterator = rewardViStore.iterator();
-    iterator.seekToFirst();
-    ArrayList<Sha256Hash> ids = Streams.stream(iterator)
-        .map(this::getHash)
-        .collect(Collectors.toCollection(ArrayList::new));
+    ArrayList<Sha256Hash> ids = new ArrayList<>();
+    try (DBIterator iterator = rewardViStore.iterator()) {
+      iterator.seekToFirst();
+      while (iterator.hasNext()) {
+        checkInterrupted();
+        ids.add(getHash(iterator.next()));
+      }
+    }
 
-    Sha256Hash rewardViRootLocal = MerkleRoot.root(ids);
+    Sha256Hash rewardViRootLocal = MerkleRoot.root(ids, this::checkInterrupted);
     if (!Objects.equals(rewardViRoot, rewardViRootLocal)) {
       logger.warn("Merkle root mismatch, expect: {}, actual: {}."
               + " If you are quite sure that there is no miscalculation (not on the main network)"
@@ -194,12 +225,17 @@ public class RewardViCalService {
     return Sha256Hash.of(Bytes.concat(entry.getKey(), entry.getValue()));
   }
 
-  private void startRewardCal() {
+  private void startRewardCal() throws IOException {
     logger.info("rewardViCalService start");
+    checkInterrupted();
     rewardViStore.reset();
-    DBIterator iterator = (DBIterator) witnessStore.iterator();
-    iterator.seekToFirst();
-    iterator.forEachRemaining(e -> accumulateWitnessReward(e.getKey()));
+    try (DBIterator iterator = (DBIterator) witnessStore.iterator()) {
+      iterator.seekToFirst();
+      while (iterator.hasNext()) {
+        checkInterrupted();
+        accumulateWitnessReward(iterator.next().getKey());
+      }
+    }
     rewardViStore.put(IS_DONE_KEY, IS_DONE_VALUE);
     logger.info("rewardViCalService is done");
 
@@ -207,8 +243,10 @@ public class RewardViCalService {
 
   private void accumulateWitnessReward(byte[] witness) {
     long startCycle = 1;
-    LongStream.range(startCycle, newRewardCalStartCycle)
-        .forEach(cycle -> accumulateWitnessVi(cycle, witness));
+    for (long cycle = startCycle; cycle < newRewardCalStartCycle; cycle++) {
+      checkInterrupted();
+      accumulateWitnessVi(cycle, witness);
+    }
   }
 
   private void accumulateWitnessVi(long cycle, byte[] address) {
