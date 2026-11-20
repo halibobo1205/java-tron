@@ -35,7 +35,6 @@ import java.util.Set;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -55,7 +54,7 @@ import org.tron.common.storage.metric.DbStat;
 import org.tron.common.utils.FileUtil;
 import org.tron.common.utils.StorageUtils;
 import org.tron.core.db.common.DbSourceInter;
-import org.tron.core.db.common.iterator.StoreIterator;
+import org.tron.core.db.common.iterator.IteratorGuard;
 import org.tron.core.db2.common.Instance;
 import org.tron.core.db2.common.WrappedByteArray;
 import org.tron.core.exception.TronError;
@@ -76,7 +75,8 @@ public class LevelDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
   private String parentPath;
   private Options options;
   private WriteOptions writeOptions;
-  private ReadWriteLock resetDbLock = new ReentrantReadWriteLock();
+  private final ReentrantReadWriteLock resetDbLock = new ReentrantReadWriteLock();
+  private final IteratorGuard iteratorGuard = new IteratorGuard(this::getDBName, resetDbLock);
 
 
   /**
@@ -455,6 +455,7 @@ public class LevelDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
       if (!isAlive()) {
         return;
       }
+      iteratorGuard.invalidateAll();
       database.close();
       alive = false;
     } catch (IOException e) {
@@ -484,7 +485,7 @@ public class LevelDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
    */
   @Override
   public org.tron.core.db.common.iterator.DBIterator iterator() {
-    return new StoreIterator(getDBIterator());
+    return iteratorGuard.openLevelDb(this::getDBIterator);
   }
 
   public Stream<Entry<byte[], byte[]>> stream() {

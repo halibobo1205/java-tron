@@ -6,6 +6,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.NoSuchElementException;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import org.iq80.leveldb.DB;
 import org.iq80.leveldb.Options;
 import org.junit.Assert;
@@ -18,8 +19,8 @@ import org.rocksdb.ReadOptions;
 import org.rocksdb.RocksDB;
 import org.rocksdb.RocksDBException;
 import org.tron.common.TestConstants;
-import org.tron.core.db.common.iterator.RockStoreIterator;
-import org.tron.core.db.common.iterator.StoreIterator;
+import org.tron.core.db.common.iterator.DBIterator;
+import org.tron.core.db.common.iterator.IteratorGuard;
 
 public class DBIteratorTest {
 
@@ -37,7 +38,7 @@ public class DBIteratorTest {
     try (DB db = factory.open(file, new Options().createIfMissing(true))) {
       db.put("1".getBytes(StandardCharsets.UTF_8), "1".getBytes(StandardCharsets.UTF_8));
       db.put("2".getBytes(StandardCharsets.UTF_8), "2".getBytes(StandardCharsets.UTF_8));
-      StoreIterator iterator = new StoreIterator(db.iterator());
+      DBIterator iterator = newGuard().openLevelDb(db::iterator);
       iterator.seekToFirst();
       Assert.assertArrayEquals("1".getBytes(StandardCharsets.UTF_8), iterator.getKey());
       Assert.assertArrayEquals("1".getBytes(StandardCharsets.UTF_8), iterator.next().getValue());
@@ -49,7 +50,7 @@ public class DBIteratorTest {
 
       Assert.assertThrows(IllegalStateException.class, iterator::seekToLast);
 
-      iterator = new StoreIterator(db.iterator());
+      iterator = newGuard().openLevelDb(db::iterator);
       iterator.seekToLast();
       Assert.assertArrayEquals("2".getBytes(StandardCharsets.UTF_8), iterator.getKey());
       Assert.assertArrayEquals("2".getBytes(StandardCharsets.UTF_8), iterator.getValue());
@@ -74,8 +75,7 @@ public class DBIteratorTest {
          RocksDB db = RocksDB.open(options, file.toString())) {
       db.put("1".getBytes(StandardCharsets.UTF_8), "1".getBytes(StandardCharsets.UTF_8));
       db.put("2".getBytes(StandardCharsets.UTF_8), "2".getBytes(StandardCharsets.UTF_8));
-      try (RockStoreIterator iterator =
-               new RockStoreIterator(db.newIterator(), new ReadOptions())) {
+      try (DBIterator iterator = newGuard().openRocksDb(ReadOptions::new, db::newIterator)) {
         iterator.seekToFirst();
         Assert.assertArrayEquals("1".getBytes(StandardCharsets.UTF_8), iterator.getKey());
         Assert.assertArrayEquals("1".getBytes(StandardCharsets.UTF_8), iterator.next().getValue());
@@ -88,9 +88,7 @@ public class DBIteratorTest {
         Assert.assertThrows(IllegalStateException.class, iterator::seekToLast);
       }
 
-      try (
-          RockStoreIterator iterator =
-              new RockStoreIterator(db.newIterator(), new ReadOptions())) {
+      try (DBIterator iterator = newGuard().openRocksDb(ReadOptions::new, db::newIterator)) {
         iterator.seekToLast();
         Assert.assertArrayEquals("2".getBytes(StandardCharsets.UTF_8), iterator.getKey());
         Assert.assertArrayEquals("2".getBytes(StandardCharsets.UTF_8), iterator.getValue());
@@ -107,4 +105,7 @@ public class DBIteratorTest {
     }
   }
 
+  private static IteratorGuard newGuard() {
+    return new IteratorGuard(() -> "test", new ReentrantReadWriteLock());
+  }
 }

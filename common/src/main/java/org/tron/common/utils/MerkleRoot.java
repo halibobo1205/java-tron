@@ -7,37 +7,46 @@ import lombok.Getter;
 
 public class MerkleRoot {
 
+  private static final Runnable NO_CANCELLATION_CHECK = () -> { };
+
   private MerkleRoot() {
 
   }
 
   public static Sha256Hash root(List<Sha256Hash> hashList) {
-    List<Leaf> leaves = createLeaves(hashList);
+    return root(hashList, NO_CANCELLATION_CHECK);
+  }
+
+  public static Sha256Hash root(List<Sha256Hash> hashList, Runnable cancellationCheck) {
+    cancellationCheck.run();
+    List<Leaf> leaves = createLeaves(hashList, cancellationCheck);
     while (leaves.size() > 1) {
-      leaves = createParentLeaves(leaves);
+      leaves = createParentLeaves(leaves, cancellationCheck);
     }
     return leaves.isEmpty() ? Sha256Hash.ZERO_HASH : leaves.get(0).hash;
   }
 
-  private static List<Leaf> createParentLeaves(List<Leaf> leaves) {
+  private static List<Leaf> createParentLeaves(List<Leaf> leaves, Runnable cancellationCheck) {
     int step = 2;
     int len = leaves.size();
     return IntStream.iterate(0, i -> i + step)
         .limit(len)
         .filter(i -> i < len)
         .mapToObj(i -> {
+          cancellationCheck.run();
           Leaf right = i + 1 < len ? leaves.get(i + 1) : null;
           return createLeaf(leaves.get(i), right);
         }).collect(Collectors.toList());
   }
 
-  private static List<Leaf> createLeaves(List<Sha256Hash> hashList) {
+  private static List<Leaf> createLeaves(List<Sha256Hash> hashList, Runnable cancellationCheck) {
     int step = 2;
     int len = hashList.size();
     return IntStream.iterate(0, i -> i + step)
         .limit(len)
         .filter(i -> i < len)
         .mapToObj(i -> {
+          cancellationCheck.run();
           Leaf right = i + 1 < len ? createLeaf(hashList.get(i + 1)) : null;
           return createLeaf(createLeaf(hashList.get(i)), right);
         }).collect(Collectors.toList());

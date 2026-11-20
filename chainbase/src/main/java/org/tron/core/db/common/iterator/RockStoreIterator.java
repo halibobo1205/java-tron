@@ -1,67 +1,42 @@
 package org.tron.core.db.common.iterator;
 
-import java.io.IOException;
 import java.util.Map.Entry;
-import java.util.NoSuchElementException;
-import java.util.concurrent.atomic.AtomicBoolean;
-import lombok.extern.slf4j.Slf4j;
 import org.rocksdb.ReadOptions;
 import org.rocksdb.RocksIterator;
 
-
-@Slf4j(topic = "DB")
-public final class RockStoreIterator implements DBIterator {
+public final class RockStoreIterator extends GuardedDbIterator {
 
   private final RocksIterator dbIterator;
-  private boolean first = true;
-
-  private final AtomicBoolean close = new AtomicBoolean(false);
   private final ReadOptions readOptions;
 
-  public RockStoreIterator(RocksIterator dbIterator, ReadOptions readOptions) {
-    this.readOptions = readOptions;
+  RockStoreIterator(RocksIterator dbIterator, ReadOptions readOptions, IteratorGuard guard) {
+    super(guard);
     this.dbIterator = dbIterator;
+    this.readOptions = readOptions;
   }
 
   @Override
-  public void close() throws IOException {
-    if (close.compareAndSet(false, true)) {
-      readOptions.close();
-      dbIterator.close();
-    }
+  void seekToFirstNative() {
+    dbIterator.seekToFirst();
   }
 
   @Override
-  public boolean hasNext() {
-    if (close.get()) {
-      return false;
-    }
-    boolean hasNext = false;
-    // true is first item
-    try {
-      if (first) {
-        dbIterator.seekToFirst();
-        first = false;
-      }
-      if (!(hasNext = dbIterator.isValid())) { // false is last item
-        close();
-      }
-    } catch (Exception e) {
-      logger.error(e.getMessage(), e);
-      try {
-        close();
-      } catch (Exception e1) {
-        logger.error(e1.getMessage(), e1);
-      }
-    }
-    return hasNext;
+  void seekToLastNative() {
+    dbIterator.seekToLast();
   }
 
   @Override
-  public Entry<byte[], byte[]> next() {
-    if (close.get()) {
-      throw new NoSuchElementException();
-    }
+  void seekNative(byte[] key) {
+    dbIterator.seek(key);
+  }
+
+  @Override
+  boolean validNative() {
+    return dbIterator.isValid();
+  }
+
+  @Override
+  Entry<byte[], byte[]> nextNative() {
     byte[] key = dbIterator.key();
     byte[] value = dbIterator.value();
     dbIterator.next();
@@ -84,53 +59,18 @@ public final class RockStoreIterator implements DBIterator {
   }
 
   @Override
-  public void remove() {
-    throw new UnsupportedOperationException();
-  }
-
-  @Override
-  public void seek(byte[] key) {
-    checkState();
-    dbIterator.seek(key);
-    this.first = false;
-  }
-
-  @Override
-  public void seekToFirst() {
-    checkState();
-    dbIterator.seekToFirst();
-    this.first = false;
-  }
-
-  @Override
-  public void seekToLast() {
-    checkState();
-    dbIterator.seekToLast();
-    this.first = false;
-  }
-
-  @Override
-  public boolean valid() {
-    checkState();
-    return dbIterator.isValid();
-  }
-
-  @Override
-  public byte[] getKey() {
-    checkValid();
+  byte[] keyNative() {
     return dbIterator.key();
   }
 
   @Override
-  public byte[] getValue() {
-    checkValid();
+  byte[] valueNative() {
     return dbIterator.value();
   }
 
   @Override
-  public void checkState() {
-    if (close.get()) {
-      throw new IllegalStateException("iterator has been closed");
-    }
+  void closeNative() {
+    readOptions.close();
+    dbIterator.close();
   }
 }
