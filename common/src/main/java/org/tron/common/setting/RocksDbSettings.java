@@ -163,10 +163,11 @@ public class RocksDbSettings {
   }
 
   /**
-   * Creates a new RocksDB Options.
+   * Creates a new RocksDB Options that owns its logging callback.
    *
    * <p><b>CRITICAL:</b> Must be closed after use to prevent native memory leaks.
-   * Use try-with-resources.
+   * Close all databases opened with these options before closing the options.
+   * Use try-with-resources, declaring the options before the database.
    *
    * <pre>{@code
    * try (Options options = getOptionsByDbName(dbName)) {
@@ -178,16 +179,17 @@ public class RocksDbSettings {
    * @return a new Options instance that must be closed
    */
   public static Options getOptionsByDbName(String dbName) {
+    Options options = new OptionsWithLogger(dbName);
+    try {
+      return configureOptions(options, dbName);
+    } catch (RuntimeException | Error e) {
+      options.close();
+      throw e;
+    }
+  }
+
+  private static Options configureOptions(Options options, String dbName) {
     RocksDbSettings settings = getSettings();
-
-    Options options = new Options();
-
-    options.setLogger(new Logger(options) {
-      @Override
-      protected void log(InfoLogLevel infoLogLevel, String logMsg) {
-        rocksDbLogger.info("{} {}", dbName, logMsg);
-      }
-    });
     // most of these options are suggested by https://github.com/facebook/rocksdb/wiki/Set-Up-Options
 
     // general options
@@ -231,6 +233,36 @@ public class RocksDbSettings {
     }
 
     return options;
+  }
+
+  private static class OptionsWithLogger extends Options {
+    private final Logger dbLogger;
+
+    private OptionsWithLogger(String dbName) {
+      try {
+        dbLogger = new Logger(this) {
+          @Override
+          protected void log(InfoLogLevel infoLogLevel, String logMsg) {
+            rocksDbLogger.info("{} {}", dbName, logMsg);
+          }
+        };
+        setLogger(dbLogger);
+      } catch (RuntimeException | Error e) {
+        close();
+        throw e;
+      }
+    }
+
+    @Override
+    public void close() {
+      try {
+        super.close();
+      } finally {
+        if (dbLogger != null) {
+          dbLogger.close();
+        }
+      }
+    }
   }
 
   private static boolean isRunningInCI() {

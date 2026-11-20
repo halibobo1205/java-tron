@@ -15,8 +15,6 @@
 
 package org.tron.common.storage.leveldb;
 
-import static org.fusesource.leveldbjni.JniDBFactory.factory;
-
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Sets;
 import com.google.common.primitives.Bytes;
@@ -141,7 +139,7 @@ public class LevelDbDataSourceImpl extends DbStat implements DbSourceInter<byte[
     try {
       DbSourceInter.checkOrInitEngine(getEngine(), dbPath.toString(),
           TronError.ErrCode.LEVELDB_INIT);
-      database = factory.open(dbPath.toFile(), dbOptions);
+      database = LevelDbFactory.open(dbPath.toFile(), dbOptions);
       if (!this.getDBName().startsWith("checkpoint")) {
         logger
             .info("DB {} open success with writeBufferSize {} M, cacheSize {} M, maxOpenFiles {}.",

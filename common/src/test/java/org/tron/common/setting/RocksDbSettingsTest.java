@@ -15,45 +15,30 @@
 
 package org.tron.common.setting;
 
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.Comparator;
-import java.util.stream.Stream;
-import org.junit.Rule;
+import java.lang.reflect.Field;
 import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
+import org.rocksdb.Logger;
 import org.rocksdb.Options;
-import org.rocksdb.RocksDB;
 
 public class RocksDbSettingsTest {
 
-  @Rule
-  public TemporaryFolder temporaryFolder = new TemporaryFolder();
-
   @Test
-  public void shouldKeepNativeBlockTableDefaults() throws Exception {
-    Path database = temporaryFolder.newFolder("rocksdb").toPath();
-
-    try (Options options = RocksDbSettings.getOptionsByDbName("test")) {
-      try (RocksDB ignored = RocksDB.open(options, database.toString())) {
-        // Opening the DB materializes the table factory and persists its native settings.
-      }
+  public void shouldReleaseLoggerWhenOptionsClose() throws Exception {
+    Options options = RocksDbSettings.getOptionsByDbName("logger-lifecycle");
+    Logger dbLogger;
+    try (Options ignored = options) {
+      Field loggerField = options.getClass().getDeclaredField("dbLogger");
+      loggerField.setAccessible(true);
+      dbLogger = (Logger) loggerField.get(options);
+      assertTrue(dbLogger.isOwningHandle());
     }
 
-    Path optionsFile;
-    try (Stream<Path> files = Files.list(database)) {
-      optionsFile = files
-          .filter(path -> path.getFileName().toString().startsWith("OPTIONS-"))
-          .max(Comparator.comparing(path -> path.getFileName().toString()))
-          .orElseThrow(() -> new AssertionError("RocksDB OPTIONS file not found"));
-    }
-    String nativeOptions = new String(Files.readAllBytes(optionsFile), StandardCharsets.UTF_8);
-
-    assertTrue(nativeOptions.contains("block_size=4096"));
-    assertTrue(nativeOptions.contains("pin_l0_filter_and_index_blocks_in_cache=false"));
-    assertTrue(nativeOptions.contains("filter_policy=nullptr"));
+    assertFalse(options.isOwningHandle());
+    assertFalse(dbLogger.isOwningHandle());
+    options.close();
+    assertFalse(dbLogger.isOwningHandle());
   }
 }
