@@ -9,6 +9,8 @@ import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
+import org.eclipse.jetty.http.HttpFields;
+import org.eclipse.jetty.http.MimeTypes;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.tron.common.utils.ByteArray;
@@ -98,7 +100,14 @@ public class CommittedHeadQuery {
     return hasSingleCommittedHeadSelector(request)
         && surface == Surface.FULL
         && HttpApiRegistry.committedHeadServlets().contains(servlet)
-        && ("GET".equals(method) || "POST".equals(method));
+        && ("GET".equals(method) || "POST".equals(method))
+        && !isFormPost(request);
+  }
+
+  private static boolean isFormPost(HttpServletRequest request) {
+    String contentType = request.getContentType();
+    return "POST".equals(request.getMethod()) && contentType != null
+        && MimeTypes.Type.FORM_ENCODED.is(HttpFields.valueParameters(contentType, null));
   }
 
   private static boolean hasSingleCommittedHeadSelector(HttpServletRequest request) {

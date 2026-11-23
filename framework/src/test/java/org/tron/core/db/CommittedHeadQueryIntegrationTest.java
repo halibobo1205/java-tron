@@ -36,7 +36,6 @@ import org.tron.common.BaseMethodTest;
 import org.tron.common.crypto.ECKey;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.Sha256Hash;
-import org.tron.common.utils.StringUtil;
 import org.tron.common.utils.Utils;
 import org.tron.consensus.dpos.DposSlot;
 import org.tron.core.ChainBaseManager;
@@ -486,7 +485,7 @@ public class CommittedHeadQueryIntegrationTest extends BaseMethodTest {
   }
 
   @Test
-  public void formPostKeepsItsParameters() throws Exception {
+  public void formPostIsRejected() throws Exception {
     witnessKeys = addWitnesses();
     dbManager.markCommittedHeadReady();
     pushNext(BASE_TIME + 3000);
@@ -499,10 +498,9 @@ public class CommittedHeadQueryIntegrationTest extends BaseMethodTest {
     MockHttpServletResponse response = new MockHttpServletResponse();
     context.getBean(ListWitnessesServlet.class).service(request, response);
 
-    assertEquals(200, response.getStatus());
-    ByteString witness = witnessKeys.keySet().iterator().next();
-    assertTrue(response.getContentAsString()
-        .contains(StringUtil.encode58Check(witness.toByteArray())));
+    assertEquals(400, response.getStatus());
+    assertTrue(response.getContentAsString().contains(Reason.UNSUPPORTED.getCode()));
+    assertNull(response.getHeader(CommittedHeadQuery.HTTP_BLOCK_NUMBER));
   }
 
   private static HashSet<Object> witnessSet(WitnessList witnesses) {
