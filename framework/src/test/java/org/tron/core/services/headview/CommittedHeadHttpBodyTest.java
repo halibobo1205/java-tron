@@ -12,6 +12,7 @@ import com.google.common.io.ByteStreams;
 import com.google.protobuf.ByteString;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.UnsupportedEncodingException;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -42,6 +43,7 @@ import org.tron.core.services.http.HttpApi.Surface;
 import org.tron.core.services.http.servlets.GetAssetIssueByNameServlet;
 import org.tron.core.services.http.servlets.ListWitnessesServlet;
 import org.tron.core.services.http.servlets.RateLimiterServlet;
+import org.tron.core.services.http.servlets.TriggerConstantContractServlet;
 import org.tron.core.services.interfaceOnPBFT.WalletOnPBFT;
 import org.tron.core.services.ratelimiter.RateLimiterContainer;
 import org.tron.protos.Protocol.BlockHeader;
@@ -52,6 +54,7 @@ public class CommittedHeadHttpBodyTest {
 
   private static final String PATH = "/wallet/listwitnesses";
   private static final String ASSET_BY_NAME = "/wallet/getassetissuebyname";
+  private static final String TRIGGER_CONSTANT = "/wallet/triggerconstantcontract";
   private static final String FORM = "application/x-www-form-urlencoded";
   private static final byte[] VISIBLE = "visible=true".getBytes(StandardCharsets.UTF_8);
   private static final byte[] WITNESS =
@@ -86,6 +89,7 @@ public class CommittedHeadHttpBodyTest {
     context.setAttribute(RateLimiterServlet.SURFACE_ATTRIBUTE, Surface.FULL);
     register(context, new ListWitnessesServlet(), PATH, query, wallet);
     register(context, new GetAssetIssueByNameServlet(), ASSET_BY_NAME, query, wallet);
+    register(context, new TriggerConstantContractServlet(), TRIGGER_CONSTANT, query, wallet);
     RequestSizeLimitHandler limit = new RequestSizeLimitHandler(4 * 1024 * 1024);
     limit.setHandler(context);
     server = new Server();
@@ -157,6 +161,24 @@ public class CommittedHeadHttpBodyTest {
       assertEquals(contentType, plain.body, selected.body);
       assertEquals(contentType, 2, assetNames.size());
       assertEquals(contentType, assetNames.get(0), assetNames.get(1));
+    }
+  }
+
+  @Test
+  public void unsupportedBodyCharsetFailsLikeJetty() throws Exception {
+    byte[] json = "{}".getBytes(StandardCharsets.UTF_8);
+    String failure = ByteArray.toHexString(("class " + UnsupportedEncodingException.class.getName())
+        .getBytes(StandardCharsets.UTF_8));
+    for (String contentType : new String[] {"application/json; charset=nosuchcharset",
+        "application/json; charset=\"no such charset\""}) {
+      Reply plain = post(TRIGGER_CONSTANT, contentType, json, false);
+      Reply selected = post(TRIGGER_CONSTANT, contentType, json, true);
+
+      assertEquals(contentType, 200, plain.status);
+      assertTrue(contentType, plain.body.contains(failure));
+      assertEquals(contentType, 200, selected.status);
+      assertNotNull(contentType, selected.blockNumber);
+      assertEquals(contentType, plain.body, selected.body);
     }
   }
 
