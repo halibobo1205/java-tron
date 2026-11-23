@@ -1,6 +1,7 @@
 package org.tron.core.db;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 import com.google.protobuf.ByteString;
 import java.util.Arrays;
@@ -57,6 +58,17 @@ public class BlockStoreLatestBlocksTest extends BaseMethodTest {
     }
 
     assertEquals(Arrays.asList(3L, 4L, 5L), latestNumbers(3));
+  }
+
+  @Test
+  public void nonPositiveCountsReturnNoBlocks() {
+    for (long number = 1; number <= 3; number++) {
+      putBlock(number);
+    }
+
+    for (long count : new long[] {0, -1, Integer.MIN_VALUE, Long.MIN_VALUE}) {
+      assertTrue(String.valueOf(count), blocks.getBlockByLatestNum(count).isEmpty());
+    }
   }
 
   private List<Long> latestNumbers(long count) {
