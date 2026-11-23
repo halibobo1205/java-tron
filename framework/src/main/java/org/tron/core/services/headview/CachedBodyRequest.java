@@ -5,7 +5,6 @@ import java.io.ByteArrayInputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
-import java.util.Locale;
 import javax.servlet.ReadListener;
 import javax.servlet.ServletInputStream;
 import javax.servlet.http.HttpServletRequest;
@@ -58,12 +57,6 @@ final class CachedBodyRequest extends HttpServletRequestWrapper {
 
   private Charset charset() {
     String encoding = getCharacterEncoding();
-    if (encoding != null) {
-      return Charset.forName(encoding);
-    }
-    String contentType = getContentType();
-    boolean json = contentType != null
-        && contentType.toLowerCase(Locale.ROOT).startsWith("application/json");
-    return json ? StandardCharsets.UTF_8 : StandardCharsets.ISO_8859_1;
+    return encoding == null ? StandardCharsets.ISO_8859_1 : Charset.forName(encoding);
   }
 }

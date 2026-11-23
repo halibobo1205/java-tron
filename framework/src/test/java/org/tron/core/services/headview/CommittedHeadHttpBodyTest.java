@@ -4,6 +4,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -14,7 +15,9 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.servlet.ServletContextHandler;
@@ -36,21 +39,25 @@ import org.tron.core.db.Manager;
 import org.tron.core.db2.view.HeadView;
 import org.tron.core.db2.view.HeadViewRegistry;
 import org.tron.core.services.http.HttpApi.Surface;
+import org.tron.core.services.http.servlets.GetAssetIssueByNameServlet;
 import org.tron.core.services.http.servlets.ListWitnessesServlet;
 import org.tron.core.services.http.servlets.RateLimiterServlet;
 import org.tron.core.services.interfaceOnPBFT.WalletOnPBFT;
 import org.tron.core.services.ratelimiter.RateLimiterContainer;
 import org.tron.protos.Protocol.BlockHeader;
 import org.tron.protos.Protocol.Witness;
+import org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract;
 
 public class CommittedHeadHttpBodyTest {
 
   private static final String PATH = "/wallet/listwitnesses";
+  private static final String ASSET_BY_NAME = "/wallet/getassetissuebyname";
   private static final String FORM = "application/x-www-form-urlencoded";
   private static final byte[] VISIBLE = "visible=true".getBytes(StandardCharsets.UTF_8);
   private static final byte[] WITNESS =
       ByteArray.fromHexString("41" + "1111111111111111111111111111111111111111");
 
+  private final List<ByteString> assetNames = new ArrayList<>();
   private Server server;
   private int port;
 
@@ -69,16 +76,16 @@ public class CommittedHeadHttpBodyTest {
     Wallet wallet = mock(Wallet.class);
     when(wallet.getWitnessList()).thenReturn(WitnessList.newBuilder()
         .addWitnesses(Witness.newBuilder().setAddress(ByteString.copyFrom(WITNESS))).build());
-    ListWitnessesServlet servlet = new ListWitnessesServlet();
-    ReflectionTestUtils.setField(servlet, "container", new RateLimiterContainer());
-    ReflectionTestUtils.setField(servlet, "walletOnPBFT", mock(WalletOnPBFT.class));
-    ReflectionTestUtils.setField(servlet, "committedHeadQuery", query);
-    ReflectionTestUtils.setField(servlet, "wallet", wallet);
+    when(wallet.getAssetIssueByName(any())).thenAnswer(invocation -> {
+      assetNames.add(invocation.getArgument(0));
+      return AssetIssueContract.getDefaultInstance();
+    });
 
     ServletContextHandler context = new ServletContextHandler(ServletContextHandler.SESSIONS);
     context.setContextPath("/");
     context.setAttribute(RateLimiterServlet.SURFACE_ATTRIBUTE, Surface.FULL);
-    context.addServlet(new ServletHolder(servlet), PATH);
+    register(context, new ListWitnessesServlet(), PATH, query, wallet);
+    register(context, new GetAssetIssueByNameServlet(), ASSET_BY_NAME, query, wallet);
     RequestSizeLimitHandler limit = new RequestSizeLimitHandler(4 * 1024 * 1024);
     limit.setHandler(context);
     server = new Server();
@@ -132,6 +139,34 @@ public class CommittedHeadHttpBodyTest {
     assertEquals(200, selected.status);
     assertNotNull(selected.blockNumber);
     assertTrue(selected.body.contains(base58Witness()));
+  }
+
+  @Test
+  public void jsonBodyIsDecodedLikeJettyWithAndWithoutTheSelector() throws Exception {
+    String name = new String(Character.toChars(0x4E2D));
+    byte[] json = ("{\"value\":\"" + name + "\",\"visible\":true}")
+        .getBytes(StandardCharsets.UTF_8);
+    for (String contentType : new String[] {"application/json", "application/json;v=1",
+        "application/json; charset=utf-8", "text/plain"}) {
+      assetNames.clear();
+      Reply plain = post(ASSET_BY_NAME, contentType, json, false);
+      Reply selected = post(ASSET_BY_NAME, contentType, json, true);
+
+      assertEquals(contentType, 200, selected.status);
+      assertNotNull(contentType, selected.blockNumber);
+      assertEquals(contentType, plain.body, selected.body);
+      assertEquals(contentType, 2, assetNames.size());
+      assertEquals(contentType, assetNames.get(0), assetNames.get(1));
+    }
+  }
+
+  private static void register(ServletContextHandler context, RateLimiterServlet servlet,
+      String path, CommittedHeadQuery query, Wallet wallet) {
+    ReflectionTestUtils.setField(servlet, "container", new RateLimiterContainer());
+    ReflectionTestUtils.setField(servlet, "walletOnPBFT", mock(WalletOnPBFT.class));
+    ReflectionTestUtils.setField(servlet, "committedHeadQuery", query);
+    ReflectionTestUtils.setField(servlet, "wallet", wallet);
+    context.addServlet(new ServletHolder(servlet), path);
   }
 
   private static String base58Witness() {
