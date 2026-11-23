@@ -40,9 +40,11 @@ import org.tron.core.db.Manager;
 import org.tron.core.db2.view.HeadView;
 import org.tron.core.db2.view.HeadViewRegistry;
 import org.tron.core.services.http.HttpApi.Surface;
+import org.tron.core.services.http.servlets.GetAccountBalanceServlet;
 import org.tron.core.services.http.servlets.GetAssetIssueByNameServlet;
 import org.tron.core.services.http.servlets.ListWitnessesServlet;
 import org.tron.core.services.http.servlets.RateLimiterServlet;
+import org.tron.core.services.http.servlets.ScanShieldedTRC20NotesByIvkServlet;
 import org.tron.core.services.http.servlets.TriggerConstantContractServlet;
 import org.tron.core.services.interfaceOnPBFT.WalletOnPBFT;
 import org.tron.core.services.ratelimiter.RateLimiterContainer;
@@ -55,6 +57,8 @@ public class CommittedHeadHttpBodyTest {
   private static final String PATH = "/wallet/listwitnesses";
   private static final String ASSET_BY_NAME = "/wallet/getassetissuebyname";
   private static final String TRIGGER_CONSTANT = "/wallet/triggerconstantcontract";
+  private static final String ACCOUNT_BALANCE = "/wallet/getaccountbalance";
+  private static final String SCAN_BY_IVK = "/wallet/scanshieldedtrc20notesbyivk";
   private static final String FORM = "application/x-www-form-urlencoded";
   private static final byte[] VISIBLE = "visible=true".getBytes(StandardCharsets.UTF_8);
   private static final byte[] WITNESS =
@@ -90,6 +94,8 @@ public class CommittedHeadHttpBodyTest {
     register(context, new ListWitnessesServlet(), PATH, query, wallet);
     register(context, new GetAssetIssueByNameServlet(), ASSET_BY_NAME, query, wallet);
     register(context, new TriggerConstantContractServlet(), TRIGGER_CONSTANT, query, wallet);
+    register(context, new GetAccountBalanceServlet(), ACCOUNT_BALANCE, query, wallet);
+    register(context, new ScanShieldedTRC20NotesByIvkServlet(), SCAN_BY_IVK, query, wallet);
     RequestSizeLimitHandler limit = new RequestSizeLimitHandler(4 * 1024 * 1024);
     limit.setHandler(context);
     server = new Server();
@@ -182,6 +188,28 @@ public class CommittedHeadHttpBodyTest {
     }
   }
 
+  @Test
+  public void getOnAPostOnlyServletIsRejectedTheSameWay() throws Exception {
+    Reply plain = get(ACCOUNT_BALANCE, false);
+    Reply selected = get(ACCOUNT_BALANCE, true);
+
+    assertEquals(405, plain.status);
+    assertEquals(405, selected.status);
+    assertEquals(plain.body, selected.body);
+    assertNull(selected.blockNumber);
+  }
+
+  @Test
+  public void badRequestStatusAndBodyMatch() throws Exception {
+    Reply plain = get(SCAN_BY_IVK + "?events=a", false);
+    Reply selected = get(SCAN_BY_IVK + "?events=a", true);
+
+    assertEquals(400, plain.status);
+    assertEquals(400, selected.status);
+    assertEquals(plain.body, selected.body);
+    assertEquals("7", selected.blockNumber);
+  }
+
   private static void register(ServletContextHandler context, RateLimiterServlet servlet,
       String path, CommittedHeadQuery query, Wallet wallet) {
     ReflectionTestUtils.setField(servlet, "container", new RateLimiterContainer());
@@ -195,21 +223,32 @@ public class CommittedHeadHttpBodyTest {
     return StringUtil.encode58Check(WITNESS);
   }
 
+  private Reply get(String path, boolean selector) throws Exception {
+    return send("GET", path, null, null, selector);
+  }
+
   private Reply post(String path, String contentType, byte[] body, boolean selector)
       throws Exception {
+    return send("POST", path, contentType, body, selector);
+  }
+
+  private Reply send(String method, String path, String contentType, byte[] body,
+      boolean selector) throws Exception {
     HttpURLConnection connection =
         (HttpURLConnection) new URL("http://127.0.0.1:" + port + path).openConnection();
     try {
-      connection.setRequestMethod("POST");
-      connection.setDoOutput(true);
-      connection.setRequestProperty("Content-Type", contentType);
+      connection.setRequestMethod(method);
       if (selector) {
         connection.setRequestProperty(CommittedHeadQuery.HTTP_SELECTOR,
             CommittedHeadQuery.COMMITTED_HEAD);
       }
-      connection.setFixedLengthStreamingMode(body.length);
-      try (OutputStream out = connection.getOutputStream()) {
-        out.write(body);
+      if (body != null) {
+        connection.setDoOutput(true);
+        connection.setRequestProperty("Content-Type", contentType);
+        connection.setFixedLengthStreamingMode(body.length);
+        try (OutputStream out = connection.getOutputStream()) {
+          out.write(body);
+        }
       }
       Reply reply = new Reply();
       reply.status = connection.getResponseCode();

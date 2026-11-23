@@ -68,8 +68,6 @@ public class CommittedHeadQuery {
     }
     byte[] body = ByteStreams.toByteArray(request.getInputStream());
     HttpServletRequest cached = new CachedBodyRequest(request, body);
-    BufferedHttpResponse buffered = new BufferedHttpResponse(response,
-        Args.getInstance().getCommittedHeadQueryMaxResponseSize());
     HeadLease lease;
     try {
       lease = registry().acquire();
@@ -77,8 +75,11 @@ public class CommittedHeadQuery {
       writeHttpError(response, e.getReason());
       return;
     }
+    BufferedHttpResponse buffered;
     boolean sealed;
     try {
+      buffered = new BufferedHttpResponse(response, lease,
+          Args.getInstance().getCommittedHeadQueryMaxResponseSize());
       invokeHttp(lease, invocation, cached, buffered);
       if (buffered.isOverflow()) {
         lease.fail(Reason.RESPONSE_TOO_LARGE, "response exceeds the committed head buffer");
