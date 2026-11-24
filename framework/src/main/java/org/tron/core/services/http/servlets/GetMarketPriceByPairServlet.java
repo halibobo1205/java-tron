@@ -17,7 +17,8 @@ import org.tron.protos.Protocol.MarketPriceList;
 @Component
 @Slf4j(topic = "API")
 @HttpApi(value = "getmarketpricebypair", access = Access.READ,
-    surfaces = {Surface.FULL, Surface.SOLIDITY, Surface.PBFT, Surface.SOLIDITY_NODE})
+    surfaces = {Surface.FULL, Surface.SOLIDITY, Surface.PBFT, Surface.SOLIDITY_NODE},
+    committedHead = true)
 public class GetMarketPriceByPairServlet extends RateLimiterServlet {
 
   @Autowired

@@ -30,6 +30,9 @@ import org.tron.common.utils.Pair;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.db.common.iterator.DBIterator;
 import org.tron.core.db2.common.DB;
+import org.tron.core.db2.view.HeadLease;
+import org.tron.core.db2.view.HeadViewException.Reason;
+import org.tron.core.db2.view.QueryViewScope;
 import org.tron.core.exception.TronError;
 import org.tron.core.store.DelegationStore;
 import org.tron.core.store.DynamicPropertiesStore;
@@ -143,6 +146,10 @@ public class RewardViCalService {
   public long getNewRewardAlgorithmReward(long beginCycle, long endCycle,
                                           List<Pair<byte[], Long>> votes) {
     if (!isDone()) {
+      HeadLease lease = QueryViewScope.current();
+      if (lease != null && lock.getCount() > 0) {
+        throw lease.fail(Reason.UNAVAILABLE, "reward vi calculation is not done");
+      }
       logger.warn("rewardViCalService is not done, wait for it");
       try {
         lock.await();

@@ -19,7 +19,8 @@ import org.tron.protos.Protocol.DelegatedResourceAccountIndex;
 @Component
 @Slf4j(topic = "API")
 @HttpApi(value = "getdelegatedresourceaccountindexv2", access = Access.READ,
-    surfaces = {Surface.FULL, Surface.SOLIDITY, Surface.PBFT, Surface.SOLIDITY_NODE})
+    surfaces = {Surface.FULL, Surface.SOLIDITY, Surface.PBFT, Surface.SOLIDITY_NODE},
+    committedHead = true)
 public class GetDelegatedResourceAccountIndexV2Servlet extends RateLimiterServlet {
 
   private static final  String VALUE_FIELD_NAME = "value";

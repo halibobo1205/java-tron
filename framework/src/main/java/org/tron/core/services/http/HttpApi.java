@@ -37,6 +37,9 @@ public @interface HttpApi {
   /** Http services the endpoint is exposed on; must not be empty. */
   Surface[] surfaces();
 
+  /** Whether a FULL request may select the committed-head view; READ endpoints only. */
+  boolean committedHead() default false;
+
   /**
    * Http services an endpoint can be exposed on. FULL / SOLIDITY / PBFT are the three
    * services run by the FullNode process (its HEAD, solidified and PBFT-finalized views);

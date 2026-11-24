@@ -17,7 +17,7 @@ import org.tron.protos.Protocol.Account;
 @Component
 @Slf4j(topic = "API")
 @HttpApi(value = "getaccountnet", access = Access.READ,
-    surfaces = {Surface.FULL})
+    surfaces = {Surface.FULL}, committedHead = true)
 public class GetAccountNetServlet extends RateLimiterServlet {
 
   @Autowired

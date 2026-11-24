@@ -27,6 +27,7 @@ import org.tron.common.prometheus.Metrics;
 import org.tron.core.config.args.Args;
 import org.tron.core.exception.TronError;
 import org.tron.core.services.WalletOnCursor;
+import org.tron.core.services.headview.CommittedHeadQuery;
 import org.tron.core.services.http.HttpApi;
 import org.tron.core.services.http.HttpApi.Surface;
 import org.tron.core.services.interfaceOnPBFT.WalletOnPBFT;
@@ -76,6 +77,9 @@ public abstract class RateLimiterServlet extends HttpServlet {
 
   @Autowired
   private WalletOnPBFT walletOnPBFT;
+
+  @Autowired(required = false)
+  private CommittedHeadQuery committedHeadQuery;
 
   /**
    * Name of the rate limiter, which is also its {@code rate.limiter.http} component, for the
@@ -229,6 +233,12 @@ public abstract class RateLimiterServlet extends HttpServlet {
    */
   private void serviceOnSurface(Surface surface, HttpServletRequest req,
       HttpServletResponse resp) throws ServletException, IOException {
+    Surface declaredSurface = declaredSurfaceOf(req);
+    if (committedHeadQuery != null && committedHeadQuery.isRequested(req, declaredSurface)) {
+      committedHeadQuery.serviceHttp(getClass(), declaredSurface, req, resp,
+          (request, response) -> super.service(request, response));
+      return;
+    }
     if (surface != Surface.PBFT) {
       super.service(req, resp);
       return;
@@ -236,6 +246,12 @@ public abstract class RateLimiterServlet extends HttpServlet {
     try (WalletOnCursor.CursorScope ignored = walletOnPBFT.selectCursor()) {
       super.service(req, resp);
     }
+  }
+
+  private static Surface declaredSurfaceOf(HttpServletRequest req) {
+    ServletContext context = req.getServletContext();
+    Object surface = context == null ? null : context.getAttribute(SURFACE_ATTRIBUTE);
+    return surface instanceof Surface ? (Surface) surface : null;
   }
 
   private static Surface surfaceOf(HttpServletRequest req) {

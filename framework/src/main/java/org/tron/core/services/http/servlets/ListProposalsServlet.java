@@ -14,7 +14,7 @@ import org.tron.core.services.http.HttpApi.Surface;
 @Component
 @Slf4j(topic = "API")
 @HttpApi(value = "listproposals", access = Access.READ,
-    surfaces = {Surface.FULL})
+    surfaces = {Surface.FULL}, committedHead = true)
 public class ListProposalsServlet extends RateLimiterServlet {
 
   @Autowired

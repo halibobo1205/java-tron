@@ -5,6 +5,7 @@ import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
 import com.google.protobuf.ProtocolStringList;
+import io.grpc.ServerInterceptors;
 import io.grpc.ServerServiceDefinition;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
@@ -96,6 +97,7 @@ import org.tron.core.exception.StoreException;
 import org.tron.core.exception.VMIllegalException;
 import org.tron.core.exception.ZksnarkException;
 import org.tron.core.metrics.MetricsApiService;
+import org.tron.core.services.headview.CommittedHeadQuery;
 import org.tron.core.services.http.servlets.Util;
 import org.tron.core.zen.address.DiversifierT;
 import org.tron.core.zen.address.IncomingViewingKey;
@@ -177,6 +179,8 @@ public class RpcApiService extends RpcService {
   private NodeInfoService nodeInfoService;
   @Autowired
   private MetricsApiService metricsApiService;
+  @Autowired(required = false)
+  private CommittedHeadQuery committedHeadQuery;
   @Getter
   private DatabaseApi databaseApi = new DatabaseApi();
   // WalletApi is the full protocol.Wallet impl (HEAD); WalletSolidityApi is its read-only subset,
@@ -199,11 +203,18 @@ public class RpcApiService extends RpcService {
     List<ServerServiceDefinition> services = new ArrayList<>();
     services.add(databaseApi.bindService());
     services.add(parameter.isSolidityNode()
-        ? walletSolidityApi.bindService() : walletApi.bindService());
+        ? walletSolidityApi.bindService() : walletService());
     if (parameter.isNodeMetricsEnable()) {
       services.add(monitorApi.bindService());
     }
     return services;
+  }
+
+  private ServerServiceDefinition walletService() {
+    if (committedHeadQuery != null && committedHeadQuery.isEnabled()) {
+      return ServerInterceptors.intercept(walletApi, committedHeadQuery.grpcInterceptor());
+    }
+    return walletApi.bindService();
   }
 
 

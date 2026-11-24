@@ -18,7 +18,7 @@ import org.tron.protos.Protocol.Proposal;
 @Component
 @Slf4j(topic = "API")
 @HttpApi(value = "getproposalbyid", access = Access.READ,
-    surfaces = {Surface.FULL})
+    surfaces = {Surface.FULL}, committedHead = true)
 public class GetProposalByIdServlet extends RateLimiterServlet {
 
   @Autowired

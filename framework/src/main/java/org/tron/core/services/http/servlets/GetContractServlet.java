@@ -18,7 +18,7 @@ import org.tron.protos.contract.SmartContractOuterClass.SmartContract;
 @Component
 @Slf4j(topic = "API")
 @HttpApi(value = "getcontract", access = Access.READ,
-    surfaces = {Surface.FULL})
+    surfaces = {Surface.FULL}, committedHead = true)
 public class GetContractServlet extends RateLimiterServlet {
 
   @Autowired

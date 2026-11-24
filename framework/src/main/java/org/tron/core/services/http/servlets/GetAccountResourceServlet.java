@@ -17,7 +17,7 @@ import org.tron.json.JSONObject;
 @Component
 @Slf4j(topic = "API")
 @HttpApi(value = "getaccountresource", access = Access.READ,
-    surfaces = {Surface.FULL})
+    surfaces = {Surface.FULL}, committedHead = true)
 public class GetAccountResourceServlet extends RateLimiterServlet {
 
   @Autowired

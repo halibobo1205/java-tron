@@ -25,6 +25,8 @@ public class SnapshotImpl extends AbstractSnapshot<Key, Value> {
   @Getter
   protected Snapshot root;
 
+  private volatile FrozenLayerListener frozenListener;
+
   SnapshotImpl(Snapshot snapshot) {
     root = snapshot.getRoot();
     synchronized (this) {
@@ -58,10 +60,24 @@ public class SnapshotImpl extends AbstractSnapshot<Key, Value> {
     return snapshot == null ? null : snapshot.get(key);
   }
 
+  void freeze(FrozenLayerListener listener) {
+    if (frozenListener == null) {
+      frozenListener = listener;
+    }
+  }
+
+  private void beforeContentWrite() {
+    FrozenLayerListener listener = frozenListener;
+    if (listener != null) {
+      listener.onFrozenLayerWrite(getDbName());
+    }
+  }
+
   @Override
   public void put(byte[] key, byte[] value) {
     Preconditions.checkNotNull(key, "key in db is not null.");
     Preconditions.checkNotNull(value, "value in db is not null.");
+    beforeContentWrite();
 
     db.put(Key.copyOf(key), Value.copyOf(Value.Operator.PUT, value));
   }
@@ -69,6 +85,7 @@ public class SnapshotImpl extends AbstractSnapshot<Key, Value> {
   @Override
   public void remove(byte[] key) {
     Preconditions.checkNotNull(key, "key in db is not null.");
+    beforeContentWrite();
     db.put(Key.of(key), Value.of(Value.Operator.DELETE, null));
   }
 
@@ -86,6 +103,7 @@ public class SnapshotImpl extends AbstractSnapshot<Key, Value> {
   // \ +------------+------------+------------+------------+
   @Override
   public void merge(Snapshot from) {
+    beforeContentWrite();
     SnapshotImpl fromImpl = (SnapshotImpl) from;
     Streams.stream(fromImpl.db).forEach(e -> db.put(e.getKey(), e.getValue()));
   }
@@ -94,6 +112,7 @@ public class SnapshotImpl extends AbstractSnapshot<Key, Value> {
     if (from instanceof SnapshotRoot) {
       return ;
     }
+    beforeContentWrite();
     SnapshotImpl fromImpl = (SnapshotImpl) from;
     Streams.stream(fromImpl.db).forEach(e -> {
       if (db.get(e.getKey()) == null) {

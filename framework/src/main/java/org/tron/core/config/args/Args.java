@@ -618,6 +618,11 @@ public class Args extends CommonParameter {
     PARAMETER.isOpenFullTcpDisconnect = nc.isOpenFullTcpDisconnect();
     PARAMETER.nodeDetectEnable = nc.isNodeDetectEnable();
     PARAMETER.nodeAllowNumericFieldAlias = nc.isAllowNumericFieldAlias();
+    PARAMETER.committedHeadQueryEnable = nc.getCommittedHeadQuery().isEnable();
+    PARAMETER.committedHeadQueryMaxActiveRequests =
+        nc.getCommittedHeadQuery().getMaxActiveRequests();
+    PARAMETER.committedHeadQueryMaxResponseSize =
+        nc.getCommittedHeadQuery().getMaxResponseSize();
 
     PARAMETER.inactiveThreshold = nc.getInactiveThreshold();
 

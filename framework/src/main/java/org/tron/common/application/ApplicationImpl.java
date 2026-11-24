@@ -53,10 +53,12 @@ public class ApplicationImpl implements Application {
     if ((!Args.getInstance().isSolidityNode()) && (!Args.getInstance().isP2pDisable())) {
       tronNetService.start();
     }
+    dbManager.markCommittedHeadReady();
   }
 
   @Override
   public void shutdown() {
+    dbManager.beginCommittedHeadClosing();
     this.shutdownServices();
     if (!Args.getInstance().isSolidityNode() && !Args.getInstance().p2pDisable) {
       tronNetService.close();

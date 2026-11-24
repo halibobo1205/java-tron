@@ -9,6 +9,7 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -18,6 +19,8 @@ import org.tron.core.db2.common.IRevokingDB;
 import org.tron.core.db2.common.LevelDB;
 import org.tron.core.db2.common.RocksDB;
 import org.tron.core.db2.common.Value;
+import org.tron.core.db2.view.HeadLease;
+import org.tron.core.db2.view.QueryViewScope;
 import org.tron.core.db2.common.Value.Operator;
 import org.tron.core.db2.common.WrappedByteArray;
 import org.tron.core.exception.ItemNotFoundException;
@@ -35,6 +38,7 @@ public class Chainbase implements IRevokingDB {
   private ThreadLocal<Cursor> cursor = new ThreadLocal<>();
   private ThreadLocal<Long> offset = new ThreadLocal<>();
   private Snapshot head;
+  private volatile boolean queryViewEnabled;
 
   public Chainbase(Snapshot head) {
     this.head = head;
@@ -103,6 +107,30 @@ public class Chainbase implements IRevokingDB {
     this.head = head;
   }
 
+  synchronized Snapshot getWorkingHead() {
+    return head;
+  }
+
+  void setQueryViewEnabled(boolean enabled) {
+    this.queryViewEnabled = enabled;
+  }
+
+  private HeadLease boundLease() {
+    return queryViewEnabled ? QueryViewScope.current() : null;
+  }
+
+  private Snapshot readHead() {
+    HeadLease lease = boundLease();
+    return lease == null ? head() : lease.top(this);
+  }
+
+  private void rejectInQueryView(String operation) {
+    HeadLease lease = boundLease();
+    if (lease != null) {
+      throw lease.unsupported(operation + " on " + getDbName());
+    }
+  }
+
   /**
    * close the database.
    */
@@ -120,11 +148,13 @@ public class Chainbase implements IRevokingDB {
 
   @Override
   public synchronized void put(byte[] key, byte[] value) {
+    rejectInQueryView("put");
     head().put(key, value);
   }
 
   @Override
   public synchronized void delete(byte[] key) {
+    rejectInQueryView("delete");
     head().remove(key);
   }
 
@@ -140,6 +170,7 @@ public class Chainbase implements IRevokingDB {
 
   @Override
   public byte[] getFromRoot(byte[] key) throws ItemNotFoundException {
+    rejectInQueryView("getFromRoot");
     byte[] value = head().getRoot().get(key);
     if (value == null) {
       throw new ItemNotFoundException();
@@ -149,6 +180,10 @@ public class Chainbase implements IRevokingDB {
 
   @Override
   public byte[] getUnchecked(byte[] key) {
+    HeadLease lease = boundLease();
+    if (lease != null) {
+      return lease.read(this, key);
+    }
     return head().get(key);
   }
 
@@ -159,12 +194,12 @@ public class Chainbase implements IRevokingDB {
 
   @Override
   public synchronized Iterator<Map.Entry<byte[], byte[]>> iterator() {
-    return head().iterator();
+    return readHead().iterator();
   }
 
   @Override
   public Set<byte[]> getValuesNext(byte[] key, long limit) {
-    return getValuesNext(head(), key, limit);
+    return getValuesNext(readHead(), key, limit);
   }
 
   // for blockstore
@@ -205,7 +240,7 @@ public class Chainbase implements IRevokingDB {
 
   @Override
   public List<byte[]> getKeysNext(byte[] key, long limit) {
-    return getKeysNext(head(), key, limit);
+    return getKeysNext(readHead(), key, limit);
   }
 
   /**
@@ -274,7 +309,7 @@ public class Chainbase implements IRevokingDB {
   // for blockstore
   @Override
   public Set<byte[]> getlatestValues(long limit) {
-    return getlatestValues(head(), limit);
+    return getlatestValues(readHead(), limit);
   }
 
   // for blockstore
@@ -297,11 +332,16 @@ public class Chainbase implements IRevokingDB {
     }
 
     if (snapshot.getPrevious() == null && tmp != 0) {
+      Set<byte[]> rootValues = Collections.emptySet();
       if (((SnapshotRoot) head.getRoot()).db.getClass() == LevelDB.class) {
-        result.addAll(((LevelDB) ((SnapshotRoot) snapshot).db).getDb().getlatestValues(tmp));
+        rootValues = ((LevelDB) ((SnapshotRoot) snapshot).db).getDb().getlatestValues(limit);
       } else if (((SnapshotRoot) head.getRoot()).db.getClass() == RocksDB.class) {
-        result.addAll(((RocksDB) ((SnapshotRoot) snapshot).db).getDb().getlatestValues(tmp));
+        rootValues = ((RocksDB) ((SnapshotRoot) snapshot).db).getDb().getlatestValues(limit);
       }
+      Set<WrappedByteArray> seen = result.stream().filter(Objects::nonNull)
+          .map(WrappedByteArray::of).collect(Collectors.toSet());
+      rootValues.stream().filter(value -> seen.add(WrappedByteArray.of(value)))
+          .forEach(result::add);
     }
 
     return result;
@@ -310,7 +350,7 @@ public class Chainbase implements IRevokingDB {
   // for accout-trace
   @Override
   public Map<byte[], byte[]> getNext(byte[] key, long limit) {
-    return getNext(head(), key, limit);
+    return getNext(readHead(), key, limit);
   }
 
   // for accout-trace
@@ -349,8 +389,8 @@ public class Chainbase implements IRevokingDB {
   }
 
   public Map<WrappedByteArray, byte[]> prefixQuery(byte[] key) {
+    Map<WrappedByteArray, byte[]> snapshot = prefixQuerySnapshot(readHead(), key);
     Map<WrappedByteArray, byte[]> result = prefixQueryRoot(key);
-    Map<WrappedByteArray, byte[]>  snapshot = prefixQuerySnapshot(key);
     result.putAll(snapshot);
     result.entrySet().removeIf(e -> e.getValue() == null);
     return result;
@@ -366,9 +406,8 @@ public class Chainbase implements IRevokingDB {
     return result;
   }
 
-  private Map<WrappedByteArray, byte[]> prefixQuerySnapshot(byte[] key) {
+  private Map<WrappedByteArray, byte[]> prefixQuerySnapshot(Snapshot snapshot, byte[] key) {
     Map<WrappedByteArray, byte[]> result = new HashMap<>();
-    Snapshot snapshot = head();
     if (!snapshot.equals(head.getRoot())) {
       Map<WrappedByteArray, WrappedByteArray> all = new HashMap<>();
       ((SnapshotImpl) snapshot).collect(all, key);

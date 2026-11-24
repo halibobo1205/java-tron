@@ -12,6 +12,7 @@ import org.tron.common.utils.Sha256Hash;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.db.KhaosDatabase.KhaosBlock;
+import org.tron.core.db2.view.QueryViewScope;
 import org.tron.core.exception.BadItemException;
 
 @Slf4j(topic = "DB")
@@ -91,7 +92,7 @@ public class TransactionStore extends TronStoreWithRevoking<TransactionCapsule> 
     if (value.length == 8) {
       blockHigh = ByteArray.toLong(value);
       transactionCapsule = getTransactionFromBlockStore(key, blockHigh);
-      if (transactionCapsule == null) {
+      if (transactionCapsule == null && !QueryViewScope.isBound()) {
         transactionCapsule = getTransactionFromKhaosDatabase(key, blockHigh);
       }
     }

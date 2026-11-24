@@ -17,7 +17,8 @@ import org.tron.protos.Protocol.MarketOrderPair;
 @Component
 @Slf4j(topic = "API")
 @HttpApi(value = "getmarketorderlistbypair", access = Access.READ,
-    surfaces = {Surface.FULL, Surface.SOLIDITY, Surface.PBFT, Surface.SOLIDITY_NODE})
+    surfaces = {Surface.FULL, Surface.SOLIDITY, Surface.PBFT, Surface.SOLIDITY_NODE},
+    committedHead = true)
 public class GetMarketOrderListByPairServlet extends RateLimiterServlet {
 
   @Autowired

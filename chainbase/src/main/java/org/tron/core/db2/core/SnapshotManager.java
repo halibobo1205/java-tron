@@ -11,7 +11,9 @@ import java.io.File;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -52,6 +54,7 @@ public class SnapshotManager implements RevokingDatabase {
   private static final int DEFAULT_STACK_MAX_SIZE = 256;
   private static final long ONE_MINUTE_MILLS = 60*1000L;
   private static final String CHECKPOINT_V2_DIR = "checkpoint";
+  private static final String TRANS_CACHE = "trans-cache";
   @Getter
   private List<Chainbase> dbs = new ArrayList<>();
   @Getter
@@ -84,6 +87,8 @@ public class SnapshotManager implements RevokingDatabase {
   private volatile int maxFlushCount = DEFAULT_MIN_FLUSH_COUNT;
 
   private int checkpointVersion = 1;   // default v1
+
+  private volatile RefreshObserver refreshObserver;
 
   public SnapshotManager(String checkpointPath) {
   }
@@ -152,6 +157,7 @@ public class SnapshotManager implements RevokingDatabase {
   @Override
   public void add(IRevokingDB db) {
     Chainbase revokingDB = (Chainbase) db;
+    revokingDB.setQueryViewEnabled(refreshObserver != null);
     dbs.add(revokingDB);
     flushServices.put(revokingDB.getDbName(),
         MoreExecutors.listeningDecorator(ExecutorServiceManager.newSingleThreadExecutor(
@@ -285,6 +291,71 @@ public class SnapshotManager implements RevokingDatabase {
     return flushCount >= maxFlushCount;
   }
 
+  @Override
+  public synchronized void setRefreshObserver(RefreshObserver observer) {
+    refreshObserver = observer;
+    dbs.forEach(db -> db.setQueryViewEnabled(observer != null));
+  }
+
+  @Override
+  public synchronized Map<Chainbase, StoreLayers> captureCommittedLayers(
+      FrozenLayerListener listener) {
+    if (activeSession != 0) {
+      throw new IllegalStateException("cannot capture with active session: " + activeSession);
+    }
+    Map<Chainbase, StoreLayers> captured = new IdentityHashMap<>();
+    for (Chainbase db : dbs) {
+      if (!TRANS_CACHE.equals(db.getDbName())) {
+        captured.put(db, captureLayers(db.getWorkingHead(), listener));
+      }
+    }
+    return Collections.unmodifiableMap(captured);
+  }
+
+  private static StoreLayers captureLayers(Snapshot head, FrozenLayerListener listener) {
+    List<SnapshotImpl> newestFirst = new ArrayList<>();
+    Snapshot snapshot = head;
+    while (Snapshot.isImpl(snapshot)) {
+      SnapshotImpl layer = (SnapshotImpl) snapshot;
+      layer.freeze(listener);
+      newestFirst.add(layer);
+      snapshot = layer.getPrevious();
+    }
+    if (!Snapshot.isRoot(snapshot)) {
+      throw new IllegalStateException("layer chain does not end at root");
+    }
+    return new StoreLayers(newestFirst, (SnapshotRoot) snapshot);
+  }
+
+  private void notifyBeforeRefresh(RefreshObserver observer) {
+    try {
+      Map<Chainbase, Snapshot> lastFlushed = new IdentityHashMap<>();
+      for (Chainbase db : dbs) {
+        Snapshot head = db.getWorkingHead();
+        if (Snapshot.isRoot(head)) {
+          continue;
+        }
+        Snapshot next = head.getRoot();
+        for (int i = 0; i < flushCount; ++i) {
+          next = next.getNext();
+        }
+        lastFlushed.put(db, next);
+      }
+      observer.beforeRefresh(lastFlushed);
+    } catch (Throwable t) {
+      observer.observerFailed(t);
+    }
+  }
+
+  private void refreshObserved(RefreshObserver observer) {
+    try {
+      refresh();
+    } catch (Throwable t) {
+      observer.refreshIncomplete();
+      throw t;
+    }
+  }
+
   private void refresh() {
     List<ListenableFuture<?>> futures = new ArrayList<>(dbs.size());
     for (Chainbase db : dbs) {
@@ -340,7 +411,13 @@ public class SnapshotManager implements RevokingDatabase {
         createCheckpoint();
 
         long checkPointEnd = System.currentTimeMillis();
-        refresh();
+        RefreshObserver observer = refreshObserver;
+        if (observer == null) {
+          refresh();
+        } else {
+          notifyBeforeRefresh(observer);
+          refreshObserved(observer);
+        }
         flushCount = 0;
         logger.info("Flush cost: {} ms, create checkpoint cost: {} ms, refresh cost: {} ms.",
             System.currentTimeMillis() - start,

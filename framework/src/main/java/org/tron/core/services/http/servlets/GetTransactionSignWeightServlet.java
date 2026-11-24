@@ -16,7 +16,7 @@ import org.tron.protos.Protocol.Transaction;
 @Component
 @Slf4j(topic = "API")
 @HttpApi(value = "getsignweight", access = Access.READ,
-    surfaces = {Surface.FULL})
+    surfaces = {Surface.FULL}, committedHead = true)
 public class GetTransactionSignWeightServlet extends RateLimiterServlet {
 
   @Autowired

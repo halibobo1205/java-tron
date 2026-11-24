@@ -20,7 +20,8 @@ import org.tron.protos.Protocol.TransactionInfo.Log;
 @Component
 @Slf4j(topic = "API")
 @HttpApi(value = "gettransactioninfobyblocknum", access = Access.READ,
-    surfaces = {Surface.FULL, Surface.SOLIDITY, Surface.PBFT, Surface.SOLIDITY_NODE})
+    surfaces = {Surface.FULL, Surface.SOLIDITY, Surface.PBFT, Surface.SOLIDITY_NODE},
+    committedHead = true)
 public class GetTransactionInfoByBlockNumServlet extends RateLimiterServlet {
 
   @Autowired

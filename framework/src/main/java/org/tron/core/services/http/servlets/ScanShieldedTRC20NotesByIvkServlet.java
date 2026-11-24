@@ -18,7 +18,8 @@ import org.tron.json.JSONObject;
 @Component
 @Slf4j(topic = "API")
 @HttpApi(value = "scanshieldedtrc20notesbyivk", access = Access.READ,
-    surfaces = {Surface.FULL, Surface.SOLIDITY, Surface.PBFT, Surface.SOLIDITY_NODE})
+    surfaces = {Surface.FULL, Surface.SOLIDITY, Surface.PBFT, Surface.SOLIDITY_NODE},
+    committedHead = true)
 public class ScanShieldedTRC20NotesByIvkServlet extends RateLimiterServlet {
 
   @Autowired

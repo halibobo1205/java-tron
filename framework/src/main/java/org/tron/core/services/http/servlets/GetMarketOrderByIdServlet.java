@@ -18,7 +18,8 @@ import org.tron.protos.Protocol.MarketOrder;
 @Component
 @Slf4j(topic = "API")
 @HttpApi(value = "getmarketorderbyid", access = Access.READ,
-    surfaces = {Surface.FULL, Surface.SOLIDITY, Surface.PBFT, Surface.SOLIDITY_NODE})
+    surfaces = {Surface.FULL, Surface.SOLIDITY, Surface.PBFT, Surface.SOLIDITY_NODE},
+    committedHead = true)
 public class GetMarketOrderByIdServlet extends RateLimiterServlet {
 
   @Autowired

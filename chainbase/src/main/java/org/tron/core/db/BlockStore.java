@@ -43,7 +43,12 @@ public class BlockStore extends TronStoreWithRevoking<BlockCapsule> {
   }
 
   public List<BlockCapsule> getBlockByLatestNum(long getNum) {
-    return pack(revokingDB.getlatestValues(getNum));
+    if (getNum <= 0) {
+      return new ArrayList<>();
+    }
+    List<BlockCapsule> blocks = pack(revokingDB.getlatestValues(getNum));
+    int from = blocks.size() > getNum ? (int) (blocks.size() - getNum) : 0;
+    return new ArrayList<>(blocks.subList(from, blocks.size()));
   }
 
   private List<BlockCapsule> pack(Set<byte[]> values) {

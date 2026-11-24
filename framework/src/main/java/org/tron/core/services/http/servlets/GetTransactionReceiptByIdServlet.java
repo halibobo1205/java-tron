@@ -17,7 +17,7 @@ import org.tron.protos.Protocol.TransactionInfo;
 @Component
 @Slf4j(topic = "API")
 @HttpApi(value = "gettransactionreceiptbyid", access = Access.READ,
-    surfaces = {Surface.FULL})
+    surfaces = {Surface.FULL}, committedHead = true)
 public class GetTransactionReceiptByIdServlet extends RateLimiterServlet {
 
   @Autowired

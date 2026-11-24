@@ -321,6 +321,15 @@ public class CommonParameter {
   public boolean nodeAllowNumericFieldAlias = false;
   @Getter
   @Setter
+  public boolean committedHeadQueryEnable = false;
+  @Getter
+  @Setter
+  public int committedHeadQueryMaxActiveRequests = 64;
+  @Getter
+  @Setter
+  public long committedHeadQueryMaxResponseSize = 8388608;
+  @Getter
+  @Setter
   public int allowMultiSign;
   @Getter
   @Setter
