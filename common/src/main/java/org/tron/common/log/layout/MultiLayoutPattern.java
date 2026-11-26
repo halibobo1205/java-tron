@@ -7,13 +7,13 @@ import ch.qos.logback.core.Context;
 import ch.qos.logback.core.Layout;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class MultiLayoutPattern extends PatternLayoutEncoder {
   private List<Rule> rules = new ArrayList<>();
-  private Map<String, Layout<ILoggingEvent>> layoutMap = new HashMap<>();
+  private final Map<String, Layout<ILoggingEvent>> layoutMap = new ConcurrentHashMap<>();
 
   public void addRule(Rule rule) {
     this.rules.add(rule);
@@ -42,18 +42,20 @@ public class MultiLayoutPattern extends PatternLayoutEncoder {
     if (Logger.ROOT_LOGGER_NAME.equalsIgnoreCase(name)) {
       return this.getLayout();
     }
-    if (layoutMap.containsKey(name)) {
-      return layoutMap.get(name);
+    Layout<ILoggingEvent> layout = layoutMap.get(name);
+    if (layout != null) {
+      return layout;
     }
-    Layout<ILoggingEvent> layout = getLayout();
+    return layoutMap.computeIfAbsent(name, this::findLayout);
+  }
+
+  private Layout<ILoggingEvent> findLayout(String name) {
     for (Rule rule : rules) {
       if (rule.logger.equals(name)) {
-        layout = rule.getPatternLayoutEncoder().getLayout();
-        break;
+        return rule.getPatternLayoutEncoder().getLayout();
       }
     }
-    layoutMap.put(name, layout);
-    return layout;
+    return getLayout();
   }
 
   @Override
