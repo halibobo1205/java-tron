@@ -518,6 +518,7 @@ public class Manager {
       throw new TronError(e, TronError.ErrCode.KHAOS_DB_INIT);
     }
     getChainBaseManager().getForkController().init(this.chainBaseManager);
+    getChainBaseManager().getForkController().resetStatsAboveLatestVersion();
 
     if (Args.getInstance().isNeedToUpdateAsset() && needToUpdateAsset()) {
       new AssetUpdateHelper(chainBaseManager).doWork();

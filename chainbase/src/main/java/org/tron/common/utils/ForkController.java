@@ -18,6 +18,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.core.ChainBaseManager;
 import org.tron.core.capsule.BlockCapsule;
+import org.tron.core.config.Parameter.ChainConstant;
 import org.tron.core.config.Parameter.ForkBlockVersionConsts;
 import org.tron.core.config.Parameter.ForkBlockVersionEnum;
 import org.tron.core.store.DynamicPropertiesStore;
@@ -210,6 +211,21 @@ public class ForkController {
         manager.getDynamicPropertiesStore().statsByVersion(versionValue, stats);
       }
     }
+  }
+
+  public synchronized void resetStatsAboveLatestVersion() {
+    DynamicPropertiesStore store = manager.getDynamicPropertiesStore();
+    int latestVersion = store.getLatestVersion();
+    int trackedVersion = store.getForkStatsTrackedVersion();
+    for (ForkBlockVersionEnum versionEnum : ForkBlockVersionEnum.values()) {
+      int versionValue = versionEnum.getValue();
+      byte[] stats = store.statsByVersion(versionValue);
+      if (versionValue > latestVersion && versionValue > trackedVersion
+          && Objects.nonNull(stats)) {
+        store.statsByVersion(versionValue, new byte[stats.length]);
+      }
+    }
+    store.saveForkStatsTrackedVersion(ChainConstant.BLOCK_VERSION);
   }
 
   public static ForkController instance() {
