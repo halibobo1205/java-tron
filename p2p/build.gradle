@@ -30,8 +30,8 @@ def releaseBinary = hasProperty('binaryRelease') ? getProperty('binaryRelease') 
 if (releaseBinary == 'true') {
     artifacts {
         archives(tasks.create('buildStandaloneJar', Jar) {
-            baseName = 'p2p-standalone'
-            version = null
+            archiveBaseName = 'p2p-standalone'
+            archiveVersion = ''
             from(sourceSets.main.output) {
                 include '/**'
             }
