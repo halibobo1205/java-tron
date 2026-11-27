@@ -856,10 +856,8 @@ public class JsonFormat {
           throw tokenizer.parseException("Expected \"" + endToken + "\".");
         }
         mergeField(tokenizer, extensionRegistry, subBuilder, selfType);
-        if (tokenizer.tryConsume(",")) {
-          // there are more fields in the object, so continue
-          continue;
-        }
+        // consume the separator when more fields follow in the object
+        tokenizer.tryConsume(",");
       }
 
       return subBuilder.build();
@@ -969,7 +967,7 @@ public class JsonFormat {
           break;
         default:
           // Check for other control characters
-          if (c >= 0x0000 && c <= 0x001F) {
+          if (c <= 0x001F) {
             appendEscapedUnicode(builder, c);
           } else if (Character.isHighSurrogate(c)
               && i + 1 < input.length() && Character.isLowSurrogate(input.charAt(i + 1))) {
@@ -1085,7 +1083,7 @@ public class JsonFormat {
    */
   public static boolean hasUnpairedSurrogate(String value) {
     try {
-      Utf8.encodedLength(value);
+      int unused = Utf8.encodedLength(value);
       return false;
     } catch (IllegalArgumentException e) {
       return true;

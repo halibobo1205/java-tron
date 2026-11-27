@@ -2,6 +2,7 @@ package org.tron.common.logsfilter.nativequeue;
 
 import java.util.Objects;
 import lombok.extern.slf4j.Slf4j;
+import org.tron.common.utils.StringUtil;
 import org.zeromq.SocketType;
 import org.zeromq.ZContext;
 import org.zeromq.ZMQ;
@@ -43,7 +44,7 @@ public class NativeMessageQueue {
       return false;
     }
 
-    String bindAddress = String.format("tcp://*:%d", bindPort);
+    String bindAddress = StringUtil.format("tcp://*:%d", bindPort);
     return publisher.bind(bindAddress);
   }
 

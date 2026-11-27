@@ -62,6 +62,7 @@ import org.tron.common.parameter.CommonParameter;
 import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.ByteUtil;
+import org.tron.common.utils.StringUtil;
 import org.tron.core.Wallet;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
@@ -1038,8 +1039,9 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
     int transactionSizeInBlock = blockCapsule.getTransactions().size();
     if (transactionSizeInBlock != transactionInfoList.getTransactionInfoCount()) {
       throw new JsonRpcInternalException(
-          String.format("TransactionList size mismatch: "
-                  + "block has %d transactions, but transactionInfoList has %d",
+          StringUtil.format(
+              "TransactionList size mismatch: block has %d transactions, "
+                  + "but transactionInfoList has %d",
               transactionSizeInBlock, transactionInfoList.getTransactionInfoCount()));
     }
 

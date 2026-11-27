@@ -18,6 +18,7 @@
 
 package org.tron.core;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.tron.common.math.Maths.addExact;
 import static org.tron.common.math.Maths.ceil;
 import static org.tron.common.math.Maths.max;
@@ -122,6 +123,7 @@ import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.ByteUtil;
 import org.tron.common.utils.DecodeUtil;
 import org.tron.common.utils.Sha256Hash;
+import org.tron.common.utils.StringUtil;
 import org.tron.common.utils.Utils;
 import org.tron.common.utils.WalletUtil;
 import org.tron.common.zksnark.IncrementalMerkleTreeContainer;
@@ -585,7 +587,7 @@ public class Wallet {
         throw new ContractValidateException(ActuatorConstant.CONTRACT_NOT_EXIST);
       }
       if (contractCount > 1) {
-        throw new ContractSizeNotEqualToOneException(String.format(
+        throw new ContractSizeNotEqualToOneException(StringUtil.format(
             "tx %s " + ActuatorConstant.CONTRACT_SIZE_NOT_EQUAL_TO_ONE, txID, contractCount));
       }
       trx.checkExpiration(chainBaseManager.getNextBlockSlotTime());
@@ -672,7 +674,8 @@ public class Wallet {
     if (contractCount > 1) {
       resultBuilder.setCode(TransactionSignWeight.Result.response_code.OTHER_ERROR);
       resultBuilder.setMessage("Invalid transaction: "
-          + String.format(ActuatorConstant.CONTRACT_SIZE_NOT_EQUAL_TO_ONE, contractCount));
+          + StringUtil.format(
+              ActuatorConstant.CONTRACT_SIZE_NOT_EQUAL_TO_ONE, contractCount));
       tswBuilder.setResult(resultBuilder);
       return tswBuilder.build();
     }
@@ -765,7 +768,8 @@ public class Wallet {
     if (contractCount > 1) {
       resultBuilder.setCode(TransactionApprovedList.Result.response_code.OTHER_ERROR);
       resultBuilder.setMessage("Invalid transaction: "
-          + String.format(ActuatorConstant.CONTRACT_SIZE_NOT_EQUAL_TO_ONE, contractCount));
+          + StringUtil.format(
+              ActuatorConstant.CONTRACT_SIZE_NOT_EQUAL_TO_ONE, contractCount));
       tswBuilder.setResult(resultBuilder);
       return tswBuilder.build();
     }
@@ -2948,7 +2952,8 @@ public class Wallet {
     }
     if (contract.size() > 1) {
       throw new ContractValidateException(
-          String.format(ActuatorConstant.CONTRACT_SIZE_NOT_EQUAL_TO_ONE, contract.size()));
+          StringUtil.format(
+              ActuatorConstant.CONTRACT_SIZE_NOT_EQUAL_TO_ONE, contract.size()));
     }
     ContractType contractType = contract.get(0).getType();
     if (contractType != ContractType.ShieldedTransferContract) {
@@ -3361,7 +3366,7 @@ public class Wallet {
     }
 
     ProgramResult result = context.getProgramResult();
-    if (!isEstimating && result.getException() != null
+    if ((!isEstimating && result.getException() != null)
         || result.getException() instanceof Program.OutOfTimeException) {
       RuntimeException e = result.getException();
       logger.warn("Constant call failed for reason: {}", e.getMessage());
@@ -3379,15 +3384,12 @@ public class Wallet {
     ret.setStatus(0, code.SUCESS);
     if (StringUtils.isNoneEmpty(result.getRuntimeError())) {
       ret.setStatus(0, code.FAILED);
-      retBuilder
-          .setMessage(ByteString.copyFromUtf8(result.getRuntimeError()))
-          .build();
+      retBuilder.setMessage(ByteString.copyFromUtf8(result.getRuntimeError()));
     }
     if (result.isRevert()) {
       ret.setStatus(0, code.FAILED);
       ret.setResultCode(contractResult.REVERT);
-      retBuilder.setMessage(ByteString.copyFromUtf8("REVERT opcode executed"))
-          .build();
+      retBuilder.setMessage(ByteString.copyFromUtf8("REVERT opcode executed"));
     }
     trxCap.setResult(ret);
     return trxCap.getInstance();
@@ -4165,7 +4167,7 @@ public class Wallet {
 
     String methodSign = "nullifiers(bytes32)";
     byte[] selector = new byte[4];
-    System.arraycopy(Hash.sha3(methodSign.getBytes()), 0, selector, 0, 4);
+    System.arraycopy(Hash.sha3(methodSign.getBytes(UTF_8)), 0, selector, 0, 4);
     byte[] input = ByteUtil.merge(selector, nf);
 
     TriggerSmartContract.Builder triggerBuilder = TriggerSmartContract.newBuilder();
@@ -4459,7 +4461,7 @@ public class Wallet {
       throws ContractExeException {
     String methodSign = "scalingFactor()";
     byte[] selector = new byte[4];
-    System.arraycopy(Hash.sha3(methodSign.getBytes()), 0, selector, 0, 4);
+    System.arraycopy(Hash.sha3(methodSign.getBytes(UTF_8)), 0, selector, 0, 4);
 
     TriggerSmartContract.Builder triggerBuilder = TriggerSmartContract.newBuilder();
     triggerBuilder.setContractAddress(ByteString.copyFrom(contractAddress));
@@ -4661,6 +4663,7 @@ public class Wallet {
     return blockBalanceTraceCapsule.getInstance();
   }
 
+  @SuppressWarnings("ReferenceEquality")
   public void checkBlockIdentifier(BlockBalanceTrace.BlockIdentifier blockIdentifier) {
     if (blockIdentifier == blockIdentifier.getDefaultInstanceForType()) {
       throw new IllegalArgumentException("block_identifier null");
@@ -4674,6 +4677,7 @@ public class Wallet {
 
   }
 
+  @SuppressWarnings("ReferenceEquality")
   public void checkAccountIdentifier(BalanceContract.AccountIdentifier accountIdentifier) {
     if (accountIdentifier == accountIdentifier.getDefaultInstanceForType()) {
       throw new IllegalArgumentException("account_identifier is null");

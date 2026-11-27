@@ -16,8 +16,24 @@
 package org.tron.common.utils;
 
 import com.google.protobuf.ByteString;
+import java.util.Locale;
 
 public class StringUtil {
+
+  /**
+   * Formats a string using {@link Locale#ROOT} so that the result does not depend on the JVM's
+   * default locale. The template follows {@link java.util.Formatter} syntax.
+   *
+   * @param template the format string
+   * @param args the values referenced by the format specifiers in the template
+   * @return the formatted string
+   * @throws java.util.IllegalFormatException if the template is invalid or the arguments do not
+   *     match its format specifiers
+   * @throws NullPointerException if the template is null
+   */
+  public static String format(String template, Object... args) {
+    return String.format(Locale.ROOT, template, args);
+  }
 
   public static byte[] createDbKey(ByteString string) {
     return string.toByteArray();

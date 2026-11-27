@@ -41,7 +41,7 @@ public class VoteWitnessParam {
     StringBuilder sb = new StringBuilder("{\"votes\":[");
     String template = "{\"vote_address\":\"%s\",\"vote_count\":%d}";
     for (Protocol.Vote vote : votes) {
-      sb.append(String.format(template,
+      sb.append(StringUtil.format(template,
           StringUtil.encode58Check(vote.getVoteAddress().toByteArray()),
           vote.getVoteCount())).append(",");
     }

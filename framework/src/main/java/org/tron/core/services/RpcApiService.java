@@ -2243,7 +2243,8 @@ public class RpcApiService extends RpcService {
       int contractCount = request.getRawData().getContractCount();
       if (contractCount != 1) {
         String message = contractCount == 0 ? ActuatorConstant.CONTRACT_NOT_EXIST
-            : String.format(ActuatorConstant.CONTRACT_SIZE_NOT_EQUAL_TO_ONE, contractCount);
+            : StringUtil.format(
+                ActuatorConstant.CONTRACT_SIZE_NOT_EQUAL_TO_ONE, contractCount);
         Return result = Return.newBuilder().setResult(false)
             .setCode(response_code.CONTRACT_VALIDATE_ERROR)
             .setMessage(ByteString.copyFromUtf8(Wallet.CONTRACT_VALIDATE_ERROR + message))

@@ -10,6 +10,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
+import java.nio.charset.StandardCharsets;
 import java.util.Properties;
 import lombok.extern.slf4j.Slf4j;
 
@@ -25,7 +26,8 @@ public class PropUtil {
       fis = new FileInputStream(file);
       is = new BufferedInputStream(fis);
       prop.load(is);
-      String value = new String(prop.getProperty(key, "").getBytes("ISO-8859-1"), "UTF-8");
+      String value = new String(prop.getProperty(key, "").getBytes(StandardCharsets.ISO_8859_1),
+          StandardCharsets.UTF_8);
       return value;
     } catch (Exception e) {
       logger.error("{}", e);

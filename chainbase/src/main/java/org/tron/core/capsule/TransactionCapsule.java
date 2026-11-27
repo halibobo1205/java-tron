@@ -53,6 +53,7 @@ import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.ForkController;
 import org.tron.common.utils.ReflectUtils;
 import org.tron.common.utils.Sha256Hash;
+import org.tron.common.utils.StringUtil;
 import org.tron.core.actuator.TransactionFactory;
 import org.tron.core.config.Parameter;
 import org.tron.core.db.TransactionContext;
@@ -282,6 +283,7 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
     return null;
   }
 
+  @SuppressWarnings("DefaultCharset") // shielded transaction hash: frozen wire format
   public static byte[] hashShieldTransaction(Transaction tx, String tokenId)
       throws ContractValidateException, InvalidProtocolBufferException {
     Any contractParameter = tx.getRawData().getContract(0).getParameter();
@@ -739,6 +741,10 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
     return this.transaction;
   }
 
+  private static String renderAddress(byte[] address) {
+    return address.length == 0 ? "" : encode58Check(address);
+  }
+
   @Override
   public String toString() {
     StringBuilder toStringBuff = new StringBuilder();
@@ -751,8 +757,10 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
       getInstance().getRawData().getContractList().forEach(contract -> {
         toStringBuff.append("[" + i + "] ").append("type: ").append(contract.getType())
             .append("\n");
-        toStringBuff.append("from address=").append(getOwner(contract)).append("\n");
-        toStringBuff.append("to address=").append(getToAddress(contract)).append("\n");
+        toStringBuff.append("from address=").append(renderAddress(getOwner(contract)))
+            .append("\n");
+        toStringBuff.append("to address=").append(renderAddress(getToAddress(contract)))
+            .append("\n");
         if (contract.getType().equals(ContractType.TransferContract)) {
           TransferContract transferContract;
           try {
@@ -761,7 +769,7 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
             toStringBuff.append("transfer amount=").append(transferContract.getAmount())
                 .append("\n");
           } catch (InvalidProtocolBufferException e) {
-            e.printStackTrace();
+            logger.debug("Failed to unpack transfer contract.", e);
           }
         } else if (contract.getType().equals(ContractType.TransferAssetContract)) {
           TransferAssetContract transferAssetContract;
@@ -773,7 +781,7 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
             toStringBuff.append("transfer amount=").append(transferAssetContract.getAmount())
                 .append("\n");
           } catch (InvalidProtocolBufferException e) {
-            e.printStackTrace();
+            logger.debug("Failed to unpack transfer asset contract.", e);
           }
         }
         if (this.transaction.getSignatureList().size() >= i.get() + 1) {
@@ -863,7 +871,7 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
 
   public void checkExpiration(long nextSlotTime) throws TransactionExpirationException {
     if (getExpiration() < nextSlotTime) {
-      throw new TransactionExpirationException(String.format(
+      throw new TransactionExpirationException(StringUtil.format(
           "Transaction expiration time is %d, but next slot time is %d",
           getExpiration(), nextSlotTime));
     }

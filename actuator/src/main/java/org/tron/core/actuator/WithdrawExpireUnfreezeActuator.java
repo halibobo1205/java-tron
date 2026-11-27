@@ -111,7 +111,7 @@ public class WithdrawExpireUnfreezeActuator extends AbstractActuator {
       throw new ContractValidateException("no unFreeze balance to withdraw ");
     }
     try {
-      LongMath.checkedAdd(accountCapsule.getBalance(), totalWithdrawUnfreeze);
+      long unused = LongMath.checkedAdd(accountCapsule.getBalance(), totalWithdrawUnfreeze);
     } catch (ArithmeticException e) {
       logger.debug(e.getMessage(), e);
       throw new ContractValidateException(e.getMessage());

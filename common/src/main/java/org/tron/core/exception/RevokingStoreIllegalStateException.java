@@ -1,5 +1,7 @@
 package org.tron.core.exception;
 
+import org.tron.common.utils.StringUtil;
+
 public class RevokingStoreIllegalStateException extends RuntimeException {
 
   static final long serialVersionUID = -1848914673093119416L;
@@ -53,7 +55,8 @@ public class RevokingStoreIllegalStateException extends RuntimeException {
   }
 
   public RevokingStoreIllegalStateException(int activeSession) {
-    this(String.format("activeSession %d has to be greater than 0", activeSession));
+    this(StringUtil.format(
+        "activeSession %d has to be greater than 0", activeSession));
   }
 
 }

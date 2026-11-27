@@ -103,7 +103,7 @@ public class BandwidthProcessor extends ResourceProcessor {
         .getDynamicPropertiesStore().allowConsensusLogicOptimization();
     if (!trx.isInBlock() && resultSizeWithMaxContractRet >
         Constant.MAX_RESULT_SIZE_IN_TX * contracts.size()) {
-      throw new TooBigTransactionResultException(String.format(
+      throw new TooBigTransactionResultException(StringUtil.format(
           "Too big transaction result, TxId %s, the result size is %d bytes, maxResultSize %d",
           trx.getTransactionId(), resultSizeWithMaxContractRet, Constant.MAX_RESULT_SIZE_IN_TX));
     }
@@ -140,10 +140,11 @@ public class BandwidthProcessor extends ResourceProcessor {
         if (optimizeTxs) {
           long maxCreateAccountTxSize = dynamicPropertiesStore.getMaxCreateAccountTxSize();
           int signatureCount = trx.getInstance().getSignatureCount();
+          @SuppressWarnings("IntLongMath")
           long createAccountBytesSize = trx.getInstance().toBuilder().clearRet()
               .build().getSerializedSize() - (signatureCount * PER_SIGN_LENGTH);
           if (createAccountBytesSize > maxCreateAccountTxSize) {
-            throw new TooBigTransactionException(String.format(
+            throw new TooBigTransactionException(StringUtil.format(
                 "Too big new account transaction, TxId %s, the size is %d bytes, maxTxSize %d",
                 trx.getTransactionId(), createAccountBytesSize, maxCreateAccountTxSize));
           }
@@ -171,7 +172,7 @@ public class BandwidthProcessor extends ResourceProcessor {
 
       long fee = chainBaseManager.getDynamicPropertiesStore().getTransactionFee() * bytesSize;
       throw new AccountResourceInsufficientException(
-          String.format(
+          StringUtil.format(
               "account [%s] has insufficient bandwidth[%d] and balance[%d] to create new account",
               StringUtil.encode58Check(address), bytesSize, fee));
     }
@@ -197,7 +198,7 @@ public class BandwidthProcessor extends ResourceProcessor {
     if (!ret) {
       ret = consumeFeeForCreateNewAccount(accountCapsule, trace);
       if (!ret) {
-        throw new AccountResourceInsufficientException(String.format(
+        throw new AccountResourceInsufficientException(StringUtil.format(
             "account [%s] has insufficient bandwidth[%d] and balance[%d] to create new account",
             StringUtil.encode58Check(accountCapsule.createDbKey()), bytes,
             chainBaseManager.getDynamicPropertiesStore().getCreateAccountFee()));
@@ -287,6 +288,7 @@ public class BandwidthProcessor extends ResourceProcessor {
   }
 
 
+  @SuppressWarnings("ReferenceEquality")
   private boolean useAssetAccountNet(Contract contract, AccountCapsule accountCapsule, long now,
       long bytes)
       throws ContractValidateException {

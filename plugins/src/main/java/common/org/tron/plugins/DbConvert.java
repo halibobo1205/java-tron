@@ -6,6 +6,7 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Callable;
@@ -113,8 +114,8 @@ public class DbConvert implements Callable<Integer> {
           }
         }).filter(Objects::nonNull).collect(Collectors.toList());
     long during = (System.currentTimeMillis() - time) / 1000;
-    spec.commandLine().getOut().format("convert db done, fails: %s, take %d s.",
-        fails, during).println();
+    spec.commandLine().getOut().format(Locale.ROOT,
+        "convert db done, fails: %s, take %d s.", fails, during).println();
     logger.info("database convert use {} seconds total, fails: {}.", during, fails);
     return fails.size();
   }
@@ -250,8 +251,6 @@ public class DbConvert implements Callable<Integer> {
     /**
      * https://github.com/facebook/rocksdb/wiki/RocksDB-FAQ .
      *  What's the fastest way to load data into RocksDB?
-     *
-     * @return if ok
      */
     public void convertLevelToRocks() throws Exception {
       List<byte[]> keys = new ArrayList<>(BATCH);

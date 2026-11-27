@@ -1,5 +1,7 @@
 package org.tron.common.client;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import com.google.protobuf.ByteString;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
@@ -111,13 +113,13 @@ public class WalletGrpcClient {
   }
 
   public AssetIssueContract getAssetIssueByName(String assetName) {
-    ByteString assetNameBs = ByteString.copyFrom(assetName.getBytes());
+    ByteString assetNameBs = ByteString.copyFrom(assetName.getBytes(UTF_8));
     BytesMessage request = BytesMessage.newBuilder().setValue(assetNameBs).build();
     return walletBlockingStub.getAssetIssueByName(request);
   }
 
   public Optional<AssetIssueList> getAssetIssueListByName(String assetName) {
-    ByteString assetNameBs = ByteString.copyFrom(assetName.getBytes());
+    ByteString assetNameBs = ByteString.copyFrom(assetName.getBytes(UTF_8));
     BytesMessage request = BytesMessage.newBuilder().setValue(assetNameBs).build();
 
     AssetIssueList assetIssueList = walletBlockingStub
@@ -129,7 +131,7 @@ public class WalletGrpcClient {
   }
 
   public AssetIssueContract getAssetIssueById(String assetId) {
-    ByteString assetIdBs = ByteString.copyFrom(assetId.getBytes());
+    ByteString assetIdBs = ByteString.copyFrom(assetId.getBytes(UTF_8));
     BytesMessage request = BytesMessage.newBuilder().setValue(assetIdBs).build();
     return walletBlockingStub.getAssetIssueById(request);
   }

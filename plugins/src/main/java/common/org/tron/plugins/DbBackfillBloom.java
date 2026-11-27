@@ -484,7 +484,7 @@ public class DbBackfillBloom implements Callable<Integer> {
   private BitSet getSectionBloomBitSet(int section, int bitIndex, DBInterface sectionBloomDb)
       throws EventBloomException {
     long keyLong = combineKey(section, bitIndex);
-    byte[] key = Long.toHexString(keyLong).getBytes();
+    byte[] key = Long.toHexString(keyLong).getBytes(StandardCharsets.UTF_8);
     byte[] data = sectionBloomDb.get(key);
 
     if (ArrayUtils.isEmpty(data)) {
@@ -502,7 +502,7 @@ public class DbBackfillBloom implements Callable<Integer> {
   private void putSectionBloomBitSet(int section, int bitIndex, BitSet bitSet,
       DBInterface sectionBloomDb) throws EventBloomException {
     long keyLong = combineKey(section, bitIndex);
-    byte[] key = Long.toHexString(keyLong).getBytes();
+    byte[] key = Long.toHexString(keyLong).getBytes(StandardCharsets.UTF_8);
 
     byte[] compressedData = ByteUtil.compress(bitSet.toByteArray());
     sectionBloomDb.put(key, compressedData);

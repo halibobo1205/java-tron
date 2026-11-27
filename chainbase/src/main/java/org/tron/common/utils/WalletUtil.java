@@ -32,8 +32,8 @@ public class WalletUtil {
       throws PermissionException {
     ByteString operations = permission.getOperations();
     if (operations.size() != 32) {
-      throw new PermissionException(String.format("operations size must 32, actual: %d",
-          operations.size()));
+      throw new PermissionException(StringUtil.format(
+          "operations size must 32, actual: %d", operations.size()));
     }
     int contractType = contract.getTypeValue();
     boolean b = (operations.byteAt(contractType / 8) & (1 << (contractType % 8))) != 0;
@@ -77,6 +77,7 @@ public class WalletUtil {
     }
   }
 
+  @SuppressWarnings("DefaultCharset") // consensus: TransactionTrace rejects on this selector
   public static boolean isConstant(SmartContract.ABI abi, byte[] selector) {
 
     if (selector == null || selector.length != 4

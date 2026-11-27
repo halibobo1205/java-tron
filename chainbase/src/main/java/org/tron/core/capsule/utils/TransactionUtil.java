@@ -15,6 +15,7 @@
 
 package org.tron.core.capsule.utils;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import com.google.protobuf.ByteString;
 import java.util.ArrayList;
 import java.util.List;
@@ -51,7 +52,7 @@ public class TransactionUtil {
     }
     TransferContract transferContract = TransferContract.newBuilder()
         .setAmount(value)
-        .setOwnerAddress(ByteString.copyFrom("0x000000000000000000000".getBytes()))
+        .setOwnerAddress(ByteString.copyFrom("0x000000000000000000000".getBytes(UTF_8)))
         .setToAddress(ByteString.copyFrom(key))
         .build();
 
@@ -166,7 +167,7 @@ public class TransactionUtil {
       )
     );
     // Token for loop end here
-    itBuilder.setNote(ByteString.copyFrom(it.getNote().getBytes()));
+    itBuilder.setNote(ByteString.copyFrom(it.getNote().getBytes(UTF_8)));
     itBuilder.setRejected(it.isRejected());
     itBuilder.setExtra(it.getExtra());
     return itBuilder.build();

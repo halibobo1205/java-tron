@@ -41,6 +41,7 @@ import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.FileUtil;
 import org.tron.common.utils.JsonUtil;
 import org.tron.common.utils.StorageUtils;
+import org.tron.common.utils.StringUtil;
 import org.tron.core.capsule.BytesCapsule;
 import org.tron.core.db.RecentTransactionItem;
 import org.tron.core.db.RecentTransactionStore;
@@ -166,7 +167,7 @@ public class TxCacheDB implements DB<byte[], byte[]>, Flusher {
     for (Entry<byte[], BytesCapsule> bytesCapsuleEntry : recentTransactionStore) {
       byte[] data = bytesCapsuleEntry.getValue().getData();
       RecentTransactionItem trx =
-          JsonUtil.json2Obj(new String(data), RecentTransactionItem.class);
+          JsonUtil.json2Obj(new String(data, StandardCharsets.UTF_8), RecentTransactionItem.class);
 
       trx.getTransactionIds().forEach(tid -> bloomFilters[1].put(Hex.decode(tid)));
     }
@@ -325,8 +326,8 @@ public class TxCacheDB implements DB<byte[], byte[]>, Flusher {
     try {
       Files.deleteIfExists(this.cacheFile0);
       Files.deleteIfExists(this.cacheFile1);
-    } catch (Exception ignored) {
-
+    } catch (Exception deleteError) {
+      logger.warn("delete tx cache file failed", deleteError);
     }
     logger.info("recovery bloomFilters failed. {}", e.getMessage());
     logger.info("rollback to previous mode.");
@@ -393,7 +394,8 @@ public class TxCacheDB implements DB<byte[], byte[]>, Flusher {
       currentFilterIndex = Integer.parseInt(properties.getProperty("currentFilterIndex"));
       if (currentBlockNum != currentBlockNumFromDB) {
         throw new IllegalStateException(
-            String.format("currentBlockNum not match. filter: %d, db: %d",
+            StringUtil.format(
+                "currentBlockNum not match. filter: %d, db: %d",
             currentBlockNum, currentBlockNumFromDB));
       }
       this.crc32c0 = properties.getProperty("crc32c0");

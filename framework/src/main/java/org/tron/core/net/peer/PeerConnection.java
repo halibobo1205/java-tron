@@ -30,6 +30,7 @@ import org.tron.common.prometheus.MetricKeys;
 import org.tron.common.prometheus.Metrics;
 import org.tron.common.utils.Pair;
 import org.tron.common.utils.Sha256Hash;
+import org.tron.common.utils.StringUtil;
 import org.tron.consensus.pbft.message.PbftBaseMessage;
 import org.tron.core.Constant;
 import org.tron.core.capsule.BlockCapsule.BlockId;
@@ -316,9 +317,10 @@ public class PeerConnection {
     ActivePeerInfo peerInfo = createActivePeerInfo(now, currentFastForwardBlock);
     String lastKnownBlock = currentFastForwardBlock != null
         ? String.valueOf(peerInfo.getLastKnownBlockNum())
-        : String.format("%d [updated %ds ago]", peerInfo.getLastKnownBlockNum(),
+        : StringUtil.format(
+            "%d [updated %ds ago]", peerInfo.getLastKnownBlockNum(),
             (now - blockBothHaveUpdateTime) / Constant.ONE_THOUSAND);
-    return String.format(
+    return StringUtil.format(
         "Peer /%s\n"
             + "connect time/avg latency: %ds [%sms]\n"
             + "last know block num: %s\n"

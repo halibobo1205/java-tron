@@ -4,6 +4,7 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.Locale;
 
 public class Time {
 
@@ -11,7 +12,8 @@ public class Time {
   // 3-digit millis, offset as +08:00 (or -00:44:30 when the offset has
   // seconds), and Z when the system zone is UTC.
   private static final DateTimeFormatter ISO_MILLIS_FORMAT =
-      DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSXXXXX");
+      DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSXXXXX",
+          Locale.ROOT);
 
   public static long getCurrentMillis() {
     return System.currentTimeMillis();

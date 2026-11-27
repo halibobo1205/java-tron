@@ -15,6 +15,7 @@ import org.tron.common.es.ExecutorServiceManager;
 import org.tron.common.prometheus.MetricKeys;
 import org.tron.common.prometheus.MetricLabels;
 import org.tron.common.prometheus.Metrics;
+import org.tron.common.utils.StringUtil;
 import org.tron.p2p.connection.Channel;
 import org.tron.protos.Protocol.ReasonCode;
 
@@ -104,6 +105,8 @@ public class PeerManager {
     }
   }
 
+  // Match the same registered channel instance.
+  @SuppressWarnings("ReferenceEquality")
   public static PeerConnection getPeerConnection(Channel channel) {
     for (PeerConnection peer : new ArrayList<>(peers)) {
       if (peer.getChannel() == channel) {
@@ -137,8 +140,9 @@ public class PeerManager {
   }
 
   private static synchronized void logPeerStats() {
-    String str = String.format("\n\n============ Peer stats: all %d, active %d, passive %d\n\n",
-            peers.size(), activePeersCount.get(), passivePeersCount.get());
+    String str = StringUtil.format(
+        "\n\n============ Peer stats: all %d, active %d, passive %d\n\n",
+        peers.size(), activePeersCount.get(), passivePeersCount.get());
     metric(peers.size(), MetricLabels.Gauge.PEERS_ALL);
     metric(activePeersCount.get(), MetricLabels.Gauge.PEERS_ACTIVE);
     metric(passivePeersCount.get(), MetricLabels.Gauge.PEERS_PASSIVE);

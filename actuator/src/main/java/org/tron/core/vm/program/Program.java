@@ -1,6 +1,7 @@
 package org.tron.core.vm.program;
 
 import static java.lang.String.format;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.apache.commons.lang3.ArrayUtils.EMPTY_BYTE_ARRAY;
 import static org.apache.commons.lang3.ArrayUtils.getLength;
 import static org.apache.commons.lang3.ArrayUtils.isEmpty;
@@ -41,6 +42,7 @@ import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.utils.BIUtil;
 import org.tron.common.utils.ByteUtil;
 import org.tron.common.utils.FastByteComparisons;
+import org.tron.common.utils.StringUtil;
 import org.tron.common.utils.Utils;
 import org.tron.common.utils.WalletUtil;
 import org.tron.core.ChainBaseManager;
@@ -633,6 +635,7 @@ public class Program {
     }
   }
 
+  @SuppressWarnings("MissingCasesInEnumSwitch")
   private long transferFrozenV2BalanceToInheritor(byte[] ownerAddr, byte[] inheritorAddr, Repository repo) {
     AccountCapsule ownerCapsule = repo.getAccount(ownerAddr);
     AccountCapsule inheritorCapsule = repo.getAccount(inheritorAddr);
@@ -1124,7 +1127,7 @@ public class Program {
       }
     } else {
       // transfer trc10 token validation
-      tokenId = String.valueOf(msg.getTokenId().longValue()).getBytes();
+      tokenId = String.valueOf(msg.getTokenId().longValue()).getBytes(UTF_8);
       long senderBalance = deposit.getTokenBalance(senderAddress, tokenId);
       if (senderBalance < endowment) {
         stackPushZero();
@@ -1182,7 +1185,7 @@ public class Program {
     increaseNonce();
     HashMap<String, Long> tokenInfo = new HashMap<>();
     if (isTokenTransfer) {
-      tokenInfo.put(new String(stripLeadingZeroes(tokenId)), endowment);
+      tokenInfo.put(new String(stripLeadingZeroes(tokenId), UTF_8), endowment);
     }
     InternalTransaction internalTx = addInternalTx(null, senderAddress, contextAddress,
         !isTokenTransfer ? endowment : 0, data, "call", nonce,
@@ -1526,7 +1529,7 @@ public class Program {
   public DataWord getTokenBalance(DataWord address, DataWord tokenId) {
     checkTokenIdInTokenBalance(tokenId);
     long ret = getContractState().getTokenBalance(address.toTronAddress(),
-        String.valueOf(tokenId.longValue()).getBytes());
+        String.valueOf(tokenId.longValue()).getBytes(UTF_8));
     return new DataWord(ret);
   }
 
@@ -1764,7 +1767,7 @@ public class Program {
       senderBalance = deposit.getBalance(senderAddress);
     } else {
       // transfer trc10 token validation
-      tokenId = String.valueOf(msg.getTokenId().longValue()).getBytes();
+      tokenId = String.valueOf(msg.getTokenId().longValue()).getBytes(UTF_8);
       senderBalance = deposit.getTokenBalance(senderAddress, tokenId);
     }
     if (senderBalance < endowment) {
@@ -2219,7 +2222,7 @@ public class Program {
       }
 
       if (internalTx != null && CommonParameter.getInstance().saveCancelAllUnfreezeV2Details) {
-        internalTx.setExtra(String.format("{\"%s\":%d,\"%s\":%d,\"%s\":%d}",
+        internalTx.setExtra(StringUtil.format("{\"%s\":%d,\"%s\":%d,\"%s\":%d}",
             BANDWIDTH.name(), result.getOrDefault(BANDWIDTH.name(), 0L),
             ENERGY.name(), result.getOrDefault(ENERGY.name(), 0L),
             TRON_POWER.name(), result.getOrDefault(TRON_POWER.name(), 0L)));
@@ -2591,10 +2594,9 @@ public class Program {
 
     public ReturnDataCopyIllegalBoundsException(DataWord off, DataWord size,
         long returnDataSize) {
-      super(String
-          .format(
-              "Illegal RETURNDATACOPY arguments: offset (%s) + size (%s) > RETURNDATASIZE (%d)",
-              off, size, returnDataSize));
+      super(StringUtil.format(
+          "Illegal RETURNDATACOPY arguments: offset (%s) + size (%s) > RETURNDATASIZE (%d)",
+          off, size, returnDataSize));
     }
   }
 

@@ -77,7 +77,8 @@ public class LocalWitnesses {
 
     if (StringUtils.isBlank(privateKey)
         || privateKey.length() != ChainConstant.PRIVATE_KEY_LENGTH) {
-      throw new TronError(String.format("private key must be %d hex string, actual: %d",
+      throw new TronError(StringUtil.format(
+          "private key must be %d hex string, actual: %d",
           ChainConstant.PRIVATE_KEY_LENGTH,
           StringUtils.isBlank(privateKey) ? 0 : privateKey.length()),
           TronError.ErrCode.WITNESS_INIT);

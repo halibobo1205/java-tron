@@ -1,5 +1,7 @@
 package org.tron.core.db2.core;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import com.google.common.collect.Maps;
 import com.google.common.primitives.Bytes;
 import com.google.common.primitives.Ints;
@@ -32,6 +34,7 @@ import org.tron.common.exit.ExitManager;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.FileUtil;
 import org.tron.common.utils.StorageUtils;
+import org.tron.common.utils.StringUtil;
 import org.tron.core.db.RevokingDatabase;
 import org.tron.core.db.TronDatabase;
 import org.tron.core.db2.ISession;
@@ -110,7 +113,7 @@ public class SnapshotManager implements RevokingDatabase {
     byte[] lengthBytes = Arrays.copyOf(bytes, 4);
     int length = Ints.fromByteArray(lengthBytes);
     byte[] value = Arrays.copyOfRange(bytes, 4, 4 + length);
-    return new String(value);
+    return new String(value, UTF_8);
   }
 
   public ISession buildSession() {
@@ -222,12 +225,14 @@ public class SnapshotManager implements RevokingDatabase {
   public synchronized void pop() {
     if (activeSession != 0) {
       throw new RevokingStoreIllegalStateException(
-          String.format("activeSession has to be equal 0, current %d", activeSession));
+          StringUtil.format(
+              "activeSession has to be equal 0, current %d", activeSession));
     }
 
     if (size <= 0) {
       throw new RevokingStoreIllegalStateException(
-          String.format("there is not snapshot to be popped, current: %d", size));
+          StringUtil.format(
+              "there is not snapshot to be popped, current: %d", size));
     }
 
     disabled = true;
@@ -532,7 +537,7 @@ public class SnapshotManager implements RevokingDatabase {
       if (dbMap.get(db) == null) {
         continue;
       }
-      byte[] realKey = Arrays.copyOfRange(key, db.getBytes().length + 4, key.length);
+      byte[] realKey = Arrays.copyOfRange(key, db.getBytes(UTF_8).length + 4, key.length);
       byte[] realValue = value.length == 1 ? null : Arrays.copyOfRange(value, 1, value.length);
       if (realValue != null) {
         dbMap.get(db).getHead().put(realKey, realValue);
@@ -555,7 +560,7 @@ public class SnapshotManager implements RevokingDatabase {
   }
 
   private byte[] simpleEncode(String s) {
-    byte[] bytes = s.getBytes();
+    byte[] bytes = s.getBytes(UTF_8);
     byte[] length = Ints.toByteArray(bytes.length);
     byte[] r = new byte[4 + bytes.length];
     System.arraycopy(length, 0, r, 0, 4);

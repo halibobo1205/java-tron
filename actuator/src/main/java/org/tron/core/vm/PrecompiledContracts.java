@@ -618,6 +618,7 @@ public class PrecompiledContracts {
     }
 
     @Override
+    @SuppressWarnings("NarrowCalculation")
     public long getEnergyForData(byte[] data) {
 
       // energy charge for the execution:
@@ -638,6 +639,7 @@ public class PrecompiledContracts {
 
 
     @Override
+    @SuppressWarnings("NarrowCalculation")
     public long getEnergyForData(byte[] data) {
 
       // energy charge for the execution:
@@ -662,6 +664,7 @@ public class PrecompiledContracts {
 
 
     @Override
+    @SuppressWarnings("NarrowCalculation")
     public long getEnergyForData(byte[] data) {
 
       // TODO #POC9 Replace magic numbers with constants
@@ -703,6 +706,7 @@ public class PrecompiledContracts {
     }
 
     @Override
+    @SuppressWarnings("EmptyCatch")
     public Pair<Boolean, byte[]> execute(byte[] data) {
 
       byte[] h = new byte[32];
@@ -1164,6 +1168,7 @@ public class PrecompiledContracts {
 
     @Override
     public long getEnergyForData(byte[] data) {
+      @SuppressWarnings("IntLongMath")
       long cnt = (data.length / WORD_SIZE - 5) / 5;
       // one sign 1500, half of ecrecover
       return cnt * ENGERYPERSIGN;
@@ -1259,6 +1264,7 @@ public class PrecompiledContracts {
 
     @Override
     public long getEnergyForData(byte[] data) {
+      @SuppressWarnings("IntLongMath")
       long cnt = (data.length / WORD_SIZE - 5) / 6;
       // one sign 1500, half of ecrecover
       return cnt * ENGERYPERSIGN;

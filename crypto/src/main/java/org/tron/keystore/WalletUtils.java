@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.Console;
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.Charset;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -19,6 +20,7 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Collections;
 import java.util.EnumSet;
+import java.util.Locale;
 import java.util.NoSuchElementException;
 import java.util.Scanner;
 import java.util.Set;
@@ -155,7 +157,7 @@ public class WalletUtils {
 
   public static String getWalletFileName(WalletFile walletFile) {
     DateTimeFormatter format = DateTimeFormatter.ofPattern(
-        "'UTC--'yyyy-MM-dd'T'HH-mm-ss.nVV'--'");
+        "'UTC--'yyyy-MM-dd'T'HH-mm-ss.nVV'--'", Locale.ROOT);
     ZonedDateTime now = ZonedDateTime.now(ZoneOffset.UTC);
 
     return now.format(format) + walletFile.getAddress() + ".json";
@@ -220,7 +222,7 @@ public class WalletUtils {
 
   private static synchronized Scanner getSharedStdinScanner() {
     if (sharedStdinScanner == null) {
-      sharedStdinScanner = new Scanner(System.in);
+      sharedStdinScanner = new Scanner(System.in, Charset.defaultCharset().name());
     }
     return sharedStdinScanner;
   }

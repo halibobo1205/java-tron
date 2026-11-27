@@ -1,5 +1,6 @@
 package org.tron.common.utils;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.tron.common.math.Maths.addExact;
 import static org.tron.common.math.Maths.subtractExact;
 
@@ -85,7 +86,8 @@ public class Commons {
 
     if (amount < 0 && balance < -amount) {
       throw new BalanceInsufficientException(
-          String.format("%s insufficient balance, balance: %d, amount: %d",
+          StringUtil.format(
+              "%s insufficient balance, balance: %d, amount: %d",
               StringUtil.createReadableString(account.createDbKey()), balance, -amount));
     }
     account.setBalance(addExact(balance, amount, useStrict));
@@ -130,14 +132,14 @@ public class Commons {
       DynamicPropertiesStore dynamicPropertiesStore)
       throws BalanceInsufficientException {
     if (amount < 0) {
-      if (!account.reduceAssetAmountV2(AssetID.getBytes(), -amount, dynamicPropertiesStore,
+      if (!account.reduceAssetAmountV2(AssetID.getBytes(UTF_8), -amount, dynamicPropertiesStore,
           assetIssueStore)) {
         throw new BalanceInsufficientException(
             String.format("reduceAssetAmount failed! account: %s",
                     StringUtil.encode58Check(account.createDbKey())));
       }
     } else if (amount > 0 &&
-        !account.addAssetAmountV2(AssetID.getBytes(), amount, dynamicPropertiesStore,
+        !account.addAssetAmountV2(AssetID.getBytes(UTF_8), amount, dynamicPropertiesStore,
             assetIssueStore)) {
       throw new BalanceInsufficientException(
           String.format("addAssetAmount failed! account: %s",
@@ -152,7 +154,7 @@ public class Commons {
         dynamicPropertiesStore.getTotalShieldedPoolValue(), valueBalance,
         dynamicPropertiesStore.disableJavaLangMath());
     if (totalShieldedPoolValue < 0) {
-      throw new BalanceInsufficientException(String.format(
+      throw new BalanceInsufficientException(StringUtil.format(
           "total shielded pool value can not below 0, actual: %d", totalShieldedPoolValue));
     }
     dynamicPropertiesStore.saveTotalShieldedPoolValue(totalShieldedPoolValue);

@@ -6,6 +6,7 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
@@ -109,8 +110,8 @@ public class DbCopy implements Callable<Integer> {
         .filter(File::isFile).forEach(f -> FileUtils.copy(Paths.get(src.toString(), f.getName()),
             Paths.get(dest.toString(), f.getName())));
     long during = (System.currentTimeMillis() - time) / 1000;
-    spec.commandLine().getOut().format("copy db done, fails: %s, take %d s.",
-        fails, during).println();
+    spec.commandLine().getOut().format(Locale.ROOT,
+        "copy db done, fails: %s, take %d s.", fails, during).println();
     logger.info("database copy use {} seconds total, fails: {}.", during, fails);
     return fails.size();
   }

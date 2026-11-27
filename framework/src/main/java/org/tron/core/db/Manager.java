@@ -1,5 +1,6 @@
 package org.tron.core.db;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.tron.common.math.Maths.floorDiv;
 import static org.tron.common.math.Maths.max;
 import static org.tron.common.math.Maths.min;
@@ -214,7 +215,7 @@ public class Manager {
   @Setter
   private boolean isSyncMode;
   @Getter
-  private Object forkLock = new Object();
+  private final Object forkLock = new Object();
   // map<Long, IncrementalMerkleTree>
   @Getter
   @Setter
@@ -274,7 +275,7 @@ public class Manager {
   private final ThreadLocal<Histogram.Timer> blockedTimer = new ThreadLocal<>();
 
   private AtomicInteger blockWaitLock = new AtomicInteger(0);
-  private Object transactionLock = new Object();
+  private final Object transactionLock = new Object();
 
   private ExecutorService rePushEs;
   private static final String rePushEsName = "repush";
@@ -717,12 +718,14 @@ public class Manager {
 
     if (exitHeight > 0 && exitHeight < headNum) {
       throw new IllegalArgumentException(
-          String.format("shutDownBlockHeight %d is less than headNum %d", exitHeight, headNum));
+          StringUtil.format(
+              "shutDownBlockHeight %d is less than headNum %d", exitHeight, headNum));
     }
 
     if (exitCount == 0) {
       throw new IllegalArgumentException(
-          String.format("shutDownBlockCount %d is less than 1", exitCount));
+          StringUtil.format(
+              "shutDownBlockCount %d is less than 1", exitCount));
     }
 
     if (blockTime != null) {
@@ -740,19 +743,22 @@ public class Manager {
 
     if (exitHeight > 0 && exitCount > 0) {
       throw new IllegalArgumentException(
-          String.format("shutDownBlockHeight %d and shutDownBlockCount %d set both",
+          StringUtil.format(
+              "shutDownBlockHeight %d and shutDownBlockCount %d set both",
               exitHeight, exitCount));
     }
 
     if (exitHeight > 0 && blockTime != null) {
       throw new IllegalArgumentException(
-          String.format("shutDownBlockHeight %d and shutDownBlockTime %s set both",
+          StringUtil.format(
+              "shutDownBlockHeight %d and shutDownBlockTime %s set both",
               exitHeight, blockTime));
     }
 
     if (exitCount > 0 && blockTime != null) {
       throw new IllegalArgumentException(
-          String.format("shutDownBlockCount %d and shutDownBlockTime %s set both",
+          StringUtil.format(
+              "shutDownBlockCount %d and shutDownBlockTime %s set both",
               exitCount, blockTime));
     }
 
@@ -835,13 +841,13 @@ public class Manager {
           transactionCapsule.getInstance().toBuilder().clearRet().build().getSerializedSize()
               + Constant.MAX_RESULT_SIZE_IN_TX + Constant.MAX_RESULT_SIZE_IN_TX;
       if (generalBytesSize > TRANSACTION_MAX_BYTE_SIZE) {
-        throw new TooBigTransactionException(String.format(
+        throw new TooBigTransactionException(StringUtil.format(
             "Too big transaction with result, TxId %s, the size is %d bytes, maxTxSize %d",
             transactionCapsule.getTransactionId(), generalBytesSize, TRANSACTION_MAX_BYTE_SIZE));
       }
     }
     if (transactionCapsule.getData().length > Constant.TRANSACTION_MAX_BYTE_SIZE) {
-      throw new TooBigTransactionException(String.format(
+      throw new TooBigTransactionException(StringUtil.format(
           "Too big transaction, TxId %s, the size is %d bytes, maxTxSize %d",
           transactionCapsule.getTransactionId(), transactionCapsule.getData().length,
           TRANSACTION_MAX_BYTE_SIZE));
@@ -855,8 +861,8 @@ public class Manager {
     if (transactionExpiration <= headBlockTime
         || transactionExpiration > headBlockTime + Constant.MAXIMUM_TIME_UNTIL_EXPIRATION) {
       throw new TransactionExpirationException(
-          String.format(
-          "Transaction expiration, transaction expiration time is %d, but headBlockTime is %d",
+          StringUtil.format(
+              "Transaction expiration, transaction expiration time is %d, but headBlockTime is %d",
               transactionExpiration, headBlockTime));
     }
   }
@@ -995,7 +1001,8 @@ public class Manager {
           }
         } catch (BalanceInsufficientException e) {
           throw new AccountResourceInsufficientException(
-              String.format("account %s insufficient balance[%d] to multiSign",
+              StringUtil.format(
+                  "account %s insufficient balance[%d] to multiSign",
                   StringUtil.encode58Check(address), fee));
         }
       }
@@ -1033,7 +1040,8 @@ public class Manager {
         }
       } catch (BalanceInsufficientException e) {
         throw new AccountResourceInsufficientException(
-            String.format("account %s insufficient balance[%d] to memo fee",
+            StringUtil.format(
+                "account %s insufficient balance[%d] to memo fee",
                 StringUtil.encode58Check(address), fee));
       }
     }
@@ -1111,7 +1119,7 @@ public class Manager {
       CronExpression shutdownBlockTime = Args.getInstance().getShutdownBlockTime();
       if (shutdownBlockTime != null) {
         Date nextStopTime = shutdownBlockTime.getNextValidTimeAfter(
-            new Date(block.getTimeStamp() - maxFlushCount * 1000 * 3L));
+            new Date(block.getTimeStamp() - maxFlushCount * 1000L * 3L));
         if (nextStopTime != null && nextStopTime.compareTo(new Date(block.getTimeStamp())) <= 0) {
           revokingStore.setMaxFlushCount(SnapshotManager.DEFAULT_MIN_FLUSH_COUNT);
         }
@@ -1163,7 +1171,7 @@ public class Manager {
         MetricsUtil.meterMark(MetricsKey.BLOCKCHAIN_FAIL_FORK_COUNT);
         binaryTree.getKey().forEach(block -> khaosDb.removeBlk(block.getId()));
         khaosDb.setHead(binaryTree.getValue().peekFirst());
-        throw new BadBlockException(String.format(
+        throw new BadBlockException(StringUtil.format(
             "Fork common ancestor %d is below solidified block %d", ancestorNum, solidifiedNum));
       }
       while (!getDynamicPropertiesStore()
@@ -1348,7 +1356,8 @@ public class Manager {
                   .filter(tran -> isShieldedTransaction(tran.getInstance()))
                   .count() > SHIELDED_TRANS_IN_BLOCK_COUNTS) {
             throw new BadBlockException(
-                String.format("num: %d, shielded transaction count > %d",
+                StringUtil.format(
+                    "num: %d, shielded transaction count > %d",
                     block.getNum(), SHIELDED_TRANS_IN_BLOCK_COUNTS));
           }
 
@@ -1562,7 +1571,8 @@ public class Manager {
     int contractCount = trxCap.getInstance().getRawData().getContractCount();
     if (contractCount != 1) {
       throw new ContractSizeNotEqualToOneException(
-          String.format("tx %s " + ActuatorConstant.CONTRACT_SIZE_NOT_EQUAL_TO_ONE,
+          StringUtil.format(
+              "tx %s " + ActuatorConstant.CONTRACT_SIZE_NOT_EQUAL_TO_ONE,
               txId, contractCount));
     }
     Contract contract = trxCap.getInstance().getRawData().getContract(0);
@@ -1703,7 +1713,7 @@ public class Manager {
     HistoryBlockHashUtil.write(this, blockCapsule);
 
     Set<String> accountSet = new HashSet<>();
-    AtomicInteger shieldedTransCounts = new AtomicInteger(0);
+    int shieldedTransCounts = 0;
     List<TransactionCapsule> toBePacked = new ArrayList<>();
     long currentSize = blockCapsule.getInstance().getSerializedSize();
     boolean isSort = Args.getInstance().isOpenTransactionSort();
@@ -1759,7 +1769,7 @@ public class Manager {
       //shielded transaction
       Transaction transaction = trx.getInstance();
       if (isShieldedTransaction(transaction)
-          && shieldedTransCounts.incrementAndGet() > SHIELDED_TRANS_IN_BLOCK_COUNTS) {
+          && ++shieldedTransCounts > SHIELDED_TRANS_IN_BLOCK_COUNTS) {
         continue;
       }
       //multi sign transaction
@@ -1929,7 +1939,8 @@ public class Manager {
         rejectExchangeTransaction(transactionCapsule.getInstance());
         if (chainBaseManager.getDynamicPropertiesStore().allowConsensusLogicOptimization()
             && transactionCapsule.retCountIsGreatThanContractCount()) {
-          throw new BadBlockException(String.format("The result count %d of this transaction %s is "
+          throw new BadBlockException(StringUtil.format(
+              "The result count %d of this transaction %s is "
                   + "greater than its contract count %d", transactionCapsule.getRetCount(),
               transactionCapsule.getTransactionId(), transactionCapsule.getContractCount()));
         }
@@ -2107,7 +2118,7 @@ public class Manager {
     RecentTransactionItem item = new RecentTransactionItem(block.getNum(), list);
     chainBaseManager.getRecentTransactionStore().put(
             ByteArray.subArray(ByteArray.fromLong(block.getNum()), 6, 8),
-            new BytesCapsule(JsonUtil.obj2Json(item).getBytes()));
+            new BytesCapsule(JsonUtil.obj2Json(item).getBytes(UTF_8)));
   }
 
   public void updateFork(BlockCapsule block) {
@@ -2621,7 +2632,7 @@ public class Manager {
   }
 
   public long getPendingSize() {
-    long value = getPendingTransactions().size() + getRePushTransactions().size()
+    long value = (long) getPendingTransactions().size() + getRePushTransactions().size()
         + getPoppedTransactions().size();
     return value;
   }
@@ -2657,7 +2668,7 @@ public class Manager {
           chainBaseManager.getRecentTransactionStore()) {
         byte[] data = entry.getValue().getData();
         RecentTransactionItem trx =
-            JsonUtil.json2Obj(new String(data), RecentTransactionItem.class);
+            JsonUtil.json2Obj(new String(data, UTF_8), RecentTransactionItem.class);
         if (trx == null) {
           continue;
         }

@@ -1,5 +1,7 @@
 package org.tron.common.log.layout;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.encoder.PatternLayoutEncoder;
 import ch.qos.logback.classic.spi.ILoggingEvent;
@@ -15,24 +17,24 @@ public class MultiLayoutPattern extends PatternLayoutEncoder {
   private List<Rule> rules = new ArrayList<>();
   private Map<String, Layout<ILoggingEvent>> layoutMap = new HashMap<>();
 
+  public MultiLayoutPattern() {
+    super.setCharset(UTF_8);
+  }
+
+  @Override
+  public void setCharset(Charset charset) {
+    super.setCharset(charset == null ? UTF_8 : charset);
+  }
+
   public void addRule(Rule rule) {
     this.rules.add(rule);
     rule.start(context);
   }
 
+  @Override
   public byte[] encode(ILoggingEvent event) {
     Layout<ILoggingEvent> layout = getLayout(event.getLoggerName());
-    String txt = layout.doLayout(event);
-    return convertToBytes(txt);
-  }
-
-  private byte[] convertToBytes(String s) {
-    Charset charset = getCharset();
-    if (charset == null) {
-      return s.getBytes();
-    } else {
-      return s.getBytes(charset);
-    }
+    return layout.doLayout(event).getBytes(getCharset());
   }
 
   private Layout<ILoggingEvent> getLayout(final String name) {
