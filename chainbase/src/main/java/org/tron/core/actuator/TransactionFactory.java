@@ -3,6 +3,7 @@ package org.tron.core.actuator;
 import com.google.protobuf.GeneratedMessageV3;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import org.tron.core.exception.TronError;
 import org.tron.protos.Protocol.Transaction.Contract.ContractType;
 import org.tron.protos.contract.SmartContractOuterClass.CreateSmartContract;
 import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
@@ -20,7 +21,12 @@ public class TransactionFactory {
   public static void register(ContractType type, Class<? extends Actuator> actuatorClass,
       Class<? extends GeneratedMessageV3> clazz) {
     if (type != null && actuatorClass != null) {
-      actuatorMap.put(type, actuatorClass);
+      Class<? extends Actuator> registeredClass = actuatorMap.putIfAbsent(type, actuatorClass);
+      if (registeredClass != null && registeredClass != actuatorClass) {
+        throw new TronError("Duplicate actuator for " + type + ": "
+            + registeredClass.getName() + " vs " + actuatorClass.getName(),
+            TronError.ErrCode.ACTUATOR_REGISTER);
+      }
     }
     if (type != null && clazz != null) {
       contractMap.put(type, clazz);
